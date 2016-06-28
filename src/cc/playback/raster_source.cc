@@ -40,6 +40,7 @@ RasterSource::RasterSource(const RecordingSource* other, bool can_use_lcd_text)
       slow_down_raster_scale_factor_for_debug_(
           other->slow_down_raster_scale_factor_for_debug_),
       should_attempt_to_use_distance_field_text_(false),
+      default_lcd_background_color_(other->default_lcd_background_color_),
       image_decode_controller_(nullptr) {
 }
 
@@ -58,6 +59,7 @@ RasterSource::RasterSource(const RasterSource* other, bool can_use_lcd_text)
           other->slow_down_raster_scale_factor_for_debug_),
       should_attempt_to_use_distance_field_text_(
           other->should_attempt_to_use_distance_field_text_),
+      default_lcd_background_color_(other->default_lcd_background_color_),
       image_decode_controller_(other->image_decode_controller_) {
 }
 
@@ -294,6 +296,15 @@ bool RasterSource::CanUseLCDText() const {
 scoped_refptr<RasterSource> RasterSource::CreateCloneWithoutLCDText() const {
   bool can_use_lcd_text = false;
   return scoped_refptr<RasterSource>(new RasterSource(this, can_use_lcd_text));
+}
+
+SkColor RasterSource::DefaultLCDBackgroundColor() const {
+  if (can_use_lcd_text_) {
+    return default_lcd_background_color_;
+  }
+  else {
+    return SK_ColorTRANSPARENT;
+  }
 }
 
 RasterSource::PlaybackSettings::PlaybackSettings()

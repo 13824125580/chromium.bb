@@ -175,6 +175,9 @@ public:
 
     bool inOverlayFullscreenVideo() const { return m_inOverlayFullscreenVideo; }
 
+    void setLCDTextShouldBlendWithCSSBackgroundColor(bool);
+    bool lcdTextShouldBlendWithCSSBackgroundColor() const { return m_lcdTextShouldBlendWithCSSBackgroundColor; }
+
 private:
 #if ENABLE(ASSERT)
     void assertNoUnresolvedDirtyBits();
@@ -241,6 +244,8 @@ private:
     bool m_isTrackingPaintInvalidations; // Used for testing.
     bool m_inOverlayFullscreenVideo;
     bool m_needsUpdateDescendantDependentFlags;
+
+    bool m_lcdTextShouldBlendWithCSSBackgroundColor;
 
     RootLayerAttachment m_rootLayerAttachment;
 

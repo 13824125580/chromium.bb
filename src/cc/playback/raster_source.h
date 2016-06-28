@@ -162,6 +162,7 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   // TODO(enne/vmiura): this has a read/write race between raster and compositor
   // threads with multi-threaded Ganesh.  Make this const or remove it.
   bool should_attempt_to_use_distance_field_text_;
+  const SkColor default_lcd_background_color_;
 
   // In practice, this is only set once before raster begins, so it's ok with
   // respect to threading.

@@ -201,7 +201,11 @@ class CC_EXPORT LayerImpl {
   void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return contents_opaque_; }
 
+  void SetContentsOpaqueForLCDText(bool opaque);
+  bool contents_opaque_for_lcd_text() const { return contents_opaque_for_lcd_text_; }
+
   float Opacity() const;
+
   bool OpacityIsAnimating() const;
   bool HasPotentiallyRunningOpacityAnimation() const;
 
@@ -277,6 +281,8 @@ class CC_EXPORT LayerImpl {
     return performance_properties_;
   }
 
+  bool CanUseLCDText() const;
+
   // Setter for draw_properties_.
   void set_visible_layer_rect(const gfx::Rect& visible_rect) {
     draw_properties_.visible_layer_rect = visible_rect;
@@ -290,8 +296,7 @@ class CC_EXPORT LayerImpl {
   float draw_opacity() const { return draw_properties_.opacity; }
   bool screen_space_transform_is_animating() const {
     return draw_properties_.screen_space_transform_is_animating;
-  }
-  bool can_use_lcd_text() const { return draw_properties_.can_use_lcd_text; }
+  }  
   gfx::Rect clip_rect() const { return draw_properties_.clip_rect; }
   gfx::Rect drawable_content_rect() const {
     return draw_properties_.drawable_content_rect;
@@ -523,6 +528,7 @@ class CC_EXPORT LayerImpl {
 
   bool masks_to_bounds_ : 1;
   bool contents_opaque_ : 1;
+  bool contents_opaque_for_lcd_text_ : 1;
   bool use_parent_backface_visibility_ : 1;
   bool use_local_transform_for_backface_visibility_ : 1;
   bool should_check_backface_visibility_ : 1;

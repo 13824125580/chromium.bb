@@ -12,6 +12,7 @@
 #include "SkMath.h"
 #include "SkRect.h"
 #include "SkSize.h"
+#include "SkColor.h"
 
 class SkReadBuffer;
 class SkWriteBuffer;
@@ -186,19 +187,22 @@ public:
         , fHeight(0)
         , fColorType(kUnknown_SkColorType)
         , fAlphaType(kUnknown_SkAlphaType)
+        , fDefaultLCDBackgroundColor(SK_ColorTRANSPARENT)
     {}
 
     static SkImageInfo Make(int width, int height, SkColorType ct, SkAlphaType at,
-                            sk_sp<SkColorSpace> cs = nullptr) {
-        return SkImageInfo(width, height, ct, at, std::move(cs));
+                            sk_sp<SkColorSpace> cs = nullptr,
+                            SkColor lcdbc = SK_ColorTRANSPARENT) {
+        return SkImageInfo(width, height, ct, at, std::move(cs), lcdbc);
     }
 
     /**
      *  Sets colortype to the native ARGB32 type.
      */
     static SkImageInfo MakeN32(int width, int height, SkAlphaType at,
-                               sk_sp<SkColorSpace> cs = nullptr) {
-        return Make(width, height, kN32_SkColorType, at, cs);
+                               sk_sp<SkColorSpace> cs = nullptr,
+                               SkColor lcdbc = SK_ColorTRANSPARENT) {
+        return Make(width, height, kN32_SkColorType, at, cs, lcdbc);
     }
 
     /**
@@ -209,21 +213,25 @@ public:
     /**
      *  Sets colortype to the native ARGB32 type, and the alphatype to premul.
      */
-    static SkImageInfo MakeN32Premul(int width, int height, sk_sp<SkColorSpace> cs = nullptr) {
-        return Make(width, height, kN32_SkColorType, kPremul_SkAlphaType, cs);
+    static SkImageInfo MakeN32Premul(int width, int height, sk_sp<SkColorSpace> cs = nullptr,
+                                     SkColor lcdbc = SK_ColorTRANSPARENT) {
+        return Make(width, height, kN32_SkColorType, kPremul_SkAlphaType, cs, lcdbc);
     }
 
-    static SkImageInfo MakeN32Premul(const SkISize& size) {
-        return MakeN32Premul(size.width(), size.height());
+    static SkImageInfo MakeN32Premul(const SkISize& size,
+                                     SkColor lcdbc = SK_ColorTRANSPARENT) {
+        return MakeN32Premul(size.width(), size.height(), nullptr, lcdbc);
     }
 
 
     static SkImageInfo MakeA8(int width, int height) {
-        return Make(width, height, kAlpha_8_SkColorType, kPremul_SkAlphaType, nullptr);
+        return Make(width, height, kAlpha_8_SkColorType, kPremul_SkAlphaType, nullptr, 
+                    SK_ColorTRANSPARENT);
     }
 
     static SkImageInfo MakeUnknown(int width, int height) {
-        return Make(width, height, kUnknown_SkColorType, kUnknown_SkAlphaType, nullptr);
+        return Make(width, height, kUnknown_SkColorType, kUnknown_SkAlphaType, nullptr,
+                    SK_ColorTRANSPARENT);
     }
 
     static SkImageInfo MakeUnknown() {
@@ -255,16 +263,16 @@ public:
      */
     SkImageInfo makeWH(int newWidth, int newHeight) const {
 
-        return Make(newWidth, newHeight, fColorType, fAlphaType, fColorSpace);
+        return Make(newWidth, newHeight, fColorType, fAlphaType, fColorSpace, fDefaultLCDBackgroundColor);
 
     }
 
     SkImageInfo makeAlphaType(SkAlphaType newAlphaType) const {
-        return Make(fWidth, fHeight, fColorType, newAlphaType, fColorSpace);
+        return Make(fWidth, fHeight, fColorType, newAlphaType, fColorSpace, fDefaultLCDBackgroundColor);
     }
-    
+
     SkImageInfo makeColorType(SkColorType newColorType) const {
-        return Make(fWidth, fHeight, newColorType, fAlphaType, fColorSpace);
+        return Make(fWidth, fHeight, newColorType, fAlphaType, fColorSpace, fDefaultLCDBackgroundColor);
     }
 
     SkImageInfo makeColorSpace(sk_sp<SkColorSpace> cs) const {
@@ -331,6 +339,8 @@ public:
         fAlphaType = kUnknown_SkAlphaType;
     }
 
+    SkColor defaultLCDBackgroundColor() const { return fDefaultLCDBackgroundColor; }
+
     SkDEBUGCODE(void validate() const;)
 
 private:
@@ -339,13 +349,15 @@ private:
     int                 fHeight;
     SkColorType         fColorType;
     SkAlphaType         fAlphaType;
+    SkColor             fDefaultLCDBackgroundColor;
 
-    SkImageInfo(int width, int height, SkColorType ct, SkAlphaType at, sk_sp<SkColorSpace> cs)
+    SkImageInfo(int width, int height, SkColorType ct, SkAlphaType at, sk_sp<SkColorSpace> cs, SkColor defaultLCDBackgroundColor)
         : fColorSpace(std::move(cs))
         , fWidth(width)
         , fHeight(height)
         , fColorType(ct)
         , fAlphaType(at)
+        , fDefaultLCDBackgroundColor(defaultLCDBackgroundColor)
     {}
 };
 
