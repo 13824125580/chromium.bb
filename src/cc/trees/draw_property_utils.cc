@@ -1175,6 +1175,33 @@ static void SetSurfaceDrawOpacity(const EffectTree& tree,
   render_surface->SetDrawOpacity(draw_opacity);
 }
 
+static bool LayerCanUseLcdText(const LayerImpl* layer,
+                               bool layers_always_allowed_lcd_text,
+                               bool can_use_lcd_text,
+                               const TransformNode* transform_node,
+                               const EffectNode* effect_node) {
+  if (layers_always_allowed_lcd_text)
+    return true;
+  if (!can_use_lcd_text)
+    return false;
+  if (!layer->contents_opaque() && !layer->contents_opaque_for_lcd_text())
+    return false;
+
+  if (effect_node->data.screen_space_opacity != 1.f)
+    return false;
+  // TODO(abetts3): LCD text should be disabled in cases of rotational,
+  // shearing, or perspective transformation.  
+  // if (!transform_node->data.node_and_ancestors_have_only_integer_translation)
+  //   return false;
+  if (static_cast<int>(layer->offset_to_transform_parent().x()) !=
+      layer->offset_to_transform_parent().x())
+    return false;
+  if (static_cast<int>(layer->offset_to_transform_parent().y()) !=
+      layer->offset_to_transform_parent().y())
+    return false;
+  return true;
+}
+
 static gfx::Rect LayerDrawableContentRect(
     const LayerImpl* layer,
     const gfx::Rect& layer_bounds_in_target_space,

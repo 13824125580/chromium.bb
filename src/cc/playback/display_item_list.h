@@ -25,6 +25,10 @@
 class SkCanvas;
 class SkPictureRecorder;
 
+namespace gfx {
+class AxisTransform2d;
+}  // namespace gfx
+
 namespace cc {
 class ClientPictureCache;
 class DisplayItem;
@@ -61,7 +65,7 @@ class CC_EXPORT DisplayItemList
   void Raster(SkCanvas* canvas,
               SkPicture::AbortCallback* callback,
               const gfx::Rect& canvas_target_playback_rect,
-              float contents_scale) const;
+              const gfx::AxisTransform2d& contents_transform) const;
 
   void Raster(SkCanvas* canvas, SkPicture::AbortCallback* callback) const;
 
@@ -105,7 +109,7 @@ class CC_EXPORT DisplayItemList
 
   void GenerateDiscardableImagesMetadata();
   void GetDiscardableImagesInRect(const gfx::Rect& rect,
-                                  float raster_scale,
+                                  const gfx::Scaling2d& raster_scale,
                                   std::vector<DrawImage>* images);
 
   gfx::Rect VisualRectForTesting(int index) { return visual_rects_[index]; }

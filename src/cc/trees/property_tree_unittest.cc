@@ -28,7 +28,7 @@ TEST(PropertyTreeSerializationTest, TransformNodeDataSerialization) {
   original.has_only_translation_animations = false;
   original.flattens_inherited_transform = false;
   original.node_and_ancestors_are_flat = false;
-  original.node_and_ancestors_have_only_integer_translation = false;
+  original.node_and_ancestors_have_only_axis_aligned_transform = false;
   original.scrolls = false;
   original.needs_sublayer_scale = false;
   original.affected_by_inner_viewport_bounds_delta_x = false;
@@ -1081,9 +1081,9 @@ class PropertyTreeTestNonIntegerTranslationTest : public PropertyTreeTest {
     SetupTransformTreeForTest(&tree);
     draw_property_utils::ComputeTransforms(&tree);
     EXPECT_FALSE(tree.Node(parent)
-                     ->data.node_and_ancestors_have_only_integer_translation);
+                     ->data.node_and_ancestors_have_only_axis_aligned_transform);
     EXPECT_FALSE(tree.Node(child)
-                     ->data.node_and_ancestors_have_only_integer_translation);
+                     ->data.node_and_ancestors_have_only_axis_aligned_transform);
 
     tree.Node(parent)->data.local.Translate(0.5f, 0.5f);
     tree.Node(child)->data.local.Translate(0.5f, 0.5f);
@@ -1091,9 +1091,9 @@ class PropertyTreeTestNonIntegerTranslationTest : public PropertyTreeTest {
     SetupTransformTreeForTest(&tree);
     draw_property_utils::ComputeTransforms(&tree);
     EXPECT_TRUE(tree.Node(parent)
-                    ->data.node_and_ancestors_have_only_integer_translation);
+                    ->data.node_and_ancestors_have_only_axis_aligned_transform);
     EXPECT_FALSE(tree.Node(child)
-                     ->data.node_and_ancestors_have_only_integer_translation);
+                     ->data.node_and_ancestors_have_only_axis_aligned_transform);
 
     tree.Node(child)->data.local.Translate(0.5f, 0.5f);
     tree.SetTargetId(child, child);
@@ -1101,9 +1101,9 @@ class PropertyTreeTestNonIntegerTranslationTest : public PropertyTreeTest {
     SetupTransformTreeForTest(&tree);
     draw_property_utils::ComputeTransforms(&tree);
     EXPECT_TRUE(tree.Node(parent)
-                    ->data.node_and_ancestors_have_only_integer_translation);
+                    ->data.node_and_ancestors_have_only_axis_aligned_transform);
     EXPECT_TRUE(tree.Node(child)
-                    ->data.node_and_ancestors_have_only_integer_translation);
+                    ->data.node_and_ancestors_have_only_axis_aligned_transform);
   }
 };
 

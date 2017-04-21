@@ -11,6 +11,7 @@
 #include "third_party/skia/include/core/SkMatrix.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
+#include "ui/gfx/geometry/scaling2d.h"
 
 namespace cc {
 
@@ -37,11 +38,15 @@ class CC_EXPORT DrawImage {
     return ApplyScale(SkSize::Make(scale, scale));
   }
 
+  DrawImage ApplyScale(const gfx::Scaling2d& scale) const {
+    return ApplyScale(SkSize::Make(scale.x(), scale.y()));
+  }
+
   DrawImage ApplyScale(const SkSize& scale) const {
     SkMatrix scaled_matrix = matrix_;
     scaled_matrix.postScale(scale.width(), scale.height());
     return DrawImage(image_, src_rect_, filter_quality_, scaled_matrix);
-  }
+  }  
 
  private:
   sk_sp<const SkImage> image_;

@@ -34,7 +34,7 @@ class RasterBufferImpl : public RasterBuffer {
       const gfx::Rect& raster_full_rect,
       const gfx::Rect& raster_dirty_rect,
       uint64_t new_content_id,
-      float scale,
+      const gfx::Scaling2d& scale,
       const RasterSource::PlaybackSettings& playback_settings) override {
     TRACE_EVENT0("cc", "ZeroCopyRasterBuffer::Playback");
     gfx::GpuMemoryBuffer* buffer = lock_.GetGpuMemoryBuffer();

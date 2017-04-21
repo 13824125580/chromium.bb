@@ -12,6 +12,7 @@
 #include "cc/raster/task_graph_runner.h"
 #include "cc/raster/tile_task.h"
 #include "cc/resources/resource_format.h"
+#include "ui/gfx/geometry/scaling2d.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -41,7 +42,7 @@ class CC_EXPORT RasterBufferProvider {
       const RasterSource* raster_source,
       const gfx::Rect& canvas_bitmap_rect,
       const gfx::Rect& canvas_playback_rect,
-      float scale,
+      const gfx::Scaling2d& scale,
       const RasterSource::PlaybackSettings& playback_settings);
 
   // Acquire raster buffer.

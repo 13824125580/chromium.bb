@@ -53,7 +53,7 @@ void OneCopyRasterBufferProvider::RasterBufferImpl::Playback(
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
     uint64_t new_content_id,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings) {
   TRACE_EVENT0("cc", "OneCopyRasterBuffer::Playback");
   client_->PlaybackAndCopyOnWorkerThread(
@@ -164,7 +164,7 @@ void OneCopyRasterBufferProvider::PlaybackAndCopyOnWorkerThread(
     const RasterSource* raster_source,
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings,
     uint64_t previous_content_id,
     uint64_t new_content_id) {
@@ -200,7 +200,7 @@ void OneCopyRasterBufferProvider::PlaybackToStagingBuffer(
     const RasterSource* raster_source,
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings,
     uint64_t previous_content_id,
     uint64_t new_content_id) {

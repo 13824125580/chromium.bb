@@ -44,7 +44,7 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
       const gfx::Rect& raster_full_rect,
       const gfx::Rect& raster_dirty_rect,
       uint64_t new_content_id,
-      float scale,
+      const gfx::Scaling2d& scale,
       const RasterSource::PlaybackSettings& playback_settings);
 
  private:
@@ -63,7 +63,7 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
         const gfx::Rect& raster_full_rect,
         const gfx::Rect& raster_dirty_rect,
         uint64_t new_content_id,
-        float scale,
+        const gfx::Scaling2d& scale,
         const RasterSource::PlaybackSettings& playback_settings) override;
 
     void set_sync_token(const gpu::SyncToken& sync_token) {

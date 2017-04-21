@@ -31,7 +31,7 @@ static sk_sp<SkPicture> PlaybackToPicture(
     const gfx::Size& resource_size,
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings) {
   // GPU raster doesn't do low res tiles, so should always include images.
   DCHECK(!playback_settings.skip_images);
@@ -144,7 +144,7 @@ void GpuRasterBufferProvider::RasterBufferImpl::Playback(
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
     uint64_t new_content_id,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings) {
   TRACE_EVENT0("cc", "GpuRasterBuffer::Playback");
   client_->PlaybackOnWorkerThread(&lock_, sync_token_,
@@ -235,7 +235,7 @@ void GpuRasterBufferProvider::PlaybackOnWorkerThread(
     const gfx::Rect& raster_full_rect,
     const gfx::Rect& raster_dirty_rect,
     uint64_t new_content_id,
-    float scale,
+    const gfx::Scaling2d& scale,
     const RasterSource::PlaybackSettings& playback_settings) {
   ContextProvider::ScopedContextLock scoped_context(worker_context_provider_);
   gpu::gles2::GLES2Interface* gl = scoped_context.ContextGL();

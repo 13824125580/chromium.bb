@@ -65,6 +65,8 @@ class CC_EXPORT PictureLayer : public Layer {
 
   void DropRecordingSourceContentIfInvalid();
 
+  bool ShouldUseTransformedRasterization() const;
+
   ContentLayerClient* client_;
   std::unique_ptr<RecordingSource> recording_source_;
   devtools_instrumentation::

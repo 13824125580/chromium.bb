@@ -16,6 +16,7 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkClipStack.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
+#include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace cc {
@@ -69,7 +70,7 @@ RasterSource::~RasterSource() {
 void RasterSource::PlaybackToCanvas(SkCanvas* raster_canvas,
                                     const gfx::Rect& canvas_bitmap_rect,
                                     const gfx::Rect& canvas_playback_rect,
-                                    float contents_scale,
+                                    const gfx::Scaling2d& contents_scale,
                                     const PlaybackSettings& settings) const {
   SkIRect raster_bounds = gfx::RectToSkIRect(canvas_bitmap_rect);
   if (!canvas_playback_rect.IsEmpty() &&
@@ -79,7 +80,7 @@ void RasterSource::PlaybackToCanvas(SkCanvas* raster_canvas,
   raster_canvas->save();
   raster_canvas->translate(-canvas_bitmap_rect.x(), -canvas_bitmap_rect.y());
   raster_canvas->clipRect(SkRect::MakeFromIRect(raster_bounds));
-  raster_canvas->scale(contents_scale, contents_scale);
+  raster_canvas->scale(contents_scale.x(), contents_scale.y());
   PlaybackToCanvas(raster_canvas, settings);
   raster_canvas->restore();
 }
@@ -220,7 +221,7 @@ size_t RasterSource::GetPictureMemoryUsage() const {
 }
 
 bool RasterSource::PerformSolidColorAnalysis(const gfx::Rect& content_rect,
-                                             float contents_scale,
+                                             const gfx::Scaling2d& contents_scale,
                                              SkColor* color) const {
   TRACE_EVENT0("cc", "RasterSource::PerformSolidColorAnalysis");
 
@@ -236,7 +237,7 @@ bool RasterSource::PerformSolidColorAnalysis(const gfx::Rect& content_rect,
 
 void RasterSource::GetDiscardableImagesInRect(
     const gfx::Rect& layer_rect,
-    float raster_scale,
+    const gfx::Scaling2d& raster_scale,
     std::vector<DrawImage>* images) const {
   DCHECK_EQ(0u, images->size());
   display_list_->GetDiscardableImagesInRect(layer_rect, raster_scale, images);

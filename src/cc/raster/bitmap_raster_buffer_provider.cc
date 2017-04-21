@@ -40,7 +40,7 @@ class RasterBufferImpl : public RasterBuffer {
       const gfx::Rect& raster_full_rect,
       const gfx::Rect& raster_dirty_rect,
       uint64_t new_content_id,
-      float scale,
+      const gfx::Scaling2d& scale,
       const RasterSource::PlaybackSettings& playback_settings) override {
     TRACE_EVENT0("cc", "BitmapRasterBuffer::Playback");
     gfx::Rect playback_rect = raster_full_rect;

@@ -16,6 +16,7 @@
 #include "cc/proto/gfx_conversions.h"
 #include "cc/proto/recording_source.pb.h"
 #include "skia/ext/analysis_canvas.h"
+#include "ui/gfx/geometry/axis_transform2d.h"
 
 namespace {
 
@@ -238,7 +239,7 @@ void RecordingSource::DetermineIfSolidColor() {
                display_list_->ApproximateOpCount());
   gfx::Size layer_size = GetSize();
   skia::AnalysisCanvas canvas(layer_size.width(), layer_size.height());
-  display_list_->Raster(&canvas, nullptr, gfx::Rect(), 1.f);
+  display_list_->Raster(&canvas, nullptr, gfx::Rect(), gfx::AxisTransform2d(1.f));
   is_solid_color_ = canvas.GetColorIfSolid(&solid_color_);
 }
 
