@@ -32,7 +32,7 @@ enum class ConfigOptionID {
   kExperimentalNs,
   kBeamforming,
   kIntelligibility,
-  kNextGenerationAec,
+  kEchoCanceller3,
   kAecRefinedAdaptiveFilter
 };
 

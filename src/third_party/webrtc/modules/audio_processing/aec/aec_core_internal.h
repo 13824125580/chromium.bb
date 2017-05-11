@@ -17,7 +17,10 @@ extern "C" {
 #include "webrtc/common_audio/wav_file.h"
 #include "webrtc/modules/audio_processing/aec/aec_common.h"
 #include "webrtc/modules/audio_processing/aec/aec_core.h"
+#include "webrtc/modules/audio_processing/utility/block_mean_calculator.h"
 #include "webrtc/typedefs.h"
+
+namespace webrtc {
 
 // Number of partitions for the extended filter mode. The first one is an enum
 // to be used in array declarations, as it represents the maximum filter length.
@@ -33,16 +36,41 @@ enum {
 };
 
 typedef struct PowerLevel {
-  float sfrsum;
-  int sfrcounter;
-  float framelevel;
-  float frsum;
-  int frcounter;
+  PowerLevel();
+
+  BlockMeanCalculator framelevel;
+  BlockMeanCalculator averagelevel;
   float minlevel;
-  float averagelevel;
 } PowerLevel;
 
+class DivergentFilterFraction {
+ public:
+  DivergentFilterFraction();
+
+  // Reset.
+  void Reset();
+
+  void AddObservation(const PowerLevel& nearlevel,
+                      const PowerLevel& linoutlevel,
+                      const PowerLevel& nlpoutlevel);
+
+  // Return the latest fraction.
+  float GetLatestFraction() const;
+
+ private:
+  // Clear all values added.
+  void Clear();
+
+  size_t count_;
+  size_t occurrence_;
+  float fraction_;
+
+  RTC_DISALLOW_COPY_AND_ASSIGN(DivergentFilterFraction);
+};
+
 struct AecCore {
+  AecCore();
+
   int farBufWritePos, farBufReadPos;
 
   int knownDelay;
@@ -113,6 +141,7 @@ struct AecCore {
   Stats erle;
   Stats aNlp;
   Stats rerl;
+  DivergentFilterFraction divergent_filter_fraction;
 
   // Quantities to control H band scaling for SWB input
   int freq_avg_ic;       // initial bin for averaging nlp gain
@@ -143,8 +172,8 @@ struct AecCore {
   // 1 = extended filter mode enabled, 0 = disabled.
   int extended_filter_enabled;
   // 1 = next generation aec mode enabled, 0 = disabled.
-  int next_generation_aec_enabled;
-  int refined_adaptive_filter_enabled;
+  int aec3_enabled;
+  bool refined_adaptive_filter_enabled;
 
   // Runtime selection of number of filter partitions.
   int num_partitions;
@@ -221,5 +250,7 @@ extern WebRtcAecStoreAsComplex WebRtcAec_StoreAsComplex;
 
 typedef void (*WebRtcAecWindowData)(float* x_windowed, const float* x);
 extern WebRtcAecWindowData WebRtcAec_WindowData;
+
+}  // namespace webrtc
 
 #endif  // WEBRTC_MODULES_AUDIO_PROCESSING_AEC_AEC_CORE_INTERNAL_H_

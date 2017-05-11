@@ -18,6 +18,7 @@
 #include <stdio.h>
 #endif
 
+#include <algorithm>
 #include <assert.h>
 #include <math.h>
 #include <stddef.h>  // size_t
@@ -41,13 +42,21 @@ extern "C" {
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
 #include "webrtc/typedefs.h"
 
+namespace webrtc {
+
 // Buffer size (samples)
 static const size_t kBufSizePartitions = 250;  // 1 second of audio in 16 kHz.
 
 // Metrics
-static const int subCountLen = 4;
-static const int countLen = 50;
+static const size_t kSubCountLen = 4;
+static const size_t kCountLen = 50;
 static const int kDelayMetricsAggregationWindow = 1250;  // 5 seconds at 16 kHz.
+
+// Divergence metric is based on audio level, which gets updated every
+// |kCountLen + 1| * 10 milliseconds. Divergence metric takes the statistics of
+// |kDivergentFilterFractionAggregationWindowSize| samples. Current value
+// corresponds to 0.5 seconds at 16 kHz.
+static const int kDivergentFilterFractionAggregationWindowSize = 25;
 
 // Quantities to control H band scaling for SWB input
 static const float cnScaleHband = 0.4f;  // scale for comfort noise in H band.
@@ -148,6 +157,60 @@ __inline static float MulRe(float aRe, float aIm, float bRe, float bIm) {
 __inline static float MulIm(float aRe, float aIm, float bRe, float bIm) {
   return aRe * bIm + aIm * bRe;
 }
+
+// TODO(minyue): Due to a legacy bug, |framelevel| and |averagelevel| use a
+// window, of which the length is 1 unit longer than indicated. Remove "+1" when
+// the code is refactored.
+PowerLevel::PowerLevel()
+    : framelevel(kSubCountLen + 1),
+      averagelevel(kCountLen + 1) {
+}
+
+DivergentFilterFraction::DivergentFilterFraction()
+    : count_(0),
+      occurrence_(0),
+      fraction_(-1.0) {
+}
+
+void DivergentFilterFraction::Reset() {
+  Clear();
+  fraction_ = -1.0;
+}
+
+void DivergentFilterFraction::AddObservation(const PowerLevel& nearlevel,
+                                             const PowerLevel& linoutlevel,
+                                             const PowerLevel& nlpoutlevel) {
+  const float near_level = nearlevel.framelevel.GetLatestMean();
+  const float level_increase =
+      linoutlevel.framelevel.GetLatestMean() - near_level;
+  const bool output_signal_active = nlpoutlevel.framelevel.GetLatestMean() >
+          40.0 * nlpoutlevel.minlevel;
+  // Level increase should be, in principle, negative, when the filter
+  // does not diverge. Here we allow some margin (0.01 * near end level) and
+  // numerical error (1.0). We count divergence only when the AEC output
+  // signal is active.
+  if (output_signal_active &&
+      level_increase > std::max(0.01 * near_level, 1.0))
+    occurrence_++;
+  ++count_;
+  if (count_ == kDivergentFilterFractionAggregationWindowSize) {
+    fraction_ = static_cast<float>(occurrence_) /
+        kDivergentFilterFractionAggregationWindowSize;
+    Clear();
+  }
+}
+
+float DivergentFilterFraction::GetLatestFraction() const {
+  return fraction_;
+}
+
+void DivergentFilterFraction::Clear() {
+  count_ = 0;
+  occurrence_ = 0;
+}
+
+// TODO(minyue): Moving some initialization from WebRtcAec_CreateAec() to ctor.
+AecCore::AecCore() = default;
 
 static int CmpFloat(const void* a, const void* b) {
   const float* da = (const float*)a;
@@ -517,14 +580,9 @@ static void ComfortNoise(AecCore* aec,
 
 static void InitLevel(PowerLevel* level) {
   const float kBigFloat = 1E17f;
-
-  level->averagelevel = 0;
-  level->framelevel = 0;
+  level->averagelevel.Reset();
+  level->framelevel.Reset();
   level->minlevel = kBigFloat;
-  level->frsum = 0;
-  level->sfrsum = 0;
-  level->frcounter = 0;
-  level->sfrcounter = 0;
 }
 
 static void InitStats(Stats* stats) {
@@ -550,6 +608,8 @@ static void InitMetrics(AecCore* self) {
   InitStats(&self->erle);
   InitStats(&self->aNlp);
   InitStats(&self->rerl);
+
+  self->divergent_filter_fraction.Reset();
 }
 
 static float CalculatePower(const float* in, size_t num_samples) {
@@ -562,43 +622,29 @@ static float CalculatePower(const float* in, size_t num_samples) {
   return energy / num_samples;
 }
 
-static void UpdateLevel(PowerLevel* level, float energy) {
-  level->sfrsum += energy;
-  level->sfrcounter++;
-
-  if (level->sfrcounter > subCountLen) {
-    level->framelevel = level->sfrsum / (subCountLen * PART_LEN);
-    level->sfrsum = 0;
-    level->sfrcounter = 0;
-    if (level->framelevel > 0) {
-      if (level->framelevel < level->minlevel) {
-        level->minlevel = level->framelevel;  // New minimum.
+static void UpdateLevel(PowerLevel* level, float power) {
+  level->framelevel.AddValue(power);
+  if (level->framelevel.EndOfBlock()) {
+    const float new_frame_level = level->framelevel.GetLatestMean();
+    if (new_frame_level > 0) {
+      if (new_frame_level < level->minlevel) {
+        level->minlevel = new_frame_level;  // New minimum.
       } else {
         level->minlevel *= (1 + 0.001f);  // Small increase.
       }
     }
-    level->frcounter++;
-    level->frsum += level->framelevel;
-    if (level->frcounter > countLen) {
-      level->averagelevel = level->frsum / countLen;
-      level->frsum = 0;
-      level->frcounter = 0;
-    }
+    level->averagelevel.AddValue(new_frame_level);
   }
 }
 
 static void UpdateMetrics(AecCore* aec) {
-  float dtmp, dtmp2;
+  float dtmp;
 
   const float actThresholdNoisy = 8.0f;
   const float actThresholdClean = 40.0f;
   const float safety = 0.99995f;
 
-  // To make noisePower consistent with the legacy code, a factor of
-  // 2.0f / PART_LEN2 is applied to noisyPower, since the legacy code uses
-  // the energy of a frame as the audio levels, while the new code uses a
-  // a per-sample energy (i.e., power).
-  const float noisyPower = 300000.0f * 2.0f / PART_LEN2;
+  const float noisyPower = 300000.0f;
 
   float actThreshold;
   float echo, suppressedEcho;
@@ -607,29 +653,36 @@ static void UpdateMetrics(AecCore* aec) {
     aec->stateCounter++;
   }
 
-  if (aec->farlevel.frcounter == 0) {
+  if (aec->linoutlevel.framelevel.EndOfBlock()) {
+    aec->divergent_filter_fraction.AddObservation(aec->nearlevel,
+                                                  aec->linoutlevel,
+                                                  aec->nlpoutlevel);
+  }
+
+  if (aec->farlevel.averagelevel.EndOfBlock()) {
     if (aec->farlevel.minlevel < noisyPower) {
       actThreshold = actThresholdClean;
     } else {
       actThreshold = actThresholdNoisy;
     }
 
-    if ((aec->stateCounter > (0.5f * countLen * subCountLen)) &&
-        (aec->farlevel.sfrcounter == 0)
+    const float far_average_level = aec->farlevel.averagelevel.GetLatestMean();
 
-        // Estimate in active far-end segments only
-        && (aec->farlevel.averagelevel >
-            (actThreshold * aec->farlevel.minlevel))) {
+    // The last condition is to let estimation be made in active far-end
+    // segments only.
+    if ((aec->stateCounter > (0.5f * kCountLen * kSubCountLen)) &&
+        (aec->farlevel.framelevel.EndOfBlock()) &&
+        (far_average_level > (actThreshold * aec->farlevel.minlevel))) {
+
+      const float near_average_level =
+          aec->nearlevel.averagelevel.GetLatestMean();
+
       // Subtract noise power
-      echo = aec->nearlevel.averagelevel - safety * aec->nearlevel.minlevel;
+      echo = near_average_level - safety * aec->nearlevel.minlevel;
 
       // ERL
-      dtmp = 10 * static_cast<float>(log10(aec->farlevel.averagelevel /
-                                           aec->nearlevel.averagelevel +
-                                           1e-10f));
-      dtmp2 = 10 * static_cast<float>(log10(aec->farlevel.averagelevel /
-                                            echo +
-                                            1e-10f));
+      dtmp = 10 * static_cast<float>(log10(far_average_level /
+                                           near_average_level + 1e-10f));
 
       aec->erl.instant = dtmp;
       if (dtmp > aec->erl.max) {
@@ -652,17 +705,18 @@ static void UpdateMetrics(AecCore* aec) {
       }
 
       // A_NLP
-      dtmp = 10 * static_cast<float>(log10(aec->nearlevel.averagelevel /
-                                           aec->linoutlevel.averagelevel +
-                                           1e-10f));
+      const float linout_average_level =
+          aec->linoutlevel.averagelevel.GetLatestMean();
+      dtmp = 10 * static_cast<float>(log10(near_average_level /
+                                           linout_average_level + 1e-10f));
 
       // subtract noise power
-      suppressedEcho = aec->linoutlevel.averagelevel -
-          safety * aec->linoutlevel.minlevel;
+      suppressedEcho =
+          linout_average_level - safety * aec->linoutlevel.minlevel;
 
-      dtmp2 = 10 * static_cast<float>(log10(echo / suppressedEcho + 1e-10f));
+      aec->aNlp.instant =
+          10 * static_cast<float>(log10(echo / suppressedEcho + 1e-10f));
 
-      aec->aNlp.instant = dtmp2;
       if (dtmp > aec->aNlp.max) {
         aec->aNlp.max = dtmp;
       }
@@ -683,17 +737,13 @@ static void UpdateMetrics(AecCore* aec) {
       }
 
       // ERLE
-
+      const float nlpout_average_level =
+          aec->nlpoutlevel.averagelevel.GetLatestMean();
       // subtract noise power
-      suppressedEcho = 2 * (aec->nlpoutlevel.averagelevel -
-                            safety * aec->nlpoutlevel.minlevel);
+      suppressedEcho =
+          nlpout_average_level - safety * aec->nlpoutlevel.minlevel;
+      dtmp = 10 * static_cast<float>(log10(echo / suppressedEcho + 1e-10f));
 
-      dtmp = 10 * static_cast<float>(log10(aec->nearlevel.averagelevel /
-                                           (2 * aec->nlpoutlevel.averagelevel) +
-                                           1e-10f));
-      dtmp2 = 10 * static_cast<float>(log10(echo / suppressedEcho + 1e-10f));
-
-      dtmp = dtmp2;
       aec->erle.instant = dtmp;
       if (dtmp > aec->erle.max) {
         aec->erle.max = dtmp;
@@ -1161,16 +1211,6 @@ static void EchoSuppression(AecCore* aec,
   // Inverse error fft.
   ScaledInverseFft(efw, fft, 2.0f, 1);
 
-  // TODO(bjornv): Investigate how to take the windowing below into account if
-  // needed.
-  if (aec->metricsMode == 1) {
-    // Note that we have a scaling by two in the time domain |eBuf|.
-    // In addition the time domain signal is windowed before transformation,
-    // losing half the energy on the average. We take care of the first
-    // scaling only in UpdateMetrics().
-    UpdateLevel(&aec->nlpoutlevel, CalculatePower(fft, PART_LEN2));
-  }
-
   // Overlap and add to obtain output.
   for (i = 0; i < PART_LEN; i++) {
     output[i] = (fft[i] * WebRtcAec_sqrtHanning[i] +
@@ -1393,6 +1433,7 @@ static void ProcessBlock(AecCore* aec) {
   EchoSuppression(aec, farend_ptr, echo_subtractor_output, output, outputH_ptr);
 
   if (aec->metricsMode == 1) {
+    UpdateLevel(&aec->nlpoutlevel, CalculatePower(output, PART_LEN));
     UpdateMetrics(aec);
   }
 
@@ -1408,7 +1449,7 @@ static void ProcessBlock(AecCore* aec) {
 
 AecCore* WebRtcAec_CreateAec() {
   int i;
-  AecCore* aec = reinterpret_cast<AecCore*>(malloc(sizeof(AecCore)));
+  AecCore* aec = new AecCore;
   if (!aec) {
     return NULL;
   }
@@ -1482,8 +1523,8 @@ AecCore* WebRtcAec_CreateAec() {
   WebRtc_set_lookahead(aec->delay_estimator, kLookaheadBlocks);
 #endif
   aec->extended_filter_enabled = 0;
-  aec->next_generation_aec_enabled = 0;
-  aec->refined_adaptive_filter_enabled = 0;
+  aec->aec3_enabled = 0;
+  aec->refined_adaptive_filter_enabled = false;
 
   // Assembly optimization
   WebRtcAec_FilterFar = FilterFar;
@@ -1544,7 +1585,7 @@ void WebRtcAec_FreeAec(AecCore* aec) {
   WebRtc_FreeDelayEstimator(aec->delay_estimator);
   WebRtc_FreeDelayEstimatorFarend(aec->delay_estimator_farend);
 
-  free(aec);
+  delete aec;
 }
 
 static void SetAdaptiveFilterStepSize(AecCore* aec) {
@@ -1917,13 +1958,16 @@ int WebRtcAec_echo_state(AecCore* self) {
 void WebRtcAec_GetEchoStats(AecCore* self,
                             Stats* erl,
                             Stats* erle,
-                            Stats* a_nlp) {
+                            Stats* a_nlp,
+                            float* divergent_filter_fraction) {
   assert(erl != NULL);
   assert(erle != NULL);
   assert(a_nlp != NULL);
   *erl = self->erl;
   *erle = self->erle;
   *a_nlp = self->aNlp;
+  *divergent_filter_fraction =
+      self->divergent_filter_fraction.GetLatestFraction();
 }
 
 void WebRtcAec_SetConfigCore(AecCore* self,
@@ -1952,25 +1996,22 @@ int WebRtcAec_delay_agnostic_enabled(AecCore* self) {
   return self->delay_agnostic_enabled;
 }
 
-void WebRtcAec_enable_next_generation_aec(AecCore* self, int enable) {
-  self->next_generation_aec_enabled = (enable != 0);
+void WebRtcAec_enable_aec3(AecCore* self, int enable) {
+  self->aec3_enabled = (enable != 0);
 }
 
-int WebRtcAec_next_generation_aec_enabled(AecCore* self) {
-  assert(self->next_generation_aec_enabled == 0 ||
-         self->next_generation_aec_enabled == 1);
-  return self->next_generation_aec_enabled;
+int WebRtcAec_aec3_enabled(AecCore* self) {
+  assert(self->aec3_enabled == 0 || self->aec3_enabled == 1);
+  return self->aec3_enabled;
 }
 
-void WebRtcAec_enable_refined_adaptive_filter(AecCore* self, int enable) {
-  self->refined_adaptive_filter_enabled = (enable != 0);
+void WebRtcAec_enable_refined_adaptive_filter(AecCore* self, bool enable) {
+  self->refined_adaptive_filter_enabled = enable;
   SetAdaptiveFilterStepSize(self);
   SetErrorThreshold(self);
 }
 
-int WebRtcAec_refined_adaptive_filter_enabled(const AecCore* self) {
-  assert(self->refined_adaptive_filter_enabled == 0 ||
-         self->refined_adaptive_filter_enabled == 1);
+bool WebRtcAec_refined_adaptive_filter_enabled(const AecCore* self) {
   return self->refined_adaptive_filter_enabled;
 }
 
@@ -1995,3 +2036,4 @@ void WebRtcAec_SetSystemDelay(AecCore* self, int delay) {
   assert(delay >= 0);
   self->system_delay = delay;
 }
+}  // namespace webrtc

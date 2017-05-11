@@ -27,6 +27,8 @@ extern "C" {
 #include "webrtc/modules/audio_processing/aec/aec_rdft.h"
 }
 
+namespace webrtc {
+
 enum { kShiftExponentIntoTopMantissa = 8 };
 enum { kFloatExponentShift = 23 };
 
@@ -723,3 +725,4 @@ void WebRtcAec_InitAec_neon(void) {
   WebRtcAec_PartitionDelay = PartitionDelayNEON;
   WebRtcAec_WindowData = WindowDataNEON;
 }
+}  // namespace webrtc
