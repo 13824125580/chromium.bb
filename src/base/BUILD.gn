@@ -1526,6 +1526,7 @@ component("i18n") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
   public_deps = [
     "//third_party/icu",
+    "//blpwtk2:blpwtk2_generate_sources",
   ]
   deps = [
     ":base",
@@ -1543,6 +1544,10 @@ component("i18n") {
   if (is_mac) {
     libs = [ "CoreFoundation.framework" ]
   }
+
+  public_configs = [
+    "//blpwtk2:blpwtk2_public"
+  ]
 }
 
 test("base_perftests") {

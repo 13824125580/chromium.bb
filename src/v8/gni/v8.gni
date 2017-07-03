@@ -77,3 +77,13 @@ template("v8_component") {
     configs += add_configs
   }
 }
+
+template("v8_shared_library") {
+  shared_library(target_name) {
+    forward_variables_from(invoker, "*", [ "configs" ])
+    configs += invoker.configs
+    configs -= remove_configs
+    configs += add_configs
+  }
+}
+

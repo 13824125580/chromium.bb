@@ -297,8 +297,9 @@ if (!is_ios) {
     ]
     deps = [
       "//base",
-      "//base/test:test_support",
       "//testing/gtest",
+    # blpwtk2, not needed
+#    "//base/test:test_support",
     ]
   }
 }

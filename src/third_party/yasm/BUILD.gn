@@ -63,6 +63,7 @@ if (current_toolchain == host_toolchain) {
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
+
   }
 
   executable("genmodule") {

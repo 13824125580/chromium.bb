@@ -62,7 +62,8 @@ source_set("browser") {
     "//device/power_save_blocker",
     "//device/vibration",
     "//gin",
-    "//google_apis",
+    # blpwtk2: Remove dependencies on Google API
+#    "//google_apis",
     "//gpu",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/client:gles2_interface",
@@ -382,26 +383,29 @@ source_set("browser") {
 
   if (use_aura) {
     deps += [
-      "//components/bitmap_uploader",
       "//components/mus/common:mus_common",
-      "//components/mus/public/cpp",
-      "//components/mus/public/interfaces",
       "//ui/aura",
       "//ui/aura_extra",
       "//ui/strings",
       "//ui/wm",
+      # blpwtk2: trim fat
+#      "//components/bitmap_uploader",
+#      "//components/mus/public/cpp",
+#      "//components/mus/public/interfaces",
+#      "//ui/views/mus:for_component",
     ]
-    sources += [
-      "compositor/software_output_device_mus.cc",
-      "compositor/software_output_device_mus.h",
-      "renderer_host/render_widget_host_view_mus.cc",
-      "renderer_host/render_widget_host_view_mus.h",
-      "web_contents/web_contents_view_mus.cc",
-      "web_contents/web_contents_view_mus.h",
-    ]
-    if (toolkit_views) {
-      defines += [ "MOJO_RUNNER_CLIENT" ]
-    }
+      # blpwtk2: trim fat
+#    sources += [
+#      "compositor/software_output_device_mus.cc",
+#      "compositor/software_output_device_mus.h",
+#      "renderer_host/render_widget_host_view_mus.cc",
+#      "renderer_host/render_widget_host_view_mus.h",
+#      "web_contents/web_contents_view_mus.cc",
+#      "web_contents/web_contents_view_mus.h",
+#    ]
+#    if (toolkit_views) {
+#      defines += [ "MOJO_RUNNER_CLIENT" ]
+#    }
   } else {  # Not aura.
     sources -= [
       "media/capture/cursor_renderer_aura.cc",

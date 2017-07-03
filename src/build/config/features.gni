@@ -16,6 +16,8 @@
 
 import("//build/config/chrome_build.gni")
 import("//build/config/chromecast_build.gni")
+import("//blpwtk2/blpwtk2.gni")
+
 if (is_android) {
   import("//build/config/android/config.gni")
 }
@@ -31,8 +33,7 @@ declare_args() {
   # Enables Native Client support.
   # Temporarily disable nacl on arm64 linux to get rid of compilation errors.
   # TODO(mcgrathr): When mipsel-nacl-clang is available, drop the exclusion.
-  enable_nacl = !is_ios && !is_android && !is_chromecast &&
-                current_cpu != "mipsel" && !(is_linux && target_cpu == "arm64")
+  enable_nacl = false
 
   # If debug_devtools is set to true, JavaScript files for DevTools are stored
   # as is and loaded from disk. Otherwise, a concatenated file is stored in
@@ -48,7 +49,7 @@ declare_args() {
 
   # Enables proprietary codecs and demuxers; e.g. H264, AAC, MP3, and MP4.
   # We always build Google Chrome and Chromecast with proprietary codecs.
-  proprietary_codecs = is_chrome_branded || is_chromecast
+  proprietary_codecs = is_chrome_branded || is_chromecast || is_blpwtk2
 
   enable_captive_portal_detection = !is_android && !is_ios
 
@@ -81,7 +82,7 @@ declare_args() {
   # external API.
   if (is_android) {
     safe_browsing_mode = 2
-  } else if (is_ios) {
+  } else if (is_ios || is_blpwtk2) {
     safe_browsing_mode = 0
   } else {
     safe_browsing_mode = 1

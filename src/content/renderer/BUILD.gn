@@ -64,6 +64,7 @@ source_set("renderer") {
     "//media/gpu/ipc/client",
     "//media/gpu/ipc/common",
     "//media/midi",
+    "//media/cast:sender",
     "//mojo/common",
     "//mojo/edk/js",
     "//mojo/public/cpp/bindings",
@@ -96,12 +97,6 @@ source_set("renderer") {
     "//v8",
   ]
   allow_circular_includes_from = []
-
-  if (use_aura) {
-    public_deps += [ "//content/renderer/mus" ]
-    allow_circular_includes_from += [ "//content/renderer/mus" ]
-    deps += [ "//components/mus/common:mus_common" ]
-  }
 
   if (use_external_popup_menu) {
     sources += [
