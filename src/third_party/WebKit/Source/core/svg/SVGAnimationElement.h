@@ -28,7 +28,7 @@
 #include "core/CoreExport.h"
 #include "core/svg/SVGAnimatedBoolean.h"
 #include "core/svg/animation/SVGSMILElement.h"
-#include "platform/animation/UnitBezier.h"
+#include "ui/gfx/geometry/cubic_bezier.h"
 #include "wtf/Functional.h"
 #include "wtf/Vector.h"
 
@@ -81,17 +81,17 @@ public:
 
     virtual bool isAdditive();
     bool isAccumulated() const;
-    AnimationMode animationMode() const { return m_animationMode; }
-    CalcMode calcMode() const { return m_calcMode; }
+    AnimationMode getAnimationMode() const { return m_animationMode; }
+    CalcMode getCalcMode() const { return m_calcMode; }
 
-    enum ShouldApplyAnimation {
+    enum ShouldApplyAnimationType {
         DontApplyAnimation,
         ApplyCSSAnimation,
         ApplyXMLAnimation,
         ApplyXMLandCSSAnimation
     };
 
-    ShouldApplyAnimation shouldApplyAnimation(SVGElement* targetElement, const QualifiedName& attributeName);
+    ShouldApplyAnimationType shouldApplyAnimation(SVGElement* targetElement, const QualifiedName& attributeName);
 
     AnimatedPropertyValueType fromPropertyValueType() const { return m_fromPropertyValueType; }
     AnimatedPropertyValueType toPropertyValueType() const { return m_toPropertyValueType; }
@@ -110,7 +110,7 @@ public:
     template<typename AnimatedType>
     void animateDiscreteType(float percentage, const AnimatedType& fromType, const AnimatedType& toType, AnimatedType& animatedType)
     {
-        if ((animationMode() == FromToAnimation && percentage > 0.5) || animationMode() == ToAnimation || percentage == 1) {
+        if ((getAnimationMode() == FromToAnimation && percentage > 0.5) || getAnimationMode() == ToAnimation || percentage == 1) {
             animatedType = AnimatedType(toType);
             return;
         }
@@ -120,7 +120,7 @@ public:
     void animateAdditiveNumber(float percentage, unsigned repeatCount, float fromNumber, float toNumber, float toAtEndOfDurationNumber, float& animatedNumber)
     {
         float number;
-        if (calcMode() == CalcModeDiscrete)
+        if (getCalcMode() == CalcModeDiscrete)
             number = percentage < 0.5 ? fromNumber : toNumber;
         else
             number = (toNumber - fromNumber) * percentage + fromNumber;
@@ -128,7 +128,7 @@ public:
         if (isAccumulated() && repeatCount)
             number += toAtEndOfDurationNumber * repeatCount;
 
-        if (isAdditive() && animationMode() != ToAnimation)
+        if (isAdditive() && getAnimationMode() != ToAnimation)
             animatedNumber += number;
         else
             animatedNumber = number;
@@ -148,7 +148,7 @@ protected:
         AttributeTypeXML,
         AttributeTypeAuto
     };
-    AttributeType attributeType() const { return m_attributeType; }
+    AttributeType getAttributeType() const { return m_attributeType; }
 
     String toValue() const;
     String byValue() const;
@@ -212,7 +212,7 @@ private:
     // changed to use doubles.
     Vector<float> m_keyTimes;
     Vector<float> m_keyPoints;
-    Vector<UnitBezier> m_keySplines;
+    Vector<gfx::CubicBezier> m_keySplines;
     String m_lastValuesAnimationFrom;
     String m_lastValuesAnimationTo;
     bool m_hasInvalidCSSAttributeType;

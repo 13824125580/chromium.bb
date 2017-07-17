@@ -23,7 +23,7 @@
  */
 
 #include "modules/webaudio/WaveShaperDSPKernel.h"
-#include "wtf/MainThread.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/Threading.h"
 #include <algorithm>
 
@@ -41,18 +41,18 @@ WaveShaperDSPKernel::WaveShaperDSPKernel(WaveShaperProcessor* processor)
 void WaveShaperDSPKernel::lazyInitializeOversampling()
 {
     if (!m_tempBuffer) {
-        m_tempBuffer = adoptPtr(new AudioFloatArray(RenderingQuantum * 2));
-        m_tempBuffer2 = adoptPtr(new AudioFloatArray(RenderingQuantum * 4));
-        m_upSampler = adoptPtr(new UpSampler(RenderingQuantum));
-        m_downSampler = adoptPtr(new DownSampler(RenderingQuantum * 2));
-        m_upSampler2 = adoptPtr(new UpSampler(RenderingQuantum * 2));
-        m_downSampler2 = adoptPtr(new DownSampler(RenderingQuantum * 4));
+        m_tempBuffer = wrapUnique(new AudioFloatArray(RenderingQuantum * 2));
+        m_tempBuffer2 = wrapUnique(new AudioFloatArray(RenderingQuantum * 4));
+        m_upSampler = wrapUnique(new UpSampler(RenderingQuantum));
+        m_downSampler = wrapUnique(new DownSampler(RenderingQuantum * 2));
+        m_upSampler2 = wrapUnique(new UpSampler(RenderingQuantum * 2));
+        m_downSampler2 = wrapUnique(new DownSampler(RenderingQuantum * 4));
     }
 }
 
 void WaveShaperDSPKernel::process(const float* source, float* destination, size_t framesToProcess)
 {
-    switch (waveShaperProcessor()->oversample()) {
+    switch (getWaveShaperProcessor()->oversample()) {
     case WaveShaperProcessor::OverSampleNone:
         processCurve(source, destination, framesToProcess);
         break;
@@ -72,9 +72,9 @@ void WaveShaperDSPKernel::processCurve(const float* source, float* destination, 
 {
     ASSERT(source);
     ASSERT(destination);
-    ASSERT(waveShaperProcessor());
+    ASSERT(getWaveShaperProcessor());
 
-    DOMFloat32Array* curve = waveShaperProcessor()->curve();
+    DOMFloat32Array* curve = getWaveShaperProcessor()->curve();
     if (!curve) {
         // Act as "straight wire" pass-through if no curve is set.
         memcpy(destination, source, sizeof(float) * framesToProcess);
@@ -175,7 +175,7 @@ double WaveShaperDSPKernel::latencyTime() const
     size_t latencyFrames = 0;
     WaveShaperDSPKernel* kernel = const_cast<WaveShaperDSPKernel*>(this);
 
-    switch (kernel->waveShaperProcessor()->oversample()) {
+    switch (kernel->getWaveShaperProcessor()->oversample()) {
     case WaveShaperProcessor::OverSampleNone:
         break;
     case WaveShaperProcessor::OverSample2x:

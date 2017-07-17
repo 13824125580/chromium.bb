@@ -7,7 +7,6 @@
 #include <android/native_window_jni.h>
 
 #include "blimp/client/app/android/blimp_client_session_android.h"
-#include "blimp/client/app/android/blimp_compositor_manager_android.h"
 #include "jni/BlimpView_jni.h"
 #include "ui/events/android/motion_event_android.h"
 #include "ui/gfx/geometry/size.h"
@@ -33,7 +32,8 @@ static jlong Init(JNIEnv* env,
 
   return reinterpret_cast<intptr_t>(new BlimpView(
       env, jobj, gfx::Size(real_width, real_height), gfx::Size(width, height),
-      dp_to_px, client_session->GetRenderWidgetFeature()));
+      dp_to_px, client_session->GetRenderWidgetFeature(),
+      client_session->GetBlimpConnectionStatistics()));
 }
 
 // static
@@ -46,13 +46,17 @@ BlimpView::BlimpView(JNIEnv* env,
                      const gfx::Size& real_size,
                      const gfx::Size& size,
                      float dp_to_px,
-                     RenderWidgetFeature* render_widget_feature)
+                     RenderWidgetFeature* render_widget_feature,
+                     BlimpConnectionStatistics* blimp_connection_statistics)
     : device_scale_factor_(dp_to_px),
-      compositor_manager_(BlimpCompositorManagerAndroid::Create(real_size,
-                                                 size,
-                                                 render_widget_feature)),
+      compositor_manager_(
+          BlimpCompositorManagerAndroid::Create(real_size,
+                                                size,
+                                                render_widget_feature,
+                                                this)),
       current_surface_format_(0),
-      window_(gfx::kNullAcceleratedWidget) {
+      window_(gfx::kNullAcceleratedWidget),
+      blimp_connection_statistics_(blimp_connection_statistics) {
   java_obj_.Reset(env, jobj);
 }
 
@@ -172,6 +176,16 @@ jboolean BlimpView::OnTouchEvent(JNIEnv* env,
                                pointer1);
 
   return compositor_manager_->OnTouchEvent(event);
+}
+
+void BlimpView::OnSwapBuffersCompleted() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_BlimpView_onSwapBuffersCompleted(env, java_obj_.obj());
+}
+
+void BlimpView::DidCommitAndDrawFrame() {
+  DCHECK(blimp_connection_statistics_);
+  blimp_connection_statistics_->Add(BlimpConnectionStatistics::COMMIT, 1);
 }
 
 }  // namespace client

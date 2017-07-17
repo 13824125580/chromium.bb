@@ -11,12 +11,13 @@
 #include "platform/graphics/ImageBuffer.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-RecordingImageBufferSurface::RecordingImageBufferSurface(const IntSize& size, PassOwnPtr<RecordingImageBufferFallbackSurfaceFactory> fallbackFactory, OpacityMode opacityMode)
+RecordingImageBufferSurface::RecordingImageBufferSurface(const IntSize& size, std::unique_ptr<RecordingImageBufferFallbackSurfaceFactory> fallbackFactory, OpacityMode opacityMode)
     : ImageBufferSurface(size, opacityMode)
     , m_imageBuffer(0)
     , m_currentFramePixelCount(0)
@@ -36,7 +37,7 @@ RecordingImageBufferSurface::~RecordingImageBufferSurface()
 void RecordingImageBufferSurface::initializeCurrentFrame()
 {
     static SkRTreeFactory rTreeFactory;
-    m_currentFrame = adoptPtr(new SkPictureRecorder);
+    m_currentFrame = wrapUnique(new SkPictureRecorder);
     m_currentFrame->beginRecording(size().width(), size().height(), &rTreeFactory);
     if (m_imageBuffer) {
         m_imageBuffer->resetCanvas(m_currentFrame->getRecordingCanvas());
@@ -70,6 +71,9 @@ bool RecordingImageBufferSurface::writePixels(const SkImageInfo& origInfo, const
 
 void RecordingImageBufferSurface::fallBackToRasterCanvas(FallbackReason reason)
 {
+    ASSERT(m_fallbackFactory);
+    DCHECK(reason != FallbackReasonUnknown);
+
     if (m_fallbackSurface) {
         ASSERT(!m_currentFrame);
         return;
@@ -78,7 +82,7 @@ void RecordingImageBufferSurface::fallBackToRasterCanvas(FallbackReason reason)
     DEFINE_THREAD_SAFE_STATIC_LOCAL(EnumerationHistogram, canvasFallbackHistogram, new EnumerationHistogram("Canvas.DisplayListFallbackReason", FallbackReasonCount));
     canvasFallbackHistogram.count(reason);
 
-    m_fallbackSurface = m_fallbackFactory->createSurface(size(), opacityMode());
+    m_fallbackSurface = m_fallbackFactory->createSurface(size(), getOpacityMode());
     m_fallbackSurface->setImageBuffer(m_imageBuffer);
 
     if (m_previousFrame) {
@@ -87,9 +91,8 @@ void RecordingImageBufferSurface::fallBackToRasterCanvas(FallbackReason reason)
     }
 
     if (m_currentFrame) {
-        RefPtr<SkPicture> currentPicture = adoptRef(m_currentFrame->endRecording());
-        currentPicture->playback(m_fallbackSurface->canvas());
-        m_currentFrame.clear();
+        m_currentFrame->finishRecordingAsPicture()->playback(m_fallbackSurface->canvas());
+        m_currentFrame.reset();
     }
 
     if (m_imageBuffer) {
@@ -120,6 +123,14 @@ static RecordingImageBufferSurface::FallbackReason snapshotReasonToFallbackReaso
         return RecordingImageBufferSurface::FallbackReasonSnapshotForDrawImage;
     case SnapshotReasonCreatePattern:
         return RecordingImageBufferSurface::FallbackReasonSnapshotForCreatePattern;
+    case SnapshotReasonTransferToImageBitmap:
+        return RecordingImageBufferSurface::FallbackReasonSnapshotForTransferToImageBitmap;
+    case SnapshotReasonUnitTests:
+        return RecordingImageBufferSurface::FallbackReasonSnapshotForUnitTests;
+    case SnapshotReasonGetCopiedImage:
+        return RecordingImageBufferSurface::FallbackReasonSnapshotGetCopiedImage;
+    case SnapshotReasonWebGLDrawImageIntoBuffer:
+        return RecordingImageBufferSurface::FallbackReasonSnapshotWebGLDrawImageIntoBuffer;
     }
     ASSERT_NOT_REACHED();
     return RecordingImageBufferSurface::FallbackReasonUnknown;
@@ -156,6 +167,8 @@ static RecordingImageBufferSurface::FallbackReason disableDeferralReasonToFallba
         return RecordingImageBufferSurface::FallbackReasonDrawImageOfAnimated2dCanvas;
     case DisableDeferralReasonSubPixelTextAntiAliasingSupport:
         return RecordingImageBufferSurface::FallbackReasonSubPixelTextAntiAliasingSupport;
+    case DisableDeferralDrawImageWithTextureBackedSourceImage:
+        return RecordingImageBufferSurface::FallbackReasonDrawImageWithTextureBackedSourceImage;
     case DisableDeferralReasonCount:
         ASSERT_NOT_REACHED();
         break;
@@ -178,6 +191,8 @@ PassRefPtr<SkPicture> RecordingImageBufferSurface::getPicture()
     FallbackReason fallbackReason = FallbackReasonUnknown;
     bool canUsePicture = finalizeFrameInternal(&fallbackReason);
     m_imageBuffer->didFinalizeFrame();
+
+    ASSERT(canUsePicture || m_fallbackFactory);
 
     if (canUsePicture) {
         return m_previousFrame;
@@ -229,7 +244,7 @@ void RecordingImageBufferSurface::willOverwriteCanvas()
     m_previousFramePixelCount = 0;
     if (m_didRecordDrawCommandsInCurrentFrame) {
         // Discard previous draw commands
-        adoptRef(m_currentFrame->endRecording());
+        m_currentFrame->finishRecordingAsPicture();
         initializeCurrentFrame();
     }
 }
@@ -252,10 +267,10 @@ bool RecordingImageBufferSurface::finalizeFrameInternal(FallbackReason* fallback
     if (!m_imageBuffer->isDirty()) {
         if (!m_previousFrame) {
             // Create an initial blank frame
-            m_previousFrame = adoptRef(m_currentFrame->endRecording());
+            m_previousFrame = fromSkSp(m_currentFrame->finishRecordingAsPicture());
             initializeCurrentFrame();
         }
-        return m_currentFrame;
+        return m_currentFrame.get();
     }
 
     if (!m_frameWasCleared) {
@@ -263,12 +278,12 @@ bool RecordingImageBufferSurface::finalizeFrameInternal(FallbackReason* fallback
         return false;
     }
 
-    if (m_currentFrame->getRecordingCanvas()->getSaveCount() > ExpensiveCanvasHeuristicParameters::ExpensiveRecordingStackDepth) {
+    if (m_fallbackFactory && m_currentFrame->getRecordingCanvas()->getSaveCount() > ExpensiveCanvasHeuristicParameters::ExpensiveRecordingStackDepth) {
         *fallbackReason = FallbackReasonRunawayStateStack;
         return false;
     }
 
-    m_previousFrame = adoptRef(m_currentFrame->endRecording());
+    m_previousFrame = fromSkSp(m_currentFrame->finishRecordingAsPicture());
     m_previousFrameHasExpensiveOp = m_currentFrameHasExpensiveOp;
     m_previousFramePixelCount = m_currentFramePixelCount;
     initializeCurrentFrame();

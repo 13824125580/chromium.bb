@@ -70,7 +70,7 @@ const char* GetDangerTypeString(content::DownloadDangerType danger_type) {
 
 // TODO(dbeam): if useful elsewhere, move to base/i18n/time_formatting.h?
 base::string16 TimeFormatLongDate(const base::Time& time) {
-  scoped_ptr<icu::DateFormat> formatter(
+  std::unique_ptr<icu::DateFormat> formatter(
       icu::DateFormat::createDateInstance(icu::DateFormat::kLong));
   icu::UnicodeString date_string;
   formatter->format(static_cast<UDate>(time.ToDoubleT() * 1000), date_string);
@@ -94,7 +94,7 @@ DownloadsListTracker::~DownloadsListTracker() {}
 
 void DownloadsListTracker::Reset() {
   if (sending_updates_)
-    web_ui_->CallJavascriptFunction("downloads.Manager.clearAll");
+    web_ui_->CallJavascriptFunctionUnsafe("downloads.Manager.clearAll");
   sent_to_page_ = 0u;
 }
 
@@ -127,10 +127,9 @@ void DownloadsListTracker::StartAndSendChunk() {
     ++it;
   }
 
-  web_ui_->CallJavascriptFunction(
+  web_ui_->CallJavascriptFunctionUnsafe(
       "downloads.Manager.insertItems",
-      base::FundamentalValue(static_cast<int>(sent_to_page_)),
-      list);
+      base::FundamentalValue(static_cast<int>(sent_to_page_)), list);
 
   sent_to_page_ += list.GetSize();
 }
@@ -185,7 +184,8 @@ DownloadsListTracker::DownloadsListTracker(
   Init();
 }
 
-scoped_ptr<base::DictionaryValue> DownloadsListTracker::CreateDownloadItemValue(
+std::unique_ptr<base::DictionaryValue>
+DownloadsListTracker::CreateDownloadItemValue(
     content::DownloadItem* download_item) const {
   // TODO(asanka): Move towards using download_model here for getting status and
   // progress. The difference currently only matters to Drive downloads and
@@ -196,7 +196,7 @@ scoped_ptr<base::DictionaryValue> DownloadsListTracker::CreateDownloadItemValue(
   // chrome/browser/resources/downloads/downloads.js in @typedef for
   // BackendDownloadObject. Please update it whenever you add or remove
   // any keys in file_value.
-  scoped_ptr<base::DictionaryValue> file_value(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> file_value(new base::DictionaryValue);
 
   file_value->SetInteger(
       "started", static_cast<int>(download_item->GetStartTime().ToTimeT()));
@@ -278,7 +278,11 @@ scoped_ptr<base::DictionaryValue> DownloadsListTracker::CreateDownloadItemValue(
       if (download_item->CanResume())
         percent = download_item->PercentComplete();
 
-      last_reason_text = download_model.GetInterruptReasonText();
+      // TODO(asanka): last_reason_text should be set via
+      // download_model.GetInterruptReasonText(). But we are using
+      // GetStatusText() as a temporary measure until the layout is fixed to
+      // accommodate the longer string. http://crbug.com/609255
+      last_reason_text = download_model.GetStatusText();
       if (content::DOWNLOAD_INTERRUPT_REASON_CRASH ==
           download_item->GetLastReason() && !download_item->CanResume()) {
         retry = true;
@@ -384,10 +388,9 @@ void DownloadsListTracker::InsertItem(const SortedSet::iterator& insert) {
   base::ListValue list;
   list.Append(CreateDownloadItemValue(*insert));
 
-  web_ui_->CallJavascriptFunction(
+  web_ui_->CallJavascriptFunctionUnsafe(
       "downloads.Manager.insertItems",
-      base::FundamentalValue(static_cast<int>(index)),
-      list);
+      base::FundamentalValue(static_cast<int>(index)), list);
 
   sent_to_page_++;
 }
@@ -396,7 +399,7 @@ void DownloadsListTracker::UpdateItem(const SortedSet::iterator& update) {
   if (!sending_updates_ || GetIndex(update) >= sent_to_page_)
     return;
 
-  web_ui_->CallJavascriptFunction(
+  web_ui_->CallJavascriptFunctionUnsafe(
       "downloads.Manager.updateItem",
       base::FundamentalValue(static_cast<int>(GetIndex(update))),
       *CreateDownloadItemValue(*update));
@@ -411,7 +414,7 @@ void DownloadsListTracker::RemoveItem(const SortedSet::iterator& remove) {
   if (sending_updates_) {
     size_t index = GetIndex(remove);
     if (index < sent_to_page_) {
-      web_ui_->CallJavascriptFunction(
+      web_ui_->CallJavascriptFunctionUnsafe(
           "downloads.Manager.removeItem",
           base::FundamentalValue(static_cast<int>(index)));
       sent_to_page_--;

@@ -10,6 +10,7 @@
 #include "ash/display/display_manager.h"
 #include "ash/display/display_pref_util.h"
 #include "ash/display/display_util.h"
+#include "ash/display/json_converter.h"
 #include "ash/shell.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -24,9 +25,8 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/insets.h"
-#include "ui/gfx/screen.h"
 #include "url/url_canon.h"
 #include "url/url_util.h"
 
@@ -117,8 +117,8 @@ void LoadDisplayLayouts() {
       prefs::kSecondaryDisplays);
   for (base::DictionaryValue::Iterator it(*layouts);
        !it.IsAtEnd(); it.Advance()) {
-    scoped_ptr<ash::DisplayLayout> layout(new ash::DisplayLayout);
-    if (!ash::DisplayLayout::ConvertFromValue(it.value(), layout.get())) {
+    std::unique_ptr<display::DisplayLayout> layout(new display::DisplayLayout);
+    if (!ash::JsonToDisplayLayout(it.value(), layout.get())) {
       LOG(WARNING) << "Invalid preference value for " << it.key();
       continue;
     }
@@ -126,17 +126,15 @@ void LoadDisplayLayouts() {
     if (it.key().find(",") != std::string::npos) {
       std::vector<std::string> ids_str = base::SplitString(
           it.key(), ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-      int64_t id1 = gfx::Display::kInvalidDisplayID;
-      int64_t id2 = gfx::Display::kInvalidDisplayID;
-      if (!base::StringToInt64(ids_str[0], &id1) ||
-          !base::StringToInt64(ids_str[1], &id2) ||
-          id1 == gfx::Display::kInvalidDisplayID ||
-          id2 == gfx::Display::kInvalidDisplayID) {
-        continue;
+      std::vector<int64_t> ids;
+      for (std::string id_str : ids_str) {
+        int64_t id;
+        if (!base::StringToInt64(id_str, &id))
+          continue;
+        ids.push_back(id);
       }
-      int64_t ids[] = {id1, id2};
-      ash::DisplayIdList list =
-          ash::GenerateDisplayIdList(std::begin(ids), std::end(ids));
+      display::DisplayIdList list =
+          ash::GenerateDisplayIdList(ids.begin(), ids.end());
       layout_store->RegisterLayoutForDisplayIdList(list, std::move(layout));
     }
   }
@@ -151,18 +149,18 @@ void LoadDisplayProperties() {
     const base::DictionaryValue* dict_value = nullptr;
     if (!it.value().GetAsDictionary(&dict_value) || dict_value == nullptr)
       continue;
-    int64_t id = gfx::Display::kInvalidDisplayID;
+    int64_t id = display::Display::kInvalidDisplayID;
     if (!base::StringToInt64(it.key(), &id) ||
-        id == gfx::Display::kInvalidDisplayID) {
+        id == display::Display::kInvalidDisplayID) {
       continue;
     }
-    gfx::Display::Rotation rotation = gfx::Display::ROTATE_0;
+    display::Display::Rotation rotation = display::Display::ROTATE_0;
     float ui_scale = 1.0f;
     const gfx::Insets* insets_to_set = nullptr;
 
     int rotation_value = 0;
     if (dict_value->GetInteger("rotation", &rotation_value)) {
-      rotation = static_cast<gfx::Display::Rotation>(rotation_value);
+      rotation = static_cast<display::Display::Rotation>(rotation_value);
     }
     int ui_scale_value = 0;
     if (dict_value->GetInteger("ui-scale", &ui_scale_value))
@@ -205,28 +203,28 @@ void LoadDisplayRotationState() {
   if (!properties->GetBoolean("lock", &rotation_lock))
     return;
 
-  int rotation = gfx::Display::ROTATE_0;
+  int rotation = display::Display::ROTATE_0;
   if (!properties->GetInteger("orientation", &rotation))
     return;
 
-  GetDisplayManager()->RegisterDisplayRotationProperties(rotation_lock,
-      static_cast<gfx::Display::Rotation>(rotation));
+  GetDisplayManager()->RegisterDisplayRotationProperties(
+      rotation_lock, static_cast<display::Display::Rotation>(rotation));
 }
 
-void StoreDisplayLayoutPref(const ash::DisplayIdList& list,
-                            const ash::DisplayLayout& display_layout) {
+void StoreDisplayLayoutPref(const display::DisplayIdList& list,
+                            const display::DisplayLayout& display_layout) {
   std::string name = ash::DisplayIdListToString(list);
 
   PrefService* local_state = g_browser_process->local_state();
   DictionaryPrefUpdate update(local_state, prefs::kSecondaryDisplays);
   base::DictionaryValue* pref_data = update.Get();
-  scoped_ptr<base::Value> layout_value(new base::DictionaryValue());
+  std::unique_ptr<base::Value> layout_value(new base::DictionaryValue());
   if (pref_data->HasKey(name)) {
     base::Value* value = nullptr;
     if (pref_data->Get(name, &value) && value != nullptr)
       layout_value.reset(value->DeepCopy());
   }
-  if (ash::DisplayLayout::ConvertToValue(display_layout, layout_value.get()))
+  if (ash::DisplayLayoutToJson(display_layout, layout_value.get()))
     pref_data->Set(name, layout_value.release());
 }
 
@@ -237,8 +235,8 @@ void StoreCurrentDisplayLayoutPrefs() {
     return;
   }
 
-  ash::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
-  const ash::DisplayLayout& display_layout =
+  display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
+  const display::DisplayLayout& display_layout =
       display_manager->layout_store()->GetRegisteredDisplayLayout(list);
   StoreDisplayLayoutPref(list, display_layout);
 }
@@ -252,19 +250,19 @@ void StoreCurrentDisplayProperties() {
 
   size_t num = display_manager->GetNumDisplays();
   for (size_t i = 0; i < num; ++i) {
-    const gfx::Display& display = display_manager->GetDisplayAt(i);
+    const display::Display& display = display_manager->GetDisplayAt(i);
     int64_t id = display.id();
     ash::DisplayInfo info = display_manager->GetDisplayInfo(id);
 
-    scoped_ptr<base::DictionaryValue> property_value(
+    std::unique_ptr<base::DictionaryValue> property_value(
         new base::DictionaryValue());
     // Don't save the display preference in unified mode because its
     // size and modes can change depending on the combination of displays.
     if (display_manager->IsInUnifiedMode())
       continue;
-    property_value->SetInteger(
-        "rotation",
-        static_cast<int>(info.GetRotation(gfx::Display::ROTATION_SOURCE_USER)));
+    property_value->SetInteger("rotation",
+                               static_cast<int>(info.GetRotation(
+                                   display::Display::ROTATION_SOURCE_USER)));
     property_value->SetInteger(
         "ui-scale", static_cast<int>(info.configured_ui_scale() * 1000));
 
@@ -361,17 +359,17 @@ void StoreDisplayPrefs() {
 }
 
 void StoreDisplayRotationPrefs(bool rotation_lock) {
-  if (!gfx::Display::HasInternalDisplay())
+  if (!display::Display::HasInternalDisplay())
     return;
 
   PrefService* local_state = g_browser_process->local_state();
   DictionaryPrefUpdate update(local_state, prefs::kDisplayRotationLock);
   base::DictionaryValue* pref_data = update.Get();
   pref_data->SetBoolean("lock", rotation_lock);
-  gfx::Display::Rotation rotation =
+  display::Display::Rotation rotation =
       GetDisplayManager()
-          ->GetDisplayInfo(gfx::Display::InternalDisplayId())
-          .GetRotation(gfx::Display::ROTATION_SOURCE_ACCELEROMETER);
+          ->GetDisplayInfo(display::Display::InternalDisplayId())
+          .GetRotation(display::Display::ROTATION_SOURCE_ACCELEROMETER);
   pref_data->SetInteger("orientation", static_cast<int>(rotation));
 }
 
@@ -392,8 +390,8 @@ void LoadDisplayPreferences(bool first_run_after_boot) {
 }
 
 // Stores the display layout for given display pairs.
-void StoreDisplayLayoutPrefForTest(const ash::DisplayIdList& list,
-                                   const ash::DisplayLayout& layout) {
+void StoreDisplayLayoutPrefForTest(const display::DisplayIdList& list,
+                                   const display::DisplayLayout& layout) {
   StoreDisplayLayoutPref(list, layout);
 }
 

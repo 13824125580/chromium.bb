@@ -5,11 +5,13 @@
 #ifndef CC_SURFACES_DISPLAY_SCHEDULER_H_
 #define CC_SURFACES_DISPLAY_SCHEDULER_H_
 
+#include <memory>
+
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
+#include "cc/output/renderer_settings.h"
 #include "cc/scheduler/begin_frame_source.h"
 #include "cc/surfaces/surface_id.h"
 #include "cc/surfaces/surfaces_export.h"
@@ -28,11 +30,12 @@ class CC_SURFACES_EXPORT DisplaySchedulerClient {
 
 class CC_SURFACES_EXPORT DisplayScheduler : public BeginFrameObserverBase {
  public:
-  DisplayScheduler(DisplaySchedulerClient* client,
-                   BeginFrameSource* begin_frame_source,
+  DisplayScheduler(BeginFrameSource* begin_frame_source,
                    base::SingleThreadTaskRunner* task_runner,
                    int max_pending_swaps);
   ~DisplayScheduler() override;
+
+  void SetClient(DisplaySchedulerClient* client);
 
   void SetRootSurfaceResourcesLocked(bool locked);
   void ForceImmediateSwapIfPossible();
@@ -49,10 +52,6 @@ class CC_SURFACES_EXPORT DisplayScheduler : public BeginFrameObserverBase {
   bool OnBeginFrameDerivedImpl(const BeginFrameArgs& args) override;
   void OnBeginFrameSourcePausedChanged(bool paused) override;
 
-  BeginFrameSource* begin_frame_source_for_children() {
-    return begin_frame_source_for_children_.get();
-  }
-
  protected:
   base::TimeTicks DesiredBeginFrameDeadlineTime();
   virtual void ScheduleBeginFrameDeadline();
@@ -68,9 +67,6 @@ class CC_SURFACES_EXPORT DisplayScheduler : public BeginFrameObserverBase {
   base::Closure begin_frame_deadline_closure_;
   base::CancelableClosure begin_frame_deadline_task_;
   base::TimeTicks begin_frame_deadline_task_time_;
-
-  // TODO(tansell): Set this to something useful.
-  scoped_ptr<BeginFrameSource> begin_frame_source_for_children_;
 
   bool output_surface_lost_;
   bool root_surface_resources_locked_;

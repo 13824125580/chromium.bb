@@ -5,9 +5,6 @@
 /**
  * @fileoverview 'settings-omnibox-extension-entry' is a component for showing
  * an omnibox extension with its name and keyword.
- *
- * @group Chrome Settings Elements
- * @element settings-omnibox-extension-entry
  */
 Polymer({
   is: 'settings-omnibox-extension-entry',
@@ -40,5 +37,14 @@ Polymer({
   /** @private */
   closePopupMenu_: function() {
     this.$$('iron-dropdown').close();
+  },
+
+  /**
+   * @param {string} url
+   * @return {string} A set of icon URLs.
+   * @private
+   */
+  getIconSet_: function(url) {
+    return cr.icon.getFaviconImageSet(url);
   },
 });

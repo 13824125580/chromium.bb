@@ -43,8 +43,7 @@ class ASH_EXPORT FrameCaptionButtonContainerView
   class ASH_EXPORT TestApi {
    public:
     explicit TestApi(FrameCaptionButtonContainerView* container_view)
-        : container_view_(container_view) {
-    }
+        : container_view_(container_view) {}
 
     void EndAnimations();
 
@@ -148,7 +147,7 @@ class ASH_EXPORT FrameCaptionButtonContainerView
 
   // Animation that affects the position of |minimize_button_| and the
   // visibility of |size_button_|.
-  scoped_ptr<gfx::SlideAnimation> maximize_mode_animation_;
+  std::unique_ptr<gfx::SlideAnimation> maximize_mode_animation_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameCaptionButtonContainerView);
 };

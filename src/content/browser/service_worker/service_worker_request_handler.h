@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REQUEST_HANDLER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REQUEST_HANDLER_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
@@ -31,31 +33,16 @@ namespace content {
 
 class ResourceContext;
 class ResourceMessageFilter;
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerContextCore;
 class ServiceWorkerContextWrapper;
-class ServiceWorkerNavigationHandleCore;
 class ServiceWorkerProviderHost;
-struct ResourceResponseInfo;
 
 // Abstract base class for routing network requests to ServiceWorkers.
 // Created one per URLRequest and attached to each request.
 class CONTENT_EXPORT ServiceWorkerRequestHandler
     : public base::SupportsUserData::Data {
  public:
-  // PlzNavigate
-  // Attaches a newly created handler if the given |request| needs to be handled
-  // by ServiceWorker.
-  static void InitializeForNavigation(
-      net::URLRequest* request,
-      ServiceWorkerNavigationHandleCore* navigation_handle_core,
-      storage::BlobStorageContext* blob_storage_context,
-      bool skip_service_worker,
-      ResourceType resource_type,
-      RequestContextType request_context_type,
-      RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
-
   // Attaches a newly created handler if the given |request| needs to
   // be handled by ServiceWorker.
   // TODO(kinuko): While utilizing UserData to attach data to URLRequest
@@ -75,22 +62,27 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body);
 
   // Returns the handler attached to |request|. This may return NULL
   // if no handler is attached.
   static ServiceWorkerRequestHandler* GetHandler(
-      net::URLRequest* request);
+      const net::URLRequest* request);
 
   // Creates a protocol interceptor for ServiceWorker.
-  static scoped_ptr<net::URLRequestInterceptor> CreateInterceptor(
+  static std::unique_ptr<net::URLRequestInterceptor> CreateInterceptor(
       ResourceContext* resource_context);
 
   // Returns true if the request falls into the scope of a ServiceWorker.
   // It's only reliable after the ServiceWorkerRequestHandler MaybeCreateJob
   // method runs to completion for this request. The AppCache handler uses
   // this to avoid colliding with ServiceWorkers.
-  static bool IsControlledByServiceWorker(net::URLRequest* request);
+  static bool IsControlledByServiceWorker(const net::URLRequest* request);
+
+  // Returns the ServiceWorkerProviderHost the request is associated with.
+  // Only valid after InitializeHandler has been called. Can return null.
+  static ServiceWorkerProviderHost* GetProviderHost(
+      const net::URLRequest* request);
 
   ~ServiceWorkerRequestHandler() override;
 
@@ -99,9 +91,6 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
       net::URLRequest* request,
       net::NetworkDelegate* network_delegate,
       ResourceContext* context) = 0;
-
-  virtual void GetExtraResponseInfo(
-      ResourceResponseInfo* response_info) const = 0;
 
   // Methods to support cross site navigations.
   void PrepareForCrossSiteTransfer(int old_process_id);
@@ -127,7 +116,7 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
   ResourceType resource_type_;
 
  private:
-  scoped_ptr<ServiceWorkerProviderHost> host_for_cross_site_transfer_;
+  std::unique_ptr<ServiceWorkerProviderHost> host_for_cross_site_transfer_;
   int old_process_id_;
   int old_provider_id_;
 

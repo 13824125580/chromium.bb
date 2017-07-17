@@ -71,6 +71,10 @@ enum FieldFilterMask {
                                      FILTER_NON_FOCUSABLE_ELEMENTS,
 };
 
+// If true, operations causing layout computation should be avoided. Set by
+// ScopedLayoutPreventer.
+bool g_prevent_layout = false;
+
 void TruncateString(base::string16* str, size_t max_length) {
   if (str->length() > max_length)
     str->resize(max_length);
@@ -597,8 +601,7 @@ base::string16 InferLabelFromDivTable(const WebFormControlElement& element) {
       if (!looking_for_parent && !inferred_label.empty()) {
         CR_DEFINE_STATIC_LOCAL(WebString, kSelector,
                                ("input, select, textarea"));
-        blink::WebExceptionCode ec = 0;
-        WebElement result_element = node.querySelector(kSelector, ec);
+        WebElement result_element = node.querySelector(kSelector);
         if (!result_element.isNull()) {
           inferred_label.clear();
           divs_to_skip.insert(node);
@@ -810,16 +813,22 @@ void ForEachMatchingFormFieldCommon(
     // user is currently editing and interacting with.
     const WebInputElement* input_element = toWebInputElement(element);
     CR_DEFINE_STATIC_LOCAL(WebString, kValue, ("value"));
+    CR_DEFINE_STATIC_LOCAL(WebString, kPlaceholder, ("placeholder"));
     if (!force_override && !is_initiating_element &&
         // A text field, with a non-empty value that is NOT the value of the
-        // input field's "value" attribute, is skipped.
+        // input field's "value" or "placeholder" attribute, is skipped.
         (IsAutofillableInputElement(input_element) ||
          IsTextAreaElement(*element)) &&
         !element->value().isEmpty() &&
         (!element->hasAttribute(kValue) ||
-         element->getAttribute(kValue) != element->value()))
+         element->getAttribute(kValue) != element->value()) &&
+        (!element->hasAttribute(kPlaceholder) ||
+         element->getAttribute(kPlaceholder) != element->value()))
       continue;
 
+    DCHECK(!g_prevent_layout || !(filters & FILTER_NON_FOCUSABLE_ELEMENTS))
+        << "The callsite of this code wanted to both prevent layout and check "
+           "isFocusable. Pick one.";
     if (((filters & FILTER_DISABLED_ELEMENTS) && !element->isEnabled()) ||
         ((filters & FILTER_READONLY_ELEMENTS) && element->isReadOnly()) ||
         // See description for FILTER_NON_FOCUSABLE_ELEMENTS.
@@ -880,7 +889,7 @@ void FillFormField(const FormFieldData& data,
 
   WebInputElement* input_element = toWebInputElement(field);
   if (IsCheckableElement(input_element)) {
-    input_element->setChecked(data.is_checked, true);
+    input_element->setChecked(IsChecked(data.check_status), true);
   } else {
     base::string16 value = data.value;
     if (IsTextInput(input_element) || IsMonthInput(input_element)) {
@@ -888,8 +897,12 @@ void FillFormField(const FormFieldData& data,
       // returns the default maxlength value.
       TruncateString(&value, input_element->maxLength());
     }
-    field->setValue(value, true);
+    field->setAutofillValue(value);
   }
+  // Setting the form might trigger JavaScript, which is capable of
+  // destroying the frame.
+  if (!field->document().frame())
+    return;
 
   field->setAutofilled(true);
 
@@ -1166,6 +1179,18 @@ GURL StripAuthAndParams(const GURL& gurl) {
 
 }  // namespace
 
+ScopedLayoutPreventer::ScopedLayoutPreventer() {
+  DCHECK(!g_prevent_layout) << "Is any other instance of ScopedLayoutPreventer "
+                               "alive in the same process?";
+  g_prevent_layout = true;
+}
+
+ScopedLayoutPreventer::~ScopedLayoutPreventer() {
+  DCHECK(g_prevent_layout) << "Is any other instance of ScopedLayoutPreventer "
+                              "alive in the same process?";
+  g_prevent_layout = false;
+}
+
 bool ExtractFormData(const WebFormElement& form_element, FormData* data) {
   return WebFormElementToFormData(
       form_element, WebFormControlElement(),
@@ -1340,6 +1365,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
   DCHECK(!element.isNull());
   CR_DEFINE_STATIC_LOCAL(WebString, kAutocomplete, ("autocomplete"));
   CR_DEFINE_STATIC_LOCAL(WebString, kRole, ("role"));
+  CR_DEFINE_STATIC_LOCAL(WebString, kPlaceholder, ("placeholder"));
+  CR_DEFINE_STATIC_LOCAL(WebString, kClass, ("class"));
 
   // The label is not officially part of a WebFormControlElement; however, the
   // labels for all form control elements are scraped from the DOM and set in
@@ -1357,6 +1384,10 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
           base::StringPiece16(element.getAttribute(kRole)), "presentation"))
     field->role = FormFieldData::ROLE_ATTRIBUTE_PRESENTATION;
 
+  field->placeholder = element.getAttribute(kPlaceholder);
+  if (element.hasAttribute(kClass))
+    field->css_classes = element.getAttribute(kClass);
+
   if (!IsAutofillableElement(element))
     return;
 
@@ -1365,7 +1396,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
       IsTextAreaElement(element) ||
       IsSelectElement(element)) {
     field->is_autofilled = element.isAutofilled();
-    field->is_focusable = element.isFocusable();
+    if (!g_prevent_layout)
+      field->is_focusable = element.isFocusable();
     field->should_autocomplete = element.autoComplete();
     field->text_direction = element.directionForFormData() ==
         "rtl" ? base::i18n::RIGHT_TO_LEFT : base::i18n::LEFT_TO_RIGHT;
@@ -1375,8 +1407,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
     if (IsTextInput(input_element))
       field->max_length = input_element->maxLength();
 
-    field->is_checkable = IsCheckableElement(input_element);
-    field->is_checked = input_element->isChecked();
+    SetCheckStatus(field, IsCheckableElement(input_element),
+                   input_element->isChecked());
   } else if (IsTextAreaElement(element)) {
     // Nothing more to do in this case.
   } else if (extract_mask & EXTRACT_OPTIONS) {

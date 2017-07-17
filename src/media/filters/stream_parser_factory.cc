@@ -108,6 +108,12 @@ static StreamParser* BuildWebMParser(const std::vector<std::string>& codecs,
 }
 
 #if defined(USE_PROPRIETARY_CODECS)
+bool CheckIfMp4Vp9DemuxingEnabled(const std::string& codec_id,
+                                  const scoped_refptr<MediaLog>& media_log) {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableVp9InMp4);
+}
+
 // AAC Object Type IDs that Chrome supports.
 static const int kAACLCObjectType = 2;
 static const int kAACSBRObjectType = 5;
@@ -162,6 +168,9 @@ static const CodecInfo kHEVCHEV1CodecInfo = { "hev1.*", CodecInfo::VIDEO, NULL,
 static const CodecInfo kHEVCHVC1CodecInfo = { "hvc1.*", CodecInfo::VIDEO, NULL,
                                               CodecInfo::HISTOGRAM_HEVC };
 #endif
+static const CodecInfo kMPEG4VP09CodecInfo = {"vp09.*", CodecInfo::VIDEO,
+                                              &CheckIfMp4Vp9DemuxingEnabled,
+                                              CodecInfo::HISTOGRAM_VP9};
 static const CodecInfo kMPEG4AACCodecInfo = { "mp4a.40.*", CodecInfo::AUDIO,
                                               &ValidateMP4ACodecID,
                                               CodecInfo::HISTOGRAM_MPEG4AAC };
@@ -190,11 +199,12 @@ static const CodecInfo kEAC3CodecInfo3 = {"mp4a.A6", CodecInfo::AUDIO, NULL,
 #endif
 
 static const CodecInfo* kVideoMP4Codecs[] = {
-    &kH264AVC1CodecInfo, &kH264AVC3CodecInfo,
+    &kH264AVC1CodecInfo,  &kH264AVC3CodecInfo,
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
-    &kHEVCHEV1CodecInfo, &kHEVCHVC1CodecInfo,
+    &kHEVCHEV1CodecInfo,  &kHEVCHVC1CodecInfo,
 #endif
-    &kMPEG4AACCodecInfo, &kMPEG2AACLCCodecInfo, NULL};
+    &kMPEG4VP09CodecInfo,
+    &kMPEG4AACCodecInfo,  &kMPEG2AACLCCodecInfo, NULL};
 
 static const CodecInfo* kAudioMP4Codecs[] = {&kMPEG4AACCodecInfo,
                                              &kMPEG2AACLCCodecInfo,
@@ -334,7 +344,7 @@ static bool VerifyCodec(
       // TODO(wolenetz, dalecurtis): This should instead use MimeUtil() to avoid
       // duplication of subtle Android behavior.  http://crbug.com/587303.
       if (codec_info->tag == CodecInfo::HISTOGRAM_H264) {
-        if (media::IsUnifiedMediaPipelineEnabledForMse() &&
+        if (media::IsUnifiedMediaPipelineEnabled() &&
             !media::HasPlatformDecoderSupport()) {
           return false;
         }
@@ -344,17 +354,17 @@ static bool VerifyCodec(
       }
       if (codec_info->tag == CodecInfo::HISTOGRAM_VP8 &&
           !media::MediaCodecUtil::IsVp8DecoderAvailable() &&
-          !media::IsUnifiedMediaPipelineEnabledForMse()) {
+          !media::IsUnifiedMediaPipelineEnabled()) {
         return false;
       }
       if (codec_info->tag == CodecInfo::HISTOGRAM_VP9 &&
           !media::MediaCodecUtil::IsVp9DecoderAvailable() &&
-          !media::IsUnifiedMediaPipelineEnabledForMse()) {
+          !media::IsUnifiedMediaPipelineEnabled()) {
         return false;
       }
       if (codec_info->tag == CodecInfo::HISTOGRAM_OPUS &&
           !media::PlatformHasOpusSupport() &&
-          !media::IsUnifiedMediaPipelineEnabledForMse()) {
+          !media::IsUnifiedMediaPipelineEnabled()) {
         return false;
       }
 #endif
@@ -450,13 +460,13 @@ bool StreamParserFactory::IsTypeSupported(
   return CheckTypeAndCodecs(type, codecs, new MediaLog(), NULL, NULL, NULL);
 }
 
-scoped_ptr<StreamParser> StreamParserFactory::Create(
+std::unique_ptr<StreamParser> StreamParserFactory::Create(
     const std::string& type,
     const std::vector<std::string>& codecs,
     const scoped_refptr<MediaLog>& media_log,
     bool* has_audio,
     bool* has_video) {
-  scoped_ptr<StreamParser> stream_parser;
+  std::unique_ptr<StreamParser> stream_parser;
   ParserFactoryFunction factory_function;
   std::vector<CodecInfo::HistogramTag> audio_codecs;
   std::vector<CodecInfo::HistogramTag> video_codecs;

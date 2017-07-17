@@ -7,12 +7,13 @@
 
 #include <stdint.h>
 
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "mojo/edk/system/awakable.h"
 #include "mojo/edk/system/system_impl_export.h"
 #include "mojo/public/c/system/types.h"
-#include "mojo/public/cpp/system/macros.h"
 
 namespace mojo {
 namespace edk {
@@ -63,14 +64,14 @@ class MOJO_SYSTEM_IMPL_EXPORT Waiter final : public Awakable {
  private:
   base::ConditionVariable cv_;  // Associated to |lock_|.
   base::Lock lock_;             // Protects the following members.
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   bool initialized_;
 #endif
   bool awoken_;
   MojoResult awake_result_;
   uintptr_t awake_context_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(Waiter);
+  DISALLOW_COPY_AND_ASSIGN(Waiter);
 };
 
 }  // namespace edk

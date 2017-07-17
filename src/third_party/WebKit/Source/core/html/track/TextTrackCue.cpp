@@ -129,14 +129,14 @@ unsigned TextTrackCue::cueIndex()
 {
     // This method can only be called on cues while they are associated with
     // a(n enabled) track (and hence that track's list of cues should exist.)
-    ASSERT(track() && track()->cues());
+    DCHECK(track() && track()->cues());
     TextTrackCueList* cueList = track()->cues();
     if (!cueList->isCueIndexValid(m_cueIndex))
         cueList->validateCueIndexes();
     return m_cueIndex;
 }
 
-DispatchEventResult TextTrackCue::dispatchEventInternal(PassRefPtrWillBeRawPtr<Event> event)
+DispatchEventResult TextTrackCue::dispatchEventInternal(Event* event)
 {
     // When a TextTrack's mode is disabled: no cues are active, no events fired.
     if (!track() || track()->mode() == TextTrack::disabledKeyword())
@@ -153,7 +153,7 @@ const AtomicString& TextTrackCue::interfaceName() const
 DEFINE_TRACE(TextTrackCue)
 {
     visitor->trace(m_track);
-    RefCountedGarbageCollectedEventTargetWithInlineData<TextTrackCue>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
 }
 
 } // namespace blink

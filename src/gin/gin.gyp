@@ -15,11 +15,11 @@
         '../base/base.gyp:base',
         '../blpwtk2/blpwtk2.gyp:blpwtk2_generate_sources',
         '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
       ],
       'export_dependent_settings': [
         '../base/base.gyp:base',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
       ],
       'defines': [
         'GIN_IMPLEMENTATION',
@@ -39,6 +39,7 @@
         'function_template.cc',
         'function_template.h',
         'gin_export.h',
+        'gin_features.cc',
         'handle.h',
         'interceptor.cc',
         'interceptor.h',
@@ -63,6 +64,7 @@
         'public/context_holder.h',
         'public/debug.h',
         'public/gin_embedders.h',
+        'public/gin_features.h',
         'public/isolate_holder.h',
         'public/v8_platform.h',
         'public/wrapper_info.h',
@@ -110,7 +112,7 @@
       'dependencies': [
         '../base/base.gyp:base',
         '../base/base.gyp:base_i18n',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
         'gin',
       ],
       'sources': [
@@ -126,7 +128,7 @@
       'target_name': 'gin_test',
       'type': 'static_library',
       'dependencies': [
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
         'gin',
       ],
       'export_dependent_settings': [
@@ -149,7 +151,7 @@
       'target_name': 'gin_unittests',
       'type': 'executable',
       'dependencies': [
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../v8/src/v8.gyp:v8',
         'gin_shell',
         'gin_test',
       ],

@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_ASH_CAST_CONFIG_DELEGATE_MEDIA_ROUTER_H_
 #define CHROME_BROWSER_UI_ASH_CAST_CONFIG_DELEGATE_MEDIA_ROUTER_H_
 
-#include "ash/cast_config_delegate.h"
+#include "ash/common/cast_config_delegate.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 
@@ -40,7 +40,7 @@ class CastConfigDelegateMediaRouter : public ash::CastConfigDelegate {
   // |devices_| stores the current source/route status that we query from.
   // This will return null until the media router is initialized.
   CastDeviceCache* devices();
-  scoped_ptr<CastDeviceCache> devices_;
+  std::unique_ptr<CastDeviceCache> devices_;
 
   base::ObserverList<ash::CastConfigDelegate::Observer> observer_list_;
 

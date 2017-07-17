@@ -32,14 +32,15 @@
 #include "core/html/parser/HTMLSourceTracker.h"
 #include "core/html/parser/HTMLTokenizer.h"
 #include "core/html/parser/XSSAuditor.h"
+#include <memory>
 
 namespace blink {
 
 class HTMLViewSourceParser final :  public DecodedDataDocumentParser {
 public:
-    static PassRefPtrWillBeRawPtr<HTMLViewSourceParser> create(HTMLViewSourceDocument& document, const String& mimeType)
+    static HTMLViewSourceParser* create(HTMLViewSourceDocument& document, const String& mimeType)
     {
-        return adoptRefWillBeNoop(new HTMLViewSourceParser(document, mimeType));
+        return new HTMLViewSourceParser(document, mimeType);
     }
     ~HTMLViewSourceParser() override { }
 
@@ -59,7 +60,7 @@ private:
     HTMLInputStream m_input;
     HTMLToken m_token;
     HTMLSourceTracker m_sourceTracker;
-    OwnPtr<HTMLTokenizer> m_tokenizer;
+    std::unique_ptr<HTMLTokenizer> m_tokenizer;
     XSSAuditor m_xssAuditor;
 };
 

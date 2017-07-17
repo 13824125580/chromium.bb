@@ -29,8 +29,6 @@
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/task_manager/task_manager.h"
-#include "chrome/browser/task_manager/task_manager_browsertest_util.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -57,8 +55,8 @@
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/autocomplete_result.h"
+#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/browser/search_provider.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/search.h"
@@ -228,10 +226,9 @@ class InstantExtendedTest : public InProcessBrowserTest,
 
     base::CancelableTaskTracker tracker;
     history->ScheduleDBTask(
-        scoped_ptr<history::HistoryDBTask>(
-            new QuittingHistoryDBTask()),
+        std::unique_ptr<history::HistoryDBTask>(new QuittingHistoryDBTask()),
         &tracker);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   int CountSearchProviderSuggestions() {
@@ -279,10 +276,10 @@ class InstantExtendedPrefetchTest : public InstantExtendedTest {
 
  private:
   // Used to instantiate FakeURLFetcherFactory.
-  scoped_ptr<net::URLFetcherImplFactory> factory_;
+  std::unique_ptr<net::URLFetcherImplFactory> factory_;
 
   // Used to mock default search provider suggest response.
-  scoped_ptr<net::FakeURLFetcherFactory> fake_factory_;
+  std::unique_ptr<net::FakeURLFetcherFactory> fake_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InstantExtendedPrefetchTest);
 };
@@ -306,8 +303,8 @@ class InstantExtendedNetworkTest : public InstantExtendedTest {
   }
 
  private:
-  scoped_ptr<net::NetworkChangeNotifier::DisableForTest> disable_for_test_;
-  scoped_ptr<FakeNetworkChangeNotifier> fake_network_change_notifier_;
+  std::unique_ptr<net::NetworkChangeNotifier::DisableForTest> disable_for_test_;
+  std::unique_ptr<FakeNetworkChangeNotifier> fake_network_change_notifier_;
 };
 
 // Test class used to verify chrome-search: scheme and access policy from the

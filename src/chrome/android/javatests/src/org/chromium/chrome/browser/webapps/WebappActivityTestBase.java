@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
 import android.content.Intent;
 import android.net.Uri;
 import android.view.ViewGroup;
@@ -28,6 +30,8 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
     static final String WEBAPP_ID = "webapp_id";
     static final String WEBAPP_NAME = "webapp name";
     static final String WEBAPP_SHORT_NAME = "webapp short name";
+
+    private static final long STARTUP_TIMEOUT = scaleTimeout(10000);
 
     // Empty 192x192 image generated with:
     // ShortcutHelper.encodeBitmapAsString(Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_4444));
@@ -89,9 +93,16 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
         super.setUp();
 
         // Register the webapp so when the data storage is opened, the test doesn't crash. There is
-        // no race condition with the retrival as AsyncTasks are run sequentially on the background
+        // no race condition with the retrieval as AsyncTasks are run sequentially on the background
         // thread.
-        WebappRegistry.registerWebapp(getInstrumentation().getTargetContext(), WEBAPP_ID);
+        WebappRegistry.registerWebapp(getInstrumentation().getTargetContext(), WEBAPP_ID,
+                new WebappRegistry.FetchWebappDataStorageCallback() {
+                    @Override
+                    public void onWebappDataStorageRetrieved(WebappDataStorage storage) {
+                        storage.updateFromShortcutIntent(createIntent());
+                    }
+                }
+        );
     }
 
     /**
@@ -126,13 +137,13 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
     protected void waitUntilIdle() {
         getInstrumentation().waitForIdleSync();
         try {
-            CriteriaHelper.pollForCriteria(new Criteria() {
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
                     @Override
                     public boolean isSatisfied() {
                         return getActivity().getActivityTab() != null
                                 && !getActivity().getActivityTab().isLoading();
                     }
-                });
+                }, STARTUP_TIMEOUT, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
         } catch (InterruptedException exception) {
             fail();
         }
@@ -185,7 +196,7 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
      * Waits for the splash screen to be hidden.
      */
     protected void waitUntilSplashscreenHides() throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return !getActivity().isSplashScreenVisibleForTests();
@@ -195,7 +206,7 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
 
     protected ViewGroup waitUntilSplashScreenAppears() {
         try {
-            CriteriaHelper.pollForCriteria(new Criteria() {
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
                 @Override
                 public boolean isSatisfied() {
                     return getActivity().getSplashScreenForTests() != null;

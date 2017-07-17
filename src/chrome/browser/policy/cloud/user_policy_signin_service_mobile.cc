@@ -7,8 +7,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -81,14 +83,19 @@ std::vector<std::string> UserPolicySigninService::GetScopes() {
 }
 #endif
 
+void UserPolicySigninService::ShutdownUserCloudPolicyManager() {
+  CancelPendingRegistration();
+  UserPolicySigninServiceBase::ShutdownUserCloudPolicyManager();
+}
+
 void UserPolicySigninService::RegisterForPolicyInternal(
     const std::string& username,
     const std::string& account_id,
     const std::string& access_token,
     const PolicyRegistrationCallback& callback) {
   // Create a new CloudPolicyClient for fetching the DMToken.
-  scoped_ptr<CloudPolicyClient> policy_client = CreateClientForRegistrationOnly(
-      username);
+  std::unique_ptr<CloudPolicyClient> policy_client =
+      CreateClientForRegistrationOnly(username);
   if (!policy_client) {
     callback.Run(std::string(), std::string());
     return;
@@ -123,7 +130,7 @@ void UserPolicySigninService::RegisterForPolicyInternal(
 }
 
 void UserPolicySigninService::CallPolicyRegistrationCallback(
-    scoped_ptr<CloudPolicyClient> client,
+    std::unique_ptr<CloudPolicyClient> client,
     PolicyRegistrationCallback callback) {
   registration_helper_.reset();
   callback.Run(client->dm_token(), client->client_id());
@@ -168,16 +175,11 @@ void UserPolicySigninService::OnInitializationCompleted(
   if (now > last_check_time && now < next_check_time)
     try_registration_delay = next_check_time - now;
 
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&UserPolicySigninService::RegisterCloudPolicyService,
                  weak_factory_.GetWeakPtr()),
       try_registration_delay);
-}
-
-void UserPolicySigninService::ShutdownUserCloudPolicyManager() {
-  CancelPendingRegistration();
-  UserPolicySigninServiceBase::ShutdownUserCloudPolicyManager();
 }
 
 void UserPolicySigninService::RegisterCloudPolicyService() {

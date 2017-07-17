@@ -6,25 +6,31 @@
 #define CompositorAnimationPlayer_h
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_curve.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/animation_player.h"
 #include "platform/PlatformExport.h"
+#include "platform/graphics/CompositorElementId.h"
 #include "wtf/Noncopyable.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 class CompositorAnimation;
-class WebCompositorAnimationDelegate;
+class CompositorAnimationDelegate;
 class WebLayer;
 
 // A compositor representation for AnimationPlayer.
 class PLATFORM_EXPORT CompositorAnimationPlayer : public cc::AnimationDelegate {
     WTF_MAKE_NONCOPYABLE(CompositorAnimationPlayer);
 public:
-    CompositorAnimationPlayer();
+    static std::unique_ptr<CompositorAnimationPlayer> create()
+    {
+        return wrapUnique(new CompositorAnimationPlayer());
+    }
+
     ~CompositorAnimationPlayer();
 
     cc::AnimationPlayer* animationPlayer() const;
@@ -33,26 +39,28 @@ public:
     // stopped. The CompositorAnimationPlayer does not take ownership of the delegate, and it is
     // the responsibility of the client to reset the layer's delegate before
     // deleting the delegate.
-    void setAnimationDelegate(WebCompositorAnimationDelegate*);
+    void setAnimationDelegate(CompositorAnimationDelegate*);
 
-    void attachLayer(WebLayer*);
-    void detachLayer();
-    bool isLayerAttached() const;
+    void attachElement(const CompositorElementId&);
+    void detachElement();
+    bool isElementAttached() const;
 
     void addAnimation(CompositorAnimation*);
-    void removeAnimation(int animationId);
-    void pauseAnimation(int animationId, double timeOffset);
-    void abortAnimation(int animationId);
+    void removeAnimation(uint64_t animationId);
+    void pauseAnimation(uint64_t animationId, double timeOffset);
+    void abortAnimation(uint64_t animationId);
 
 private:
+    CompositorAnimationPlayer();
+
     // cc::AnimationDelegate implementation.
     void NotifyAnimationStarted(base::TimeTicks monotonicTime, cc::TargetProperty::Type, int group) override;
     void NotifyAnimationFinished(base::TimeTicks monotonicTime, cc::TargetProperty::Type, int group) override;
     void NotifyAnimationAborted(base::TimeTicks monotonicTime, cc::TargetProperty::Type, int group) override;
-    void NotifyAnimationTakeover(base::TimeTicks monotonicTime, cc::TargetProperty::Type, double animationStartTime, scoped_ptr<cc::AnimationCurve>) override;
+    void NotifyAnimationTakeover(base::TimeTicks monotonicTime, cc::TargetProperty::Type, double animationStartTime, std::unique_ptr<cc::AnimationCurve>) override;
 
     scoped_refptr<cc::AnimationPlayer> m_animationPlayer;
-    WebCompositorAnimationDelegate* m_delegate;
+    CompositorAnimationDelegate* m_delegate;
 };
 
 } // namespace blink

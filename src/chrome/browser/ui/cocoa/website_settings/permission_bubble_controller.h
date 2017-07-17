@@ -27,7 +27,7 @@ class PermissionBubbleRequest;
   Browser* browser_;  // Weak.
 
   // Delegate that receives menu events on behalf of this.
-  scoped_ptr<ui::SimpleMenuModel::Delegate> menuDelegate_;
+  std::unique_ptr<ui::SimpleMenuModel::Delegate> menuDelegate_;
 
   // Bridge to the C++ class that created this object.
   PermissionBubbleCocoa* bridge_;  // Weak.
@@ -35,6 +35,12 @@ class PermissionBubbleRequest;
 
 // Designated initializer.  |browser| and |bridge| must both be non-nil.
 - (id)initWithBrowser:(Browser*)browser bridge:(PermissionBubbleCocoa*)bridge;
+
+// Returns the anchor point to use for the given Cocoa |browser|.
++ (NSPoint)getAnchorPointForBrowser:(Browser*)browser;
+
+// Returns true if |browser| has a visible location bar.
++ (bool)hasVisibleLocationBarForBrowser:(Browser*)browser;
 
 // Makes the bubble visible. The bubble will be popuplated with text retrieved
 // from |requests|. |delegate| will receive callbacks for user actions.
@@ -49,8 +55,8 @@ class PermissionBubbleRequest;
 // Should only be used outside this class for tests.
 - (NSPoint)getExpectedAnchorPoint;
 
-// Returns true of the browser has support for the location bar.
+// Returns true if the browser has a visible location bar.
 // Should only be used outside this class for tests.
-- (bool)hasLocationBar;
+- (bool)hasVisibleLocationBar;
 
 @end

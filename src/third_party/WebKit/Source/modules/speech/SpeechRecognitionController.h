@@ -28,15 +28,14 @@
 
 #include "core/page/Page.h"
 #include "modules/speech/SpeechRecognitionClient.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
 class MediaStreamTrack;
 
-class SpeechRecognitionController final : public NoBaseWillBeGarbageCollectedFinalized<SpeechRecognitionController>, public WillBeHeapSupplement<Page> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SpeechRecognitionController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(SpeechRecognitionController);
+class SpeechRecognitionController final : public GarbageCollectedFinalized<SpeechRecognitionController>, public Supplement<Page> {
+    USING_GARBAGE_COLLECTED_MIXIN(SpeechRecognitionController);
 public:
     virtual ~SpeechRecognitionController();
 
@@ -48,16 +47,16 @@ public:
     void stop(SpeechRecognition* recognition) { m_client->stop(recognition); }
     void abort(SpeechRecognition* recognition) { m_client->abort(recognition); }
 
-    static PassOwnPtrWillBeRawPtr<SpeechRecognitionController> create(PassOwnPtr<SpeechRecognitionClient>);
+    static SpeechRecognitionController* create(std::unique_ptr<SpeechRecognitionClient>);
     static const char* supplementName();
-    static SpeechRecognitionController* from(Page* page) { return static_cast<SpeechRecognitionController*>(WillBeHeapSupplement<Page>::from(page, supplementName())); }
+    static SpeechRecognitionController* from(Page* page) { return static_cast<SpeechRecognitionController*>(Supplement<Page>::from(page, supplementName())); }
 
-    DEFINE_INLINE_VIRTUAL_TRACE() { WillBeHeapSupplement<Page>::trace(visitor); }
+    DEFINE_INLINE_VIRTUAL_TRACE() { Supplement<Page>::trace(visitor); }
 
 private:
-    explicit SpeechRecognitionController(PassOwnPtr<SpeechRecognitionClient>);
+    explicit SpeechRecognitionController(std::unique_ptr<SpeechRecognitionClient>);
 
-    OwnPtr<SpeechRecognitionClient> m_client;
+    std::unique_ptr<SpeechRecognitionClient> m_client;
 };
 
 } // namespace blink

@@ -107,7 +107,7 @@ void WebScrollbarThemeClientImpl::invalidateRect(const IntRect&)
     ASSERT_NOT_REACHED();
 }
 
-ScrollbarOverlayStyle WebScrollbarThemeClientImpl::scrollbarOverlayStyle() const
+ScrollbarOverlayStyle WebScrollbarThemeClientImpl::getScrollbarOverlayStyle() const
 {
     return static_cast<ScrollbarOverlayStyle>(m_scrollbar.scrollbarOverlayStyle());
 }
@@ -220,11 +220,6 @@ float WebScrollbarThemeClientImpl::elasticOverscroll() const
 void WebScrollbarThemeClientImpl::setElasticOverscroll(float elasticOverscroll)
 {
     return m_scrollbar.setElasticOverscroll(elasticOverscroll);
-}
-
-String WebScrollbarThemeClientImpl::debugName() const
-{
-    return "WebScrollbarThemeClientImpl";
 }
 
 } // namespace blink

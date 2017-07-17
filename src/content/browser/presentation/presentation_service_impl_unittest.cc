@@ -6,16 +6,17 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/presentation_service_delegate.h"
 #include "content/public/browser/presentation_session.h"
 #include "content/public/common/presentation_constants.h"
@@ -46,17 +47,15 @@ const char *const kPresentationId = "presentationId";
 const char *const kPresentationUrl = "http://foo.com/index.html";
 
 bool ArePresentationSessionMessagesEqual(
-    const presentation::SessionMessage* expected,
-    const presentation::SessionMessage* actual) {
+    const blink::mojom::SessionMessage* expected,
+    const blink::mojom::SessionMessage* actual) {
   return expected->type == actual->type &&
          expected->message == actual->message &&
          expected->data.Equals(actual->data);
 }
 
-void DoNothing(
-    presentation::PresentationSessionInfoPtr info,
-    presentation::PresentationErrorPtr error) {
-}
+void DoNothing(blink::mojom::PresentationSessionInfoPtr info,
+               blink::mojom::PresentationErrorPtr error) {}
 
 }  // namespace
 
@@ -129,7 +128,7 @@ class MockPresentationServiceDelegate : public PresentationServiceDelegate {
   void SendMessage(int render_process_id,
                    int render_frame_id,
                    const content::PresentationSessionInfo& session,
-                   scoped_ptr<PresentationSessionMessage> message_request,
+                   std::unique_ptr<PresentationSessionMessage> message_request,
                    const SendMessageCallback& send_message_cb) override {
     SendMessageRawPtr(render_process_id, render_frame_id, session,
                       message_request.release(), send_message_cb);
@@ -149,67 +148,69 @@ class MockPresentationServiceDelegate : public PresentationServiceDelegate {
   bool screen_availability_listening_supported_ = true;
 };
 
-class MockPresentationServiceClient :
-    public presentation::PresentationServiceClient {
+class MockPresentationServiceClient
+    : public blink::mojom::PresentationServiceClient {
  public:
   MOCK_METHOD2(OnScreenAvailabilityUpdated,
       void(const mojo::String& url, bool available));
   void OnConnectionStateChanged(
-      presentation::PresentationSessionInfoPtr connection,
-      presentation::PresentationConnectionState new_state) override {
+      blink::mojom::PresentationSessionInfoPtr connection,
+      blink::mojom::PresentationConnectionState new_state) override {
     OnConnectionStateChanged(*connection, new_state);
   }
   MOCK_METHOD2(OnConnectionStateChanged,
-               void(const presentation::PresentationSessionInfo& connection,
-                    presentation::PresentationConnectionState new_state));
+               void(const blink::mojom::PresentationSessionInfo& connection,
+                    blink::mojom::PresentationConnectionState new_state));
 
   void OnConnectionClosed(
-      presentation::PresentationSessionInfoPtr connection,
-      presentation::PresentationConnectionCloseReason reason,
+      blink::mojom::PresentationSessionInfoPtr connection,
+      blink::mojom::PresentationConnectionCloseReason reason,
       const mojo::String& message) override {
     OnConnectionClosed(*connection, reason, message);
   }
   MOCK_METHOD3(OnConnectionClosed,
-               void(const presentation::PresentationSessionInfo& connection,
-                    presentation::PresentationConnectionCloseReason reason,
+               void(const blink::mojom::PresentationSessionInfo& connection,
+                    blink::mojom::PresentationConnectionCloseReason reason,
                     const mojo::String& message));
 
   MOCK_METHOD1(OnScreenAvailabilityNotSupported, void(const mojo::String& url));
 
   void OnSessionMessagesReceived(
-      presentation::PresentationSessionInfoPtr session_info,
-      mojo::Array<presentation::SessionMessagePtr> messages) override {
+      blink::mojom::PresentationSessionInfoPtr session_info,
+      mojo::Array<blink::mojom::SessionMessagePtr> messages) override {
     messages_received_ = std::move(messages);
     MessagesReceived();
   }
   MOCK_METHOD0(MessagesReceived, void());
 
   void OnDefaultSessionStarted(
-      presentation::PresentationSessionInfoPtr session_info) override {
+      blink::mojom::PresentationSessionInfoPtr session_info) override {
     OnDefaultSessionStarted(*session_info);
   }
   MOCK_METHOD1(OnDefaultSessionStarted,
-               void(const presentation::PresentationSessionInfo& session_info));
+               void(const blink::mojom::PresentationSessionInfo& session_info));
 
-  mojo::Array<presentation::SessionMessagePtr> messages_received_;
+  mojo::Array<blink::mojom::SessionMessagePtr> messages_received_;
 };
 
 class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
  public:
-  PresentationServiceImplTest() : default_session_started_count_(0) {}
+  PresentationServiceImplTest() {}
 
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
 
     auto request = mojo::GetProxy(&service_ptr_);
     EXPECT_CALL(mock_delegate_, AddObserver(_, _, _)).Times(1);
+    TestRenderFrameHost* render_frame_host = contents()->GetMainFrame();
+    render_frame_host->InitializeRenderFrameIfNeeded();
     service_impl_.reset(new PresentationServiceImpl(
-        contents()->GetMainFrame(), contents(), &mock_delegate_));
+        render_frame_host, contents(), &mock_delegate_));
     service_impl_->Bind(std::move(request));
 
-    presentation::PresentationServiceClientPtr client_ptr;
+    blink::mojom::PresentationServiceClientPtr client_ptr;
     client_binding_.reset(
-        new mojo::Binding<presentation::PresentationServiceClient>(
+        new mojo::Binding<blink::mojom::PresentationServiceClient>(
             &mock_client_, mojo::GetProxy(&client_ptr)));
     service_impl_->SetClient(std::move(client_ptr));
   }
@@ -279,18 +280,18 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
     EXPECT_FALSE(service_impl_->on_session_messages_callback_.get());
   }
 
-  void ExpectNewSessionMojoCallbackSuccess(
-      presentation::PresentationSessionInfoPtr info,
-      presentation::PresentationErrorPtr error) {
+  void ExpectNewSessionCallbackSuccess(
+      blink::mojom::PresentationSessionInfoPtr info,
+      blink::mojom::PresentationErrorPtr error) {
     EXPECT_FALSE(info.is_null());
     EXPECT_TRUE(error.is_null());
     if (!run_loop_quit_closure_.is_null())
       run_loop_quit_closure_.Run();
   }
 
-  void ExpectNewSessionMojoCallbackError(
-      presentation::PresentationSessionInfoPtr info,
-      presentation::PresentationErrorPtr error) {
+  void ExpectNewSessionCallbackError(
+      blink::mojom::PresentationSessionInfoPtr info,
+      blink::mojom::PresentationErrorPtr error) {
     EXPECT_TRUE(info.is_null());
     EXPECT_FALSE(error.is_null());
     if (!run_loop_quit_closure_.is_null())
@@ -298,8 +299,8 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
   }
 
   void ExpectSessionMessages(
-      const mojo::Array<presentation::SessionMessagePtr>& expected_msgs,
-      const mojo::Array<presentation::SessionMessagePtr>& actual_msgs) {
+      const mojo::Array<blink::mojom::SessionMessagePtr>& expected_msgs,
+      const mojo::Array<blink::mojom::SessionMessagePtr>& actual_msgs) {
     EXPECT_EQ(expected_msgs.size(), actual_msgs.size());
     for (size_t i = 0; i < actual_msgs.size(); ++i) {
       EXPECT_TRUE(ArePresentationSessionMessagesEqual(expected_msgs[i].get(),
@@ -307,7 +308,7 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
     }
   }
 
-  void ExpectSendMessageMojoCallback(bool success) {
+  void ExpectSendSessionMessageCallback(bool success) {
     EXPECT_TRUE(success);
     EXPECT_FALSE(service_impl_->send_message_callback_);
     if (!run_loop_quit_closure_.is_null())
@@ -317,17 +318,17 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
   void RunListenForSessionMessages(const std::string& text_msg,
                                    const std::vector<uint8_t>& binary_data,
                                    bool pass_ownership) {
-    mojo::Array<presentation::SessionMessagePtr> expected_msgs(2);
-    expected_msgs[0] = presentation::SessionMessage::New();
-    expected_msgs[0]->type = presentation::PresentationMessageType::TEXT;
+    mojo::Array<blink::mojom::SessionMessagePtr> expected_msgs(2);
+    expected_msgs[0] = blink::mojom::SessionMessage::New();
+    expected_msgs[0]->type = blink::mojom::PresentationMessageType::TEXT;
     expected_msgs[0]->message = text_msg;
-    expected_msgs[1] = presentation::SessionMessage::New();
+    expected_msgs[1] = blink::mojom::SessionMessage::New();
     expected_msgs[1]->type =
-        presentation::PresentationMessageType::ARRAY_BUFFER;
+        blink::mojom::PresentationMessageType::ARRAY_BUFFER;
     expected_msgs[1]->data = mojo::Array<uint8_t>::From(binary_data);
 
-    presentation::PresentationSessionInfoPtr session(
-        presentation::PresentationSessionInfo::New());
+    blink::mojom::PresentationSessionInfoPtr session(
+        blink::mojom::PresentationSessionInfo::New());
     session->url = kPresentationUrl;
     session->id = kPresentationId;
 
@@ -342,7 +343,7 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
     }
 
     ScopedVector<PresentationSessionMessage> messages;
-    scoped_ptr<content::PresentationSessionMessage> message;
+    std::unique_ptr<content::PresentationSessionMessage> message;
     message.reset(
         new content::PresentationSessionMessage(PresentationMessageType::TEXT));
     message->message = text_msg;
@@ -352,7 +353,7 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
     message->data.reset(new std::vector<uint8_t>(binary_data));
     messages.push_back(std::move(message));
 
-    std::vector<presentation::SessionMessagePtr> actual_msgs;
+    std::vector<blink::mojom::SessionMessagePtr> actual_msgs;
     {
       base::RunLoop run_loop;
       EXPECT_CALL(mock_client_, MessagesReceived())
@@ -365,15 +366,14 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
 
   MockPresentationServiceDelegate mock_delegate_;
 
-  scoped_ptr<PresentationServiceImpl> service_impl_;
-  mojo::InterfacePtr<presentation::PresentationService> service_ptr_;
+  std::unique_ptr<PresentationServiceImpl> service_impl_;
+  mojo::InterfacePtr<blink::mojom::PresentationService> service_ptr_;
 
   MockPresentationServiceClient mock_client_;
-  scoped_ptr<mojo::Binding<presentation::PresentationServiceClient>>
+  std::unique_ptr<mojo::Binding<blink::mojom::PresentationServiceClient>>
       client_binding_;
 
   base::Closure run_loop_quit_closure_;
-  int default_session_started_count_;
 };
 
 TEST_F(PresentationServiceImplTest, ListenForScreenAvailability) {
@@ -461,7 +461,7 @@ TEST_F(PresentationServiceImplTest, SetDefaultPresentationUrl) {
   service_impl_->SetDefaultPresentationURL(url2);
   EXPECT_EQ(url2, service_impl_->default_presentation_url_);
 
-  presentation::PresentationSessionInfo session_info;
+  blink::mojom::PresentationSessionInfo session_info;
   session_info.url = url2;
   session_info.id = kPresentationId;
   base::RunLoop run_loop;
@@ -480,7 +480,7 @@ TEST_F(PresentationServiceImplTest, ListenForConnectionStateChange) {
   service_impl_->ListenForConnectionStateChange(connection);
 
   // Trigger state change. It should be propagated back up to |mock_client_|.
-  presentation::PresentationSessionInfo presentation_connection;
+  blink::mojom::PresentationSessionInfo presentation_connection;
   presentation_connection.url = kPresentationUrl;
   presentation_connection.id = kPresentationId;
   {
@@ -488,7 +488,7 @@ TEST_F(PresentationServiceImplTest, ListenForConnectionStateChange) {
     EXPECT_CALL(mock_client_,
                 OnConnectionStateChanged(
                     Equals(presentation_connection),
-                    presentation::PresentationConnectionState::TERMINATED))
+                    blink::mojom::PresentationConnectionState::TERMINATED))
         .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
     state_changed_cb.Run(PresentationConnectionStateChangeInfo(
         PRESENTATION_CONNECTION_STATE_TERMINATED));
@@ -506,7 +506,7 @@ TEST_F(PresentationServiceImplTest, ListenForConnectionClose) {
 
   // Trigger connection close. It should be propagated back up to
   // |mock_client_|.
-  presentation::PresentationSessionInfo presentation_connection;
+  blink::mojom::PresentationSessionInfo presentation_connection;
   presentation_connection.url = kPresentationUrl;
   presentation_connection.id = kPresentationId;
   {
@@ -519,7 +519,7 @@ TEST_F(PresentationServiceImplTest, ListenForConnectionClose) {
     EXPECT_CALL(mock_client_,
                 OnConnectionClosed(
                     Equals(presentation_connection),
-                    presentation::PresentationConnectionCloseReason::WENT_AWAY,
+                    blink::mojom::PresentationConnectionCloseReason::WENT_AWAY,
                     mojo::String("Foo")))
         .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
     state_changed_cb.Run(closed_info);
@@ -545,7 +545,7 @@ TEST_F(PresentationServiceImplTest, StartSessionSuccess) {
   service_ptr_->StartSession(
       kPresentationUrl,
       base::Bind(
-          &PresentationServiceImplTest::ExpectNewSessionMojoCallbackSuccess,
+          &PresentationServiceImplTest::ExpectNewSessionCallbackSuccess,
           base::Unretained(this)));
   base::RunLoop run_loop;
   base::Callback<void(const PresentationSessionInfo&)> success_cb;
@@ -565,7 +565,7 @@ TEST_F(PresentationServiceImplTest, StartSessionError) {
   service_ptr_->StartSession(
       kPresentationUrl,
       base::Bind(
-          &PresentationServiceImplTest::ExpectNewSessionMojoCallbackError,
+          &PresentationServiceImplTest::ExpectNewSessionCallbackError,
           base::Unretained(this)));
   base::RunLoop run_loop;
   base::Callback<void(const PresentationError&)> error_cb;
@@ -583,7 +583,7 @@ TEST_F(PresentationServiceImplTest, JoinSessionSuccess) {
       kPresentationUrl,
       kPresentationId,
       base::Bind(
-          &PresentationServiceImplTest::ExpectNewSessionMojoCallbackSuccess,
+          &PresentationServiceImplTest::ExpectNewSessionCallbackSuccess,
           base::Unretained(this)));
   base::RunLoop run_loop;
   base::Callback<void(const PresentationSessionInfo&)> success_cb;
@@ -605,7 +605,7 @@ TEST_F(PresentationServiceImplTest, JoinSessionError) {
       kPresentationUrl,
       kPresentationId,
       base::Bind(
-          &PresentationServiceImplTest::ExpectNewSessionMojoCallbackError,
+          &PresentationServiceImplTest::ExpectNewSessionCallbackError,
           base::Unretained(this)));
   base::RunLoop run_loop;
   base::Callback<void(const PresentationError&)> error_cb;
@@ -666,7 +666,7 @@ TEST_F(PresentationServiceImplTest, StartSessionInProgress) {
   service_ptr_->StartSession(
       presentation_url2,
       base::Bind(
-          &PresentationServiceImplTest::ExpectNewSessionMojoCallbackError,
+          &PresentationServiceImplTest::ExpectNewSessionCallbackError,
           base::Unretained(this)));
   SaveQuitClosureAndRunLoop();
 }
@@ -674,17 +674,17 @@ TEST_F(PresentationServiceImplTest, StartSessionInProgress) {
 TEST_F(PresentationServiceImplTest, SendStringMessage) {
   std::string message("Test presentation session message");
 
-  presentation::PresentationSessionInfoPtr session(
-      presentation::PresentationSessionInfo::New());
+  blink::mojom::PresentationSessionInfoPtr session(
+      blink::mojom::PresentationSessionInfo::New());
   session->url = kPresentationUrl;
   session->id = kPresentationId;
-  presentation::SessionMessagePtr message_request(
-      presentation::SessionMessage::New());
-  message_request->type = presentation::PresentationMessageType::TEXT;
+  blink::mojom::SessionMessagePtr message_request(
+      blink::mojom::SessionMessage::New());
+  message_request->type = blink::mojom::PresentationMessageType::TEXT;
   message_request->message = message;
   service_ptr_->SendSessionMessage(
       std::move(session), std::move(message_request),
-      base::Bind(&PresentationServiceImplTest::ExpectSendMessageMojoCallback,
+      base::Bind(&PresentationServiceImplTest::ExpectSendSessionMessageCallback,
                  base::Unretained(this)));
 
   base::RunLoop run_loop;
@@ -696,7 +696,7 @@ TEST_F(PresentationServiceImplTest, SendStringMessage) {
   run_loop.Run();
 
   // Make sure |test_message| gets deleted.
-  scoped_ptr<PresentationSessionMessage> scoped_test_message(test_message);
+  std::unique_ptr<PresentationSessionMessage> scoped_test_message(test_message);
   EXPECT_TRUE(test_message);
   EXPECT_FALSE(test_message->is_binary());
   EXPECT_LE(test_message->message.size(), kMaxPresentationSessionMessageSize);
@@ -712,17 +712,17 @@ TEST_F(PresentationServiceImplTest, SendArrayBuffer) {
   std::vector<uint8_t> data;
   data.assign(buffer, buffer + sizeof(buffer));
 
-  presentation::PresentationSessionInfoPtr session(
-      presentation::PresentationSessionInfo::New());
+  blink::mojom::PresentationSessionInfoPtr session(
+      blink::mojom::PresentationSessionInfo::New());
   session->url = kPresentationUrl;
   session->id = kPresentationId;
-  presentation::SessionMessagePtr message_request(
-      presentation::SessionMessage::New());
-  message_request->type = presentation::PresentationMessageType::ARRAY_BUFFER;
+  blink::mojom::SessionMessagePtr message_request(
+      blink::mojom::SessionMessage::New());
+  message_request->type = blink::mojom::PresentationMessageType::ARRAY_BUFFER;
   message_request->data = mojo::Array<uint8_t>::From(data);
   service_ptr_->SendSessionMessage(
       std::move(session), std::move(message_request),
-      base::Bind(&PresentationServiceImplTest::ExpectSendMessageMojoCallback,
+      base::Bind(&PresentationServiceImplTest::ExpectSendSessionMessageCallback,
                  base::Unretained(this)));
 
   base::RunLoop run_loop;
@@ -734,7 +734,7 @@ TEST_F(PresentationServiceImplTest, SendArrayBuffer) {
   run_loop.Run();
 
   // Make sure |test_message| gets deleted.
-  scoped_ptr<PresentationSessionMessage> scoped_test_message(test_message);
+  std::unique_ptr<PresentationSessionMessage> scoped_test_message(test_message);
   EXPECT_TRUE(test_message);
   EXPECT_TRUE(test_message->is_binary());
   EXPECT_EQ(PresentationMessageType::ARRAY_BUFFER, test_message->type);
@@ -756,17 +756,17 @@ TEST_F(PresentationServiceImplTest, SendArrayBufferWithExceedingLimit) {
   std::vector<uint8_t> data;
   data.assign(buffer, buffer + sizeof(buffer));
 
-  presentation::PresentationSessionInfoPtr session(
-      presentation::PresentationSessionInfo::New());
+  blink::mojom::PresentationSessionInfoPtr session(
+      blink::mojom::PresentationSessionInfo::New());
   session->url = kPresentationUrl;
   session->id = kPresentationId;
-  presentation::SessionMessagePtr message_request(
-      presentation::SessionMessage::New());
-  message_request->type = presentation::PresentationMessageType::ARRAY_BUFFER;
+  blink::mojom::SessionMessagePtr message_request(
+      blink::mojom::SessionMessage::New());
+  message_request->type = blink::mojom::PresentationMessageType::ARRAY_BUFFER;
   message_request->data = mojo::Array<uint8_t>::From(data);
   service_ptr_->SendSessionMessage(
       std::move(session), std::move(message_request),
-      base::Bind(&PresentationServiceImplTest::ExpectSendMessageMojoCallback,
+      base::Bind(&PresentationServiceImplTest::ExpectSendSessionMessageCallback,
                  base::Unretained(this)));
 
   base::RunLoop run_loop;
@@ -787,17 +787,17 @@ TEST_F(PresentationServiceImplTest, SendBlobData) {
   std::vector<uint8_t> data;
   data.assign(buffer, buffer + sizeof(buffer));
 
-  presentation::PresentationSessionInfoPtr session(
-      presentation::PresentationSessionInfo::New());
+  blink::mojom::PresentationSessionInfoPtr session(
+      blink::mojom::PresentationSessionInfo::New());
   session->url = kPresentationUrl;
   session->id = kPresentationId;
-  presentation::SessionMessagePtr message_request(
-      presentation::SessionMessage::New());
-  message_request->type = presentation::PresentationMessageType::BLOB;
+  blink::mojom::SessionMessagePtr message_request(
+      blink::mojom::SessionMessage::New());
+  message_request->type = blink::mojom::PresentationMessageType::BLOB;
   message_request->data = mojo::Array<uint8_t>::From(data);
   service_ptr_->SendSessionMessage(
       std::move(session), std::move(message_request),
-      base::Bind(&PresentationServiceImplTest::ExpectSendMessageMojoCallback,
+      base::Bind(&PresentationServiceImplTest::ExpectSendSessionMessageCallback,
                  base::Unretained(this)));
 
   base::RunLoop run_loop;
@@ -809,7 +809,7 @@ TEST_F(PresentationServiceImplTest, SendBlobData) {
   run_loop.Run();
 
   // Make sure |test_message| gets deleted.
-  scoped_ptr<PresentationSessionMessage> scoped_test_message(test_message);
+  std::unique_ptr<PresentationSessionMessage> scoped_test_message(test_message);
   EXPECT_TRUE(test_message);
   EXPECT_TRUE(test_message->is_binary());
   EXPECT_EQ(PresentationMessageType::BLOB, test_message->type);
@@ -841,7 +841,7 @@ TEST_F(PresentationServiceImplTest, MaxPendingJoinSessionRequests) {
         base::StringPrintf(presentation_url, i),
         base::StringPrintf(presentation_id, i),
         base::Bind(
-            &PresentationServiceImplTest::ExpectNewSessionMojoCallbackError,
+            &PresentationServiceImplTest::ExpectNewSessionCallbackError,
             base::Unretained(this)));
   SaveQuitClosureAndRunLoop();
 }

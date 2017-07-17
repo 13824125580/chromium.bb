@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_SSL_CHROME_SECURITY_STATE_MODEL_CLIENT_H_
 #define CHROME_BROWSER_SSL_CHROME_SECURITY_STATE_MODEL_CLIENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "components/security_state/security_state_model.h"
 #include "components/security_state/security_state_model_client.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "content/public/common/security_style.h"
 
 namespace content {
+struct SecurityStyleExplanations;
 class WebContents;
 }  // namespace content
 
@@ -25,6 +29,14 @@ class ChromeSecurityStateModelClient
   const security_state::SecurityStateModel::SecurityInfo& GetSecurityInfo()
       const;
 
+  // Returns the SecurityStyle that should be applied to a WebContents
+  // with the given |security_info|. Populates
+  // |security_style_explanations| to explain why the returned
+  // SecurityStyle was chosen.
+  static content::SecurityStyle GetSecurityStyle(
+      const security_state::SecurityStateModel::SecurityInfo& security_info,
+      content::SecurityStyleExplanations* security_style_explanations);
+
   // SecurityStateModelClient:
   void GetVisibleSecurityState(
       security_state::SecurityStateModel::VisibleSecurityState* state) override;
@@ -37,7 +49,7 @@ class ChromeSecurityStateModelClient
   friend class content::WebContentsUserData<ChromeSecurityStateModelClient>;
 
   content::WebContents* web_contents_;
-  scoped_ptr<security_state::SecurityStateModel> security_state_model_;
+  std::unique_ptr<security_state::SecurityStateModel> security_state_model_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeSecurityStateModelClient);
 };

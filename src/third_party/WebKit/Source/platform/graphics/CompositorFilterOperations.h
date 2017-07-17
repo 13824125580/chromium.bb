@@ -11,6 +11,8 @@
 #include "platform/graphics/Color.h"
 #include "third_party/skia/include/core/SkScalar.h"
 #include "wtf/Noncopyable.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 class SkImageFilter;
 
@@ -20,7 +22,10 @@ namespace blink {
 class PLATFORM_EXPORT CompositorFilterOperations {
     WTF_MAKE_NONCOPYABLE(CompositorFilterOperations);
 public:
-    CompositorFilterOperations();
+    static std::unique_ptr<CompositorFilterOperations> create()
+    {
+        return wrapUnique(new CompositorFilterOperations());
+    }
 
     const cc::FilterOperations& asFilterOperations() const;
 
@@ -38,13 +43,14 @@ public:
     void appendZoomFilter(float amount, int inset);
     void appendSaturatingBrightnessFilter(float amount);
 
-    // This grabs a ref on the passed-in filter.
-    void appendReferenceFilter(SkImageFilter*);
+    void appendReferenceFilter(sk_sp<SkImageFilter>);
 
     void clear();
     bool isEmpty() const;
 
 private:
+    CompositorFilterOperations();
+
     cc::FilterOperations m_filterOperations;
 };
 

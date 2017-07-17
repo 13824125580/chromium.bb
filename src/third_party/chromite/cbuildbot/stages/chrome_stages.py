@@ -6,15 +6,16 @@
 
 from __future__ import print_function
 
+import glob
 import multiprocessing
 import platform
 import os
-import sys
 
 from chromite.cbuildbot import commands
-from chromite.cbuildbot import failures_lib
 from chromite.cbuildbot import constants
+from chromite.cbuildbot import failures_lib
 from chromite.cbuildbot import manifest_version
+from chromite.cbuildbot import results_lib
 from chromite.cbuildbot.stages import artifact_stages
 from chromite.cbuildbot.stages import generic_stages
 from chromite.cbuildbot.stages import sync_stages
@@ -24,6 +25,11 @@ from chromite.lib import osutils
 from chromite.lib import parallel
 from chromite.lib import path_util
 
+MASK_CHANGES_ERROR_SNIPPET = 'The following mask changes are necessary'
+CHROMEPIN_MASK_PATH = os.path.join(constants.SOURCE_ROOT,
+                                   constants.CHROMIUMOS_OVERLAY_DIR,
+                                   'profiles', 'default', 'linux',
+                                   'package.mask', 'chromepin')
 
 class SyncChromeStage(generic_stages.BuilderStage,
                       generic_stages.ArchivingStageMixin):
@@ -36,7 +42,6 @@ class SyncChromeStage(generic_stages.BuilderStage,
     # PerformStage() will fill this out for us.
     # TODO(mtennant): Replace with a run param.
     self.chrome_version = None
-    self.chrome_uprevved = False
 
   def HandleSkip(self):
     """Set run.attrs.chrome_version to chrome version in buildroot now."""
@@ -67,21 +72,38 @@ class SyncChromeStage(generic_stages.BuilderStage,
                        self.chrome_version)
 
       # Perform chrome uprev.
-      chrome_atom_to_build = commands.MarkChromeAsStable(
-          self._build_root, self._run.manifest_branch,
-          self._chrome_rev, self._boards,
-          chrome_version=self.chrome_version)
+      try:
+        chrome_atom_to_build = commands.MarkChromeAsStable(
+            self._build_root, self._run.manifest_branch,
+            self._chrome_rev, self._boards,
+            chrome_version=self.chrome_version)
+      except commands.ChromeIsPinnedUprevError as e:
+        # If uprev failed due to a chrome pin, record that failure (so that the
+        # build ultimately fails) but try again without the pin, to allow the
+        # slave to test the newer chrome anyway).
+        chrome_atom_to_build = e.new_chrome_atom
+        if chrome_atom_to_build:
+          results_lib.Results.Record(self.name, e)
+          logging.PrintBuildbotStepFailure()
+          logging.error('Chrome is pinned. Attempting to continue build for '
+                        'chrome atom %s anyway but build will ultimately fail.',
+                        chrome_atom_to_build)
+          logging.info('Deleting pin file at %s and proceeding.',
+                       CHROMEPIN_MASK_PATH)
+          osutils.SafeUnlink(CHROMEPIN_MASK_PATH)
+        else:
+          raise
 
     kwargs = {}
     if self._chrome_rev == constants.CHROME_REV_SPEC:
       kwargs['revision'] = self.chrome_version
-      cros_build_lib.PrintBuildbotStepText('revision %s' % kwargs['revision'])
+      logging.PrintBuildbotStepText('revision %s' % kwargs['revision'])
     else:
       if not self.chrome_version:
         self.chrome_version = self._run.DetermineChromeVersion()
 
       kwargs['tag'] = self.chrome_version
-      cros_build_lib.PrintBuildbotStepText('tag %s' % kwargs['tag'])
+      logging.PrintBuildbotStepText('tag %s' % kwargs['tag'])
 
     useflags = self._run.config.useflags
     commands.SyncChrome(self._build_root, self._run.options.chrome_root,
@@ -90,11 +112,8 @@ class SyncChromeStage(generic_stages.BuilderStage,
         self._run.options.buildbot and
         self._run.config.build_type == constants.CHROME_PFQ_TYPE):
       logging.info('Chrome already uprevved. Nothing else to do.')
-      sys.exit(0)
-
-    if chrome_atom_to_build:
-      self.chrome_uprevved = True
-
+      raise failures_lib.ExitEarlyException(
+          'SyncChromeStage finished and exited early.')
 
   def _WriteChromeVersionToMetadata(self):
     """Write chrome version to metadata and upload partial json file."""
@@ -109,8 +128,6 @@ class SyncChromeStage(generic_stages.BuilderStage,
     # means something.  In other words, this stage tried to run.
     self._run.attrs.chrome_version = self.chrome_version
     self._WriteChromeVersionToMetadata()
-    self._run.attrs.metadata.UpdateWithDict(
-        {'chrome_was_uprevved': self.chrome_uprevved})
     super(SyncChromeStage, self)._Finish()
 
 
@@ -127,27 +144,28 @@ class PatchChromeStage(generic_stages.BuilderStage):
       if not colon:
         subdir = 'src'
       url = self.URL_BASE % {'id': patch}
-      cros_build_lib.PrintBuildbotLink(spatch, url)
+      logging.PrintBuildbotLink(spatch, url)
       commands.PatchChrome(self._run.options.chrome_root, patch, subdir)
 
 
-class ChromeSDKStage(generic_stages.BoardSpecificBuilderStage,
-                     generic_stages.ArchivingStageMixin):
+class SimpleChromeWorkflowStage(generic_stages.BoardSpecificBuilderStage,
+                                generic_stages.ArchivingStageMixin):
   """Run through the simple chrome workflow."""
 
   option_name = 'chrome_sdk'
   config_name = 'chrome_sdk'
 
   def __init__(self, *args, **kwargs):
-    super(ChromeSDKStage, self).__init__(*args, **kwargs)
+    super(SimpleChromeWorkflowStage, self).__init__(*args, **kwargs)
     self._upload_queue = multiprocessing.Queue()
     self._pkg_dir = os.path.join(
         self._build_root, constants.DEFAULT_CHROOT_DIR,
         'build', self._current_board, 'var', 'db', 'pkg')
     if self._run.options.chrome_root:
       self.chrome_src = os.path.join(self._run.options.chrome_root, 'src')
+      board_dir = 'out_%s' % self._current_board
       self.out_board_dir = os.path.join(
-          self.chrome_src, 'out_%s' % self._current_board)
+          self.chrome_src, board_dir, 'Release')
 
   def _BuildAndArchiveChromeSysroot(self):
     """Generate and upload sysroot for building Chrome."""
@@ -164,8 +182,16 @@ class ChromeSDKStage(generic_stages.BoardSpecificBuilderStage,
 
   def _ArchiveChromeEbuildEnv(self):
     """Generate and upload Chrome ebuild environment."""
-    chrome_dir = artifact_stages.ArchiveStage.SingleMatchGlob(
-        os.path.join(self._pkg_dir, constants.CHROME_CP) + '-*')
+    files = glob.glob(os.path.join(self._pkg_dir, constants.CHROME_CP) + '-*')
+    if not files:
+      raise artifact_stages.NothingToArchiveException(
+          'Failed to find package %s' % constants.CHROME_CP)
+    if len(files) > 1:
+      logging.PrintBuildbotStepWarnings()
+      logging.warning('Expected one package for %s, found %d',
+                      constants.CHROME_CP, len(files))
+
+    chrome_dir = sorted(files)[-1]
     env_bzip = os.path.join(chrome_dir, 'environment.bz2')
     with osutils.TempDir(prefix='chrome-sdk-stage') as tempdir:
       # Convert from bzip2 to tar format.
@@ -185,18 +211,34 @@ class ChromeSDKStage(generic_stages.BoardSpecificBuilderStage,
   def _VerifySDKEnvironment(self):
     """Make sure the SDK environment is set up properly."""
     # If the environment wasn't set up, then the output directory wouldn't be
-    # created after 'gclient runhooks'.
+    # created after 'gn gen'.
     # TODO: Make this check actually look at the environment.
     if not os.path.exists(self.out_board_dir):
       raise AssertionError('%s not created!' % self.out_board_dir)
+    # Log args.gn for debugging.
+    logging.info('ARGS.GN=\n%s',
+                 osutils.ReadFile(os.path.join(self.out_board_dir, 'args.gn')))
 
   def _BuildChrome(self, sdk_cmd):
     """Use the generated SDK to build Chrome."""
     # Validate fetching of the SDK and setting everything up.
     sdk_cmd.Run(['true'])
-    # Actually build chromium.
-    sdk_cmd.Run(['gclient', 'runhooks'])
+    # Wipe the output directory if switching from GYP to GN.
+    args_path = os.path.join(self.out_board_dir, 'args.gn')
+    if not os.path.exists(args_path):
+      sdk_cmd.Run(['rm', '-rf', self.out_board_dir])
+    # Set GYP_CHROMIUM_NO_ACTION=1 and run hooks.
+    # TODO(stevenjb): Remove GYP_CHROMIUM_NO_ACTION=1 once no longer necessary.
+    sdk_cmd.Run(['bash', '-c',
+                 'GYP_CHROMIUM_NO_ACTION=1 gclient runhooks'])
+    # Generate args.gn and ninja files.
+    gn_cmd = os.path.join(self.chrome_src, 'buildtools', 'linux64', 'gn')
+    gn_gen_cmd = '%s gen "%s" --args="$GN_ARGS"' % (gn_cmd, self.out_board_dir)
+    sdk_cmd.Run(['bash', '-c', gn_gen_cmd])
+
     self._VerifySDKEnvironment()
+
+    # Build chromium.
     sdk_cmd.Ninja()
 
   def _TestDeploy(self, sdk_cmd):
@@ -205,8 +247,7 @@ class ChromeSDKStage(generic_stages.BoardSpecificBuilderStage,
       # Use the TOT deploy_chrome.
       script_path = os.path.join(
           self._build_root, constants.CHROMITE_BIN_SUBDIR, 'deploy_chrome')
-      sdk_cmd.Run([script_path, '--build-dir',
-                   os.path.join(self.out_board_dir, 'Release'),
+      sdk_cmd.Run([script_path, '--build-dir', self.out_board_dir,
                    '--staging-only', '--staging-dir', tempdir])
       self._VerifyChromeDeployed(tempdir)
 
@@ -219,7 +260,7 @@ class ChromeSDKStage(generic_stages.BoardSpecificBuilderStage,
       # Chrome no longer builds on Lucid. See crbug.com/276311
       print('Ubuntu lucid is no longer supported.')
       print('Please upgrade to Ubuntu Precise.')
-      cros_build_lib.PrintBuildbotStepWarnings()
+      logging.PrintBuildbotStepWarnings()
       return
 
     steps = [self._BuildAndArchiveChromeSysroot, self._ArchiveChromeEbuildEnv,

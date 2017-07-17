@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/arc/arc_app_model_builder.h"
 
+#include "base/memory/ptr_util.h"
+#include "chrome/browser/chromeos/arc/arc_auth_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_item.h"
 
@@ -17,14 +19,16 @@ ArcAppModelBuilder::~ArcAppModelBuilder() {
 
 void ArcAppModelBuilder::BuildModel() {
   prefs_ = ArcAppListPrefs::Get(profile());
+  DCHECK(prefs_);
 
   std::vector<std::string> app_ids = prefs_->GetAppIds();
   for (auto& app_id : app_ids) {
-    scoped_ptr<ArcAppListPrefs::AppInfo> app_info = prefs_->GetApp(app_id);
+    std::unique_ptr<ArcAppListPrefs::AppInfo> app_info = prefs_->GetApp(app_id);
     if (!app_info)
       continue;
 
-    InsertApp(CreateApp(app_id, *app_info));
+    if (app_info->showInLauncher)
+      InsertApp(CreateApp(app_id, *app_info));
   }
 
   prefs_->AddObserver(this);
@@ -34,36 +38,26 @@ ArcAppItem* ArcAppModelBuilder::GetArcAppItem(const std::string& app_id) {
   return static_cast<ArcAppItem*>(GetAppItem(app_id));
 }
 
-scoped_ptr<ArcAppItem> ArcAppModelBuilder::CreateApp(
+std::unique_ptr<ArcAppItem> ArcAppModelBuilder::CreateApp(
     const std::string& app_id,
     const ArcAppListPrefs::AppInfo& app_info) {
-  return make_scoped_ptr(new ArcAppItem(profile(),
-                                        GetSyncItem(app_id),
-                                        app_id,
-                                        app_info.name,
-                                        app_info.ready));
+  return base::WrapUnique(new ArcAppItem(profile(), GetSyncItem(app_id), app_id,
+                                         app_info.name));
 }
 
 void ArcAppModelBuilder::OnAppRegistered(
     const std::string& app_id,
     const ArcAppListPrefs::AppInfo& app_info) {
-  InsertApp(CreateApp(app_id, app_info));
-}
-
-void ArcAppModelBuilder::OnAppReadyChanged(const std::string& app_id,
-                                           bool ready) {
-  ArcAppItem* app_item = GetArcAppItem(app_id);
-  if (!app_item) {
-    VLOG(2) << "Could not update the state of ARC app(" << app_id
-            << ") because it was not found.";
-    return;
-  }
-
-  app_item->SetReady(ready);
+  if (app_info.showInLauncher)
+    InsertApp(CreateApp(app_id, app_info));
 }
 
 void ArcAppModelBuilder::OnAppRemoved(const std::string& app_id) {
-  RemoveApp(app_id);
+  const arc::ArcAuthService* auth_service = arc::ArcAuthService::Get();
+  DCHECK(auth_service);
+  // Don't sync app removal in case it was caused by disabling Arc.
+  const bool unsynced_change = !auth_service->IsArcEnabled();
+  RemoveApp(app_id, unsynced_change);
 }
 
 void ArcAppModelBuilder::OnAppIconUpdated(const std::string& app_id,

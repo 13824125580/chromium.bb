@@ -14,8 +14,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ViewSwitcher;
 
-import org.chromium.base.ApplicationStatus;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
@@ -137,11 +138,16 @@ public class BookmarkManager implements BookmarkDelegate {
         PartnerBookmarksShim.kickOffReading(activity);
 
         mLargeIconBridge = new LargeIconBridge(Profile.getLastUsedProfile().getOriginalProfile());
-        ActivityManager activityManager = ((ActivityManager) ApplicationStatus
+        ActivityManager activityManager = ((ActivityManager) ContextUtils
                 .getApplicationContext().getSystemService(Context.ACTIVITY_SERVICE));
         int maxSize = Math.min(activityManager.getMemoryClass() / 4 * 1024 * 1024,
                 FAVICON_MAX_CACHE_SIZE_BYTES);
         mLargeIconBridge.createCache(maxSize);
+
+        RecordUserAction.record("MobileBookmarkManagerOpen");
+        if (!isDialogUi) {
+            RecordUserAction.record("MobileBookmarkManagerPageOpen");
+        }
     }
 
     /**
@@ -269,9 +275,7 @@ public class BookmarkManager implements BookmarkDelegate {
 
         if (state.mState != BookmarkUIState.STATE_LOADING) {
             // Loading state may be pushed to the stack but should never be stored in preferences.
-            if (state.mShouldPersist) {
-                BookmarkUtils.setLastUsedUrl(mActivity, state.mUrl);
-            }
+            BookmarkUtils.setLastUsedUrl(mActivity, state.mUrl);
             // If a loading state is replaced by another loading state, do not notify this change.
             if (mUrlChangeListener != null) {
                 mUrlChangeListener.onBookmarkUIStateChange(state.mUrl);
@@ -302,11 +306,6 @@ public class BookmarkManager implements BookmarkDelegate {
     public void openAllBookmarks() {
         closeSearchUI();
         setState(BookmarkUIState.createAllBookmarksState(mBookmarkModel));
-    }
-
-    @Override
-    public void openFilter(BookmarkFilter filter) {
-        setState(BookmarkUIState.createFilterState(filter, mBookmarkModel));
     }
 
     @Override
@@ -359,9 +358,6 @@ public class BookmarkManager implements BookmarkDelegate {
                 // In loading state, onBookmarkDelegateInitialized() is not called for all
                 // UIObservers, which means that there will be no observers at the time. Do nothing.
                 assert mUIObservers.isEmpty();
-                break;
-            case BookmarkUIState.STATE_FILTER:
-                observer.onFilterStateSet(mStateStack.peek().mFilter);
                 break;
             default:
                 assert false : "State not valid";

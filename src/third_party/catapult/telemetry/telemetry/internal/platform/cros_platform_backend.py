@@ -4,6 +4,7 @@
 
 import logging
 
+from telemetry import decorators
 from telemetry.core import cros_interface
 from telemetry.core import platform
 from telemetry.core import util
@@ -55,10 +56,10 @@ class CrosPlatformBackend(
       return port
     return self._cri.GetRemotePort()
 
-  def GetWprPortPairs(self, has_netsim):
+  def GetWprPortPairs(self):
     """Return suitable port pairs to be used for web page replay."""
     default_local_ports = super(CrosPlatformBackend, self).GetWprPortPairs(
-        has_netsim).local_ports
+        ).local_ports
     return forwarders.PortPairs.Zip(
         default_local_ports,
         forwarders.PortSet(
@@ -119,6 +120,13 @@ class CrosPlatformBackend(
       sample_stats[cpu] = cstates
     return sample_stats
 
+  def GetDeviceTypeName(self):
+    return self._cri.GetDeviceTypeName()
+
+  @decorators.Cache
+  def GetArchName(self):
+    return self._cri.GetArchName()
+
   def GetOSName(self):
     return 'chromeos'
 
@@ -162,3 +170,12 @@ class CrosPlatformBackend(
       logging.warning(
           'PathExists: params timeout and retries are not support on CrOS.')
     return self._cri.FileExistsOnDevice(path)
+
+  def CanTakeScreenshot(self):
+    # crbug.com/609001: screenshots don't work on VMs.
+    logging.info('Sys vendor=' + self.cri.SysVendor() +
+                 ', IsRunningOnVM=' + repr(self.cri.IsRunningOnVM()))
+    return False
+
+  def TakeScreenshot(self, file_path):
+    return self._cri.TakeScreenshot(file_path)

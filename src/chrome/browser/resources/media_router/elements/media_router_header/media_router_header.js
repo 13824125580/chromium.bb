@@ -10,11 +10,10 @@ Polymer({
     /**
      * The name of the icon used as the back button. This is set once, when
      * the |this| is ready.
-     * @private {string}
+     * @private {string|undefined}
      */
     arrowDropIcon_: {
       type: String,
-      value: '',
     },
 
     /**
@@ -28,11 +27,10 @@ Polymer({
 
     /**
      * The header text to show.
-     * @type {string}
+     * @type {string|undefined}
      */
     headingText: {
       type: String,
-      value: '',
     },
 
     /**
@@ -46,70 +44,73 @@ Polymer({
     },
 
     /**
+     * The height of the header when it doesn't show the user email.
+     * @private {number}
+     */
+    headerWithoutEmailHeight_: {
+      type: Number,
+      readOnly: true,
+      value: 52,
+    },
+
+    /**
      * Whether to show the user email in the header.
-     * @type {boolean}
+     * @type {boolean|undefined}
      */
     showEmail: {
       type: Boolean,
-      value: false,
       observer: 'maybeChangeHeaderHeight_',
     },
 
     /**
      * The text to show in the tooltip.
-     * @type {string}
+     * @type {string|undefined}
      */
     tooltip: {
       type: String,
-      value: '',
     },
 
     /**
      * The user email if they are signed in.
-     * @type {string}
+     * @type {string|undefined}
      */
     userEmail: {
       type: String,
-      value: '',
     },
 
     /**
      * The current view that this header should reflect.
-     * @type {?media_router.MediaRouterView}
+     * @type {?media_router.MediaRouterView|undefined}
      */
     view: {
       type: String,
-      value: null,
       observer: 'updateHeaderCursorStyle_',
     },
   },
 
-  listeners: {
-    'focus': 'onFocus_',
-  },
+  behaviors: [
+    I18nBehavior,
+  ],
 
   ready: function() {
-    // If this is not on a Mac platform, remove the placeholder. See
-    // onFocus_() for more details. ready() is only called once, so no need
-    // to check if the placeholder exist before removing.
-    if (!cr.isMac)
-      this.$$('#focus-placeholder').remove();
+    this.$$('#header').style.height = this.headerWithoutEmailHeight_ + 'px';
   },
 
   attached: function() {
     // isRTL() only works after i18n_template.js runs to set <html dir>.
     // Set the back button icon based on text direction.
-    this.arrowDropIcon_ = isRTL() ? 'arrow-forward' : 'arrow-back';
+    this.arrowDropIcon_ = isRTL() ?
+        'media-router:arrow-forward' : 'media-router:arrow-back';
   },
 
   /**
    * @param {?media_router.MediaRouterView} view The current view.
-   * @return {string} The current arrow-drop-* icon to use.
+   * @return {string} The icon to use.
    * @private
    */
   computeArrowDropIcon_: function(view) {
     return view == media_router.MediaRouterView.CAST_MODE_LIST ?
-        'arrow-drop-up' : 'arrow-drop-down';
+        'media-router:arrow-drop-up' : 'media-router:arrow-drop-down';
   },
 
   /**
@@ -124,12 +125,23 @@ Polymer({
 
   /**
    * @param {?media_router.MediaRouterView} view The current view.
-   * @return {boolean} Whether or not the back button should be hidden.
+   * @return {string} The title text for the arrow drop button.
    * @private
    */
-  computeBackButtonHidden_: function(view) {
-    return view != media_router.MediaRouterView.ROUTE_DETAILS &&
-        view != media_router.MediaRouterView.FILTER;
+  computeArrowDropTitle_: function(view) {
+    return view == media_router.MediaRouterView.CAST_MODE_LIST ?
+        this.i18n('viewDeviceListButtonTitle') :
+            this.i18n('viewCastModeListButtonTitle');
+  },
+
+  /**
+   * @param {?media_router.MediaRouterView} view The current view.
+   * @return {boolean} Whether or not the back button should be shown.
+   * @private
+   */
+  computeBackButtonShown_: function(view) {
+    return view == media_router.MediaRouterView.ROUTE_DETAILS ||
+        view == media_router.MediaRouterView.FILTER;
   },
 
   /**
@@ -164,28 +176,6 @@ Polymer({
   },
 
   /**
-   * Called when a focus event is triggered.
-   *
-   * @param {!Event} event The event object.
-   * @private
-   */
-  onFocus_: function(event) {
-    // If the focus event was not triggered by the user, remove focus from
-    // the element. This prevents unexpected focusing when the dialog is
-    // initially loaded.
-    // This only happens on mac.
-    if (cr.isMac && !event.sourceCapabilities) {
-      event.path[0].blur();
-      // Adding a focus placeholder element is part of the workaround for
-      // handling unexpected focusing, which only happens once on dialog open.
-      // Since #focus-placeholder initially is focus-enabled, as denoted by
-      // its tabindex value, the focus will not appear in other elements.
-      // Remove the placeholder since we have no more use for it.
-      this.$$('#focus-placeholder').remove();
-    }
-  },
-
-  /**
    * Handles a click on the arrow button by firing an arrow-click event.
    *
    * @private
@@ -201,22 +191,22 @@ Polymer({
    * Updates header height to accomodate email text. This is called on changes
    * to |showEmail| and will return early if the value has not changed.
    *
-   * @param {boolean} oldValue .
-   * @param {boolean} newValue .
+   * @param {boolean} newValue The new value of |showEmail|.
+   * @param {boolean} oldValue The previous value of |showEmail|.
    * @private
    */
-  maybeChangeHeaderHeight_: function(oldValue, newValue) {
-    if (!!oldValue == !!newValue) {
+  maybeChangeHeaderHeight_: function(newValue, oldValue) {
+    if (oldValue == newValue)
       return;
-    }
 
     // Ensures conditional templates are stamped.
     this.async(function() {
       var currentHeight = this.offsetHeight;
 
-      this.$$('#header-toolbar').style.height =
+      this.$$('#header').style.height =
           this.showEmail && !this.isEmptyOrWhitespace_(this.userEmail) ?
-              this.headerWithEmailHeight_ + 'px' : undefined;
+              this.headerWithEmailHeight_ + 'px' :
+                  this.headerWithoutEmailHeight_ + 'px';
 
       // Only fire if height actually changed.
       if (currentHeight != this.offsetHeight) {

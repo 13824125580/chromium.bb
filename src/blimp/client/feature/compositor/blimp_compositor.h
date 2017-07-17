@@ -5,14 +5,12 @@
 #ifndef BLIMP_CLIENT_FEATURE_COMPOSITOR_BLIMP_COMPOSITOR_H_
 #define BLIMP_CLIENT_FEATURE_COMPOSITOR_BLIMP_COMPOSITOR_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "blimp/client/blimp_client_export.h"
 #include "blimp/client/feature/compositor/blimp_input_manager.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_settings.h"
@@ -35,7 +33,6 @@ class LayerTreeHost;
 
 namespace blimp {
 
-class BlimpImageSerializationProcessor;
 class BlimpMessage;
 
 namespace client {
@@ -54,6 +51,8 @@ class BlimpCompositorClient {
   virtual cc::TaskGraphRunner* GetTaskGraphRunner() = 0;
   virtual gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() = 0;
   virtual cc::ImageSerializationProcessor* GetImageSerializationProcessor() = 0;
+  virtual void DidCompleteSwapBuffers() = 0;
+  virtual void DidCommitAndDrawFrame() = 0;
 
   // Should send web gesture events which could not be handled locally by the
   // compositor to the engine.
@@ -86,7 +85,7 @@ class BlimpCompositorClient {
 // RenderWidget, identified by a custom |render_widget_id| generated on the
 // engine. The lifetime of this compositor is controlled by its corresponding
 // RenderWidget.
-class BLIMP_CLIENT_EXPORT BlimpCompositor
+class BlimpCompositor
     : public cc::LayerTreeHostClient,
       public cc::RemoteProtoChannel,
       public BlimpInputManagerClient {
@@ -125,7 +124,7 @@ class BLIMP_CLIENT_EXPORT BlimpCompositor
   // LayerTreeHost of the render widget for this compositor.
   // virtual for testing.
   virtual void OnCompositorMessageReceived(
-      scoped_ptr<cc::proto::CompositorMessage> message);
+      std::unique_ptr<cc::proto::CompositorMessage> message);
 
   int render_widget_id() const { return render_widget_id_; }
 
@@ -151,10 +150,6 @@ class BLIMP_CLIENT_EXPORT BlimpCompositor
   void DidCommitAndDrawFrame() override;
   void DidCompleteSwapBuffers() override;
   void DidCompletePageScaleAnimation() override;
-  void RecordFrameTimingEvents(
-      scoped_ptr<cc::FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<cc::FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override;
 
   // RemoteProtoChannel implementation.
   void SetProtoReceiver(ProtoReceiver* receiver) override;
@@ -186,7 +181,7 @@ class BLIMP_CLIENT_EXPORT BlimpCompositor
 
   BlimpCompositorClient* client_;
 
-  scoped_ptr<cc::LayerTreeHost> host_;
+  std::unique_ptr<cc::LayerTreeHost> host_;
 
   gfx::AcceleratedWidget window_;
 
@@ -210,7 +205,7 @@ class BLIMP_CLIENT_EXPORT BlimpCompositor
   // cc::InputHandler. The input events are forwarded to this input handler by
   // the manager to be handled by the client compositor for the current render
   // widget.
-  scoped_ptr<BlimpInputManager> input_manager_;
+  std::unique_ptr<BlimpInputManager> input_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpCompositor);
 };

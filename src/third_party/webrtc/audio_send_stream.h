@@ -11,13 +11,12 @@
 #ifndef WEBRTC_AUDIO_SEND_STREAM_H_
 #define WEBRTC_AUDIO_SEND_STREAM_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "webrtc/base/scoped_ptr.h"
 #include "webrtc/config.h"
 #include "webrtc/modules/audio_coding/codecs/audio_encoder.h"
-#include "webrtc/stream.h"
 #include "webrtc/transport.h"
 #include "webrtc/typedefs.h"
 
@@ -28,7 +27,7 @@ namespace webrtc {
 // of WebRtc/Libjingle. Please use the VoiceEngine API instead.
 // See: https://bugs.chromium.org/p/webrtc/issues/detail?id=4690
 
-class AudioSendStream : public SendStream {
+class AudioSendStream {
  public:
   struct Stats {
     // TODO(solenberg): Harmonize naming and defaults with receive stream stats.
@@ -57,7 +56,7 @@ class AudioSendStream : public SendStream {
 
     std::string ToString() const;
 
-    // Receive-stream specific RTP settings.
+    // Send-stream specific RTP settings.
     struct Rtp {
       std::string ToString() const;
 
@@ -66,6 +65,9 @@ class AudioSendStream : public SendStream {
 
       // RTP header extensions used for the sent stream.
       std::vector<RtpExtension> extensions;
+
+      // See NackConfig for description.
+      NackConfig nack;
 
       // RTCP CNAME, see RFC 3550.
       std::string c_name;
@@ -84,15 +86,27 @@ class AudioSendStream : public SendStream {
     // Ownership of the encoder object is transferred to Call when the config is
     // passed to Call::CreateAudioSendStream().
     // TODO(solenberg): Implement, once we configure codecs through the new API.
-    // rtc::scoped_ptr<AudioEncoder> encoder;
+    // std::unique_ptr<AudioEncoder> encoder;
     int cng_payload_type = -1;  // pt, or -1 to disable Comfort Noise Generator.
-    int red_payload_type = -1;  // pt, or -1 to disable REDundant coding.
   };
 
+  // Starts stream activity.
+  // When a stream is active, it can receive, process and deliver packets.
+  virtual void Start() = 0;
+  // Stops stream activity.
+  // When a stream is stopped, it can't receive, process or deliver packets.
+  virtual void Stop() = 0;
+
   // TODO(solenberg): Make payload_type a config property instead.
-  virtual bool SendTelephoneEvent(int payload_type, uint8_t event,
-                                  uint32_t duration_ms) = 0;
+  virtual bool SendTelephoneEvent(int payload_type, int event,
+                                  int duration_ms) = 0;
+
+  virtual void SetMuted(bool muted) = 0;
+
   virtual Stats GetStats() const = 0;
+
+ protected:
+  virtual ~AudioSendStream() {}
 };
 }  // namespace webrtc
 

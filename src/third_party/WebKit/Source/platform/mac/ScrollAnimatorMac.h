@@ -35,6 +35,7 @@
 #include "platform/scroll/ScrollAnimatorBase.h"
 #include "public/platform/WebTaskRunner.h"
 #include "wtf/RetainPtr.h"
+#include <memory>
 
 OBJC_CLASS BlinkScrollAnimationHelperDelegate;
 OBJC_CLASS BlinkScrollbarPainterControllerDelegate;
@@ -47,7 +48,7 @@ namespace blink {
 class Scrollbar;
 
 class PLATFORM_EXPORT ScrollAnimatorMac : public ScrollAnimatorBase {
-    WILL_BE_USING_PRE_FINALIZER(ScrollAnimatorMac, dispose);
+    USING_PRE_FINALIZER(ScrollAnimatorMac, dispose);
 public:
     ScrollAnimatorMac(ScrollableArea*);
     ~ScrollAnimatorMac() override;
@@ -67,8 +68,6 @@ public:
 
     void setVisibleScrollerThumbRect(const IntRect&);
 
-    static bool canUseCoordinatedScrollbar();
-
     DEFINE_INLINE_VIRTUAL_TRACE()
     {
         ScrollAnimatorBase::trace(visitor);
@@ -84,14 +83,14 @@ private:
     RetainPtr<BlinkScrollbarPainterDelegate> m_verticalScrollbarPainterDelegate;
 
     void initialScrollbarPaintTask();
-    OwnPtr<CancellableTaskFactory> m_initialScrollbarPaintTaskFactory;
+    std::unique_ptr<CancellableTaskFactory> m_initialScrollbarPaintTaskFactory;
 
     void sendContentAreaScrolledTask();
-    OwnPtr<CancellableTaskFactory> m_sendContentAreaScrolledTaskFactory;
-    OwnPtr<WebTaskRunner> m_taskRunner;
+    std::unique_ptr<CancellableTaskFactory> m_sendContentAreaScrolledTaskFactory;
+    std::unique_ptr<WebTaskRunner> m_taskRunner;
     FloatSize m_contentAreaScrolledTimerScrollDelta;
 
-    ScrollResultOneDimensional userScroll(ScrollbarOrientation, ScrollGranularity, float step, float delta) override;
+    ScrollResult userScroll(ScrollGranularity, const FloatSize& delta) override;
     void scrollToOffsetWithoutAnimation(const FloatPoint&) override;
 
     void handleWheelEventPhase(PlatformWheelEventPhase) override;
@@ -104,9 +103,7 @@ private:
     void mouseMovedInContentArea() const override;
     void mouseEnteredScrollbar(Scrollbar&) const override;
     void mouseExitedScrollbar(Scrollbar&) const override;
-    void willStartLiveResize() override;
     void contentsResized() const override;
-    void willEndLiveResize() override;
     void contentAreaDidShow() const override;
     void contentAreaDidHide() const override;
     void didBeginScrollGesture() const;

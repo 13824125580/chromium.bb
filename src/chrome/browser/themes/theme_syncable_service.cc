@@ -59,8 +59,8 @@ void ThemeSyncableService::OnThemeChange() {
 syncer::SyncMergeResult ThemeSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> error_handler) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
@@ -235,14 +235,12 @@ void ThemeSyncableService::SetCurrentThemeFromThemeSpecifics(
       // so by adding it as a pending extension and then triggering an
       // auto-update cycle.
       const bool kRemoteInstall = false;
-      const bool kInstalledByCustodian = false;
       if (!extensions_service->pending_extension_manager()->AddFromSync(
               id,
               update_url,
               base::Version(),
               &IsTheme,
-              kRemoteInstall,
-              kInstalledByCustodian)) {
+              kRemoteInstall)) {
         LOG(WARNING) << "Could not add pending extension for " << id;
         return;
       }

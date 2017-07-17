@@ -45,9 +45,10 @@ class Toolbar : public NavigationFeature::NavigationFeatureDelegate {
   void OnFaviconChanged(int tab_id, const SkBitmap& favicon) override;
   void OnTitleChanged(int tab_id, const std::string& title) override;
   void OnLoadingChanged(int tab_id, bool loading) override;
+  void OnPageLoadStatusUpdate(int tab_id, bool completed) override;
 
  private:
-  virtual ~Toolbar();
+  ~Toolbar() override;
 
   // A bridge to the network layer which does the work of (de)serializing the
   // outgoing and incoming navigation messages from the engine. Toolbar does not

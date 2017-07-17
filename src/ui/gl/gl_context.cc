@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/gl/gl_context.h"
+
 #include <string>
 
 #include "base/bind.h"
@@ -9,10 +11,10 @@
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_local.h"
 #include "ui/gl/gl_bindings.h"
-#include "ui/gl/gl_context.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
@@ -20,7 +22,7 @@
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/gpu_timing.h"
 
-namespace gfx {
+namespace gl {
 
 namespace {
 base::LazyInstance<base::ThreadLocalPointer<GLContext> >::Leaky
@@ -42,17 +44,11 @@ void GLContext::ScopedReleaseCurrent::Cancel() {
   canceled_ = true;
 }
 
-GLContext::GLContext(GLShareGroup* share_group) :
-    share_group_(share_group),
-    state_dirtied_externally_(false),
-    swap_interval_(1),
-    force_swap_interval_zero_(false),
-    state_dirtied_callback_(
-        base::Bind(&GLContext::SetStateWasDirtiedExternally,
-        // Note that if this is not unretained, it will create a cycle (and
-        // will never be freed.
-        base::Unretained(this),
-        true)) {
+GLContext::GLContext(GLShareGroup* share_group)
+    : share_group_(share_group),
+      state_dirtied_externally_(false),
+      swap_interval_(1),
+      force_swap_interval_zero_(false) {
   if (!share_group_.get())
     share_group_ = new GLShareGroup;
 
@@ -96,22 +92,8 @@ std::string GLContext::GetGLRenderer() {
   return std::string(renderer ? renderer : "");
 }
 
-base::Closure GLContext::GetStateWasDirtiedExternallyCallback() {
-  return state_dirtied_callback_.callback();
-}
-
-void GLContext::RestoreStateIfDirtiedExternally() {
-  NOTREACHED();
-}
-
-bool GLContext::GetStateWasDirtiedExternally() const {
-  DCHECK(virtual_gl_api_);
-  return state_dirtied_externally_;
-}
-
-void GLContext::SetStateWasDirtiedExternally(bool dirtied_externally) {
-  DCHECK(virtual_gl_api_);
-  state_dirtied_externally_ = dirtied_externally;
+YUVToRGBConverter* GLContext::GetYUVToRGBConverter() {
+  return nullptr;
 }
 
 bool GLContext::HasExtension(const char* name) {
@@ -125,13 +107,11 @@ bool GLContext::HasExtension(const char* name) {
 }
 
 const GLVersionInfo* GLContext::GetVersionInfo() {
-  if(!version_info_) {
+  if (!version_info_) {
     std::string version = GetGLVersion();
     std::string renderer = GetGLRenderer();
-    version_info_ =
-        make_scoped_ptr(new GLVersionInfo(
-            version.c_str(), renderer.c_str(),
-            GetExtensions().c_str()));
+    version_info_ = base::WrapUnique(new GLVersionInfo(
+        version.c_str(), renderer.c_str(), GetExtensions().c_str()));
   }
   return version_info_.get();
 }
@@ -181,7 +161,7 @@ GLStateRestorer* GLContext::GetGLStateRestorer() {
 }
 
 void GLContext::SetGLStateRestorer(GLStateRestorer* state_restorer) {
-  state_restorer_ = make_scoped_ptr(state_restorer);
+  state_restorer_ = base::WrapUnique(state_restorer);
 }
 
 void GLContext::SetSwapInterval(int interval) {
@@ -233,18 +213,29 @@ void GLContext::SetRealGLApi() {
 GLContextReal::GLContextReal(GLShareGroup* share_group)
     : GLContext(share_group) {}
 
-scoped_refptr<gfx::GPUTimingClient> GLContextReal::CreateGPUTimingClient() {
+scoped_refptr<GPUTimingClient> GLContextReal::CreateGPUTimingClient() {
   if (!gpu_timing_) {
     gpu_timing_.reset(GPUTiming::CreateGPUTiming(this));
   }
   return gpu_timing_->CreateGPUTimingClient();
 }
 
-GLContextReal::~GLContextReal() {}
+GLContextReal::~GLContextReal() {
+  if (GetRealCurrent() == this)
+    current_real_context_.Pointer()->Set(nullptr);
+}
 
 void GLContextReal::SetCurrent(GLSurface* surface) {
   GLContext::SetCurrent(surface);
   current_real_context_.Pointer()->Set(surface ? this : nullptr);
 }
 
-}  // namespace gfx
+scoped_refptr<GLContext> InitializeGLContext(scoped_refptr<GLContext> context,
+                                             GLSurface* compatible_surface,
+                                             GpuPreference gpu_preference) {
+  if (!context->Initialize(compatible_surface, gpu_preference))
+    return nullptr;
+  return context;
+}
+
+}  // namespace gl

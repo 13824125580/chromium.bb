@@ -7,16 +7,17 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/common/page_type.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
@@ -35,7 +36,7 @@ class NavigationEntry {
  public:
   virtual ~NavigationEntry() {}
 
-  CONTENT_EXPORT static scoped_ptr<NavigationEntry> Create();
+  CONTENT_EXPORT static std::unique_ptr<NavigationEntry> Create();
 
   // Page-related stuff --------------------------------------------------------
 
@@ -109,11 +110,8 @@ class NavigationEntry {
   // Page-related helpers ------------------------------------------------------
 
   // Returns the title to be displayed on the tab. This could be the title of
-  // the page if it is available or the URL. |languages| is the list of
-  // accepted languages (e.g., prefs::kAcceptLanguages) or empty if proper
-  // URL formatting isn't needed (e.g., unit tests).
-  virtual const base::string16& GetTitleForDisplay(
-      const std::string& languages) const = 0;
+  // the page if it is available or the URL.
+  virtual const base::string16& GetTitleForDisplay() const = 0;
 
   // Returns true if the current tab is in view source mode. This will be false
   // if there is no navigation.
@@ -142,8 +140,8 @@ class NavigationEntry {
   // whether the page had post data.
   //
   // The actual post data is stored either in
-  // 1) browser_initiated_post_data when a new post data request is started.
-  // 2) content_state when a post request has started and is extracted by
+  // 1) post_data when a new post data request is started.
+  // 2) PageState when a post request has started and is extracted by
   //    WebKit to actually make the request.
   virtual void SetHasPostData(bool has_post_data) = 0;
   virtual bool GetHasPostData() const = 0;
@@ -152,16 +150,15 @@ class NavigationEntry {
   virtual void SetPostID(int64_t post_id) = 0;
   virtual int64_t GetPostID() const = 0;
 
-  // Holds the raw post data of a browser initiated post request.
-  // For efficiency, this should be cleared when content_state is populated
+  // Holds the raw post data of a post request.
+  // For efficiency, this should be cleared when PageState is populated
   // since the data is duplicated.
   // Note, this field:
   // 1) is not persisted in session restore.
   // 2) is shallow copied with the static copy Create method above.
   // 3) may be nullptr so check before use.
-  virtual void SetBrowserInitiatedPostData(
-      const base::RefCountedMemory* data) = 0;
-  virtual const base::RefCountedMemory* GetBrowserInitiatedPostData() const = 0;
+  virtual void SetPostData(const scoped_refptr<ResourceRequestBody>& data) = 0;
+  virtual scoped_refptr<ResourceRequestBody> GetPostData() const = 0;
 
   // The favicon data and tracking information. See content::FaviconStatus.
   virtual const FaviconStatus& GetFavicon() const = 0;

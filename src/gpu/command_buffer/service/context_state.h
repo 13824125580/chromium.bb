@@ -7,15 +7,15 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_CONTEXT_STATE_H_
 #define GPU_COMMAND_BUFFER_SERVICE_CONTEXT_STATE_H_
 
+#include <memory>
 #include <vector>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "gpu/command_buffer/service/valuebuffer_manager.h"
-#include "gpu/command_buffer/service/vertex_attrib_manager.h"
 #include "gpu/command_buffer/service/vertex_array_manager.h"
+#include "gpu/command_buffer/service/vertex_attrib_manager.h"
 #include "gpu/gpu_export.h"
 
 namespace gpu {
@@ -26,13 +26,16 @@ class ErrorState;
 class ErrorStateClient;
 class FeatureInfo;
 class Framebuffer;
+class IndexedBufferBindingHost;
 class Logger;
 class Program;
 class Renderbuffer;
+class TransformFeedback;
 
 // State associated with each texture unit.
 struct GPU_EXPORT TextureUnit {
   TextureUnit();
+  TextureUnit(const TextureUnit& other);
   ~TextureUnit();
 
   // The last target that was bound to this texture unit.
@@ -185,8 +188,10 @@ struct GPU_EXPORT ContextState {
   void RestoreVertexAttribs() const;
   void RestoreBufferBindings() const;
   void RestoreGlobalState(const ContextState* prev_state) const;
-  void RestoreProgramBindings() const;
+  void RestoreProgramSettings(const ContextState* prev_state,
+                              bool restore_transform_feedback_bindings) const;
   void RestoreRenderbufferBindings();
+  void RestoreIndexedUniformBufferBindings(const ContextState* prev_state);
   void RestoreTextureUnitBindings(
       GLuint unit, const ContextState* prev_state) const;
 
@@ -246,6 +251,8 @@ struct GPU_EXPORT ContextState {
   PixelStoreParams GetPackParams();
   PixelStoreParams GetUnpackParams(Dimension dimension);
 
+  void EnableDisableFramebufferSRGB(bool enable);
+
   #include "gpu/command_buffer/service/context_state_autogen.h"
 
   EnableFlags enable_flags;
@@ -272,6 +279,16 @@ struct GPU_EXPORT ContextState {
   // Which samplers are bound to each texture unit;
   std::vector<scoped_refptr<Sampler>> sampler_units;
 
+  // We create a transform feedback as the default one per ES3 enabled context
+  // instead of using GL's default one to make context switching easier.
+  // For other context, we will never change the default transform feedback's
+  // states, so we can just use the GL's default one.
+  scoped_refptr<TransformFeedback> default_transform_feedback;
+
+  scoped_refptr<TransformFeedback> bound_transform_feedback;
+
+  scoped_refptr<IndexedBufferBindingHost> indexed_uniform_buffer_bindings;
+
   // The values for each attrib.
   std::vector<Vec4> attrib_values;
 
@@ -285,9 +302,6 @@ struct GPU_EXPORT ContextState {
   // The currently bound renderbuffer
   scoped_refptr<Renderbuffer> bound_renderbuffer;
   bool bound_renderbuffer_valid;
-
-  // The currently bound valuebuffer
-  scoped_refptr<Valuebuffer> bound_valuebuffer;
 
   bool pack_reverse_row_order;
   bool ignore_cached_state;
@@ -306,8 +320,10 @@ struct GPU_EXPORT ContextState {
 
   void InitStateManual(const ContextState* prev_state) const;
 
+  bool framebuffer_srgb_;
+
   FeatureInfo* feature_info_;
-  scoped_ptr<ErrorState> error_state_;
+  std::unique_ptr<ErrorState> error_state_;
 };
 
 }  // namespace gles2

@@ -6,8 +6,8 @@
 #define COMPONENTS_SCHEDULER_CHILD_WEBTHREAD_BASE_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread.h"
 #include "components/scheduler/scheduler_export.h"
 #include "third_party/WebKit/public/platform/WebThread.h"
@@ -37,11 +37,11 @@ class SCHEDULER_EXPORT WebThreadBase : public blink::WebThread {
 
   // Returns the base::Bind-compatible task runner for posting tasks to this
   // thread. Can be called from any thread.
-  virtual base::SingleThreadTaskRunner* TaskRunner() const = 0;
+  virtual base::SingleThreadTaskRunner* GetTaskRunner() const = 0;
 
   // Returns the base::Bind-compatible task runner for posting idle tasks to
   // this thread. Can be called from any thread.
-  virtual scheduler::SingleThreadIdleTaskRunner* IdleTaskRunner() const = 0;
+  virtual scheduler::SingleThreadIdleTaskRunner* GetIdleTaskRunner() const = 0;
 
  protected:
   class TaskObserverAdapter;
@@ -54,7 +54,7 @@ class SCHEDULER_EXPORT WebThreadBase : public blink::WebThread {
       base::MessageLoop::TaskObserver* observer);
 
   static void RunWebThreadIdleTask(
-      scoped_ptr<blink::WebThread::IdleTask> idle_task,
+      std::unique_ptr<blink::WebThread::IdleTask> idle_task,
       base::TimeTicks deadline);
 
  private:

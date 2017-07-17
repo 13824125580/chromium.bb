@@ -34,17 +34,17 @@
 #define EventListenerMap_h
 
 #include "core/CoreExport.h"
+#include "core/events/AddEventListenerOptions.h"
 #include "core/events/EventListenerOptions.h"
 #include "core/events/RegisteredEventListener.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/AtomicStringHash.h"
 
 namespace blink {
 
 class EventTarget;
 
-using EventListenerVector = WillBeHeapVector<RegisteredEventListener, 1>;
+using EventListenerVector = HeapVector<RegisteredEventListener, 1>;
 
 class CORE_EXPORT EventListenerMap {
     WTF_MAKE_NONCOPYABLE(EventListenerMap);
@@ -57,8 +57,8 @@ public:
     bool containsCapturing(const AtomicString& eventType) const;
 
     void clear();
-    bool add(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&);
-    bool remove(const AtomicString& eventType, EventListener*, const EventListenerOptions&, size_t& indexOfRemovedListener);
+    bool add(const AtomicString& eventType, EventListener*, const AddEventListenerOptions&, RegisteredEventListener* registeredListener);
+    bool remove(const AtomicString& eventType, const EventListener*, const EventListenerOptions&, size_t* indexOfRemovedListener, RegisteredEventListener* registeredListener);
     EventListenerVector* find(const AtomicString& eventType);
     Vector<AtomicString> eventTypes() const;
 
@@ -71,7 +71,7 @@ private:
 
     void assertNoActiveIterators();
 
-    WillBeHeapVector<std::pair<AtomicString, OwnPtrWillBeMember<EventListenerVector>>, 2> m_entries;
+    HeapVector<std::pair<AtomicString, Member<EventListenerVector>>, 2> m_entries;
 
 #if ENABLE(ASSERT)
     int m_activeIteratorCount;

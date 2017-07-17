@@ -17,7 +17,6 @@
 #include "net/base/request_priority.h"
 #include "net/http/http_server_properties.h"
 #include "net/socket/connection_attempts.h"
-#include "net/ssl/ssl_failure_state.h"
 // This file can be included from net/http even though
 // it is in net/websockets because it doesn't
 // introduce any link dependency to net/websockets.
@@ -33,11 +32,12 @@ namespace net {
 
 class AuthCredentials;
 class BoundNetLog;
-class BidirectionalStreamJob;
+class BidirectionalStreamImpl;
 class HostMappingRules;
 class HostPortPair;
 class HttpAuthController;
 class HttpNetworkSession;
+class HttpResponseHeaders;
 class HttpResponseInfo;
 class HttpServerProperties;
 class HttpStream;
@@ -54,6 +54,12 @@ struct SSLConfig;
 // which no callbacks will be invoked.
 class NET_EXPORT_PRIVATE HttpStreamRequest {
  public:
+  // Indicates which type of stream is requested.
+  enum StreamType {
+    BIDIRECTIONAL_STREAM,
+    HTTP_STREAM,
+  };
+
   // The HttpStreamRequest::Delegate is a set of callback methods for a
   // HttpStreamRequestJob.  Generally, only one of these methods will be
   // called as a result of a stream request.
@@ -85,19 +91,17 @@ class NET_EXPORT_PRIVATE HttpStreamRequest {
         const ProxyInfo& used_proxy_info,
         WebSocketHandshakeStreamBase* stream) = 0;
 
-    virtual void OnBidirectionalStreamJobReady(
+    virtual void OnBidirectionalStreamImplReady(
         const SSLConfig& used_ssl_config,
         const ProxyInfo& used_proxy_info,
-        BidirectionalStreamJob* stream) = 0;
+        BidirectionalStreamImpl* stream) = 0;
 
     // This is the failure to create a stream case.
     // |used_ssl_config| indicates the actual SSL configuration used for this
     // stream, since the HttpStreamRequest may have modified the configuration
-    // during stream processing. If an SSL handshake failed, |ssl_failure_state|
-    // is the state the SSLClientSocket was in.
+    // during stream processing.
     virtual void OnStreamFailed(int status,
-                                const SSLConfig& used_ssl_config,
-                                SSLFailureState ssl_failure_state) = 0;
+                                const SSLConfig& used_ssl_config) = 0;
 
     // Called when we have a certificate error for the request.
     // |used_ssl_config| indicates the actual SSL configuration used for this
@@ -194,19 +198,9 @@ class NET_EXPORT HttpStreamFactory {
  public:
   virtual ~HttpStreamFactory();
 
-  void ProcessAlternativeService(
-      const base::WeakPtr<HttpServerProperties>& http_server_properties,
-      base::StringPiece alternative_service_str,
-      const HostPortPair& http_host_port_pair,
-      const HttpNetworkSession& session);
-
-  void ProcessAlternateProtocol(
-      const base::WeakPtr<HttpServerProperties>& http_server_properties,
-      const std::vector<std::string>& alternate_protocol_values,
-      const HostPortPair& http_host_port_pair,
-      const HttpNetworkSession& session);
-
-  GURL ApplyHostMappingRules(const GURL& url, HostPortPair* endpoint);
+  void ProcessAlternativeServices(HttpNetworkSession* session,
+                                  const HttpResponseHeaders* headers,
+                                  const url::SchemeHostPort& http_server);
 
   // Virtual interface methods.
 
@@ -232,10 +226,10 @@ class NET_EXPORT HttpStreamFactory {
       WebSocketHandshakeStreamBase::CreateHelper* create_helper,
       const BoundNetLog& net_log) = 0;
 
-  // Request a BidirectionalStreamJob.
-  // Will call delegate->OnBidirectionalStreamJobReady on successful
+  // Request a BidirectionalStreamImpl.
+  // Will call delegate->OnBidirectionalStreamImplReady on successful
   // completion.
-  virtual HttpStreamRequest* RequestBidirectionalStreamJob(
+  virtual HttpStreamRequest* RequestBidirectionalStreamImpl(
       const HttpRequestInfo& info,
       RequestPriority priority,
       const SSLConfig& server_ssl_config,
@@ -245,9 +239,7 @@ class NET_EXPORT HttpStreamFactory {
 
   // Requests that enough connections for |num_streams| be opened.
   virtual void PreconnectStreams(int num_streams,
-                                 const HttpRequestInfo& info,
-                                 const SSLConfig& server_ssl_config,
-                                 const SSLConfig& proxy_ssl_config) = 0;
+                                 const HttpRequestInfo& info) = 0;
 
   virtual const HostMappingRules* GetHostMappingRules() const = 0;
 
@@ -270,7 +262,7 @@ class NET_EXPORT HttpStreamFactory {
  private:
   static bool spdy_enabled_;
 
-  HostPortPair RewriteHost(HostPortPair host_port_pair);
+  url::SchemeHostPort RewriteHost(const url::SchemeHostPort& server);
 
   DISALLOW_COPY_AND_ASSIGN(HttpStreamFactory);
 };

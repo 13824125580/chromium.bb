@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/net/cast_transport_config.h"
 
@@ -26,7 +27,7 @@ class PacketPipe;
 }  // namespace test
 
 // Class that sends the packet to a receiver through a stack of PacketPipes.
-class LoopBackTransport : public PacketSender {
+class LoopBackTransport : public PacketTransport {
  public:
   explicit LoopBackTransport(
       scoped_refptr<CastEnvironment> cast_environment);
@@ -50,14 +51,14 @@ class LoopBackTransport : public PacketSender {
   // If |pipe| is NULL then the data flow looks like:
   // SendPacket() -> Fake loopback pipe -> |packet_receiver|.
   void Initialize(
-      scoped_ptr<test::PacketPipe> pipe,
+      std::unique_ptr<test::PacketPipe> pipe,
       const PacketReceiverCallback& packet_receiver,
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       base::TickClock* clock);
 
  private:
   const scoped_refptr<CastEnvironment> cast_environment_;
-  scoped_ptr<test::PacketPipe> packet_pipe_;
+  std::unique_ptr<test::PacketPipe> packet_pipe_;
   int64_t bytes_sent_;
 
   DISALLOW_COPY_AND_ASSIGN(LoopBackTransport);

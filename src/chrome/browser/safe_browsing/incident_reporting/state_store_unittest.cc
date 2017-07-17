@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -25,6 +25,7 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/syncable_prefs/pref_service_syncable.h"
 #include "components/syncable_prefs/pref_service_syncable_factory.h"
+#include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -93,8 +94,8 @@ class StateStoreTest : public PlatformStateStoreTestBase {
   // store.
   void TrimPref() {
     ASSERT_EQ(nullptr, profile_);
-    scoped_ptr<base::Value> prefs(JSONFileValueDeserializer(GetPrefsPath())
-                                      .Deserialize(nullptr, nullptr));
+    std::unique_ptr<base::Value> prefs(JSONFileValueDeserializer(GetPrefsPath())
+                                           .Deserialize(nullptr, nullptr));
     ASSERT_NE(nullptr, prefs.get());
     base::DictionaryValue* dict = nullptr;
     ASSERT_TRUE(prefs->GetAsDictionary(&dict));
@@ -126,6 +127,8 @@ class StateStoreTest : public PlatformStateStoreTestBase {
     return temp_dir_.path().AppendASCII("prefs");
   }
 
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
   base::ScopedTempDir temp_dir_;
   base::ThreadTaskRunnerHandle thread_task_runner_handle_;
   TestingProfileManager profile_manager_;

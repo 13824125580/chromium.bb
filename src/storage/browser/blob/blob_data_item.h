@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <ostream>
 #include <string>
 
@@ -58,6 +59,9 @@ class STORAGE_EXPORT BlobDataItem : public base::RefCounted<BlobDataItem> {
 
   disk_cache::Entry* disk_cache_entry() const { return disk_cache_entry_; }
   int disk_cache_stream_index() const { return disk_cache_stream_index_; }
+  int disk_cache_side_stream_index() const {
+    return disk_cache_side_stream_index_;
+  }
 
  private:
   friend class BlobDataBuilder;
@@ -65,22 +69,24 @@ class STORAGE_EXPORT BlobDataItem : public base::RefCounted<BlobDataItem> {
   friend class base::RefCounted<BlobDataItem>;
   friend STORAGE_EXPORT void PrintTo(const BlobDataItem& x, ::std::ostream* os);
 
-  explicit BlobDataItem(scoped_ptr<DataElement> item);
-  BlobDataItem(scoped_ptr<DataElement> item,
+  explicit BlobDataItem(std::unique_ptr<DataElement> item);
+  BlobDataItem(std::unique_ptr<DataElement> item,
                const scoped_refptr<DataHandle>& data_handle);
-  BlobDataItem(scoped_ptr<DataElement> item,
+  BlobDataItem(std::unique_ptr<DataElement> item,
                const scoped_refptr<DataHandle>& data_handle,
                disk_cache::Entry* entry,
-               int disk_cache_stream_index_);
+               int disk_cache_stream_index,
+               int disk_cache_side_stream_index);
   virtual ~BlobDataItem();
 
-  scoped_ptr<DataElement> item_;
+  std::unique_ptr<DataElement> item_;
   scoped_refptr<DataHandle> data_handle_;
 
   // This naked pointer is safe because the scope is protected by the DataHandle
   // instance for disk cache entries during the lifetime of this BlobDataItem.
   disk_cache::Entry* disk_cache_entry_;
   int disk_cache_stream_index_;  // For TYPE_DISK_CACHE_ENTRY.
+  int disk_cache_side_stream_index_;  // For TYPE_DISK_CACHE_ENTRY.
 };
 
 STORAGE_EXPORT bool operator==(const BlobDataItem& a, const BlobDataItem& b);

@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_host.h"
@@ -38,6 +39,8 @@ class PepperCompositorHost : public ppapi::host::ResourceHost {
   PepperCompositorHost(RendererPpapiHost* host,
                        PP_Instance instance,
                        PP_Resource resource);
+  ~PepperCompositorHost() override;
+
   // Associates this device with the given plugin instance. You can pass NULL
   // to clear the existing device. Returns true on success. In this case, a
   // repaint of the page will also be scheduled. Failure means that the device
@@ -48,12 +51,15 @@ class PepperCompositorHost : public ppapi::host::ResourceHost {
 
   void ViewInitiatedPaint();
 
- private:
-  ~PepperCompositorHost() override;
+  void set_viewport_to_dip_scale(float viewport_to_dip_scale) {
+    DCHECK_LT(0, viewport_to_dip_scale_);
+    viewport_to_dip_scale_ = viewport_to_dip_scale;
+  }
 
+ private:
   void ImageReleased(int32_t id,
-                     scoped_ptr<base::SharedMemory> shared_memory,
-                     scoped_ptr<cc::SharedBitmap> bitmap,
+                     std::unique_ptr<base::SharedMemory> shared_memory,
+                     std::unique_ptr<cc::SharedBitmap> bitmap,
                      const gpu::SyncToken& sync_token,
                      bool is_lost);
   void ResourceReleased(int32_t id,
@@ -63,7 +69,7 @@ class PepperCompositorHost : public ppapi::host::ResourceHost {
   void UpdateLayer(const scoped_refptr<cc::Layer>& layer,
                    const ppapi::CompositorLayerData* old_layer,
                    const ppapi::CompositorLayerData* new_layer,
-                   scoped_ptr<base::SharedMemory> image_shm);
+                   std::unique_ptr<base::SharedMemory> image_shm);
 
   // ResourceMessageHandler overrides:
   int32_t OnResourceMessageReceived(
@@ -100,6 +106,10 @@ class PepperCompositorHost : public ppapi::host::ResourceHost {
   std::vector<LayerData> layers_;
 
   ppapi::host::ReplyMessageContext commit_layers_reply_context_;
+
+  // The scale between the viewport and dip. This differs in
+  // use-zoom-for-dsf mode where the content is scaled by zooming.
+  float viewport_to_dip_scale_ = 1.0f;
 
   base::WeakPtrFactory<PepperCompositorHost> weak_factory_;
 

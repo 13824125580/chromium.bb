@@ -40,11 +40,6 @@ class FolderHeaderView::FolderNameView : public views::Textfield {
  public:
   FolderNameView() {
     SetBorder(views::Border::CreateEmptyBorder(1, 1, 1, 1));
-    const SkColor kFocusBorderColor = SkColorSetRGB(64, 128, 250);
-    SetFocusPainter(views::Painter::CreateSolidFocusPainter(
-          kFocusBorderColor,
-          gfx::Insets(0, 0, 1, 1)));
-
     SetTextColor(kFolderTitleColor);
   }
 
@@ -72,7 +67,8 @@ FolderHeaderView::FolderHeaderView(FolderHeaderViewDelegate* delegate)
     back_button_->SetImageAlignment(views::ImageButton::ALIGN_CENTER,
                                     views::ImageButton::ALIGN_MIDDLE);
     AddChildView(back_button_);
-    back_button_->SetFocusable(true);
+    back_button_->SetFocusForPlatform();
+    back_button_->set_request_focus_on_press(true);
     back_button_->SetAccessibleName(
         ui::ResourceBundle::GetSharedInstance().GetLocalizedString(
             IDS_APP_LIST_FOLDER_CLOSE_FOLDER_ACCESSIBILE_NAME));

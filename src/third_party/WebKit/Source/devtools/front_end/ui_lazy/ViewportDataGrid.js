@@ -237,11 +237,14 @@ WebInspector.ViewportDataGrid.prototype = {
         }
 
         this.setVerticalPadding(viewportState.topPadding, viewportState.bottomPadding);
-        var contentFits = viewportState.contentHeight <= clientHeight;
-        this.element.classList.toggle("data-grid-fits-viewport", contentFits && viewportState.topPadding + viewportState.bottomPadding === 0);
         this._lastScrollTop = scrollTop;
         if (scrollTop !== currentScrollTop)
             this._scrollContainer.scrollTop = scrollTop;
+        var contentFits = viewportState.contentHeight <= clientHeight && viewportState.topPadding + viewportState.bottomPadding === 0;
+        if (contentFits !== this.element.classList.contains("data-grid-fits-viewport")) {
+            this.element.classList.toggle("data-grid-fits-viewport", contentFits);
+            this.updateWidths();
+        }
         this._visibleNodes = visibleNodes;
     },
 
@@ -354,7 +357,7 @@ WebInspector.ViewportDataGridNode.prototype = {
         if (child.nextSibling)
             child.nextSibling.previousSibling = child.previousSibling;
         if (child.parent !== this)
-            throw("removeChild: Node is not a child of this node.");
+            throw "removeChild: Node is not a child of this node.";
 
         child._unlink();
         this.children.remove(child, true);

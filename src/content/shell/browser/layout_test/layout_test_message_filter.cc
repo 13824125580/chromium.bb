@@ -11,7 +11,7 @@
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/test/layouttest_support.h"
-#include "content/shell/browser/layout_test/layout_test_bluetooth_adapter_provider.h"
+#include "content/shell/browser/layout_test/blink_test_controller.h"
 #include "content/shell/browser/layout_test/layout_test_browser_context.h"
 #include "content/shell/browser/layout_test/layout_test_content_browser_client.h"
 #include "content/shell/browser/layout_test/layout_test_notification_manager.h"
@@ -47,14 +47,19 @@ LayoutTestMessageFilter::~LayoutTestMessageFilter() {
 
 void LayoutTestMessageFilter::OverrideThreadForMessage(
     const IPC::Message& message, BrowserThread::ID* thread) {
-  if (message.type() == LayoutTestHostMsg_ClearAllDatabases::ID)
-    *thread = BrowserThread::FILE;
-  if (message.type() == LayoutTestHostMsg_SimulateWebNotificationClick::ID ||
-      message.type() == LayoutTestHostMsg_SimulateWebNotificationClose::ID ||
-      message.type() == LayoutTestHostMsg_SetPermission::ID ||
-      message.type() == LayoutTestHostMsg_ResetPermissions::ID ||
-      message.type() == LayoutTestHostMsg_SetBluetoothAdapter::ID)
-    *thread = BrowserThread::UI;
+  switch (message.type()) {
+    case LayoutTestHostMsg_ClearAllDatabases::ID:
+      *thread = BrowserThread::FILE;
+      break;
+    case LayoutTestHostMsg_SimulateWebNotificationClick::ID:
+    case LayoutTestHostMsg_SimulateWebNotificationClose::ID:
+    case LayoutTestHostMsg_SetPermission::ID:
+    case LayoutTestHostMsg_ResetPermissions::ID:
+    case LayoutTestHostMsg_LayoutTestRuntimeFlagsChanged::ID:
+    case LayoutTestHostMsg_TestFinishedInSecondaryRenderer::ID:
+      *thread = BrowserThread::UI;
+      break;
+  }
 }
 
 bool LayoutTestMessageFilter::OnMessageReceived(const IPC::Message& message) {
@@ -74,8 +79,10 @@ bool LayoutTestMessageFilter::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_DeleteAllCookies, OnDeleteAllCookies)
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_SetPermission, OnSetPermission)
     IPC_MESSAGE_HANDLER(LayoutTestHostMsg_ResetPermissions, OnResetPermissions)
-    IPC_MESSAGE_HANDLER(LayoutTestHostMsg_SetBluetoothAdapter,
-                        OnSetBluetoothAdapter)
+    IPC_MESSAGE_HANDLER(LayoutTestHostMsg_LayoutTestRuntimeFlagsChanged,
+                        OnLayoutTestRuntimeFlagsChanged)
+    IPC_MESSAGE_HANDLER(LayoutTestHostMsg_TestFinishedInSecondaryRenderer,
+                        OnTestFinishedInSecondaryRenderer)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
@@ -141,10 +148,11 @@ void LayoutTestMessageFilter::OnDeleteAllCookies() {
       ->DeleteAllAsync(net::CookieStore::DeleteCallback());
 }
 
-void LayoutTestMessageFilter::OnSetPermission(const std::string& name,
-                                              PermissionStatus status,
-                                              const GURL& origin,
-                                              const GURL& embedding_origin) {
+void LayoutTestMessageFilter::OnSetPermission(
+    const std::string& name,
+    blink::mojom::PermissionStatus status,
+    const GURL& origin,
+    const GURL& embedding_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   content::PermissionType type;
@@ -160,6 +168,8 @@ void LayoutTestMessageFilter::OnSetPermission(const std::string& name,
     type = PermissionType::GEOLOCATION;
   } else if (name == "protected-media-identifier") {
     type = PermissionType::PROTECTED_MEDIA_IDENTIFIER;
+  } else if (name == "background-sync") {
+    type = PermissionType::BACKGROUND_SYNC;
   } else {
     NOTREACHED();
     type = PermissionType::NOTIFICATIONS;
@@ -180,11 +190,14 @@ void LayoutTestMessageFilter::OnResetPermissions() {
       ->ResetPermissions();
 }
 
-void LayoutTestMessageFilter::OnSetBluetoothAdapter(const std::string& name) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  SetBluetoothAdapter(
-      render_process_id_,
-      LayoutTestBluetoothAdapterProvider::GetBluetoothAdapter(name));
+void LayoutTestMessageFilter::OnLayoutTestRuntimeFlagsChanged(
+    const base::DictionaryValue& changed_layout_test_runtime_flags) {
+  BlinkTestController::Get()->OnLayoutTestRuntimeFlagsChanged(
+      render_process_id_, changed_layout_test_runtime_flags);
+}
+
+void LayoutTestMessageFilter::OnTestFinishedInSecondaryRenderer() {
+  BlinkTestController::Get()->OnTestFinishedInSecondaryRenderer();
 }
 
 }  // namespace content

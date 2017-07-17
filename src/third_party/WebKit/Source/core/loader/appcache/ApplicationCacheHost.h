@@ -35,8 +35,8 @@
 #include "platform/weborigin/KURL.h"
 #include "public/platform/WebApplicationCacheHostClient.h"
 #include "wtf/Allocator.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
     class ApplicationCache;
@@ -121,7 +121,7 @@ namespace blink {
 
         void willStartLoadingResource(ResourceRequest&);
 
-        Status status() const;
+        Status getStatus() const;
         bool update();
         bool swapCache();
         void abort();
@@ -169,13 +169,13 @@ namespace blink {
         };
 
         WeakMember<ApplicationCache> m_domApplicationCache;
-        RawPtrWillBeMember<DocumentLoader> m_documentLoader;
+        Member<DocumentLoader> m_documentLoader;
         bool m_defersEvents; // Events are deferred until after document onload.
         Vector<DeferredEvent> m_deferredEvents;
 
         void dispatchDOMEvent(EventID, int progressTotal, int progressDone, WebApplicationCacheHost::ErrorReason, const String& errorURL, int errorStatus, const String& errorMessage);
 
-        OwnPtr<WebApplicationCacheHost> m_host;
+        std::unique_ptr<WebApplicationCacheHost> m_host;
     };
 
 }  // namespace blink

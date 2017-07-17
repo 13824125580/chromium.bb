@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -25,15 +26,12 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/cloud_devices/common/cloud_devices_switches.h"
+#include "components/network_session_configurator/switches.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "google_apis/gaia/gaia_switches.h"
 #include "ui/base/ui_base_switches.h"
-
-#if defined(OS_WIN)
-#include "components/startup_metric_utils/common/pre_read_field_trial_utils_win.h"
-#endif  // defined(OS_WIN)
 
 #if !defined(OS_MACOSX)
 
@@ -119,7 +117,7 @@ std::string GetServiceProcessScopedVersionedName(
 // Reads the named shared memory to get the shared data. Returns false if no
 // matching shared memory was found.
 bool GetServiceProcessData(std::string* version, base::ProcessId* pid) {
-  scoped_ptr<base::SharedMemory> shared_mem_service_data;
+  std::unique_ptr<base::SharedMemory> shared_mem_service_data;
   shared_mem_service_data.reset(new base::SharedMemory());
   ServiceProcessSharedData* service_data = NULL;
   if (shared_mem_service_data.get() &&
@@ -157,17 +155,17 @@ std::string GetServiceProcessScopedName(const std::string& append_str) {
   return hex_hash + "." + append_str;
 }
 
-scoped_ptr<base::CommandLine> CreateServiceProcessCommandLine() {
+std::unique_ptr<base::CommandLine> CreateServiceProcessCommandLine() {
   base::FilePath exe_path;
   PathService::Get(content::CHILD_PROCESS_EXE, &exe_path);
   DCHECK(!exe_path.empty()) << "Unable to get service process binary name.";
-  scoped_ptr<base::CommandLine> command_line(new base::CommandLine(exe_path));
+  std::unique_ptr<base::CommandLine> command_line(
+      new base::CommandLine(exe_path));
   command_line->AppendSwitchASCII(switches::kProcessType,
                                   switches::kServiceProcess);
 
 #if defined(OS_WIN)
-  if (startup_metric_utils::GetPreReadOptions().use_prefetch_argument)
-    command_line->AppendArg(switches::kPrefetchArgumentOther);
+  command_line->AppendArg(switches::kPrefetchArgumentOther);
 #endif  // defined(OS_WIN)
 
   static const char* const kSwitchesToCopy[] = {
@@ -256,7 +254,7 @@ bool ServiceProcessState::CreateSharedData() {
     return false;
   }
 
-  scoped_ptr<base::SharedMemory> shared_mem_service_data(
+  std::unique_ptr<base::SharedMemory> shared_mem_service_data(
       new base::SharedMemory());
   if (!shared_mem_service_data.get())
     return false;

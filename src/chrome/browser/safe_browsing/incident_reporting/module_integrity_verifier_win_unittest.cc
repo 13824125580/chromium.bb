@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -156,8 +157,8 @@ class SafeBrowsingModuleVerifierWinTest : public testing::Test {
 
   base::ScopedNativeLibrary mem_dll_handle_;
   base::MemoryMappedFile disk_dll_handle_;
-  scoped_ptr<base::win::PEImageAsData> disk_peimage_ptr_;
-  scoped_ptr<base::win::PEImage> mem_peimage_ptr_;
+  std::unique_ptr<base::win::PEImageAsData> disk_peimage_ptr_;
+  std::unique_ptr<base::win::PEImage> mem_peimage_ptr_;
 };
 
 // Don't run these tests under AddressSanitizer as it patches the modules on
@@ -233,10 +234,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleModified) {
             (uint8_t)state.modification(1).modified_bytes()[0]);
 }
 
-// Disabled because it fails about 80% of the time on XP.
-// http://crbug.com/549564
-TEST_F(SafeBrowsingModuleVerifierWinTest,
-       DISABLED_VerifyModuleLongModification) {
+TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleLongModification) {
   ModuleState state;
   int num_bytes_different = 0;
 
@@ -282,9 +280,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest,
       state.modification(0).modified_bytes());
 }
 
-// Disabled because it fails about 80% of the time on XP.
-// http://crbug.com/549564
-TEST_F(SafeBrowsingModuleVerifierWinTest, DISABLED_VerifyModuleRelocOverlap) {
+TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleRelocOverlap) {
   int num_bytes_different = 0;
   ModuleState state;
 

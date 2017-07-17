@@ -6,9 +6,11 @@
 
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
 
@@ -34,14 +36,14 @@ void HidService::Observer::OnDeviceRemovedCleanup(
     scoped_refptr<HidDeviceInfo> device_info) {
 }
 
-scoped_ptr<HidService> HidService::Create(
+std::unique_ptr<HidService> HidService::Create(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner) {
 #if defined(OS_LINUX) && defined(USE_UDEV)
-  return make_scoped_ptr(new HidServiceLinux(file_task_runner));
+  return base::WrapUnique(new HidServiceLinux(file_task_runner));
 #elif defined(OS_MACOSX)
-  return make_scoped_ptr(new HidServiceMac(file_task_runner));
+  return base::WrapUnique(new HidServiceMac(file_task_runner));
 #elif defined(OS_WIN)
-  return make_scoped_ptr(new HidServiceWin(file_task_runner));
+  return base::WrapUnique(new HidServiceWin(file_task_runner));
 #else
   return nullptr;
 #endif
@@ -54,8 +56,8 @@ void HidService::GetDevices(const GetDevicesCallback& callback) {
     for (const auto& map_entry : devices_) {
       devices.push_back(map_entry.second);
     }
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback, devices));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, devices));
   } else {
     pending_enumerations_.push_back(callback);
   }

@@ -6,16 +6,18 @@
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_BLINK_TEST_CONTROLLER_H_
 
 #include <map>
+#include <memory>
 #include <ostream>
+#include <set>
 #include <string>
 
 #include "base/cancelable_callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
@@ -32,10 +34,6 @@
 #endif
 
 class SkBitmap;
-
-namespace test_runner {
-struct LayoutDumpFlags;
-}
 
 namespace url {
 class Origin;
@@ -136,13 +134,23 @@ class BlinkTestController : public base::NonThreadSafe,
   // True if the controller was reset successfully.
   bool ResetAfterLayoutTest();
 
+  // IPC messages forwarded from elsewhere.
+  void OnLayoutTestRuntimeFlagsChanged(
+      int sender_process_host_id,
+      const base::DictionaryValue& changed_layout_test_runtime_flags);
+  void OnTestFinishedInSecondaryRenderer();
+
+  // Makes sure that the potentially new renderer associated with |frame| is 1)
+  // initialized for the test, 2) kept up to date wrt test flags and 3)
+  // monitored for crashes.
+  void HandleNewRenderFrameHost(RenderFrameHost* frame);
+
   void SetTempPath(const base::FilePath& temp_path);
   void RendererUnresponsive();
   void OverrideWebkitPrefs(WebPreferences* prefs);
   void OpenURL(const GURL& url);
-  void TestFinishedInSecondaryWindow();
   bool IsMainWindow(WebContents* web_contents) const;
-  scoped_ptr<BluetoothChooser> RunBluetoothChooser(
+  std::unique_ptr<BluetoothChooser> RunBluetoothChooser(
       RenderFrameHost* frame,
       const BluetoothChooser::EventHandler& event_handler);
 
@@ -158,8 +166,6 @@ class BlinkTestController : public base::NonThreadSafe,
   void PluginCrashed(const base::FilePath& plugin_path,
                      base::ProcessId plugin_pid) override;
   void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
-  void RenderFrameHostChanged(RenderFrameHost* old_host,
-                              RenderFrameHost* new_host) override;
   void WebContentsDestroyed() override;
 
   // RenderProcessHostObserver implementation.
@@ -187,14 +193,12 @@ class BlinkTestController : public base::NonThreadSafe,
   static BlinkTestController* instance_;
 
   void DiscardMainWindow();
-  void SendTestConfiguration();
 
   // Message handlers.
   void OnAudioDump(const std::vector<unsigned char>& audio_dump);
   void OnImageDump(const std::string& actual_pixel_hash, const SkBitmap& image);
   void OnTextDump(const std::string& dump);
-  void OnInitiateLayoutDump(
-      const test_runner::LayoutDumpFlags& layout_dump_flags);
+  void OnInitiateLayoutDump();
   void OnLayoutDumpResponse(RenderFrameHost* sender, const std::string& dump);
   void OnPrintMessage(const std::string& message);
   void OnOverridePreferences(const WebPreferences& prefs);
@@ -202,6 +206,7 @@ class BlinkTestController : public base::NonThreadSafe,
   void OnClearDevToolsLocalStorage();
   void OnShowDevTools(const std::string& settings,
                       const std::string& frontend_url);
+  void OnEvaluateInDevTools(int call_id, const std::string& script);
   void OnCloseDevTools();
   void OnGoToOffset(int offset);
   void OnReload();
@@ -215,7 +220,7 @@ class BlinkTestController : public base::NonThreadSafe,
   void OnSendBluetoothManualChooserEvent(const std::string& event,
                                          const std::string& argument);
 
-  scoped_ptr<BlinkTestResultPrinter> printer_;
+  std::unique_ptr<BlinkTestResultPrinter> printer_;
 
   base::FilePath current_working_directory_;
   base::FilePath temp_path_;
@@ -225,9 +230,11 @@ class BlinkTestController : public base::NonThreadSafe,
   // The PID of the render process of the render view host of main_window_.
   int current_pid_;
 
-  // True if we should set the test configuration to the next RenderViewHost
-  // created.
-  bool send_configuration_to_next_host_;
+  // Tracks if (during the current test) we have already sent *initial* test
+  // configuration to a renderer process (*initial* test configuration is
+  // associated with some steps that should only be executed *once* per test -
+  // for example resizing the window and setting the focus).
+  bool did_send_initial_test_configuration_;
 
   // What phase of running an individual test we are currently in.
   TestPhase test_phase_;
@@ -253,7 +260,7 @@ class BlinkTestController : public base::NonThreadSafe,
 
   LayoutTestDevToolsFrontend* devtools_frontend_;
 
-  scoped_ptr<LayoutTestBluetoothChooserFactory> bluetooth_chooser_factory_;
+  std::unique_ptr<LayoutTestBluetoothChooserFactory> bluetooth_chooser_factory_;
 
   // Map from frame_tree_node_id into frame-specific dumps.
   std::map<int, std::string> frame_to_layout_dump_map_;
@@ -263,6 +270,13 @@ class BlinkTestController : public base::NonThreadSafe,
   // Renderer processes are observed to detect crashes.
   ScopedObserver<RenderProcessHost, RenderProcessHostObserver>
       render_process_host_observer_;
+  std::set<RenderProcessHost*> all_observed_render_process_hosts_;
+  std::set<RenderProcessHost*> main_window_render_process_hosts_;
+
+  // Changes reported by OnLayoutTestRuntimeFlagsChanged that have accumulated
+  // since PrepareForLayoutTest (i.e. changes that need to be send to a fresh
+  // renderer created while test is in progress).
+  base::DictionaryValue accumulated_layout_test_runtime_flags_changes_;
 
 #if defined(OS_ANDROID)
   // Because of the nested message pump implementation, Android needs to allow

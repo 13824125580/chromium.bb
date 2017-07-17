@@ -21,7 +21,7 @@
 #include "content/public/common/security_style.h"
 #include "content/public/common/window_container_type.h"
 #include "third_party/WebKit/public/platform/WebDisplayMode.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/WebKit/public/web/WebTextDirection.h"
 #include "ui/base/window_open_disposition.h"
@@ -148,10 +148,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Request the delegate to close this web contents, and do whatever cleanup
   // it needs to do.
   virtual void CloseContents(WebContents* source) {}
-
-  // Informs the delegate that the underlying RenderViewHost has been swapped
-  // out so it can perform any cleanup necessary.
-  virtual void SwappedOut(WebContents* source) {}
 
   // Request the delegate to move this WebContents to the specified position
   // in screen coordinates.
@@ -354,7 +350,7 @@ class CONTENT_EXPORT WebContentsDelegate {
       const std::vector<ColorSuggestion>& suggestions);
 
   // Called when a file selection is to be done.
-  virtual void RunFileChooser(WebContents* web_contents,
+  virtual void RunFileChooser(RenderFrameHost* render_frame_host,
                               const FileChooserParams& params) {}
 
   // Request to enumerate a directory.  This is equivalent to running the file
@@ -366,7 +362,7 @@ class CONTENT_EXPORT WebContentsDelegate {
 
   // Shows a chooser for the user to select a nearby Bluetooth device. The
   // observer must live at least as long as the returned chooser object.
-  virtual scoped_ptr<BluetoothChooser> RunBluetoothChooser(
+  virtual std::unique_ptr<BluetoothChooser> RunBluetoothChooser(
       RenderFrameHost* frame,
       const BluetoothChooser::EventHandler& event_handler);
 
@@ -553,7 +549,7 @@ class CONTENT_EXPORT WebContentsDelegate {
       const std::vector<uint8_t>& proto) {}
 
   // Requests the app banner. This method is called from the DevTools.
-  virtual bool RequestAppBanner(content::WebContents* web_contents);
+  virtual void RequestAppBannerFromDevTools(content::WebContents* web_contents);
 
  protected:
   virtual ~WebContentsDelegate();

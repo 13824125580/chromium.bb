@@ -9,7 +9,6 @@
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "cc/layers/layer.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/layers/nine_patch_layer.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/layers/solid_color_layer.h"
@@ -20,14 +19,14 @@ namespace cc {
 
 namespace {
 
-scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
+scoped_refptr<Layer> ParseTreeFromValue(const base::Value& val,
                                         ContentLayerClient* content_client) {
-  base::DictionaryValue* dict;
+  const base::DictionaryValue* dict;
   bool success = true;
-  success &= val->GetAsDictionary(&dict);
+  success &= val.GetAsDictionary(&dict);
   std::string layer_type;
   success &= dict->GetString("LayerType", &layer_type);
-  base::ListValue* list;
+  const base::ListValue* list;
   success &= dict->GetList("Bounds", &list);
   int width, height;
   success &= list->GetInteger(0, &width);
@@ -40,11 +39,9 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
   bool draws_content;
   success &= dict->GetBoolean("DrawsContent", &draws_content);
 
-  LayerSettings layer_settings;
-
   scoped_refptr<Layer> new_layer;
   if (layer_type == "SolidColorLayer") {
-    new_layer = SolidColorLayer::Create(layer_settings);
+    new_layer = SolidColorLayer::Create();
   } else if (layer_type == "NinePatchLayer") {
     success &= dict->GetList("ImageAperture", &list);
     int aperture_x, aperture_y, aperture_width, aperture_height;
@@ -53,7 +50,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     success &= list->GetInteger(2, &aperture_width);
     success &= list->GetInteger(3, &aperture_height);
 
-    base::ListValue* bounds;
+    const base::ListValue* bounds;
     success &= dict->GetList("ImageBounds", &bounds);
     double image_width, image_height;
     success &= bounds->GetDouble(0, &image_width);
@@ -69,8 +66,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     bool fill_center;
     success &= dict->GetBoolean("FillCenter", &fill_center);
 
-    scoped_refptr<NinePatchLayer> nine_patch_layer =
-        NinePatchLayer::Create(layer_settings);
+    scoped_refptr<NinePatchLayer> nine_patch_layer = NinePatchLayer::Create();
 
     SkBitmap bitmap;
     bitmap.allocN32Pixels(image_width, image_height);
@@ -84,11 +80,11 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
 
     new_layer = nine_patch_layer;
   } else if (layer_type == "TextureLayer") {
-    new_layer = TextureLayer::CreateForMailbox(layer_settings, NULL);
+    new_layer = TextureLayer::CreateForMailbox(NULL);
   } else if (layer_type == "PictureLayer") {
-    new_layer = PictureLayer::Create(layer_settings, content_client);
+    new_layer = PictureLayer::Create(content_client);
   } else {  // Type "Layer" or "unknown"
-    new_layer = Layer::Create(layer_settings);
+    new_layer = Layer::Create();
   }
   new_layer->SetPosition(gfx::PointF(position_x, position_y));
   new_layer->SetBounds(gfx::Size(width, height));
@@ -145,7 +141,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     new_layer->SetTouchEventHandlerRegion(touch_region);
   }
 
-  success &= dict->GetList("DrawTransform", &list);
+  success &= dict->GetList("Transform", &list);
   double transform[16];
   for (int i = 0; i < 16; ++i)
     success &= list->GetDouble(i, &transform[i]);
@@ -155,9 +151,8 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
   new_layer->SetTransform(layer_transform);
 
   success &= dict->GetList("Children", &list);
-  for (base::ListValue::const_iterator it = list->begin();
-       it != list->end(); ++it) {
-    new_layer->AddChild(ParseTreeFromValue(*it, content_client));
+  for (const auto& value : *list) {
+    new_layer->AddChild(ParseTreeFromValue(*value, content_client));
   }
 
   if (!success)
@@ -170,8 +165,8 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
 
 scoped_refptr<Layer> ParseTreeFromJson(std::string json,
                                        ContentLayerClient* content_client) {
-  scoped_ptr<base::Value> val = base::test::ParseJson(json);
-  return ParseTreeFromValue(val.get(), content_client);
+  std::unique_ptr<base::Value> val = base::test::ParseJson(json);
+  return ParseTreeFromValue(*val, content_client);
 }
 
 }  // namespace cc

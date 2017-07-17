@@ -55,23 +55,15 @@ void ApppendEventDetails(const WebMouseEvent& event, std::string* result) {
 }
 
 void ApppendEventDetails(const WebMouseWheelEvent& event, std::string* result) {
-  StringAppendF(result,
-                "{\n Delta: (%f, %f)\n WheelTicks: (%f, %f)\n Accel: (%f, %f)\n"
-                " ScrollByPage: %d\n HasPreciseScrollingDeltas: %d\n"
-                " Phase: (%d, %d)\n CanRubberband: (%d, %d)\n CanScroll: %d\n}",
-                event.deltaX,
-                event.deltaY,
-                event.wheelTicksX,
-                event.wheelTicksY,
-                event.accelerationRatioX,
-                event.accelerationRatioY,
-                event.scrollByPage,
-                event.hasPreciseScrollingDeltas,
-                event.phase,
-                event.momentumPhase,
-                event.canRubberbandLeft,
-                event.canRubberbandRight,
-                event.canScroll);
+  StringAppendF(
+      result,
+      "{\n Delta: (%f, %f)\n WheelTicks: (%f, %f)\n Accel: (%f, %f)\n"
+      " ScrollByPage: %d\n HasPreciseScrollingDeltas: %d\n"
+      " Phase: (%d, %d)\n CanRubberband: (%d, %d)\n}",
+      event.deltaX, event.deltaY, event.wheelTicksX, event.wheelTicksY,
+      event.accelerationRatioX, event.accelerationRatioY, event.scrollByPage,
+      event.hasPreciseScrollingDeltas, event.phase, event.momentumPhase,
+      event.canRubberbandLeft, event.canRubberbandRight);
 }
 
 void ApppendEventDetails(const WebGestureEvent& event, std::string* result) {
@@ -111,9 +103,9 @@ void ApppendTouchPointDetails(const WebTouchPoint& point, std::string* result) {
 
 void ApppendEventDetails(const WebTouchEvent& event, std::string* result) {
   StringAppendF(result,
-                "{\n Touches: %u, Cancelable: %d, CausesScrolling: %d,"
+                "{\n Touches: %u, DispatchType: %d, CausesScrolling: %d,"
                 " uniqueTouchEventId: %u\n[\n",
-                event.touchesLength, event.cancelable,
+                event.touchesLength, event.dispatchType,
                 event.movedBeyondSlopRegion, event.uniqueTouchEventId);
   for (unsigned i = 0; i < event.touchesLength; ++i)
     ApppendTouchPointDetails(event.touches[i], result);
@@ -153,8 +145,7 @@ bool CanCoalesce(const WebMouseWheelEvent& event_to_coalesce,
          event.phase == event_to_coalesce.phase &&
          event.momentumPhase == event_to_coalesce.momentumPhase &&
          event.hasPreciseScrollingDeltas ==
-             event_to_coalesce.hasPreciseScrollingDeltas &&
-         event.canScroll == event_to_coalesce.canScroll;
+             event_to_coalesce.hasPreciseScrollingDeltas;
 }
 
 float GetUnacceleratedDelta(float accelerated_delta, float acceleration_ratio) {
@@ -199,6 +190,23 @@ int GetIndexOfTouchID(const WebTouchEvent& event, int id) {
   return kInvalidTouchIndex;
 }
 
+WebInputEvent::DispatchType MergeDispatchTypes(
+    WebInputEvent::DispatchType type_1,
+    WebInputEvent::DispatchType type_2) {
+  static_assert(WebInputEvent::DispatchType::Blocking <
+                    WebInputEvent::DispatchType::EventNonBlocking,
+                "Enum not ordered correctly");
+  static_assert(WebInputEvent::DispatchType::EventNonBlocking <
+                    WebInputEvent::DispatchType::ListenersNonBlockingPassive,
+                "Enum not ordered correctly");
+  static_assert(
+      WebInputEvent::DispatchType::ListenersNonBlockingPassive <
+          WebInputEvent::DispatchType::ListenersForcedNonBlockingPassive,
+      "Enum not ordered correctly");
+  return static_cast<WebInputEvent::DispatchType>(
+      std::min(static_cast<int>(type_1), static_cast<int>(type_2)));
+}
+
 bool CanCoalesce(const WebTouchEvent& event_to_coalesce,
                  const WebTouchEvent& event) {
   if (event.type != event_to_coalesce.type ||
@@ -241,6 +249,8 @@ void Coalesce(const WebTouchEvent& event_to_coalesce, WebTouchEvent* event) {
       event->touches[i].state = blink::WebTouchPoint::StateMoved;
   }
   event->movedBeyondSlopRegion |= old_event.movedBeyondSlopRegion;
+  event->dispatchType = MergeDispatchTypes(old_event.dispatchType,
+                                           event_to_coalesce.dispatchType);
 }
 
 bool CanCoalesce(const WebGestureEvent& event_to_coalesce,
@@ -413,6 +423,7 @@ const char* WebInputEventTraits::GetName(WebInputEvent::Type type) {
     CASE_TYPE(TouchMove);
     CASE_TYPE(TouchEnd);
     CASE_TYPE(TouchCancel);
+    CASE_TYPE(TouchScrollStarted);
     default:
       // Must include default to let blink::WebInputEvent add new event types
       // before they're added here.
@@ -466,8 +477,7 @@ void WebInputEventTraits::Coalesce(const WebInputEvent& event_to_coalesce,
   Apply(WebInputEventCoalesce(), event->type, event_to_coalesce, event);
 }
 
-bool WebInputEventTraits::WillReceiveAckFromRenderer(
-    const WebInputEvent& event) {
+bool WebInputEventTraits::ShouldBlockEventStream(const WebInputEvent& event) {
   switch (event.type) {
     case WebInputEvent::MouseDown:
     case WebInputEvent::MouseUp:
@@ -482,14 +492,40 @@ bool WebInputEventTraits::WillReceiveAckFromRenderer(
     case WebInputEvent::GestureTapCancel:
     case WebInputEvent::GesturePinchBegin:
     case WebInputEvent::GesturePinchEnd:
-    case WebInputEvent::TouchCancel:
       return false;
+
+    // TouchCancel and TouchScrollStarted should always be non-blocking.
+    case WebInputEvent::TouchCancel:
+    case WebInputEvent::TouchScrollStarted:
+      DCHECK_NE(WebInputEvent::Blocking,
+                static_cast<const WebTouchEvent&>(event).dispatchType);
+      return false;
+
+    // Touch start and touch end indicate whether they are non-blocking
+    // (aka uncancelable) on the event.
     case WebInputEvent::TouchStart:
     case WebInputEvent::TouchEnd:
-      return static_cast<const WebTouchEvent&>(event).cancelable;
+      return static_cast<const WebTouchEvent&>(event).dispatchType ==
+             WebInputEvent::Blocking;
+
+    // Touch move events may be non-blocking but are always explicitly
+    // acknowledge by the renderer so they block the event stream.
+    case WebInputEvent::TouchMove:
     default:
       return true;
   }
+}
+
+bool WebInputEventTraits::CanCauseScroll(
+    const blink::WebMouseWheelEvent& event) {
+#if defined(USE_AURA)
+  // Scroll events generated from the mouse wheel when the control key is held
+  // don't trigger scrolling. Instead, they may cause zooming.
+  return event.hasPreciseScrollingDeltas ||
+         (event.modifiers & blink::WebInputEvent::ControlKey) == 0;
+#else
+  return true;
+#endif
 }
 
 uint32_t WebInputEventTraits::GetUniqueTouchEventId(

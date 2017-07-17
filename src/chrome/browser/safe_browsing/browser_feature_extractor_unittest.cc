@@ -5,12 +5,13 @@
 #include "chrome/browser/safe_browsing/browser_feature_extractor.h"
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -149,7 +150,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
 
   bool ExtractFeatures(ClientPhishingRequest* request) {
     StartExtractFeatures(request);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     EXPECT_EQ(1U, success_.count(request));
     return success_.count(request) ? success_[request] : false;
   }
@@ -206,15 +207,15 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
   }
 
   int num_pending_;  // Number of pending feature extractions.
-  scoped_ptr<BrowserFeatureExtractor> extractor_;
+  std::unique_ptr<BrowserFeatureExtractor> extractor_;
   std::map<void*, bool> success_;
-  scoped_ptr<BrowseInfo> browse_info_;
-  scoped_ptr<StrictMock<MockClientSideDetectionHost> > host_;
+  std::unique_ptr<BrowseInfo> browse_info_;
+  std::unique_ptr<StrictMock<MockClientSideDetectionHost>> host_;
   scoped_refptr<StrictMock<MockSafeBrowsingDatabaseManager> > db_manager_;
 
  private:
   void ExtractFeaturesDone(bool success,
-                           scoped_ptr<ClientPhishingRequest> request) {
+                           std::unique_ptr<ClientPhishingRequest> request) {
     EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
     ASSERT_EQ(0U, success_.count(request.get()));
     // The pointer doesn't really belong to us.  It belongs to
@@ -227,7 +228,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
 
   void ExtractMalwareFeaturesDone(
       bool success,
-      scoped_ptr<ClientMalwareRequest> request) {
+      std::unique_ptr<ClientMalwareRequest> request) {
     EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
     ASSERT_EQ(0U, success_.count(request.get()));
     // The pointer doesn't really belong to us.  It belongs to
@@ -340,7 +341,7 @@ TEST_F(BrowserFeatureExtractorTest, MultipleRequestsAtOnce) {
   request2.set_client_score(1.0);
   StartExtractFeatures(&request2);
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(success_[&request]);
   // Success is false because the second URL is not in the history and we are
   // not able to distinguish between a missing URL in the history and an error.

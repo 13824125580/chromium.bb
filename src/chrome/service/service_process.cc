@@ -13,14 +13,15 @@
 #include "base/i18n/rtl.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
@@ -35,10 +36,14 @@
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process_prefs.h"
+#include "components/network_session_configurator/switches.h"
 #include "components/prefs/json_pref_store.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_fetcher.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 
@@ -83,7 +88,7 @@ void ServiceIOThread::CleanUp() {
 // chrome executable's lifetime.
 void PrepareRestartOnCrashEnviroment(
     const base::CommandLine& parsed_command_line) {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   // Clear this var so child processes don't show the dialog by default.
   env->UnSetVar(env_vars::kShowRestart);
 
@@ -117,7 +122,8 @@ void PrepareRestartOnCrashEnviroment(
 }  // namespace
 
 ServiceProcess::ServiceProcess()
-    : shutdown_event_(true /* manual_reset */, false /* initially_signaled */),
+    : shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
       main_message_loop_(NULL),
       enabled_services_(0),
       update_available_(false) {
@@ -150,6 +156,11 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   }
   blocking_pool_ = new base::SequencedWorkerPool(3, "ServiceBlocking");
 
+  // Initialize Mojo early so things can use it.
+  mojo::edk::Init();
+  mojo_ipc_support_.reset(
+      new mojo::edk::ScopedIPCSupport(io_thread_->task_runner()));
+
   request_context_getter_ = new ServiceURLRequestContextGetter();
 
   base::FilePath user_data_dir;
@@ -180,6 +191,7 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
     if (locale.empty())
       locale = kDefaultServiceProcessLocale;
   }
+  ui::MaterialDesignController::Initialize();
   ui::ResourceBundle::InitSharedInstanceWithLocale(
       locale, NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
 
@@ -198,7 +210,7 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
       io_task_runner(),
       service_process_state_->GetServiceProcessChannel(),
       &shutdown_event_));
-  ipc_server_->AddMessageHandler(make_scoped_ptr(
+  ipc_server_->AddMessageHandler(base::WrapUnique(
       new cloud_print::CloudPrintMessageHandler(ipc_server_.get(), this)));
   ipc_server_->Init();
 
@@ -220,6 +232,7 @@ bool ServiceProcess::Teardown() {
   service_prefs_.reset();
   cloud_print_proxy_.reset();
 
+  mojo_ipc_support_.reset();
   ipc_server_.reset();
   // Signal this event before shutting down the service process. That way all
   // background threads can cleanup.

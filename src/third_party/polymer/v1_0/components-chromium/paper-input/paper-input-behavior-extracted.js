@@ -1,4 +1,10 @@
-/**
+// Generate unique, monotonically increasing IDs for labels (needed by
+  // aria-labelledby) and add-ons.
+  Polymer.PaperInputHelper = {};
+  Polymer.PaperInputHelper.NextLabelID = 1;
+  Polymer.PaperInputHelper.NextAddonID = 1;
+
+  /**
    * Use `Polymer.PaperInputBehavior` to implement inputs with `<paper-input-container>`. This
    * behavior is implemented by `<paper-input>`. It exposes a number of properties from
    * `<paper-input-container>` and `<input is="iron-input">` and they should be bound in your
@@ -9,6 +15,7 @@
    * @polymerBehavior Polymer.PaperInputBehavior
    */
   Polymer.PaperInputBehaviorImpl = {
+
     properties: {
       /**
        * Fired when the input changes due to user interaction.
@@ -350,12 +357,7 @@
 
     listeners: {
       'addon-attached': '_onAddonAttached',
-      'focus': '_onFocus'
     },
-
-    observers: [
-      '_focusedControlStateChanged(focused)'
-    ],
 
     keyBindings: {
       'shift+tab:keydown': '_onShiftTabDown'
@@ -409,7 +411,7 @@
       if (target.id) {
         this._ariaDescribedBy = this._appendStringWithSpace(this._ariaDescribedBy, target.id);
       } else {
-        var id = 'paper-input-add-on-' + Math.floor((Math.random() * 100000));
+        var id = 'paper-input-add-on-' + Polymer.PaperInputHelper.NextAddonID++;
         target.id = id;
         this._ariaDescribedBy = this._appendStringWithSpace(this._ariaDescribedBy, id);
       }
@@ -425,12 +427,14 @@
     },
 
     /**
-     * Forward focus to inputElement
+     * Forward focus to inputElement. Overriden from IronControlState.
      */
-    _onFocus: function() {
-      if (!this._shiftTabPressed) {
+    _focusBlurHandler: function(event) {
+      Polymer.IronControlState._focusBlurHandler.call(this, event);
+
+      // Forward the focus to the nested input.
+      if (this.focused && !this._shiftTabPressed)
         this._focusableElement.focus();
-      }
     },
 
     /**
@@ -482,24 +486,6 @@
       return placeholder || alwaysFloatLabel;
     },
 
-    _focusedControlStateChanged: function(focused) {
-      // IronControlState stops the focus and blur events in order to redispatch them on the host
-      // element, but paper-input-container listens to those events. Since there are more
-      // pending work on focus/blur in IronControlState, I'm putting in this hack to get the
-      // input focus state working for now.
-      if (!this.$.container) {
-        this.$.container = Polymer.dom(this.root).querySelector('paper-input-container');
-        if (!this.$.container) {
-          return;
-        }
-      }
-      if (focused) {
-        this.$.container._onFocus();
-      } else {
-        this.$.container._onBlur();
-      }
-    },
-
     _updateAriaLabelledBy: function() {
       var label = Polymer.dom(this.root).querySelector('label');
       if (!label) {
@@ -510,7 +496,7 @@
       if (label.id) {
         labelledBy = label.id;
       } else {
-        labelledBy = 'paper-input-label-' + new Date().getUTCMilliseconds();
+        labelledBy = 'paper-input-label-' + Polymer.PaperInputHelper.NextLabelID++;
         label.id = labelledBy;
       }
       this._ariaLabelledBy = labelledBy;
@@ -528,7 +514,7 @@
         });
       }
     }
-  };
+  }
 
   /** @polymerBehavior */
   Polymer.PaperInputBehavior = [

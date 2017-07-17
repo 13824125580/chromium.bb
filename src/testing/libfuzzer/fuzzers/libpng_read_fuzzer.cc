@@ -37,7 +37,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   }
 
   std::vector<unsigned char> v(data, data + size);
-  if (!png_sig_cmp(v.data(), 0, kPngHeaderSize)) {
+  if (png_sig_cmp(v.data(), 0, kPngHeaderSize)) {
     // not a PNG.
     return 0;
   }
@@ -46,11 +46,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     (PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   assert(png_ptr);
 
-  png_ptr->flags &= ~PNG_FLAG_CRC_CRITICAL_MASK;
-  png_ptr->flags |= PNG_FLAG_CRC_CRITICAL_IGNORE;
-
-  png_ptr->flags &= ~PNG_FLAG_CRC_ANCILLARY_MASK;
-  png_ptr->flags |= PNG_FLAG_CRC_ANCILLARY_NOWARN;
+  png_set_crc_action(png_ptr, PNG_CRC_QUIET_USE, PNG_CRC_QUIET_USE);
 
   png_infop info_ptr = png_create_info_struct(png_ptr);
   assert(info_ptr);
@@ -66,18 +62,18 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   png_set_sig_bytes(png_ptr, kPngHeaderSize);
 
   // libpng error handling.
-  if (setjmp(png_ptr->jmpbuf)) {
+  if (setjmp(png_jmpbuf(png_ptr))) {
     return 0;
   }
 
-  // Reading
+  // Reading.
   png_read_info(png_ptr, info_ptr);
   png_voidp row = png_malloc(png_ptr, png_get_rowbytes(png_ptr, info_ptr));
   base::ScopedClosureRunner png_deleter(base::Bind(
         &png_free, png_ptr, row));
 
   // reset error handler to put png_deleter into scope.
-  if (setjmp(png_ptr->jmpbuf)) {
+  if (setjmp(png_jmpbuf(png_ptr))) {
     return 0;
   }
 
@@ -90,6 +86,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         &compression_type, &filter_type)) {
     return 0;
   }
+
+  // This is going to be too slow.
+  if (width && height > 100000000 / width)
+    return 0;
 
   int passes = png_set_interlace_handling(png_ptr);
   png_start_read_image(png_ptr);

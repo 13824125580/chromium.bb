@@ -27,9 +27,9 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "wtf/HashSet.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace WTF {
 
@@ -161,17 +161,17 @@ private:
     int* m_destructNumber;
 };
 
-typedef WTF::Vector<OwnPtr<DestructCounter>> OwnPtrVector;
+typedef WTF::Vector<std::unique_ptr<DestructCounter>> OwnPtrVector;
 
 TEST(VectorTest, OwnPtr)
 {
     int destructNumber = 0;
     OwnPtrVector vector;
-    vector.append(adoptPtr(new DestructCounter(0, &destructNumber)));
-    vector.append(adoptPtr(new DestructCounter(1, &destructNumber)));
+    vector.append(wrapUnique(new DestructCounter(0, &destructNumber)));
+    vector.append(wrapUnique(new DestructCounter(1, &destructNumber)));
     EXPECT_EQ(2u, vector.size());
 
-    OwnPtr<DestructCounter>& counter0 = vector.first();
+    std::unique_ptr<DestructCounter>& counter0 = vector.first();
     ASSERT_EQ(0, counter0->get());
     int counter1 = vector.last()->get();
     ASSERT_EQ(1, counter1);
@@ -179,7 +179,7 @@ TEST(VectorTest, OwnPtr)
 
     size_t index = 0;
     for (OwnPtrVector::iterator iter = vector.begin(); iter != vector.end(); ++iter) {
-        OwnPtr<DestructCounter>* refCounter = iter;
+        std::unique_ptr<DestructCounter>* refCounter = iter;
         EXPECT_EQ(index, static_cast<size_t>(refCounter->get()->get()));
         EXPECT_EQ(index, static_cast<size_t>((*refCounter)->get()));
         index++;
@@ -187,7 +187,7 @@ TEST(VectorTest, OwnPtr)
     EXPECT_EQ(0, destructNumber);
 
     for (index = 0; index < vector.size(); index++) {
-        OwnPtr<DestructCounter>& refCounter = vector[index];
+        std::unique_ptr<DestructCounter>& refCounter = vector[index];
         EXPECT_EQ(index, static_cast<size_t>(refCounter->get()));
     }
     EXPECT_EQ(0, destructNumber);
@@ -199,21 +199,21 @@ TEST(VectorTest, OwnPtr)
     EXPECT_EQ(1u, vector.size());
     EXPECT_EQ(1, destructNumber);
 
-    OwnPtr<DestructCounter> ownCounter1 = vector[0].release();
+    std::unique_ptr<DestructCounter> ownCounter1 = std::move(vector[0]);
     vector.remove(0);
     ASSERT_EQ(counter1, ownCounter1->get());
     ASSERT_EQ(0u, vector.size());
     ASSERT_EQ(1, destructNumber);
 
-    ownCounter1.clear();
+    ownCounter1.reset();
     EXPECT_EQ(2, destructNumber);
 
     size_t count = 1025;
     destructNumber = 0;
     for (size_t i = 0; i < count; i++)
-        vector.prepend(adoptPtr(new DestructCounter(i, &destructNumber)));
+        vector.prepend(wrapUnique(new DestructCounter(i, &destructNumber)));
 
-    // Vector relocation must not destruct OwnPtr element.
+    // Vector relocation must not destruct std::unique_ptr element.
     EXPECT_EQ(0, destructNumber);
     EXPECT_EQ(count, vector.size());
 
@@ -458,6 +458,243 @@ TEST(VectorTest, AppendFirst)
     for (size_t i = 0; i < limit; i++)
         vector.append(const_cast<const WTF::String&>(vector.first()));
 }
+
+// The test below is for the following issue:
+//
+// https://bugs.chromium.org/p/chromium/issues/detail?id=592767
+//
+// where deleted copy assignment operator made canMoveWithMemcpy true because of the implementation of
+// IsTriviallyMoveAssignable<T>.
+
+class MojoMoveOnlyType final {
+public:
+    MojoMoveOnlyType();
+    MojoMoveOnlyType(MojoMoveOnlyType&&);
+    MojoMoveOnlyType& operator=(MojoMoveOnlyType&&);
+    ~MojoMoveOnlyType();
+
+private:
+    MojoMoveOnlyType(const MojoMoveOnlyType&) = delete;
+    void operator=(const MojoMoveOnlyType&) = delete;
+};
+
+static_assert(!IsTriviallyMoveAssignable<MojoMoveOnlyType>::value, "MojoMoveOnlyType isn't trivially move assignable.");
+static_assert(!IsTriviallyCopyAssignable<MojoMoveOnlyType>::value, "MojoMoveOnlyType isn't trivially copy assignable.");
+
+static_assert(!VectorTraits<MojoMoveOnlyType>::canMoveWithMemcpy, "MojoMoveOnlyType can't be moved with memcpy.");
+static_assert(!VectorTraits<MojoMoveOnlyType>::canCopyWithMemcpy, "MojoMoveOnlyType can't be copied with memcpy.");
+
+class LivenessCounter {
+public:
+    void ref() { s_live++; }
+    void deref() { s_live--; }
+
+    static unsigned s_live;
+};
+
+unsigned LivenessCounter::s_live = 0;
+
+class VectorWithDifferingInlineCapacityTest : public ::testing::TestWithParam<size_t> { };
+
+template <size_t inlineCapacity>
+void testDestructorAndConstructorCallsWhenSwappingWithInlineCapacity()
+{
+    LivenessCounter::s_live = 0;
+    LivenessCounter counter;
+    EXPECT_EQ(0u, LivenessCounter::s_live);
+
+    Vector<RefPtr<LivenessCounter>, inlineCapacity> vector;
+    Vector<RefPtr<LivenessCounter>, inlineCapacity> vector2;
+    vector.append(&counter);
+    vector2.append(&counter);
+    EXPECT_EQ(2u, LivenessCounter::s_live);
+
+    for (unsigned i = 0; i < 13; i++) {
+        for (unsigned j = 0; j < 13; j++) {
+            vector.clear();
+            vector2.clear();
+            EXPECT_EQ(0u, LivenessCounter::s_live);
+
+            for (unsigned k = 0; k < j; k++)
+                vector.append(&counter);
+            EXPECT_EQ(j, LivenessCounter::s_live);
+            EXPECT_EQ(j, vector.size());
+
+            for (unsigned k = 0; k < i; k++)
+                vector2.append(&counter);
+            EXPECT_EQ(i + j, LivenessCounter::s_live);
+            EXPECT_EQ(i, vector2.size());
+
+            vector.swap(vector2);
+            EXPECT_EQ(i + j, LivenessCounter::s_live);
+            EXPECT_EQ(i, vector.size());
+            EXPECT_EQ(j, vector2.size());
+
+            unsigned size = vector.size();
+            unsigned size2 = vector2.size();
+
+            for (unsigned k = 0; k < 5; k++) {
+                vector.swap(vector2);
+                std::swap(size, size2);
+                EXPECT_EQ(i + j, LivenessCounter::s_live);
+                EXPECT_EQ(size, vector.size());
+                EXPECT_EQ(size2, vector2.size());
+
+                vector2.append(&counter);
+                vector2.remove(0);
+            }
+        }
+    }
+
+}
+
+TEST(VectorTest, SwapWithConstructorsAndDestructors)
+{
+    testDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<0>();
+    testDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<2>();
+    testDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<10>();
+}
+
+template <size_t inlineCapacity>
+void testValuesMovedAndSwappedWithInlineCapacity()
+{
+    Vector<unsigned, inlineCapacity> vector;
+    Vector<unsigned, inlineCapacity> vector2;
+
+    for (unsigned size = 0; size < 13; size++) {
+        for (unsigned size2 = 0; size2 < 13; size2++) {
+            vector.clear();
+            vector2.clear();
+            for (unsigned i = 0; i < size; i++)
+                vector.append(i);
+            for (unsigned i = 0; i < size2; i++)
+                vector2.append(i + 42);
+            EXPECT_EQ(size, vector.size());
+            EXPECT_EQ(size2, vector2.size());
+            vector.swap(vector2);
+            for (unsigned i = 0; i < size; i++)
+                EXPECT_EQ(i, vector2[i]);
+            for (unsigned i = 0; i < size2; i++)
+                EXPECT_EQ(i + 42, vector[i]);
+        }
+    }
+}
+
+TEST(VectorTest, ValuesMovedAndSwappedWithInlineCapacity)
+{
+    testValuesMovedAndSwappedWithInlineCapacity<0>();
+    testValuesMovedAndSwappedWithInlineCapacity<2>();
+    testValuesMovedAndSwappedWithInlineCapacity<10>();
+}
+
+TEST(VectorTest, UniquePtr)
+{
+    using Pointer = std::unique_ptr<int>;
+    Vector<Pointer> vector;
+    vector.append(Pointer(new int(1)));
+    vector.reserveCapacity(2);
+    vector.uncheckedAppend(Pointer(new int(2)));
+    vector.insert(2, Pointer(new int(3)));
+    vector.prepend(Pointer(new int(0)));
+
+    ASSERT_EQ(4u, vector.size());
+    EXPECT_EQ(0, *vector[0]);
+    EXPECT_EQ(1, *vector[1]);
+    EXPECT_EQ(2, *vector[2]);
+    EXPECT_EQ(3, *vector[3]);
+
+    vector.shrink(3);
+    EXPECT_EQ(3u, vector.size());
+    vector.grow(4);
+    ASSERT_EQ(4u, vector.size());
+    EXPECT_TRUE(!vector[3]);
+    vector.remove(3);
+    vector[0] = Pointer(new int(-1));
+    ASSERT_EQ(3u, vector.size());
+    EXPECT_EQ(-1, *vector[0]);
+}
+
+bool isOneTwoThree(const Vector<int>& vector)
+{
+    return vector.size() == 3 && vector[0] == 1 && vector[1] == 2 && vector[2] == 3;
+}
+
+Vector<int> returnOneTwoThree()
+{
+    return {1, 2, 3};
+}
+
+TEST(VectorTest, InitializerList)
+{
+    Vector<int> empty({});
+    EXPECT_TRUE(empty.isEmpty());
+
+    Vector<int> one({1});
+    ASSERT_EQ(1u, one.size());
+    EXPECT_EQ(1, one[0]);
+
+    Vector<int> oneTwoThree({1, 2, 3});
+    ASSERT_EQ(3u, oneTwoThree.size());
+    EXPECT_EQ(1, oneTwoThree[0]);
+    EXPECT_EQ(2, oneTwoThree[1]);
+    EXPECT_EQ(3, oneTwoThree[2]);
+
+    // Put some jank so we can check if the assignments later can clear them.
+    empty.append(9999);
+    one.append(9999);
+    oneTwoThree.append(9999);
+
+    empty = {};
+    EXPECT_TRUE(empty.isEmpty());
+
+    one = {1};
+    ASSERT_EQ(1u, one.size());
+    EXPECT_EQ(1, one[0]);
+
+    oneTwoThree = {1, 2, 3};
+    ASSERT_EQ(3u, oneTwoThree.size());
+    EXPECT_EQ(1, oneTwoThree[0]);
+    EXPECT_EQ(2, oneTwoThree[1]);
+    EXPECT_EQ(3, oneTwoThree[2]);
+
+    // Other ways of construction: as a function parameter and in a return statement.
+    EXPECT_TRUE(isOneTwoThree({1, 2, 3}));
+    EXPECT_TRUE(isOneTwoThree(returnOneTwoThree()));
+
+    // The tests below correspond to the cases in the "if" branch in operator=(std::initializer_list<T>).
+
+    // Shrinking.
+    Vector<int, 1> vector1(3); // capacity = 3.
+    vector1 = {1, 2};
+    ASSERT_EQ(2u, vector1.size());
+    EXPECT_EQ(1, vector1[0]);
+    EXPECT_EQ(2, vector1[1]);
+
+    // Expanding.
+    Vector<int, 1> vector2(3);
+    vector2 = {1, 2, 3, 4};
+    ASSERT_EQ(4u, vector2.size());
+    EXPECT_EQ(1, vector2[0]);
+    EXPECT_EQ(2, vector2[1]);
+    EXPECT_EQ(3, vector2[2]);
+    EXPECT_EQ(4, vector2[3]);
+
+    // Exact match.
+    Vector<int, 1> vector3(3);
+    vector3 = {1, 2, 3};
+    ASSERT_EQ(3u, vector3.size());
+    EXPECT_EQ(1, vector3[0]);
+    EXPECT_EQ(2, vector3[1]);
+    EXPECT_EQ(3, vector3[2]);
+}
+
+static_assert(VectorTraits<int>::canCopyWithMemcpy, "int should be copied with memcopy.");
+static_assert(VectorTraits<char>::canCopyWithMemcpy, "char should be copied with memcpy.");
+static_assert(VectorTraits<LChar>::canCopyWithMemcpy, "LChar should be copied with memcpy.");
+static_assert(VectorTraits<UChar>::canCopyWithMemcpy, "UChar should be copied with memcpy.");
+
+class UnknownType;
+static_assert(VectorTraits<UnknownType*>::canCopyWithMemcpy, "Pointers should be copied with memcpy.");
 
 } // anonymous namespace
 

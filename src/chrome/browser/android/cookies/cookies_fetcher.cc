@@ -44,9 +44,10 @@ void CookiesFetcher::PersistCookies(JNIEnv* env,
   jobject_.Reset(env, obj);
 
   // The rest must be done from the IO thread.
-  content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
+  content::BrowserThread::PostTask(
+      content::BrowserThread::IO, FROM_HERE,
       base::Bind(&CookiesFetcher::PersistCookiesInternal,
-      base::Unretained(this), getter));
+                 base::Unretained(this), base::RetainedRef(getter)));
 }
 
 void CookiesFetcher::PersistCookiesInternal(
@@ -85,7 +86,7 @@ void CookiesFetcher::OnCookiesFetchFinished(const net::CookieList& cookies) {
         base::android::ConvertUTF8ToJavaString(env, i->Path()).obj(),
         i->CreationDate().ToInternalValue(), i->ExpiryDate().ToInternalValue(),
         i->LastAccessDate().ToInternalValue(), i->IsSecure(), i->IsHttpOnly(),
-        i->IsSameSite(), i->Priority());
+        static_cast<int>(i->SameSite()), i->Priority());
     env->SetObjectArrayElement(joa.obj(), index++, java_cookie.obj());
   }
 
@@ -95,23 +96,49 @@ void CookiesFetcher::OnCookiesFetchFinished(const net::CookieList& cookies) {
   jobject_.Reset();
 }
 
-void CookiesFetcher::RestoreCookies(JNIEnv* env,
-                                    const JavaParamRef<jobject>& obj,
-                                    const JavaParamRef<jstring>& url,
-                                    const JavaParamRef<jstring>& name,
-                                    const JavaParamRef<jstring>& value,
-                                    const JavaParamRef<jstring>& domain,
-                                    const JavaParamRef<jstring>& path,
-                                    int64_t creation,
-                                    int64_t expiration,
-                                    int64_t last_access,
-                                    bool secure,
-                                    bool httponly,
-                                    bool same_site,
-                                    int priority) {
+static void RestoreToCookieJarInternal(net::URLRequestContextGetter* getter,
+                                       const net::CanonicalCookie& cookie) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+
+  net::CookieStore* store = getter->GetURLRequestContext()->cookie_store();
+
+  // Nullable sometimes according to docs.
+  if (!store) {
+    return;
+  }
+
+  base::Callback<void(bool success)> cb;
+
+  // TODO(estark): Remove kEnableExperimentalWebPlatformFeatures check
+  // when we decide whether to ship cookie
+  // prefixes. https://crbug.com/541511
+  bool experimental_features_enabled =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableExperimentalWebPlatformFeatures);
+  store->SetCookieWithDetailsAsync(
+      cookie.Source(), cookie.Name(), cookie.Value(), cookie.Domain(),
+      cookie.Path(), base::Time(), cookie.ExpiryDate(), cookie.LastAccessDate(),
+      cookie.IsSecure(), cookie.IsHttpOnly(), cookie.SameSite(),
+      experimental_features_enabled, cookie.Priority(), cb);
+}
+
+static void RestoreCookies(JNIEnv* env,
+                           const JavaParamRef<jclass>& jcaller,
+                           const JavaParamRef<jstring>& url,
+                           const JavaParamRef<jstring>& name,
+                           const JavaParamRef<jstring>& value,
+                           const JavaParamRef<jstring>& domain,
+                           const JavaParamRef<jstring>& path,
+                           jlong creation,
+                           jlong expiration,
+                           jlong last_access,
+                           jboolean secure,
+                           jboolean httponly,
+                           jint same_site,
+                           jint priority) {
   Profile* profile = ProfileManager::GetPrimaryUserProfile();
   if (!profile->HasOffTheRecordProfile()) {
-      return; // Don't create it. There is nothing to do.
+    return;  // Don't create it. There is nothing to do.
   }
   profile = profile->GetOffTheRecordProfile();
 
@@ -126,44 +153,15 @@ void CookiesFetcher::RestoreCookies(JNIEnv* env,
       base::android::ConvertJavaStringToUTF8(env, path),
       base::Time::FromInternalValue(creation),
       base::Time::FromInternalValue(expiration),
-      base::Time::FromInternalValue(last_access), secure, httponly, same_site,
+      base::Time::FromInternalValue(last_access), secure, httponly,
+      static_cast<net::CookieSameSite>(same_site),
       static_cast<net::CookiePriority>(priority));
 
   // The rest must be done from the IO thread.
   content::BrowserThread::PostTask(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&CookiesFetcher::RestoreToCookieJarInternal,
-                 base::Unretained(this),
-                 getter,
+      content::BrowserThread::IO, FROM_HERE,
+      base::Bind(&RestoreToCookieJarInternal, base::RetainedRef(getter),
                  cookie));
-}
-
-void CookiesFetcher::RestoreToCookieJarInternal(
-    net::URLRequestContextGetter* getter,
-    const net::CanonicalCookie& cookie) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-
-  net::CookieStore* store = getter->GetURLRequestContext()->cookie_store();
-
-  // Nullable sometimes according to docs.
-  if (!store) {
-      return;
-  }
-
-  base::Callback<void(bool success)> cb;
-
-  // TODO(estark): Remove kEnableExperimentalWebPlatformFeatures check
-  // when we decide whether to ship cookie
-  // prefixes. https://crbug.com/541511
-  bool experimental_features_enabled =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalWebPlatformFeatures);
-  store->SetCookieWithDetailsAsync(
-      cookie.Source(), cookie.Name(), cookie.Value(), cookie.Domain(),
-      cookie.Path(), base::Time(), cookie.ExpiryDate(), cookie.LastAccessDate(),
-      cookie.IsSecure(), cookie.IsHttpOnly(), cookie.IsSameSite(),
-      experimental_features_enabled, cookie.Priority(), cb);
 }
 
 // JNI functions

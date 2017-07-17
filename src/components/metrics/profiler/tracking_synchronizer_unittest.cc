@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/tracked_objects.h"
@@ -26,9 +27,9 @@ class TestDelegate : public TrackingSynchronizerDelegate {
  public:
   ~TestDelegate() override {}
 
-  static scoped_ptr<TrackingSynchronizerDelegate> Create(
+  static std::unique_ptr<TrackingSynchronizerDelegate> Create(
       TrackingSynchronizer* synchronizer) {
-    return make_scoped_ptr(new TestDelegate());
+    return base::WrapUnique(new TestDelegate());
   }
 
  private:
@@ -54,7 +55,7 @@ class TestObserver : public TrackingSynchronizerObserver {
       const tracked_objects::ProcessDataPhaseSnapshot& process_data_phase,
       const ProfilerEvents& past_events) override {
     EXPECT_EQ(static_cast<base::ProcessId>(239), attributes.process_id);
-    EXPECT_EQ(ProfilerEventProto::TrackedObject::PLUGIN,
+    EXPECT_EQ(ProfilerEventProto::TrackedObject::PPAPI_PLUGIN,
               attributes.process_type);
     ASSERT_EQ(1u, process_data_phase.tasks.size());
 
@@ -104,7 +105,7 @@ class TestObserver : public TrackingSynchronizerObserver {
 
 class TestTrackingSynchronizer : public TrackingSynchronizer {
  public:
-  explicit TestTrackingSynchronizer(scoped_ptr<base::TickClock> clock)
+  explicit TestTrackingSynchronizer(std::unique_ptr<base::TickClock> clock)
       : TrackingSynchronizer(std::move(clock),
                              base::Bind(&TestDelegate::Create)) {}
 
@@ -124,7 +125,7 @@ TEST(TrackingSynchronizerTest, ProfilerData) {
   clock->Advance(base::TimeDelta::FromMilliseconds(111));
 
   scoped_refptr<TestTrackingSynchronizer> tracking_synchronizer =
-      new TestTrackingSynchronizer(make_scoped_ptr(clock));
+      new TestTrackingSynchronizer(base::WrapUnique(clock));
 
   clock->Advance(base::TimeDelta::FromMilliseconds(222));
 
@@ -147,7 +148,8 @@ TEST(TrackingSynchronizerTest, ProfilerData) {
   clock->Advance(base::TimeDelta::FromMilliseconds(444));
   TestObserver test_observer;
   tracking_synchronizer->SendData(
-      profiler_data, ProfilerEventProto::TrackedObject::PLUGIN, &test_observer);
+      profiler_data, ProfilerEventProto::TrackedObject::PPAPI_PLUGIN,
+      &test_observer);
 }
 
 }  // namespace metrics

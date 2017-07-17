@@ -29,12 +29,12 @@ class MenuRunnerImplAdapter : public MenuRunnerImplInterface {
                                   MenuAnchorPosition anchor,
                                   int32_t types) override;
   void Cancel() override;
-  base::TimeDelta GetClosingEventTime() const override;
+  base::TimeTicks GetClosingEventTime() const override;
 
  private:
   ~MenuRunnerImplAdapter() override;
 
-  scoped_ptr<MenuModelAdapter> menu_model_adapter_;
+  std::unique_ptr<MenuModelAdapter> menu_model_adapter_;
   MenuRunnerImpl* impl_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuRunnerImplAdapter);

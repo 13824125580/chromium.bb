@@ -7,13 +7,27 @@
 #include "base/bind.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/nix/xdg_util.h"
 #include "base/path_service.h"
 #include "blimp/engine/app/blimp_permission_manager.h"
+#include "components/metrics/metrics_service.h"
+#include "components/metrics/stability_metrics_helper.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/in_memory_pref_store.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_service_factory.h"
 #include "content/public/browser/background_sync_controller.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
+
+namespace {
+// Function for optionally handling read errors. Is a no-op for Blimp.
+// While the PersistentPrefStore's interface is supported, it is an in-memory
+// store only.
+void IgnoreReadError(PersistentPrefStore::PrefReadError error) {}
+}  // namespace
 
 namespace blimp {
 namespace engine {
@@ -59,6 +73,10 @@ BlimpBrowserContext::BlimpBrowserContext(bool off_the_record,
       off_the_record_(off_the_record),
       net_log_(net_log) {
   InitWhileIOAllowed();
+  InitPrefService();
+  metrics_service_client_.reset(
+      new BlimpMetricsServiceClient(pref_service_.get(),
+                                    GetSystemRequestContextGetter()));
 }
 
 BlimpBrowserContext::~BlimpBrowserContext() {
@@ -70,15 +88,35 @@ BlimpBrowserContext::~BlimpBrowserContext() {
 
 void BlimpBrowserContext::InitWhileIOAllowed() {
   // Ensures ~/.config/blimp_engine directory exists.
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   base::FilePath config_dir(base::nix::GetXDGDirectory(
       env.get(), base::nix::kXdgConfigHomeEnvVar, base::nix::kDotConfigDir));
   path_ = config_dir.Append("blimp_engine");
   if (!base::PathExists(path_))
     base::CreateDirectory(path_);
+  BrowserContext::Initialize(this, path_);
 }
 
-scoped_ptr<content::ZoomLevelDelegate>
+void BlimpBrowserContext::InitPrefService() {
+  // Create PrefRegistry and register metrics services preferences with it.
+  scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry(
+      new user_prefs::PrefRegistrySyncable());
+  metrics::MetricsService::RegisterPrefs(pref_registry.get());
+  metrics::StabilityMetricsHelper::RegisterPrefs(pref_registry.get());
+
+  PrefServiceFactory pref_service_factory;
+
+  // Create an in memory preferences store to hold metrics logs.
+  pref_service_factory.set_user_prefs(new InMemoryPrefStore());
+  pref_service_factory.set_read_error_callback(base::Bind(&IgnoreReadError));
+
+  // Create a PrefService binding the PrefRegistry to the InMemoryPrefStore.
+  // The PrefService ends up owning the PrefRegistry and the InMemoryPrefStore.
+  pref_service_ = pref_service_factory.Create(pref_registry.get());
+  DCHECK(pref_service_.get());
+}
+
+std::unique_ptr<content::ZoomLevelDelegate>
 BlimpBrowserContext::CreateZoomLevelDelegate(const base::FilePath&) {
   return nullptr;
 }
@@ -96,47 +134,12 @@ BlimpBrowserContext::GetDownloadManagerDelegate() {
   return nullptr;
 }
 
-net::URLRequestContextGetter* BlimpBrowserContext::GetRequestContext() {
-  return GetDefaultStoragePartition(this)->GetURLRequestContext();
-}
-
-const scoped_refptr<BlimpURLRequestContextGetter>&
-BlimpBrowserContext::CreateRequestContext(
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  DCHECK(!resource_context_->url_request_context_getter());
-  // net_log_ is owned by BrowserMainParts.
-  resource_context_->set_url_request_context_getter(
-      new BlimpURLRequestContextGetter(
-          ignore_certificate_errors_, GetPath(),
-          content::BrowserThread::GetMessageLoopProxyForThread(
-              content::BrowserThread::IO),
-          content::BrowserThread::GetMessageLoopProxyForThread(
-              content::BrowserThread::FILE),
-          protocol_handlers, std::move(request_interceptors), net_log_));
-  return resource_context_->url_request_context_getter();
-}
-
 net::URLRequestContextGetter*
-BlimpBrowserContext::GetRequestContextForRenderProcess(int renderer_child_id) {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter* BlimpBrowserContext::GetMediaRequestContext() {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter*
-BlimpBrowserContext::GetMediaRequestContextForRenderProcess(
-    int renderer_child_id) {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter*
-BlimpBrowserContext::GetMediaRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory) {
-  return GetRequestContext();
+BlimpBrowserContext::GetSystemRequestContextGetter() {
+  if (!system_context_getter_) {
+    system_context_getter_ = new BlimpSystemURLRequestContextGetter();
+  }
+  return system_context_getter_.get();
 }
 
 content::ResourceContext* BlimpBrowserContext::GetResourceContext() {
@@ -167,6 +170,42 @@ content::PermissionManager* BlimpBrowserContext::GetPermissionManager() {
 
 content::BackgroundSyncController*
 BlimpBrowserContext::GetBackgroundSyncController() {
+  return nullptr;
+}
+
+net::URLRequestContextGetter* BlimpBrowserContext::CreateRequestContext(
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  DCHECK(!resource_context_->url_request_context_getter());
+  // net_log_ is owned by BrowserMainParts.
+  resource_context_->set_url_request_context_getter(
+      new BlimpURLRequestContextGetter(
+          ignore_certificate_errors_, GetPath(),
+          content::BrowserThread::GetMessageLoopProxyForThread(
+              content::BrowserThread::IO),
+          content::BrowserThread::GetMessageLoopProxyForThread(
+              content::BrowserThread::FILE),
+          protocol_handlers, std::move(request_interceptors), net_log_));
+  return resource_context_->url_request_context_getter().get();
+}
+
+net::URLRequestContextGetter*
+BlimpBrowserContext::CreateRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory,
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  return nullptr;
+}
+
+net::URLRequestContextGetter* BlimpBrowserContext::CreateMediaRequestContext() {
+  return resource_context_->url_request_context_getter().get();
+}
+
+net::URLRequestContextGetter*
+BlimpBrowserContext::CreateMediaRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory) {
   return nullptr;
 }
 

@@ -6,7 +6,6 @@
 
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "ui/events/event.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -33,10 +32,9 @@ class TouchPointView : public views::View,
  public:
   explicit TouchPointView(views::Widget* parent_widget)
       : circle_center_(kPointRadius + 1, kPointRadius + 1),
-        gradient_center_(SkPoint::Make(kPointRadius + 1,
-                                       kPointRadius + 1)) {
+        gradient_center_(SkPoint::Make(kPointRadius + 1, kPointRadius + 1)) {
     SetPaintToLayer(true);
-    SetFillsBoundsOpaquely(false);
+    layer()->SetFillsBoundsOpaquely(false);
 
     SetSize(gfx::Size(2 * kPointRadius + 2, 2 * kPointRadius + 2));
 
@@ -58,19 +56,16 @@ class TouchPointView : public views::View,
     if (touch.type() == ui::ET_TOUCH_RELEASED ||
         touch.type() == ui::ET_TOUCH_CANCELLED) {
       fadeout_.reset(new gfx::LinearAnimation(kFadeoutDurationInMs,
-                                             kFadeoutFrameRate,
-                                             this));
+                                              kFadeoutFrameRate, this));
       fadeout_->Start();
     } else {
       SetX(parent()->GetMirroredXInView(touch.root_location().x()) -
-               kPointRadius - 1);
+           kPointRadius - 1);
       SetY(touch.root_location().y() - kPointRadius - 1);
     }
   }
 
-  void Remove() {
-    delete this;
-  }
+  void Remove() { delete this; }
 
  private:
   ~TouchPointView() override {
@@ -85,14 +80,10 @@ class TouchPointView : public views::View,
       alpha = static_cast<int>(fadeout_->CurrentValueBetween(alpha, 0));
     fill_paint_.setAlpha(alpha);
     stroke_paint_.setAlpha(alpha);
-    skia::RefPtr<SkShader> shader = skia::AdoptRef(
-        SkGradientShader::CreateRadial(gradient_center_,
-                                       SkIntToScalar(kPointRadius),
-                                       gradient_colors_,
-                                       gradient_pos_,
-                                       arraysize(gradient_colors_),
-                                       SkShader::kMirror_TileMode));
-    fill_paint_.setShader(shader.get());
+    fill_paint_.setShader(SkGradientShader::MakeRadial(
+        gradient_center_, SkIntToScalar(kPointRadius), gradient_colors_,
+        gradient_pos_, arraysize(gradient_colors_),
+        SkShader::kMirror_TileMode));
     canvas->DrawCircle(circle_center_, SkIntToScalar(kPointRadius),
                        fill_paint_);
     canvas->DrawCircle(circle_center_, SkIntToScalar(kPointRadius),
@@ -130,21 +121,19 @@ class TouchPointView : public views::View,
   SkColor gradient_colors_[2];
   SkScalar gradient_pos_[2];
 
-  scoped_ptr<gfx::Animation> fadeout_;
+  std::unique_ptr<gfx::Animation> fadeout_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchPointView);
 };
 
 TouchHudProjection::TouchHudProjection(aura::Window* initial_root)
-    : TouchObserverHUD(initial_root) {
-}
+    : TouchObserverHUD(initial_root) {}
 
-TouchHudProjection::~TouchHudProjection() {
-}
+TouchHudProjection::~TouchHudProjection() {}
 
 void TouchHudProjection::Clear() {
   for (std::map<int, TouchPointView*>::iterator iter = points_.begin();
-      iter != points_.end(); iter++)
+       iter != points_.end(); iter++)
     iter->second->Remove();
   points_.clear();
 }

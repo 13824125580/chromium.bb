@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_UI_ANDROID_TOOLBAR_TOOLBAR_MODEL_ANDROID_H_
 #define CHROME_BROWSER_UI_ANDROID_TOOLBAR_TOOLBAR_MODEL_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/toolbar/chrome_toolbar_model_delegate.h"
 #include "components/toolbar/toolbar_model.h"
 
@@ -27,11 +28,6 @@ class ToolbarModelAndroid : public ChromeToolbarModelDelegate {
   base::android::ScopedJavaLocalRef<jstring> GetText(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
-  base::android::ScopedJavaLocalRef<jstring> GetCorpusChipText(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  jboolean WouldReplaceURL(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& obj);
 
   // ChromeToolbarModelDelegate:
   content::WebContents* GetActiveWebContents() const override;
@@ -39,7 +35,7 @@ class ToolbarModelAndroid : public ChromeToolbarModelDelegate {
   static bool RegisterToolbarModelAndroid(JNIEnv* env);
 
  private:
-  scoped_ptr<ToolbarModel> toolbar_model_;
+  std::unique_ptr<ToolbarModel> toolbar_model_;
   JavaObjectWeakGlobalRef weak_java_delegate_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ToolbarModelAndroid);

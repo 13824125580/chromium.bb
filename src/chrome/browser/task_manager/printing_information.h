@@ -10,7 +10,6 @@
 
 namespace task_manager {
 
-#if defined(ENABLE_PRINT_PREVIEW)
 class PrintingResource;
 
 // WebContentsInformation for WebContentses that are created for print preview
@@ -23,13 +22,12 @@ class PrintingInformation : public NotificationObservingWebContentsInformation {
   bool CheckOwnership(content::WebContents* web_contents) override;
   void GetAll(const NewWebContentsCallback& callback) override;
 
-  scoped_ptr<RendererResource> MakeResource(
+  std::unique_ptr<RendererResource> MakeResource(
       content::WebContents* web_contents) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PrintingInformation);
 };
-#endif  // defined(ENABLE_PRINT_PREVIEW)
 
 }  // namespace task_manager
 

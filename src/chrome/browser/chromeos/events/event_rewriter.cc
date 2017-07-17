@@ -8,8 +8,9 @@
 
 #include <vector>
 
+#include "ash/common/wm/window_state.h"
 #include "ash/sticky_keys/sticky_keys_controller.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "base/logging.h"
@@ -26,7 +27,7 @@
 #include "components/user_manager/user_manager.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
-#include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/input_device_manager.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -94,7 +95,7 @@ const struct ModifierRemapping {
     {ui::EF_COMMAND_DOWN,
      input_method::kSearchKey,
      prefs::kLanguageRemapSearchKeyTo,
-     {ui::EF_COMMAND_DOWN, ui::DomCode::OS_LEFT, ui::DomKey::META,
+     {ui::EF_COMMAND_DOWN, ui::DomCode::META_LEFT, ui::DomKey::META,
       ui::VKEY_LWIN}},
     {ui::EF_ALT_DOWN,
      input_method::kAltKey,
@@ -282,9 +283,9 @@ ui::DomCode RelocateModifier(ui::DomCode code, ui::DomKeyLocation location) {
     case ui::DomCode::ALT_LEFT:
     case ui::DomCode::ALT_RIGHT:
       return right ? ui::DomCode::ALT_RIGHT : ui::DomCode::ALT_LEFT;
-    case ui::DomCode::OS_LEFT:
-    case ui::DomCode::OS_RIGHT:
-      return right ? ui::DomCode::OS_RIGHT : ui::DomCode::OS_LEFT;
+    case ui::DomCode::META_LEFT:
+    case ui::DomCode::META_RIGHT:
+      return right ? ui::DomCode::META_RIGHT : ui::DomCode::META_LEFT;
     default:
       break;
   }
@@ -315,13 +316,13 @@ EventRewriter::DeviceType EventRewriter::KeyboardDeviceAddedForTesting(
 
 void EventRewriter::RewriteMouseButtonEventForTesting(
     const ui::MouseEvent& event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   RewriteMouseButtonEvent(event, rewritten_event);
 }
 
 ui::EventRewriteStatus EventRewriter::RewriteEvent(
     const ui::Event& event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   if ((event.type() == ui::ET_KEY_PRESSED) ||
       (event.type() == ui::ET_KEY_RELEASED)) {
     return RewriteKeyEvent(static_cast<const ui::KeyEvent&>(event),
@@ -350,7 +351,7 @@ ui::EventRewriteStatus EventRewriter::RewriteEvent(
 
 ui::EventRewriteStatus EventRewriter::NextDispatchEvent(
     const ui::Event& last_event,
-    scoped_ptr<ui::Event>* new_event) {
+    std::unique_ptr<ui::Event>* new_event) {
   if (sticky_keys_controller_) {
     // In the case of sticky keys, we know what the events obtained here are:
     // modifier key releases that match the ones previously discarded. So, we
@@ -366,7 +367,7 @@ ui::EventRewriteStatus EventRewriter::NextDispatchEvent(
 void EventRewriter::BuildRewrittenKeyEvent(
     const ui::KeyEvent& key_event,
     const MutableKeyState& state,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   ui::KeyEvent* rewritten_key_event =
       new ui::KeyEvent(key_event.type(), state.key_code, state.code,
                        state.flags, state.key, key_event.time_stamp());
@@ -484,7 +485,7 @@ int EventRewriter::GetRemappedModifierMasks(const PrefService& pref_service,
 
 ui::EventRewriteStatus EventRewriter::RewriteKeyEvent(
     const ui::KeyEvent& key_event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   if (IsExtensionCommandRegistered(key_event.key_code(), key_event.flags()))
     return ui::EVENT_REWRITE_CONTINUE;
   if (key_event.source_device_id() != ui::ED_UNKNOWN_DEVICE)
@@ -560,7 +561,7 @@ ui::EventRewriteStatus EventRewriter::RewriteKeyEvent(
 
 ui::EventRewriteStatus EventRewriter::RewriteMouseButtonEvent(
     const ui::MouseEvent& mouse_event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   int flags = mouse_event.flags();
   RewriteLocatedEvent(mouse_event, &flags);
   ui::EventRewriteStatus status = ui::EVENT_REWRITE_CONTINUE;
@@ -594,10 +595,11 @@ ui::EventRewriteStatus EventRewriter::RewriteMouseButtonEvent(
 
 ui::EventRewriteStatus EventRewriter::RewriteMouseWheelEvent(
     const ui::MouseWheelEvent& wheel_event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   if (!sticky_keys_controller_)
     return ui::EVENT_REWRITE_CONTINUE;
   int flags = wheel_event.flags();
+  RewriteLocatedEvent(wheel_event, &flags);
   ui::EventRewriteStatus status =
       sticky_keys_controller_->RewriteMouseEvent(wheel_event, &flags);
   if ((wheel_event.flags() == flags) &&
@@ -618,7 +620,7 @@ ui::EventRewriteStatus EventRewriter::RewriteMouseWheelEvent(
 
 ui::EventRewriteStatus EventRewriter::RewriteTouchEvent(
     const ui::TouchEvent& touch_event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   int flags = touch_event.flags();
   RewriteLocatedEvent(touch_event, &flags);
   if (touch_event.flags() == flags)
@@ -634,7 +636,7 @@ ui::EventRewriteStatus EventRewriter::RewriteTouchEvent(
 
 ui::EventRewriteStatus EventRewriter::RewriteScrollEvent(
     const ui::ScrollEvent& scroll_event,
-    scoped_ptr<ui::Event>* rewritten_event) {
+    std::unique_ptr<ui::Event>* rewritten_event) {
   int flags = scroll_event.flags();
   ui::EventRewriteStatus status = ui::EVENT_REWRITE_CONTINUE;
   if (sticky_keys_controller_)
@@ -753,8 +755,8 @@ bool EventRewriter::RewriteModifierKeys(const ui::KeyEvent& key_event,
       remapped_key =
           GetRemappedKey(prefs::kLanguageRemapCapsLockKeyTo, *pref_service);
       break;
-    case ui::DomCode::OS_LEFT:
-    case ui::DomCode::OS_RIGHT:
+    case ui::DomCode::META_LEFT:
+    case ui::DomCode::META_RIGHT:
       characteristic_flag = ui::EF_COMMAND_DOWN;
       // Rewrite Command-L/R key presses on an Apple keyboard to Control.
       if (IsAppleKeyboard()) {
@@ -1138,11 +1140,11 @@ EventRewriter::DeviceType EventRewriter::KeyboardDeviceAddedInternal(
 }
 
 EventRewriter::DeviceType EventRewriter::KeyboardDeviceAdded(int device_id) {
-  if (!ui::DeviceDataManager::HasInstance())
+  if (!ui::InputDeviceManager::HasInstance())
     return kDeviceUnknown;
-  const std::vector<ui::KeyboardDevice>& keyboards =
-      ui::DeviceDataManager::GetInstance()->keyboard_devices();
-  for (const auto& keyboard : keyboards) {
+  const std::vector<ui::InputDevice>& keyboard_devices =
+      ui::InputDeviceManager::GetInstance()->GetKeyboardDevices();
+  for (const auto& keyboard : keyboard_devices) {
     if (keyboard.id == device_id) {
       return KeyboardDeviceAddedInternal(
           keyboard.id, keyboard.name, keyboard.vendor_id, keyboard.product_id);

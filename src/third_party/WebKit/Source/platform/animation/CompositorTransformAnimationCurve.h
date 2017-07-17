@@ -5,14 +5,15 @@
 #ifndef CompositorTransformAnimationCurve_h
 #define CompositorTransformAnimationCurve_h
 
-#include "base/memory/scoped_ptr.h"
 #include "platform/PlatformExport.h"
 #include "platform/animation/CompositorAnimationCurve.h"
 #include "platform/animation/CompositorTransformKeyframe.h"
+#include "platform/animation/TimingFunction.h"
 #include "wtf/Noncopyable.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace cc {
-class AnimationCurve;
 class KeyframedTransformAnimationCurve;
 }
 
@@ -26,30 +27,32 @@ namespace blink {
 class PLATFORM_EXPORT CompositorTransformAnimationCurve : public CompositorAnimationCurve {
     WTF_MAKE_NONCOPYABLE(CompositorTransformAnimationCurve);
 public:
-    CompositorTransformAnimationCurve();
+    static std::unique_ptr<CompositorTransformAnimationCurve> create()
+    {
+        return wrapUnique(new CompositorTransformAnimationCurve());
+    }
+
     ~CompositorTransformAnimationCurve() override;
 
-    // Adds the keyframe with the default timing function (ease).
-    virtual void add(const CompositorTransformKeyframe&);
-    virtual void add(const CompositorTransformKeyframe&, TimingFunctionType);
+    void addLinearKeyframe(const CompositorTransformKeyframe&);
+    void addCubicBezierKeyframe(const CompositorTransformKeyframe&, CubicBezierTimingFunction::EaseType);
     // Adds the keyframe with a custom, bezier timing function. Note, it is
     // assumed that x0 = y0, and x3 = y3 = 1.
-    virtual void add(const CompositorTransformKeyframe&, double x1, double y1, double x2, double y2);
-    // Adds the keyframe with a steps timing function.
-    virtual void add(const CompositorTransformKeyframe&, int steps, float stepsStartOffset);
+    void addCubicBezierKeyframe(const CompositorTransformKeyframe&, double x1, double y1, double x2, double y2);
+    void addStepsKeyframe(const CompositorTransformKeyframe&, int steps, StepsTimingFunction::StepPosition);
 
-    virtual void setLinearTimingFunction();
-    virtual void setCubicBezierTimingFunction(TimingFunctionType);
-    virtual void setCubicBezierTimingFunction(double x1, double y1, double x2, double y2);
-    virtual void setStepsTimingFunction(int numberOfSteps, float stepsStartOffset);
+    void setLinearTimingFunction();
+    void setCubicBezierTimingFunction(CubicBezierTimingFunction::EaseType);
+    void setCubicBezierTimingFunction(double x1, double y1, double x2, double y2);
+    void setStepsTimingFunction(int numberOfSteps, StepsTimingFunction::StepPosition);
 
     // CompositorAnimationCurve implementation.
-    AnimationCurveType type() const override;
-
-    scoped_ptr<cc::AnimationCurve> cloneToAnimationCurve() const;
+    std::unique_ptr<cc::AnimationCurve> cloneToAnimationCurve() const override;
 
 private:
-    scoped_ptr<cc::KeyframedTransformAnimationCurve> m_curve;
+    CompositorTransformAnimationCurve();
+
+    std::unique_ptr<cc::KeyframedTransformAnimationCurve> m_curve;
 };
 
 } // namespace blink

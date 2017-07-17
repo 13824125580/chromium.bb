@@ -6,6 +6,8 @@
 
 #include "core/css/resolver/StyleBuilderConverter.h"
 #include "core/style/StyleMotionRotation.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -37,9 +39,9 @@ namespace {
 
 class UnderlyingRotationTypeChecker : public InterpolationType::ConversionChecker {
 public:
-    static PassOwnPtr<UnderlyingRotationTypeChecker> create(MotionRotationType underlyingRotationType)
+    static std::unique_ptr<UnderlyingRotationTypeChecker> create(MotionRotationType underlyingRotationType)
     {
-        return adoptPtr(new UnderlyingRotationTypeChecker(underlyingRotationType));
+        return wrapUnique(new UnderlyingRotationTypeChecker(underlyingRotationType));
     }
 
     bool isValid(const InterpolationEnvironment&, const InterpolationValue& underlying) const final
@@ -57,9 +59,9 @@ private:
 
 class InheritedRotationTypeChecker : public InterpolationType::ConversionChecker {
 public:
-    static PassOwnPtr<InheritedRotationTypeChecker> create(MotionRotationType inheritedRotationType)
+    static std::unique_ptr<InheritedRotationTypeChecker> create(MotionRotationType inheritedRotationType)
     {
-        return adoptPtr(new InheritedRotationTypeChecker(inheritedRotationType));
+        return wrapUnique(new InheritedRotationTypeChecker(inheritedRotationType));
     }
 
     bool isValid(const InterpolationEnvironment& environment, const InterpolationValue& underlying) const final
@@ -91,7 +93,7 @@ InterpolationValue CSSMotionRotationInterpolationType::maybeConvertNeutral(const
     return convertMotionRotation(StyleMotionRotation(0, underlyingRotationType));
 }
 
-InterpolationValue CSSMotionRotationInterpolationType::maybeConvertInitial() const
+InterpolationValue CSSMotionRotationInterpolationType::maybeConvertInitial(const StyleResolverState&, ConversionCheckers& conversionCheckers) const
 {
     return convertMotionRotation(StyleMotionRotation(0, MotionRotationAuto));
 }
@@ -108,15 +110,15 @@ InterpolationValue CSSMotionRotationInterpolationType::maybeConvertValue(const C
     return convertMotionRotation(StyleBuilderConverter::convertMotionRotation(value));
 }
 
-PairwiseInterpolationValue CSSMotionRotationInterpolationType::mergeSingleConversions(InterpolationValue& start, InterpolationValue& end) const
+PairwiseInterpolationValue CSSMotionRotationInterpolationType::maybeMergeSingles(InterpolationValue&& start, InterpolationValue&& end) const
 {
     const MotionRotationType& startType = toCSSMotionRotationNonInterpolableValue(*start.nonInterpolableValue).rotationType();
     const MotionRotationType& endType = toCSSMotionRotationNonInterpolableValue(*end.nonInterpolableValue).rotationType();
     if (startType != endType)
         return nullptr;
     return PairwiseInterpolationValue(
-        start.interpolableValue.release(),
-        end.interpolableValue.release(),
+        std::move(start.interpolableValue),
+        std::move(end.interpolableValue),
         start.nonInterpolableValue.release());
 }
 
@@ -125,7 +127,7 @@ InterpolationValue CSSMotionRotationInterpolationType::maybeConvertUnderlyingVal
     return convertMotionRotation(environment.state().style()->motionRotation());
 }
 
-void CSSMotionRotationInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value) const
+void CSSMotionRotationInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value, double interpolationFraction) const
 {
     const MotionRotationType& underlyingType = toCSSMotionRotationNonInterpolableValue(*underlyingValueOwner.value().nonInterpolableValue).rotationType();
     const MotionRotationType& rotationType = toCSSMotionRotationNonInterpolableValue(*value.nonInterpolableValue).rotationType();

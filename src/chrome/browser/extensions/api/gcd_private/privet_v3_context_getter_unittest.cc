@@ -6,8 +6,11 @@
 
 #include <stddef.h>
 
+#include "base/location.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -37,7 +40,7 @@ class PrivetV3ContextGetterTest : public testing::Test,
     done_ = true;
     status_ = source->GetStatus();
 
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_);
   }
 
   void CreateServer(EmbeddedTestServer::Type type) {
@@ -85,8 +88,8 @@ class PrivetV3ContextGetterTest : public testing::Test,
   net::URLRequestStatus status_ = net::URLRequestStatus();
   content::TestBrowserThreadBundle thread_bundle_;
   scoped_refptr<extensions::PrivetV3ContextGetter> context_getter_;
-  scoped_ptr<EmbeddedTestServer> server_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<EmbeddedTestServer> server_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   base::Closure quit_;
 };

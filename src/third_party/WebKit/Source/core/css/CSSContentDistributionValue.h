@@ -5,25 +5,25 @@
 #ifndef CSSContentDistributionValue_h
 #define CSSContentDistributionValue_h
 
+#include "core/css/CSSPrimitiveValue.h"
 #include "core/css/CSSValue.h"
-#include "core/css/CSSValuePool.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
 class CSSContentDistributionValue : public CSSValue {
 public:
-    static PassRefPtrWillBeRawPtr<CSSContentDistributionValue> create(CSSValueID distribution, CSSValueID position, CSSValueID overflow)
+    static CSSContentDistributionValue* create(CSSValueID distribution, CSSValueID position, CSSValueID overflow)
     {
-        return adoptRefWillBeNoop(new CSSContentDistributionValue(distribution, position, overflow));
+        return new CSSContentDistributionValue(distribution, position, overflow);
     }
     ~CSSContentDistributionValue();
 
-    PassRefPtrWillBeRawPtr<CSSPrimitiveValue> distribution() const { return cssValuePool().createIdentifierValue(m_distribution); }
+    CSSPrimitiveValue* distribution() const { return CSSPrimitiveValue::createIdentifier(m_distribution); }
 
-    PassRefPtrWillBeRawPtr<CSSPrimitiveValue> position() const { return cssValuePool().createIdentifierValue(m_position); }
+    CSSPrimitiveValue* position() const { return CSSPrimitiveValue::createIdentifier(m_position); }
 
-    PassRefPtrWillBeRawPtr<CSSPrimitiveValue> overflow() const { return cssValuePool().createIdentifierValue(m_overflow); }
+    CSSPrimitiveValue* overflow() const { return CSSPrimitiveValue::createIdentifier(m_overflow); }
 
     String customCSSText() const;
 

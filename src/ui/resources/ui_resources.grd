@@ -101,6 +101,7 @@
       <structure type="chrome_scaled_image" name="IDR_DISABLE" file="disable.png" />
       <structure type="chrome_scaled_image" name="IDR_DISABLE_H" file="disable_hover.png" />
       <structure type="chrome_scaled_image" name="IDR_DISABLE_P" file="disable_pressed.png" />
+      <structure type="chrome_scaled_image" name="IDR_ALL_APPS_DROP_DOWN" file="common/all_apps_drop_down.png" />
       <structure type="chrome_scaled_image" name="IDR_DEFAULT_FAVICON" file="common/default_favicon.png" />
       <structure type="chrome_scaled_image" name="IDR_DEFAULT_FAVICON_32" file="common/default_favicon_32.png" />
       <structure type="chrome_scaled_image" name="IDR_DEFAULT_FAVICON_64" file="common/default_favicon_64.png" />
@@ -124,6 +125,8 @@
       <structure type="chrome_scaled_image" name="IDR_FOLDER_CLOSED_RTL" file="common/folder_closed_rtl.png" />
       <if expr="is_macosx">
         <structure type="chrome_scaled_image" name="IDR_MENU_CHECK_CHECKED" file="legacy/menu_check.png" />
+        <structure type="chrome_scaled_image" name="IDR_MENU_OVERFLOW_UP" file="common/menu_overflow_up.png" />
+        <structure type="chrome_scaled_image" name="IDR_MENU_OVERFLOW_DOWN" file="common/menu_overflow_down.png" />
       </if>
       <if expr="is_macosx or is_ios">
         <structure type="chrome_scaled_image" name="IDR_MENU_HIERARCHY_ARROW" file="mac/menu_hierarchy_arrow.png" />
@@ -150,6 +153,7 @@
           <structure type="chrome_scaled_image" name="IDR_NOTIFICATION_CLOSE" file="common/notification_close.png"/>
           <structure type="chrome_scaled_image" name="IDR_NOTIFICATION_CLOSE_HOVER" file="common/notification_close_hover.png"/>
           <structure type="chrome_scaled_image" name="IDR_NOTIFICATION_CLOSE_PRESSED" file="common/notification_close_pressed.png"/>
+          <structure type="chrome_scaled_image" name="IDR_ARC_NOTIFICATION_CLOSE" file="common/arc_notification_close.png"/>
         </if>
         <if expr="desktop_linux and use_aura">
           <structure type="chrome_scaled_image" name="IDR_NOTIFICATION_BUBBLE_CLOSE" file="common/notification_bubble_close.png"/>
@@ -194,6 +198,7 @@
         <structure type="chrome_scaled_image" name="IDR_TOUCH_DRAG_TIP_LINK" file="common/drag_tip_link.png" />
         <structure type="chrome_scaled_image" name="IDR_TOUCH_DRAG_TIP_NODROP" file="common/drag_tip_nodrop.png" />
       </if>
+      <structure type="chrome_scaled_image" name="IDR_TRANSLATE_ICON_BUBBLE" file="common/translate.png" />
     </structures>
   </release>
 </grit>

@@ -35,7 +35,7 @@
 #include "core/html/ValidityState.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/inspector/ConsoleMessage.h"
-#include "core/layout/LayoutBox.h"
+#include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/page/Page.h"
 #include "core/page/ValidationMessageClient.h"
@@ -65,15 +65,6 @@ HTMLFormControlElement::HTMLFormControlElement(const QualifiedName& tagName, Doc
 
 HTMLFormControlElement::~HTMLFormControlElement()
 {
-#if !ENABLE(OILPAN)
-#if ENABLE(ASSERT)
-    // Recalculate m_willValidate and m_isValid for the vtbl change in order to
-    // avoid assertion failures in isValidElement() called in setForm(0).
-    setNeedsWillValidateCheck();
-    setNeedsValidityCheck();
-#endif
-    setForm(0);
-#endif
 }
 
 DEFINE_TRACE(HTMLFormControlElement)
@@ -188,7 +179,7 @@ void HTMLFormControlElement::disabledAttributeChanged()
     pseudoStateChanged(CSSSelector::PseudoEnabled);
     if (layoutObject())
         LayoutTheme::theme().controlStateChanged(*layoutObject(), EnabledControlState);
-    if (isDisabledFormControl() && treeScope().adjustedFocusedElement() == this) {
+    if (isDisabledFormControl() && adjustedFocusedElementInTreeScope() == this) {
         // We might want to call blur(), but it's dangerous to dispatch events
         // here.
         document().setNeedsFocusedElementCheck();
@@ -278,7 +269,7 @@ Node::InsertionNotificationRequest HTMLFormControlElement::insertedInto(Containe
     fieldSetAncestorsSetNeedsValidityCheck(insertionPoint);
 
     // Trigger for elements outside of forms.
-    if (!formOwner() && insertionPoint->inDocument())
+    if (!formOwner() && insertionPoint->inShadowIncludingDocument())
         document().didAssociateFormControl(this);
 
     return InsertionDone;
@@ -301,12 +292,16 @@ void HTMLFormControlElement::willChangeForm()
 {
     FormAssociatedElement::willChangeForm();
     formOwnerSetNeedsValidityCheck();
+    if (formOwner() && canBeSuccessfulSubmitButton())
+        formOwner()->invalidateDefaultButtonStyle();
 }
 
 void HTMLFormControlElement::didChangeForm()
 {
     FormAssociatedElement::didChangeForm();
     formOwnerSetNeedsValidityCheck();
+    if (formOwner() && inShadowIncludingDocument() && canBeSuccessfulSubmitButton())
+        formOwner()->invalidateDefaultButtonStyle();
 }
 
 void HTMLFormControlElement::formOwnerSetNeedsValidityCheck()
@@ -362,6 +357,11 @@ bool HTMLFormControlElement::isDisabledFormControl() const
     if (m_ancestorDisabledState == AncestorDisabledStateUnknown)
         updateAncestorDisabledState();
     return m_ancestorDisabledState == AncestorDisabledStateDisabled;
+}
+
+bool HTMLFormControlElement::matchesEnabledPseudoClass() const
+{
+    return !isDisabledFormControl();
 }
 
 bool HTMLFormControlElement::isRequired() const
@@ -530,17 +530,15 @@ ValidationMessageClient* HTMLFormControlElement::validationMessageClient() const
     return &page->validationMessageClient();
 }
 
-bool HTMLFormControlElement::checkValidity(WillBeHeapVector<RefPtrWillBeMember<HTMLFormControlElement>>* unhandledInvalidControls, CheckValidityEventBehavior eventBehavior)
+bool HTMLFormControlElement::checkValidity(HeapVector<Member<HTMLFormControlElement>>* unhandledInvalidControls, CheckValidityEventBehavior eventBehavior)
 {
     if (isValidElement())
         return true;
     if (eventBehavior != CheckValidityDispatchInvalidEvent)
         return false;
-    // An event handler can deref this object.
-    RefPtrWillBeRawPtr<HTMLFormControlElement> protector(this);
-    RefPtrWillBeRawPtr<Document> originalDocument(document());
+    Document* originalDocument = &document();
     DispatchEventResult dispatchResult = dispatchEvent(Event::createCancelable(EventTypeNames::invalid));
-    if (dispatchResult == DispatchEventResult::NotCanceled && unhandledInvalidControls && inDocument() && originalDocument == document())
+    if (dispatchResult == DispatchEventResult::NotCanceled && unhandledInvalidControls && inShadowIncludingDocument() && originalDocument == document())
         unhandledInvalidControls->append(this);
     return false;
 }
@@ -548,14 +546,13 @@ bool HTMLFormControlElement::checkValidity(WillBeHeapVector<RefPtrWillBeMember<H
 void HTMLFormControlElement::showValidationMessage()
 {
     scrollIntoViewIfNeeded(false);
-    RefPtrWillBeRawPtr<HTMLFormControlElement> protector(this);
     focus();
     updateVisibleValidationMessage();
 }
 
 bool HTMLFormControlElement::reportValidity()
 {
-    WillBeHeapVector<RefPtrWillBeMember<HTMLFormControlElement>> unhandledInvalidControls;
+    HeapVector<Member<HTMLFormControlElement>> unhandledInvalidControls;
     bool isValid = checkValidity(&unhandledInvalidControls, CheckValidityDispatchInvalidEvent);
     if (isValid || unhandledInvalidControls.isEmpty())
         return isValid;
@@ -563,7 +560,7 @@ bool HTMLFormControlElement::reportValidity()
     ASSERT(unhandledInvalidControls[0].get() == this);
     // Update layout now before calling isFocusable(), which has
     // !layoutObject()->needsLayout() assertion.
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (isFocusable()) {
         showValidationMessage();
         return false;
@@ -629,11 +626,6 @@ void HTMLFormControlElement::dispatchBlurEvent(Element* newFocusedElement, WebFo
 bool HTMLFormControlElement::isSuccessfulSubmitButton() const
 {
     return canBeSuccessfulSubmitButton() && !isDisabledFormControl();
-}
-
-bool HTMLFormControlElement::isDefaultButtonForForm() const
-{
-    return isSuccessfulSubmitButton() && form() && form()->defaultButton() == this;
 }
 
 HTMLFormControlElement* HTMLFormControlElement::enclosingFormControlElement(Node* node)

@@ -34,8 +34,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "wtf/DateMath.h"
 #include "wtf/MathExtras.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/CString.h"
+#include <memory>
 
 namespace blink {
 
@@ -70,7 +70,7 @@ protected:
         Spanish = 0x040A, // es
     };
 
-    DateComponents dateComponents(int year, int month, int day)
+    DateComponents getDateComponents(int year, int month, int day)
     {
         DateComponents date;
         date.setMillisecondsSinceEpochForDate(msForDate(year, month, day));
@@ -84,71 +84,69 @@ protected:
 
     String formatDate(LCID lcid, int year, int month, int day)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
-        return locale->formatDateTime(dateComponents(year, month, day));
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        return locale->formatDateTime(getDateComponents(year, month, day));
     }
 
     unsigned firstDayOfWeek(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->firstDayOfWeek();
     }
 
     String monthLabel(LCID lcid, unsigned index)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->monthLabels()[index];
     }
 
     String weekDayShortLabel(LCID lcid, unsigned index)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->weekDayShortLabels()[index];
     }
 
     bool isRTL(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->isRTL();
     }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
     String monthFormat(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->monthFormat();
     }
 
     String timeFormat(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->timeFormat();
     }
 
     String shortTimeFormat(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->shortTimeFormat();
     }
 
     String shortMonthLabel(LCID lcid, unsigned index)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->shortMonthLabels()[index];
     }
 
     String timeAMPMLabel(LCID lcid, unsigned index)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->timeAMPMLabels()[index];
     }
 
     String decimalSeparator(LCID lcid)
     {
-        OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+        std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
         return locale->localizedDecimalSeparator();
     }
-#endif
 };
 
 TEST_F(LocaleWinTest, formatDate)
@@ -201,7 +199,6 @@ TEST_F(LocaleWinTest, isRTL)
     EXPECT_FALSE(isRTL(EnglishUS));
 }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 TEST_F(LocaleWinTest, dateFormat)
 {
     EXPECT_STREQ("y-M-d", LocaleWin::dateFormat("y-M-d").utf8().data());
@@ -215,7 +212,7 @@ TEST_F(LocaleWinTest, monthFormat)
     // Month format for EnglishUS:
     //  "MMMM, yyyy" on Windows 7 or older.
     //  "MMMM yyyy" on Window 8 or later.
-    EXPECT_STREQ("MMMM yyyy", monthFormat(EnglishUS).replaceWithLiteral(',', "").utf8().data());
+    EXPECT_STREQ("MMMM yyyy", monthFormat(EnglishUS).replace(',', "").utf8().data());
     EXPECT_STREQ("MMMM yyyy", monthFormat(FrenchFR).utf8().data());
     EXPECT_STREQ("yyyy\xE5\xB9\xB4M\xE6\x9C\x88", monthFormat(JapaneseJP).utf8().data());
 }
@@ -261,11 +258,10 @@ TEST_F(LocaleWinTest, decimalSeparator)
     EXPECT_STREQ(".", decimalSeparator(EnglishUS).utf8().data());
     EXPECT_STREQ(",", decimalSeparator(FrenchFR).utf8().data());
 }
-#endif
 
 static void testNumberIsReversible(LCID lcid, const char* original, const char* shouldHave = 0)
 {
-    OwnPtr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
+    std::unique_ptr<LocaleWin> locale = LocaleWin::create(lcid, true /* defaultsForLocale */);
     String localized = locale->convertToLocalizedNumber(original);
     if (shouldHave)
         EXPECT_TRUE(localized.contains(shouldHave));

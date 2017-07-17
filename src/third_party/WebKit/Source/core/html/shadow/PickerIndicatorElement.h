@@ -31,9 +31,6 @@
 #ifndef PickerIndicatorElement_h
 #define PickerIndicatorElement_h
 
-#include "wtf/build_config.h"
-
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 #include "core/html/HTMLDivElement.h"
 #include "core/html/forms/DateTimeChooser.h"
 #include "core/html/forms/DateTimeChooserClient.h"
@@ -43,11 +40,11 @@ namespace blink {
 class HTMLInputElement;
 
 class PickerIndicatorElement final : public HTMLDivElement, public DateTimeChooserClient {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PickerIndicatorElement);
+    USING_GARBAGE_COLLECTED_MIXIN(PickerIndicatorElement);
 public:
     // PickerIndicatorOwner implementer must call removePickerIndicatorOwner when
     // it doesn't handle event, e.g. at destruction.
-    class PickerIndicatorOwner : public WillBeGarbageCollectedMixin {
+    class PickerIndicatorOwner : public GarbageCollectedMixin {
     public:
         virtual ~PickerIndicatorOwner() { }
         virtual bool isPickerIndicatorOwnerDisabledOrReadOnly() const = 0;
@@ -58,7 +55,7 @@ public:
         virtual bool setupDateTimeChooserParameters(DateTimeChooserParameters&) = 0;
     };
 
-    static PassRefPtrWillBeRawPtr<PickerIndicatorElement> create(Document&, PickerIndicatorOwner&);
+    static PickerIndicatorElement* create(Document&, PickerIndicatorOwner&);
     ~PickerIndicatorElement() override;
     DECLARE_VIRTUAL_TRACE();
 
@@ -85,12 +82,11 @@ private:
 
     HTMLInputElement* hostInput();
 
-    RawPtrWillBeMember<PickerIndicatorOwner> m_pickerIndicatorOwner;
-    RefPtrWillBeMember<DateTimeChooser> m_chooser;
+    Member<PickerIndicatorOwner> m_pickerIndicatorOwner;
+    Member<DateTimeChooser> m_chooser;
 };
 
 DEFINE_TYPE_CASTS(PickerIndicatorElement, Element, element, element->isPickerIndicatorElement(), element.isPickerIndicatorElement());
 
 } // namespace blink
-#endif
 #endif

@@ -30,22 +30,25 @@
 #include "core/editing/VisiblePosition.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/LayoutRect.h"
+#include "platform/graphics/paint/DisplayItem.h"
 #include "wtf/Noncopyable.h"
 
 namespace blink {
 
 class CullRect;
+class DisplayItemClient;
 class LocalFrame;
 class GraphicsContext;
 class LayoutBlock;
-class LayoutView;
+class LayoutViewItem;
 
-class CORE_EXPORT CaretBase {
+enum class CaretVisibility { Visible, Hidden };
+
+class CORE_EXPORT CaretBase : public  GarbageCollectedFinalized<CaretBase> {
     WTF_MAKE_NONCOPYABLE(CaretBase);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CaretBase);
-protected:
-    enum CaretVisibility { Visible, Hidden };
-    explicit CaretBase(CaretVisibility = Hidden);
+public:
+    explicit CaretBase(CaretVisibility = CaretVisibility::Hidden);
+    virtual ~CaretBase();
 
     void invalidateCaretRect(Node*, bool caretRectChanged = false);
     void clearCaretRect();
@@ -56,19 +59,23 @@ protected:
     bool updateCaretRect(const VisiblePosition& caretPosition);
     IntRect absoluteBoundsForLocalRect(Node*, const LayoutRect&) const;
     bool shouldRepaintCaret(Node&) const;
-    bool shouldRepaintCaret(const LayoutView*) const;
-    void paintCaret(Node*, GraphicsContext&, const LayoutPoint&) const;
+    bool shouldRepaintCaret(const LayoutViewItem) const;
+    void paintCaret(Node*, GraphicsContext&, const LayoutPoint&, DisplayItem::Type) const;
 
     const LayoutRect& localCaretRectWithoutUpdate() const { return m_caretLocalRect; }
 
-    void setCaretVisibility(CaretVisibility visibility) { m_caretVisibility = visibility; }
-    bool caretIsVisible() const { return m_caretVisibility == Visible; }
+    virtual void setCaretVisibility(CaretVisibility);
+    bool caretIsVisible() const { return m_caretVisibility == CaretVisibility::Visible; }
     CaretVisibility getCaretVisibility() const { return m_caretVisibility; }
 
     static LayoutBlock* caretLayoutObject(Node*);
     static void invalidateLocalCaretRect(Node*, const LayoutRect&);
 
+    DECLARE_VIRTUAL_TRACE();
+
 private:
+    static DisplayItemClient* displayItemClientForCaret(Node*);
+
     LayoutRect m_caretLocalRect; // caret rect in coords local to the layoutObject responsible for painting the caret
     CaretVisibility m_caretVisibility;
 };

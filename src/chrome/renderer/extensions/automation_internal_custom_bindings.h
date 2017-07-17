@@ -17,6 +17,7 @@ struct ExtensionMsg_AccessibilityEventParams;
 
 namespace extensions {
 
+class AutomationInternalCustomBindings;
 class AutomationMessageFilter;
 
 struct TreeCache {
@@ -25,9 +26,11 @@ struct TreeCache {
 
   int tab_id;
   int tree_id;
+  int parent_node_id_from_parent_tree;
 
   gfx::Vector2d location_offset;
   ui::AXTree tree;
+  AutomationInternalCustomBindings* owner;
 };
 
 struct TreeChangeObserver {
@@ -47,6 +50,8 @@ class AutomationInternalCustomBindings : public ObjectBackedNativeHandler,
   void OnMessageReceived(const IPC::Message& message);
 
   TreeCache* GetTreeCacheFromTreeID(int tree_id);
+
+  ui::AXNode* GetParent(ui::AXNode* node, TreeCache** in_out_cache);
 
   ScriptContext* context() const {
     return ObjectBackedNativeHandler::context();
@@ -125,6 +130,10 @@ class AutomationInternalCustomBindings : public ObjectBackedNativeHandler,
 
   // Args: int ax_tree_id, int node_id, Returns: int child_id.
   void GetChildIDAtIndex(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // Args: int ax_tree_id, int node_id
+  // Returns: JS object with a map from html attribute key to value.
+  void GetHtmlAttributes(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Args: int ax_tree_id, int node_id
   // Returns: JS object with a string key for each state flag that's set.

@@ -51,6 +51,7 @@ class TestProxyDelegate : public ProxyDelegate {
 
   // ProxyDelegate implementation:
   void OnResolveProxy(const GURL& url,
+                      const std::string& method,
                       int load_flags,
                       const ProxyService& proxy_service,
                       ProxyInfo* result) override;
@@ -58,9 +59,6 @@ class TestProxyDelegate : public ProxyDelegate {
                                 const HostPortPair& proxy_server,
                                 int net_error) override;
   void OnFallback(const ProxyServer& bad_proxy, int net_error) override;
-  void OnBeforeSendHeaders(URLRequest* request,
-                           const ProxyInfo& proxy_info,
-                           HttpRequestHeaders* headers) override;
   void OnBeforeTunnelRequest(const HostPortPair& proxy_server,
                              HttpRequestHeaders* extra_headers) override;
   void OnTunnelHeadersReceived(

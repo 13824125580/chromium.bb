@@ -21,9 +21,9 @@ PasswordsPrivateRemoveSavedPasswordFunction::
 
 ExtensionFunction::ResponseAction
     PasswordsPrivateRemoveSavedPasswordFunction::Run() {
-  scoped_ptr<api::passwords_private::RemoveSavedPassword::Params>
-      parameters = api::passwords_private::RemoveSavedPassword::Params::
-          Create(*args_);
+  std::unique_ptr<api::passwords_private::RemoveSavedPassword::Params>
+      parameters =
+          api::passwords_private::RemoveSavedPassword::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   PasswordsPrivateDelegate* delegate =
@@ -44,9 +44,10 @@ PasswordsPrivateRemovePasswordExceptionFunction::
 
 ExtensionFunction::ResponseAction
     PasswordsPrivateRemovePasswordExceptionFunction::Run() {
-  scoped_ptr<api::passwords_private::RemovePasswordException::Params>
-      parameters = api::passwords_private::RemovePasswordException::
-          Params::Create(*args_);
+  std::unique_ptr<api::passwords_private::RemovePasswordException::Params>
+      parameters =
+          api::passwords_private::RemovePasswordException::Params::Create(
+              *args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   PasswordsPrivateDelegate* delegate =
@@ -65,9 +66,10 @@ PasswordsPrivateRequestPlaintextPasswordFunction::
 
 ExtensionFunction::ResponseAction
     PasswordsPrivateRequestPlaintextPasswordFunction::Run() {
-  scoped_ptr<api::passwords_private::RequestPlaintextPassword::Params>
-      parameters = api::passwords_private::RequestPlaintextPassword::Params::
-          Create(*args_);
+  std::unique_ptr<api::passwords_private::RequestPlaintextPassword::Params>
+      parameters =
+          api::passwords_private::RequestPlaintextPassword::Params::Create(
+              *args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   PasswordsPrivateDelegate* delegate =
@@ -81,6 +83,38 @@ ExtensionFunction::ResponseAction
   // No response given from this API function; instead, listeners wait for the
   // chrome.passwordsPrivate.onPlaintextPasswordRetrieved event to fire.
   return RespondNow(NoArguments());
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PasswordsPrivateGetSavedPasswordListFunction
+
+PasswordsPrivateGetSavedPasswordListFunction::
+    ~PasswordsPrivateGetSavedPasswordListFunction() {}
+
+ExtensionFunction::ResponseAction
+PasswordsPrivateGetSavedPasswordListFunction::Run() {
+  PasswordsPrivateDelegate* delegate =
+      PasswordsPrivateDelegateFactory::GetForBrowserContext(browser_context(),
+                                                            true /* create */);
+  return RespondNow(ArgumentList(
+      api::passwords_private::GetSavedPasswordList::Results::Create(
+          *(delegate->GetSavedPasswordsList()))));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PasswordsPrivateGetPasswordExceptionListFunction
+
+PasswordsPrivateGetPasswordExceptionListFunction::
+    ~PasswordsPrivateGetPasswordExceptionListFunction() {}
+
+ExtensionFunction::ResponseAction
+PasswordsPrivateGetPasswordExceptionListFunction::Run() {
+  PasswordsPrivateDelegate* delegate =
+      PasswordsPrivateDelegateFactory::GetForBrowserContext(browser_context(),
+                                                            true /* create */);
+  return RespondNow(ArgumentList(
+      api::passwords_private::GetPasswordExceptionList::Results::Create(
+          *(delegate->GetPasswordExceptionsList()))));
 }
 
 }  // namespace extensions

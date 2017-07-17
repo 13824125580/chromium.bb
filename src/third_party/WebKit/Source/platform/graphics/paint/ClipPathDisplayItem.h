@@ -9,7 +9,6 @@
 #include "platform/graphics/Path.h"
 #include "platform/graphics/paint/DisplayItem.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -17,10 +16,12 @@ class PLATFORM_EXPORT BeginClipPathDisplayItem final : public PairedBeginDisplay
 public:
     BeginClipPathDisplayItem(const DisplayItemClient& client, const Path& clipPath)
         : PairedBeginDisplayItem(client, BeginClipPath, sizeof(*this))
-        , m_clipPath(clipPath.skPath()) { }
+        , m_clipPath(clipPath.getSkPath()) { }
 
     void replay(GraphicsContext&) const override;
     void appendToWebDisplayItemList(const IntRect&, WebDisplayItemList*) const override;
+
+    void analyzeForGpuRasterization(SkPictureGpuAnalyzer&) const override;
 
 private:
     const SkPath m_clipPath;

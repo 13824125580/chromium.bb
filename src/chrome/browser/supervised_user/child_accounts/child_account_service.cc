@@ -6,6 +6,8 @@
 
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -14,12 +16,14 @@
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/supervised_user/child_accounts/permission_request_creator_apiary.h"
+#include "chrome/browser/supervised_user/experimental/safe_search_url_reporter.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/browser_sync/browser/profile_sync_service.h"
@@ -143,16 +147,21 @@ bool ChildAccountService::SetActive(bool active) {
     SupervisedUserSettingsService* settings_service =
         SupervisedUserSettingsServiceFactory::GetForProfile(profile_);
 
+    settings_service->SetLocalSetting(
+        supervised_users::kRecordHistoryIncludesSessionSync,
+        base::WrapUnique(new base::FundamentalValue(false)));
+
     // In contrast to legacy SUs, child account SUs must sign in.
     settings_service->SetLocalSetting(
         supervised_users::kSigninAllowed,
-        make_scoped_ptr(new base::FundamentalValue(true)));
+        base::WrapUnique(new base::FundamentalValue(true)));
 
     // SafeSearch is controlled at the account level, so don't override it
     // client-side.
     settings_service->SetLocalSetting(
         supervised_users::kForceSafeSearch,
-        make_scoped_ptr(new base::FundamentalValue(false)));
+        base::WrapUnique(new base::FundamentalValue(false)));
+
 #if !defined(OS_CHROMEOS)
     // This is also used by user policies (UserPolicySigninService), but since
     // child accounts can not also be Dasher accounts, there shouldn't be any
@@ -168,11 +177,15 @@ bool ChildAccountService::SetActive(bool active) {
         SupervisedUserServiceFactory::GetForProfile(profile_);
     service->AddPermissionRequestCreator(
         PermissionRequestCreatorApiary::CreateWithProfile(profile_));
+    if (base::FeatureList::IsEnabled(features::kSafeSearchUrlReporting)) {
+      service->SetSafeSearchURLReporter(
+          SafeSearchURLReporter::CreateWithProfile(profile_));
+    }
   } else {
     SupervisedUserSettingsService* settings_service =
         SupervisedUserSettingsServiceFactory::GetForProfile(profile_);
     settings_service->SetLocalSetting(supervised_users::kSigninAllowed,
-                                      scoped_ptr<base::Value>());
+                                      std::unique_ptr<base::Value>());
 #if !defined(OS_CHROMEOS)
     SigninManagerFactory::GetForProfile(profile_)->ProhibitSignout(false);
 #endif

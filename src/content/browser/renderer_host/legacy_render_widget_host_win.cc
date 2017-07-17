@@ -4,8 +4,10 @@
 
 #include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "content/browser/accessibility/browser_accessibility_manager_win.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
@@ -17,9 +19,9 @@
 #include "ui/base/view_prop.h"
 #include "ui/base/win/internal_constants.h"
 #include "ui/base/win/window_event_target.h"
+#include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/win/direct_manipulation.h"
-#include "ui/gfx/win/dpi.h"
 
 namespace content {
 
@@ -60,14 +62,6 @@ void LegacyRenderWidgetHostHWND::UpdateParent(HWND parent) {
   if (GetWindowEventTarget(GetParent()))
     GetWindowEventTarget(GetParent())->HandleParentChanged();
   ::SetParent(hwnd(), parent);
-  // If the new parent is the desktop Window, then we disable the child window
-  // to ensure that it does not receive any input events. It should not because
-  // of WS_EX_TRANSPARENT. This is only for safety.
-  if (parent == ::GetDesktopWindow()) {
-    ::EnableWindow(hwnd(), FALSE);
-  } else {
-    ::EnableWindow(hwnd(), TRUE);
-  }
 }
 
 HWND LegacyRenderWidgetHostHWND::GetParent() {
@@ -83,7 +77,8 @@ void LegacyRenderWidgetHostHWND::Hide() {
 }
 
 void LegacyRenderWidgetHostHWND::SetBounds(const gfx::Rect& bounds) {
-  gfx::Rect bounds_in_pixel = gfx::win::DIPToScreenRect(bounds);
+  gfx::Rect bounds_in_pixel = display::win::ScreenWin::DIPToClientRect(hwnd(),
+                                                                       bounds);
   ::SetWindowPos(hwnd(), NULL, bounds_in_pixel.x(), bounds_in_pixel.y(),
                  bounds_in_pixel.width(), bounds_in_pixel.height(),
                  SWP_NOREDRAW);
@@ -96,6 +91,10 @@ void LegacyRenderWidgetHostHWND::OnFinalMessage(HWND hwnd) {
     host_->OnLegacyWindowDestroyed();
     host_ = NULL;
   }
+
+  // Re-enable flicks for just a moment
+  base::win::EnableFlicks(hwnd);
+
   delete this;
 }
 
@@ -135,6 +134,9 @@ bool LegacyRenderWidgetHostHWND::Init() {
       gfx::win::DirectManipulationHelper::CreateInstance();
   if (direct_manipulation_helper_)
     direct_manipulation_helper_->Initialize(hwnd());
+
+  // Disable pen flicks (http://crbug.com/506977)
+  base::win::DisableFlicks(hwnd());
 
   return !!SUCCEEDED(hr);
 }
@@ -181,7 +183,7 @@ LRESULT LegacyRenderWidgetHostHWND::OnGetObject(UINT message,
     return static_cast<LRESULT>(0L);
 
   base::win::ScopedComPtr<IAccessible> root(
-      manager->GetRoot()->ToBrowserAccessibilityWin());
+      ToBrowserAccessibilityWin(manager->GetRoot()));
   return LresultFromObject(IID_IAccessible, w_param,
       static_cast<IAccessible*>(root.Detach()));
 }

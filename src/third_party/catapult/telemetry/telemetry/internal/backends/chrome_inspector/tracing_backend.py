@@ -34,6 +34,10 @@ class TracingUnexpectedResponseException(Exception):
   pass
 
 
+class ClockSyncResponseException(Exception):
+  pass
+
+
 class _DevToolsStreamReader(object):
   def __init__(self, inspector_socket, stream_handle):
     self._inspector_websocket = inspector_socket
@@ -82,19 +86,22 @@ class TracingBackend(object):
 
   _TRACING_DOMAIN = 'Tracing'
 
-  def __init__(self, inspector_socket, is_tracing_running=False):
+  def __init__(self, inspector_socket, is_tracing_running=False,
+               support_modern_devtools_tracing_start_api=False):
     self._inspector_websocket = inspector_socket
     self._inspector_websocket.RegisterDomain(
         self._TRACING_DOMAIN, self._NotificationHandler)
     self._trace_events = []
     self._is_tracing_running = is_tracing_running
     self._has_received_all_tracing_data = False
+    self._support_modern_devtools_tracing_start_api = (
+        support_modern_devtools_tracing_start_api)
 
   @property
   def is_tracing_running(self):
     return self._is_tracing_running
 
-  def StartTracing(self, trace_options, custom_categories=None, timeout=10):
+  def StartTracing(self, chrome_trace_config, timeout=10):
     """When first called, starts tracing, and returns True.
 
     If called during tracing, tracing is unchanged, and it returns False.
@@ -108,19 +115,41 @@ class TracingBackend(object):
       raise TracingUnsupportedException(
           'Chrome tracing not supported for this app.')
 
-    req = {
-      'method': 'Tracing.start',
-      'params': {
-        'options': trace_options.GetTraceOptionsStringForChromeDevtool(),
-        'transferMode': 'ReturnAsStream'
-      }
-    }
-    if custom_categories:
-      req['params']['categories'] = custom_categories
-    logging.info('Start Tracing Request: %s', repr(req))
-    self._inspector_websocket.SyncRequest(req, timeout)
+    params = {'transferMode': 'ReturnAsStream'}
+    if self._support_modern_devtools_tracing_start_api:
+      params['traceConfig'] = (
+          chrome_trace_config.GetChromeTraceConfigForDevTools())
+    else:
+      if chrome_trace_config.requires_modern_devtools_tracing_start_api:
+        raise TracingUnsupportedException(
+            'Trace options require modern Tracing.start DevTools API, '
+            'which is NOT supported by the browser')
+      params['categories'], params['options'] = (
+          chrome_trace_config.GetChromeTraceCategoriesAndOptionsForDevTools())
+
+    req = {'method': 'Tracing.start', 'params': params}
+    logging.info('Start Tracing Request: %r', req)
+    response = self._inspector_websocket.SyncRequest(req, timeout)
+
+    if 'error' in response:
+      raise TracingUnexpectedResponseException(
+          'Inspector returned unexpected response for '
+          'Tracing.start:\n' + json.dumps(response, indent=2))
+
     self._is_tracing_running = True
     return True
+
+  def RecordClockSyncMarker(self, sync_id):
+    assert self.is_tracing_running, 'Tracing must be running to clock sync.'
+    req = {
+      'method': 'Tracing.recordClockSyncMarker',
+      'params': {
+        'syncId': sync_id
+      }
+    }
+    rc = self._inspector_websocket.SyncRequest(req, timeout=2)
+    if 'error' in rc:
+      raise ClockSyncResponseException(rc['error']['message'])
 
   def StopTracing(self, trace_data_builder, timeout=30):
     """Stops tracing and pushes results to the supplied TraceDataBuilder.
@@ -243,5 +272,5 @@ class TracingBackend(object):
   @decorators.Cache
   def IsTracingSupported(self):
     req = {'method': 'Tracing.hasCompleted'}
-    res = self._inspector_websocket.SyncRequest(req)
+    res = self._inspector_websocket.SyncRequest(req, timeout=10)
     return not res.get('response')

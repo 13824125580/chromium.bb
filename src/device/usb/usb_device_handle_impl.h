@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -32,8 +33,8 @@ class IOBuffer;
 namespace device {
 
 struct EndpointMapValue {
-  int interface_number;
-  UsbTransferType transfer_type;
+  const UsbInterfaceDescriptor* interface;
+  const UsbEndpointDescriptor* endpoint;
 };
 
 class UsbContext;
@@ -91,8 +92,8 @@ class UsbDeviceHandleImpl : public UsbDeviceHandle {
                        size_t length,
                        unsigned int timeout,
                        const TransferCallback& callback) override;
-  bool FindInterfaceByEndpoint(uint8_t endpoint_address,
-                               uint8_t* interface_number) override;
+  const UsbInterfaceDescriptor* FindInterfaceByEndpoint(
+      uint8_t endpoint_address) override;
 
  protected:
   friend class UsbDeviceImpl;
@@ -179,14 +180,11 @@ class UsbDeviceHandleImpl : public UsbDeviceHandle {
   // Submits a transfer and starts tracking it. Retains the buffer and copies
   // the completion callback until the transfer finishes, whereupon it invokes
   // the callback then releases the buffer.
-  void SubmitTransfer(scoped_ptr<Transfer> transfer);
+  void SubmitTransfer(std::unique_ptr<Transfer> transfer);
 
   // Removes the transfer from the in-flight transfer set and invokes the
   // completion callback.
   void TransferComplete(Transfer* transfer, const base::Closure& callback);
-
-  // Informs the object to drop internal references.
-  void InternalClose();
 
   scoped_refptr<UsbDeviceImpl> device_;
 

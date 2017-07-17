@@ -42,6 +42,7 @@ public final class WebRtcAudioUtils {
   private static final String[] BLACKLISTED_AEC_MODELS = new String[] {
       "D6503",      // Sony Xperia Z2 D6503
       "ONE A2005",  // OnePlus 2
+      "MotoG3",     // Moto G (3rd Generation)
   };
   private static final String[] BLACKLISTED_AGC_MODELS = new String[] {
       "Nexus 10",
@@ -99,6 +100,22 @@ public final class WebRtcAudioUtils {
     return useWebRtcBasedNoiseSuppressor;
   }
 
+  // Returns true if the device supports an audio effect (AEC, AGC or NS).
+  // Four conditions must be fulfilled if functions are to return true:
+  // 1) the platform must support the built-in (HW) effect,
+  // 2) explicit use (override) of a WebRTC based version must not be set,
+  // 3) the device must not be blacklisted for use of the effect, and
+  // 4) the UUID of the effect must be approved (some UUIDs can be excluded).
+  public static boolean isAcousticEchoCancelerSupported() {
+    return WebRtcAudioEffects.canUseAcousticEchoCanceler();
+  }
+  public static boolean isAutomaticGainControlSupported() {
+    return WebRtcAudioEffects.canUseAutomaticGainControl();
+  }
+  public static boolean isNoiseSuppressorSupported() {
+    return WebRtcAudioEffects.canUseNoiseSuppressor();
+  }
+
   // Call this method if the default handling of querying the native sample
   // rate shall be overridden. Can be useful on some devices where the
   // available Android APIs are known to return invalid results.
@@ -152,11 +169,10 @@ public final class WebRtcAudioUtils {
     return Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
   }
 
-  // TODO(phoglund): enable when all downstream users use M.
-  // public static boolean runningOnMOrHigher() {
+  public static boolean runningOnMarshmallowOrHigher() {
     // API Level 23.
-    // return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
-  //}
+    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+  }
 
   // Helper method for building a string of thread information.
   public static String getThreadInfo() {

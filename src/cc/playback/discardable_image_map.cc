@@ -24,17 +24,6 @@ SkRect MapRect(const SkMatrix& matrix, const SkRect& src) {
   return dst;
 }
 
-bool ExtractScale(const SkMatrix& matrix, SkSize* scale) {
-  *scale = SkSize::Make(matrix.getScaleX(), matrix.getScaleY());
-  if (matrix.getType() & SkMatrix::kAffine_Mask) {
-    if (!matrix.decomposeScale(scale)) {
-      scale->set(1, 1);
-      return false;
-    }
-  }
-  return true;
-}
-
 namespace {
 
 // We're using an NWay canvas with no added canvases, so in effect
@@ -64,7 +53,7 @@ class DiscardableImagesMetadataCanvas : public SkNWayCanvas {
                    const SkPaint* paint) override {
     const SkMatrix& ctm = getTotalMatrix();
     AddImage(
-        image, SkRect::MakeIWH(image->width(), image->height()),
+        sk_ref_sp(image), SkRect::MakeIWH(image->width(), image->height()),
         MapRect(ctm, SkRect::MakeXYWH(x, y, image->width(), image->height())),
         ctm, paint);
   }
@@ -83,7 +72,7 @@ class DiscardableImagesMetadataCanvas : public SkNWayCanvas {
     SkMatrix matrix;
     matrix.setRectToRect(*src, dst, SkMatrix::kFill_ScaleToFit);
     matrix.postConcat(ctm);
-    AddImage(image, *src, MapRect(ctm, dst), matrix, paint);
+    AddImage(sk_ref_sp(image), *src, MapRect(ctm, dst), matrix, paint);
   }
 
   void onDrawImageNine(const SkImage* image,
@@ -130,7 +119,7 @@ class DiscardableImagesMetadataCanvas : public SkNWayCanvas {
     return true;
   }
 
-  void AddImage(const SkImage* image,
+  void AddImage(sk_sp<const SkImage> image,
                 const SkRect& src_rect,
                 const SkRect& rect,
                 const SkMatrix& matrix,
@@ -155,11 +144,8 @@ class DiscardableImagesMetadataCanvas : public SkNWayCanvas {
 
     SkIRect src_irect;
     src_rect.roundOut(&src_irect);
-    SkSize scale;
-    bool is_decomposable = ExtractScale(matrix, &scale);
-    image_set_->push_back(
-        std::make_pair(DrawImage(image, src_irect, scale, filter_quality,
-                                 matrix.hasPerspective(), is_decomposable),
+    image_set_->push_back(std::make_pair(
+        DrawImage(std::move(image), src_irect, filter_quality, matrix),
                        gfx::ToEnclosingRect(gfx::SkRectToRectF(paint_rect))));
   }
 
@@ -174,11 +160,11 @@ DiscardableImageMap::DiscardableImageMap() {}
 
 DiscardableImageMap::~DiscardableImageMap() {}
 
-skia::RefPtr<SkCanvas> DiscardableImageMap::BeginGeneratingMetadata(
+sk_sp<SkCanvas> DiscardableImageMap::BeginGeneratingMetadata(
     const gfx::Size& bounds) {
   DCHECK(all_images_.empty());
-  return skia::AdoptRef(new DiscardableImagesMetadataCanvas(
-      bounds.width(), bounds.height(), &all_images_));
+  return sk_make_sp<DiscardableImagesMetadataCanvas>(
+      bounds.width(), bounds.height(), &all_images_);
 }
 
 void DiscardableImageMap::EndGeneratingMetadata() {
@@ -196,11 +182,6 @@ void DiscardableImageMap::GetDiscardableImagesInRect(
   images_rtree_.Search(rect, &indices);
   for (size_t index : indices)
     images->push_back(all_images_[index].first.ApplyScale(raster_scale));
-}
-
-bool DiscardableImageMap::HasDiscardableImageInRect(
-    const gfx::Rect& rect) const {
-  return images_rtree_.ContainsItemInRect(rect);
 }
 
 DiscardableImageMap::ScopedMetadataGenerator::ScopedMetadataGenerator(

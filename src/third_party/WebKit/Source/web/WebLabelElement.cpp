@@ -32,6 +32,7 @@
 
 #include "core/HTMLNames.h"
 #include "core/html/HTMLLabelElement.h"
+#include "core/html/LabelableElement.h"
 #include "public/platform/WebString.h"
 #include "wtf/PassRefPtr.h"
 
@@ -42,20 +43,20 @@ WebElement WebLabelElement::correspondingControl()
     return WebElement(unwrap<HTMLLabelElement>()->control());
 }
 
-WebLabelElement::WebLabelElement(const PassRefPtrWillBeRawPtr<HTMLLabelElement>& elem)
+WebLabelElement::WebLabelElement(HTMLLabelElement* elem)
     : WebElement(elem)
 {
 }
 
 DEFINE_WEB_NODE_TYPE_CASTS(WebLabelElement, isHTMLLabelElement(constUnwrap<Node>()));
 
-WebLabelElement& WebLabelElement::operator=(const PassRefPtrWillBeRawPtr<HTMLLabelElement>& elem)
+WebLabelElement& WebLabelElement::operator=(HTMLLabelElement* elem)
 {
     m_private = elem;
     return *this;
 }
 
-WebLabelElement::operator PassRefPtrWillBeRawPtr<HTMLLabelElement>() const
+WebLabelElement::operator HTMLLabelElement*() const
 {
     return toHTMLLabelElement(m_private.get());
 }

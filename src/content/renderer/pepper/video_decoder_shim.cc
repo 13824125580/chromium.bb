@@ -15,8 +15,8 @@
 #include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
-#include "cc/blink/context_provider_web_context.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/pepper/pepper_video_decoder_host.h"
 #include "content/renderer/render_thread_impl.h"
@@ -61,7 +61,7 @@ bool IsCodecSupported(media::VideoCodec codec) {
 // YUV->RGB converter class using a shader and FBO.
 class VideoDecoderShim::YUVConverter {
  public:
-  YUVConverter(const scoped_refptr<cc_blink::ContextProviderWebContext>&);
+  YUVConverter(scoped_refptr<ContextProviderCommandBuffer>);
   ~YUVConverter();
   bool Initialize();
   void Convert(const scoped_refptr<media::VideoFrame>& frame, GLuint tex_out);
@@ -72,7 +72,7 @@ class VideoDecoderShim::YUVConverter {
   GLuint CreateProgram(const char* name, GLuint vshader, GLuint fshader);
   GLuint CreateTexture();
 
-  scoped_refptr<cc_blink::ContextProviderWebContext> context_provider_;
+  scoped_refptr<ContextProviderCommandBuffer> context_provider_;
   gpu::gles2::GLES2Interface* gl_;
   GLuint frame_buffer_;
   GLuint vertex_buffer_;
@@ -102,8 +102,8 @@ class VideoDecoderShim::YUVConverter {
 };
 
 VideoDecoderShim::YUVConverter::YUVConverter(
-    const scoped_refptr<cc_blink::ContextProviderWebContext>& context_provider)
-    : context_provider_(context_provider),
+    scoped_refptr<ContextProviderCommandBuffer> context_provider)
+    : context_provider_(std::move(context_provider)),
       gl_(context_provider_->ContextGL()),
       frame_buffer_(0),
       vertex_buffer_(0),
@@ -316,7 +316,7 @@ GLuint VideoDecoderShim::YUVConverter::CreateShader() {
 
 bool VideoDecoderShim::YUVConverter::Initialize() {
   // If texture_rg extension is not available, use slower GL_LUMINANCE.
-  if (context_provider_->ContextCapabilities().gpu.texture_rg) {
+  if (context_provider_->ContextCapabilities().texture_rg) {
     internal_format_ = GL_RED_EXT;
     format_ = GL_RED_EXT;
   } else {
@@ -324,8 +324,7 @@ bool VideoDecoderShim::YUVConverter::Initialize() {
     format_ = GL_LUMINANCE;
   }
 
-  if (context_provider_->ContextCapabilities().gpu.max_texture_image_units <
-      4) {
+  if (context_provider_->ContextCapabilities().max_texture_image_units < 4) {
     // We support YUVA textures and require 4 texture units in the fragment
     // stage.
     return false;
@@ -650,13 +649,13 @@ class VideoDecoderShim::DecoderImpl {
  private:
   void OnInitDone(bool success);
   void DoDecode();
-  void OnDecodeComplete(media::VideoDecoder::Status status);
+  void OnDecodeComplete(media::DecodeStatus status);
   void OnOutputComplete(const scoped_refptr<media::VideoFrame>& frame);
   void OnResetComplete();
 
   // WeakPtr is bound to main_message_loop_. Use only in shim callbacks.
   base::WeakPtr<VideoDecoderShim> shim_;
-  scoped_ptr<media::VideoDecoder> decoder_;
+  std::unique_ptr<media::VideoDecoder> decoder_;
   bool initialized_ = false;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
   // Queue of decodes waiting for the decoder.
@@ -695,7 +694,7 @@ void VideoDecoderShim::DecoderImpl::Initialize(
 
 #if !defined(MEDIA_DISABLE_FFMPEG) && !defined(DISABLE_FFMPEG_VIDEO_DECODERS)
   {
-    scoped_ptr<media::FFmpegVideoDecoder> ffmpeg_video_decoder(
+    std::unique_ptr<media::FFmpegVideoDecoder> ffmpeg_video_decoder(
         new media::FFmpegVideoDecoder());
     ffmpeg_video_decoder->set_decode_nalus(true);
     decoder_ = std::move(ffmpeg_video_decoder);
@@ -730,10 +729,11 @@ void VideoDecoderShim::DecoderImpl::Reset() {
   // Abort all pending decodes.
   while (!pending_decodes_.empty()) {
     const PendingDecode& decode = pending_decodes_.front();
-    scoped_ptr<PendingFrame> pending_frame(new PendingFrame(decode.decode_id));
+    std::unique_ptr<PendingFrame> pending_frame(
+        new PendingFrame(decode.decode_id));
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&VideoDecoderShim::OnDecodeComplete, shim_,
-                              media::VideoDecoder::kAborted, decode.decode_id));
+        FROM_HERE, base::Bind(&VideoDecoderShim::OnDecodeComplete, shim_, PP_OK,
+                              decode.decode_id));
     pending_decodes_.pop();
   }
   // Don't need to call Reset() if the |decoder_| hasn't been initialized.
@@ -781,22 +781,18 @@ void VideoDecoderShim::DecoderImpl::DoDecode() {
 }
 
 void VideoDecoderShim::DecoderImpl::OnDecodeComplete(
-    media::VideoDecoder::Status status) {
+    media::DecodeStatus status) {
   DCHECK(awaiting_decoder_);
   awaiting_decoder_ = false;
 
   int32_t result;
   switch (status) {
-    case media::VideoDecoder::kOk:
-    case media::VideoDecoder::kAborted:
+    case media::DecodeStatus::OK:
+    case media::DecodeStatus::ABORTED:
       result = PP_OK;
       break;
-    case media::VideoDecoder::kDecodeError:
+    case media::DecodeStatus::DECODE_ERROR:
       result = PP_ERROR_RESOURCE_FAILED;
-      break;
-    default:
-      NOTREACHED();
-      result = PP_ERROR_FAILED;
       break;
   }
 
@@ -813,7 +809,7 @@ void VideoDecoderShim::DecoderImpl::OnOutputComplete(
   // call is pending.
   DCHECK(awaiting_decoder_);
 
-  scoped_ptr<PendingFrame> pending_frame;
+  std::unique_ptr<PendingFrame> pending_frame;
   if (!frame->metadata()->IsTrue(media::VideoFrameMetadata::END_OF_STREAM))
     pending_frame.reset(new PendingFrame(decode_id_, frame));
   else
@@ -899,7 +895,7 @@ bool VideoDecoderShim::Initialize(const Config& vda_config, Client* client) {
       gfx::Size(32, 24),  // Small sizes that won't fail.
       gfx::Rect(32, 24), gfx::Size(32, 24),
       // TODO(bbudge): Verify extra data isn't needed.
-      media::EmptyExtraData(), false /* decryption */);
+      media::EmptyExtraData(), media::Unencrypted());
 
   media_task_runner_->PostTask(
       FROM_HERE,
@@ -944,10 +940,11 @@ void VideoDecoderShim::AssignPictureBuffers(
   std::vector<uint32_t> local_texture_ids(num_textures);
   gpu::gles2::GLES2Interface* gles2 = context_provider_->ContextGL();
   for (uint32_t i = 0; i < num_textures; i++) {
+    DCHECK_EQ(1u, buffers[i].texture_ids().size());
     local_texture_ids[i] = gles2->CreateAndConsumeTextureCHROMIUM(
         GL_TEXTURE_2D, pending_texture_mailboxes_[i].name);
     // Map the plugin texture id to the local texture id.
-    uint32_t plugin_texture_id = buffers[i].texture_id();
+    uint32_t plugin_texture_id = buffers[i].texture_ids()[0];
     texture_id_map_[plugin_texture_id] = local_texture_ids[i];
     available_textures_.insert(plugin_texture_id);
   }
@@ -1014,7 +1011,7 @@ void VideoDecoderShim::OnDecodeComplete(int32_t result, uint32_t decode_id) {
     NotifyCompletedDecodes();
 }
 
-void VideoDecoderShim::OnOutputComplete(scoped_ptr<PendingFrame> frame) {
+void VideoDecoderShim::OnOutputComplete(std::unique_ptr<PendingFrame> frame) {
   DCHECK(RenderThreadImpl::current());
   DCHECK(host_);
 
@@ -1055,7 +1052,7 @@ void VideoDecoderShim::SendPictures() {
   DCHECK(RenderThreadImpl::current());
   DCHECK(host_);
   while (!pending_frames_.empty() && !available_textures_.empty()) {
-    const scoped_ptr<PendingFrame>& frame = pending_frames_.front();
+    const std::unique_ptr<PendingFrame>& frame = pending_frames_.front();
 
     TextureIdSet::iterator it = available_textures_.begin();
     uint32_t texture_id = *it;

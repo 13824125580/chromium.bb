@@ -8,7 +8,7 @@
 #include "grit/ash_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/geometry/insets.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -40,7 +40,7 @@ const int kVerticalPopupPaddingBetweenItems = 10;
 }  // namespace
 
 // The implementation of Message of the launcher.
-class PopupMessage::MessageBubble : public views::BubbleDelegateView {
+class PopupMessage::MessageBubble : public views::BubbleDialogDelegateView {
  public:
   MessageBubble(const base::string16& caption,
                 const base::string16& message,
@@ -50,11 +50,12 @@ class PopupMessage::MessageBubble : public views::BubbleDelegateView {
                 const gfx::Size& size_override,
                 int arrow_offset);
 
-  void Close();
+  void ClosePopup();
 
  private:
-  // views::View overrides:
+  // views::BubbleDialogDelegateView overrides:
   gfx::Size GetPreferredSize() const override;
+  int GetDialogButtons() const override;
 
   // Each component (width/height) can force a size override for that component
   // if not 0.
@@ -74,19 +75,17 @@ PopupMessage::MessageBubble::MessageBubble(const base::string16& caption,
                                            views::BubbleBorder::Arrow arrow,
                                            const gfx::Size& size_override,
                                            int arrow_offset)
-    : views::BubbleDelegateView(anchor, arrow),
+    : views::BubbleDialogDelegateView(anchor, arrow),
       size_override_(size_override) {
-  gfx::Insets insets = gfx::Insets(kArrowOffsetTopBottom,
-                                   kArrowOffsetLeftRight,
-                                   kArrowOffsetTopBottom,
-                                   kArrowOffsetLeftRight);
+  gfx::Insets insets =
+      gfx::Insets(kArrowOffsetTopBottom, kArrowOffsetLeftRight,
+                  kArrowOffsetTopBottom, kArrowOffsetLeftRight);
   // An anchor can have an asymmetrical border for spacing reasons. Adjust the
   // anchor location for this.
   if (anchor->border())
     insets += anchor->border()->GetInsets();
 
   set_anchor_view_insets(insets);
-  set_close_on_esc(false);
   set_close_on_deactivate(false);
   set_can_activate(false);
   set_accept_events(false);
@@ -117,8 +116,7 @@ PopupMessage::MessageBubble::MessageBubble(const base::string16& caption,
   // Add the icon to the first column (if there is one).
   if (message_type != ICON_NONE) {
     views::ImageView* icon = new views::ImageView();
-    icon->SetImage(
-        bundle.GetImageNamed(IDR_AURA_WARNING_ICON).ToImageSkia());
+    icon->SetImage(bundle.GetImageNamed(IDR_AURA_WARNING_ICON).ToImageSkia());
     icon->SetVerticalAlignment(views::ImageView::LEADING);
     AddChildView(icon);
   }
@@ -150,7 +148,7 @@ PopupMessage::MessageBubble::MessageBubble(const base::string16& caption,
     message_label->SetEnabledColor(kMessageTextColor);
     details->AddChildView(message_label);
   }
-  views::BubbleDelegateView::CreateBubble(this);
+  views::BubbleDialogDelegateView::CreateBubble(this);
 
   // Change the arrow offset if needed.
   if (arrow_offset) {
@@ -164,13 +162,13 @@ PopupMessage::MessageBubble::MessageBubble(const base::string16& caption,
   }
 }
 
-void PopupMessage::MessageBubble::Close() {
+void PopupMessage::MessageBubble::ClosePopup() {
   if (GetWidget())
     GetWidget()->Close();
 }
 
 gfx::Size PopupMessage::MessageBubble::GetPreferredSize() const {
-  gfx::Size pref_size = views::BubbleDelegateView::GetPreferredSize();
+  gfx::Size pref_size = views::BubbleDialogDelegateView::GetPreferredSize();
   // Override the size with either the provided size or adjust it to not
   // violate our minimum / maximum sizes.
   if (size_override_.height())
@@ -186,6 +184,10 @@ gfx::Size PopupMessage::MessageBubble::GetPreferredSize() const {
   return pref_size;
 }
 
+int PopupMessage::MessageBubble::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
+}
+
 PopupMessage::PopupMessage(const base::string16& caption,
                            const base::string16& message,
                            IconType message_type,
@@ -194,16 +196,14 @@ PopupMessage::PopupMessage(const base::string16& caption,
                            const gfx::Size& size_override,
                            int arrow_offset)
     : view_(NULL) {
-  view_ = new MessageBubble(
-      caption, message, message_type, anchor, arrow, size_override,
-      arrow_offset);
+  view_ = new MessageBubble(caption, message, message_type, anchor, arrow,
+                            size_override, arrow_offset);
   widget_ = view_->GetWidget();
 
   gfx::NativeView native_view = widget_->GetNativeView();
   wm::SetWindowVisibilityAnimationType(
       native_view, wm::WINDOW_VISIBILITY_ANIMATION_TYPE_VERTICAL);
-  wm::SetWindowVisibilityAnimationTransition(
-      native_view, wm::ANIMATE_HIDE);
+  wm::SetWindowVisibilityAnimationTransition(native_view, wm::ANIMATE_HIDE);
   view_->GetWidget()->Show();
 }
 
@@ -214,7 +214,7 @@ PopupMessage::~PopupMessage() {
 
 void PopupMessage::Close() {
   if (view_) {
-    view_->Close();
+    view_->ClosePopup();
     view_ = NULL;
     widget_ = NULL;
   }
@@ -225,8 +225,7 @@ void PopupMessage::CancelHidingAnimation() {
     return;
 
   gfx::NativeView native_view = widget_->GetNativeView();
-  wm::SetWindowVisibilityAnimationTransition(
-      native_view, wm::ANIMATE_NONE);
+  wm::SetWindowVisibilityAnimationTransition(native_view, wm::ANIMATE_NONE);
 }
 
 }  // namespace ash

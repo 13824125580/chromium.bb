@@ -7,14 +7,15 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/utility_process_host.h"
 #include "content/public/browser/utility_process_host_client.h"
-#include "content/public/common/service_registry.h"
+#include "services/shell/public/cpp/interface_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -42,6 +43,8 @@ UtilityProcessMojoProxyResolverFactory::
 
 void UtilityProcessMojoProxyResolverFactory::CreateProcessAndConnect() {
   DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(!resolver_factory_);
+  DCHECK(!weak_utility_process_host_);
   DVLOG(1) << "Attempting to create utility process for proxy resolver";
   content::UtilityProcessHost* utility_process_host =
       content::UtilityProcessHost::Create(
@@ -49,12 +52,10 @@ void UtilityProcessMojoProxyResolverFactory::CreateProcessAndConnect() {
           base::ThreadTaskRunnerHandle::Get());
   utility_process_host->SetName(l10n_util::GetStringUTF16(
       IDS_UTILITY_PROCESS_PROXY_RESOLVER_NAME));
-  bool process_started = utility_process_host->StartMojoMode();
+  bool process_started = utility_process_host->Start();
   if (process_started) {
-    content::ServiceRegistry* service_registry =
-        utility_process_host->GetServiceRegistry();
-    service_registry->ConnectToRemoteService(
-        mojo::GetProxy(&resolver_factory_));
+    utility_process_host->GetRemoteInterfaces()->GetInterface(
+        &resolver_factory_);
     resolver_factory_.set_connection_error_handler(
         base::Bind(&UtilityProcessMojoProxyResolverFactory::OnConnectionError,
                    base::Unretained(this)));
@@ -64,7 +65,7 @@ void UtilityProcessMojoProxyResolverFactory::CreateProcessAndConnect() {
   }
 }
 
-scoped_ptr<base::ScopedClosureRunner>
+std::unique_ptr<base::ScopedClosureRunner>
 UtilityProcessMojoProxyResolverFactory::CreateResolver(
     const mojo::String& pac_script,
     mojo::InterfaceRequest<net::interfaces::ProxyResolver> req,
@@ -83,7 +84,7 @@ UtilityProcessMojoProxyResolverFactory::CreateResolver(
   num_proxy_resolvers_++;
   resolver_factory_->CreateResolver(pac_script, std::move(req),
                                     std::move(client));
-  return make_scoped_ptr(new base::ScopedClosureRunner(
+  return base::WrapUnique(new base::ScopedClosureRunner(
       base::Bind(&UtilityProcessMojoProxyResolverFactory::OnResolverDestroyed,
                  base::Unretained(this))));
 }
@@ -91,6 +92,8 @@ UtilityProcessMojoProxyResolverFactory::CreateResolver(
 void UtilityProcessMojoProxyResolverFactory::OnConnectionError() {
   DVLOG(1) << "Disconnection from utility process detected";
   resolver_factory_.reset();
+  delete weak_utility_process_host_.get();
+  weak_utility_process_host_.reset();
 }
 
 void UtilityProcessMojoProxyResolverFactory::OnResolverDestroyed() {

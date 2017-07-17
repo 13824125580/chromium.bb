@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -14,7 +15,6 @@
 #include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/task_management/task_management_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -49,7 +49,6 @@
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
-#include "ui/gfx/screen.h"
 
 using content::WebContents;
 
@@ -274,16 +273,16 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, CheckDockedPanelProperties) {
   EXPECT_EQ(Panel::TITLE_ONLY, panel2->expansion_state());
   panel3->SetExpansionState(Panel::MINIMIZED);
   EXPECT_EQ(Panel::MINIMIZED, panel3->expansion_state());
-  scoped_ptr<NativePanelTesting> panel1_testing(
+  std::unique_ptr<NativePanelTesting> panel1_testing(
       CreateNativePanelTesting(panel1));
-  scoped_ptr<NativePanelTesting> panel2_testing(
+  std::unique_ptr<NativePanelTesting> panel2_testing(
       CreateNativePanelTesting(panel2));
-  scoped_ptr<NativePanelTesting> panel3_testing(
+  std::unique_ptr<NativePanelTesting> panel3_testing(
       CreateNativePanelTesting(panel3));
 
   // Ensure that the layout message can get a chance to be processed so that
   // the button visibility can be updated.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(3, panel_manager->num_panels());
   EXPECT_TRUE(docked_collection->HasPanel(panel1));
@@ -514,7 +513,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, AnimateBounds) {
   // Create a detached panel, instead of docked panel because it cannot be
   // moved to any location.
   Panel* panel = CreateDetachedPanel("1", gfx::Rect(200, 100, 100, 100));
-  scoped_ptr<NativePanelTesting> panel_testing(
+  std::unique_ptr<NativePanelTesting> panel_testing(
       CreateNativePanelTesting(panel));
 
   // Validates that no animation should be triggered when the panel is being
@@ -688,11 +687,11 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, MAYBE_RestoreAllWithTitlebarClick) {
   EXPECT_FALSE(panel2->IsMinimized());
   EXPECT_FALSE(panel3->IsMinimized());
 
-  scoped_ptr<NativePanelTesting> test_panel1(
+  std::unique_ptr<NativePanelTesting> test_panel1(
       CreateNativePanelTesting(panel1));
-  scoped_ptr<NativePanelTesting> test_panel2(
+  std::unique_ptr<NativePanelTesting> test_panel2(
       CreateNativePanelTesting(panel2));
-  scoped_ptr<NativePanelTesting> test_panel3(
+  std::unique_ptr<NativePanelTesting> test_panel3(
       CreateNativePanelTesting(panel3));
 
   // Click on an expanded panel's titlebar using the apply-all modifier.
@@ -999,7 +998,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, MAYBE_ActivateDeactivateBasic) {
 
   // Create an active panel.
   Panel* panel = CreatePanel("PanelTest");
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   WaitForPanelActiveState(panel, SHOW_AS_ACTIVE);  // doublecheck active state
@@ -1057,7 +1056,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, ActivateDeactivateMultiple) {
 
 IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionBasic) {
   Panel* panel = CreateInactivePanel("P1");
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   // Test that the attention is drawn when the expanded panel is not in focus.
@@ -1093,7 +1092,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionWhileMinimized) {
   Panel* panel1 = CreateInactivePanel("P1");
   Panel* panel2 = CreateInactivePanel("P2");
 
-  scoped_ptr<NativePanelTesting> native_panel1_testing(
+  std::unique_ptr<NativePanelTesting> native_panel1_testing(
       CreateNativePanelTesting(panel1));
 
   // Test that the attention is drawn and the title-bar is brought up when the
@@ -1202,7 +1201,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, StopDrawingAttentionWhileMinimized) {
 IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionWhenActive) {
   // Create an active panel.
   Panel* panel = CreatePanel("P1");
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   // Test that the attention should not be drawn if the expanded panel is in
@@ -1216,7 +1215,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionWhenActive) {
 
 IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionResetOnActivate) {
   Panel* panel = CreateInactivePanel("P1");
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   panel->FlashFrame(true);
@@ -1260,7 +1259,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(PanelBrowserTest, DrawAttentionResetOnClick) {
   Panel* panel = CreateInactivePanel("P1");
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   panel->FlashFrame(true);
@@ -1290,7 +1289,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest,
                        MAYBE_MinimizeImmediatelyAfterRestore) {
   CreatePanelParams params("Panel Test", gfx::Rect(), SHOW_AS_ACTIVE);
   Panel* panel = CreatePanelWithParams(params);
-  scoped_ptr<NativePanelTesting> native_panel_testing(
+  std::unique_ptr<NativePanelTesting> native_panel_testing(
       CreateNativePanelTesting(panel));
 
   PanelActiveStateObserver signal(panel, false);
@@ -1359,12 +1358,12 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest,
   WaitForPanelActiveState(panel1, SHOW_AS_ACTIVE);
 
   panel1->SetExpansionState(Panel::MINIMIZED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   WaitForPanelActiveState(panel1, SHOW_AS_INACTIVE);
   EXPECT_EQ(Panel::MINIMIZED, panel1->expansion_state());
 
   panel2->SetExpansionState(Panel::MINIMIZED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   WaitForPanelActiveState(panel2, SHOW_AS_INACTIVE);
   EXPECT_EQ(Panel::MINIMIZED, panel2->expansion_state());
 
@@ -1705,7 +1704,8 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest,
                        HideDockedPanelCreatedBeforeFullScreenMode) {
   // Create a docked panel.
   Panel* panel = CreatePanel("PanelTest");
-  scoped_ptr<NativePanelTesting> panel_testing(CreateNativePanelTesting(panel));
+  std::unique_ptr<NativePanelTesting> panel_testing(
+      CreateNativePanelTesting(panel));
 
   // Panel should be visible at first.
   EXPECT_TRUE(panel_testing->IsWindowVisible());
@@ -1731,7 +1731,7 @@ IN_PROC_BROWSER_TEST_F(PanelBrowserTest,
   CreatePanelParams params("1", gfx::Rect(0, 0, 250, 200), SHOW_AS_ACTIVE);
   params.wait_for_fully_created = false;
   Panel* panel = CreatePanelWithParams(params);
-  scoped_ptr<NativePanelTesting> panel_testing(
+  std::unique_ptr<NativePanelTesting> panel_testing(
       CreateNativePanelTesting(panel));
 
   // Panel should not be shown on full-screen mode.
@@ -1767,92 +1767,3 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionApiTest,
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   ASSERT_TRUE(RunExtensionTest("panels/focus_change_on_minimize")) << message_;
 }
-
-#if defined(ENABLE_TASK_MANAGER)
-
-namespace {
-
-base::string16 GetExpectedPrefix() {
-  return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_EXTENSION_PREFIX,
-                                    base::string16());
-}
-
-const std::vector<task_management::WebContentsTag*>& GetTrackedTags() {
-  return task_management::WebContentsTagsManager::GetInstance()->
-      tracked_tags();
-}
-
-// Tests that the task manager tags are recorded correctly as a result of
-// creating panels.
-IN_PROC_BROWSER_TEST_F(PanelBrowserTest, TaskManagementTagsBasic) {
-  // Browser tests start with a single tab.
-  EXPECT_EQ(1U, GetTrackedTags().size());
-
-  // Create a bunch of panels.
-  gfx::Rect bounds(300, 200, 250, 200);
-  CreatePanelParams params("PanelTest1", bounds, SHOW_AS_ACTIVE);
-  params.url = GURL("about:blank");
-  CreatePanelWithParams(params);
-  EXPECT_EQ(2U, GetTrackedTags().size());
-
-  params.name = std::string("PanelTest2_Detached");
-  params.wait_for_fully_created = false;
-  params.create_mode = PanelManager::CREATE_AS_DETACHED;
-  CreatePanelWithParams(params);
-  EXPECT_EQ(3U, GetTrackedTags().size());
-
-  params.name = std::string("PanelTest3_Docked");
-  params.create_mode = PanelManager::CREATE_AS_DOCKED;
-  CreatePanelWithParams(params);
-  EXPECT_EQ(4U, GetTrackedTags().size());
-
-  params.name = std::string("PanelTest3_Inactive");
-  params.show_flag = SHOW_AS_INACTIVE;
-  CreatePanelWithParams(params);
-  EXPECT_EQ(5U, GetTrackedTags().size());
-
-  // Close all panels and make sure the tags are removed.
-  PanelManager::GetInstance()->CloseAll();
-  EXPECT_EQ(1U, GetTrackedTags().size());
-}
-
-// Tests that the task manager sees the PanelTasks as a result of creating
-// panels, and removes the PanelTasks as a result of closing panels.
-IN_PROC_BROWSER_TEST_F(PanelBrowserTest, TaskManagementTasksProvided) {
-  task_management::MockWebContentsTaskManager task_manager;
-  // Browser tests start with a single tab.
-  EXPECT_EQ(1U, GetTrackedTags().size());
-
-  // Create a single panel.
-  gfx::Rect bounds(300, 200, 250, 200);
-  CreatePanelParams params("PanelTest1", bounds, SHOW_AS_ACTIVE);
-  params.url = GURL("about:blank");
-  CreatePanelWithParams(params);
-  EXPECT_EQ(2U, GetTrackedTags().size());
-
-  task_manager.StartObserving();
-
-  // The pre-existing tab and panel are provided.
-  EXPECT_EQ(2U, task_manager.tasks().size());
-
-  // Create one more panel.
-  params.name = std::string("PanelTest2");
-  CreatePanelWithParams(params);
-  EXPECT_EQ(3U, GetTrackedTags().size());
-  ASSERT_EQ(3U, task_manager.tasks().size());
-
-  const task_management::Task* task = task_manager.tasks().back();
-  EXPECT_EQ(task_management::Task::EXTENSION, task->GetType());
-  const base::string16 title = task->title();
-  const base::string16 expected_prefix = GetExpectedPrefix();
-  EXPECT_TRUE(base::StartsWith(title,
-                               expected_prefix,
-                               base::CompareCase::INSENSITIVE_ASCII));
-
-  PanelManager::GetInstance()->CloseAll();
-  EXPECT_EQ(1U, task_manager.tasks().size());
-}
-
-}  // namespace
-
-#endif  // defined(ENABLE_TASK_MANAGER)

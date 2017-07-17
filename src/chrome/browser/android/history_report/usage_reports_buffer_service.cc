@@ -36,7 +36,7 @@ void DoGetUsageReportsBatch(
     history_report::UsageReportsBufferBackend* backend,
     int32_t batch_size,
     base::WaitableEvent* finished,
-    scoped_ptr<std::vector<history_report::UsageReport>>* result) {
+    std::unique_ptr<std::vector<history_report::UsageReport>>* result) {
   *result = backend->GetUsageReportsBatch(batch_size);
   finished->Signal();
 }
@@ -93,10 +93,11 @@ void UsageReportsBufferService::AddVisit(const std::string& id,
       base::SequencedWorkerPool::BLOCK_SHUTDOWN);
 }
 
-scoped_ptr<std::vector<UsageReport>>
+std::unique_ptr<std::vector<UsageReport>>
 UsageReportsBufferService::GetUsageReportsBatch(int32_t batch_size) {
-  scoped_ptr<std::vector<UsageReport> > result;
-  base::WaitableEvent finished(false, false);
+  std::unique_ptr<std::vector<UsageReport>> result;
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   // It's ok to pass unretained pointers here because this is a synchronous
   // call.
@@ -115,7 +116,8 @@ UsageReportsBufferService::GetUsageReportsBatch(int32_t batch_size) {
 
 void UsageReportsBufferService::Remove(
     const std::vector<std::string>& report_ids) {
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   // It's ok to pass unretained pointers here because this is a synchronous
   // call.
@@ -131,7 +133,8 @@ void UsageReportsBufferService::Remove(
 }
 
 void UsageReportsBufferService::Clear() {
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   // It's ok to pass unretained pointers here because this is a synchronous
   // call.
@@ -147,7 +150,8 @@ void UsageReportsBufferService::Clear() {
 
 std::string UsageReportsBufferService::Dump() {
   std::string dump;
-  base::WaitableEvent finished(false, false);
+  base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                               base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   // It's ok to pass unretained pointers here because this is a synchronous
   // call.

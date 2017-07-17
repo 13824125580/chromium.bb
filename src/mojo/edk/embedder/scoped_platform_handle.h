@@ -5,8 +5,8 @@
 #ifndef MOJO_EDK_EMBEDDER_SCOPED_PLATFORM_HANDLE_H_
 #define MOJO_EDK_EMBEDDER_SCOPED_PLATFORM_HANDLE_H_
 
+#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/move.h"
 #include "mojo/edk/embedder/platform_handle.h"
 #include "mojo/edk/system/system_impl_export.h"
 #include "mojo/public/c/system/macros.h"
@@ -15,8 +15,6 @@ namespace mojo {
 namespace edk {
 
 class MOJO_SYSTEM_IMPL_EXPORT ScopedPlatformHandle {
-  DISALLOW_COPY_AND_ASSIGN_WITH_MOVE_FOR_BIND(ScopedPlatformHandle)
-
  public:
   ScopedPlatformHandle() {}
   explicit ScopedPlatformHandle(PlatformHandle handle) : handle_(handle) {}
@@ -40,7 +38,7 @@ class MOJO_SYSTEM_IMPL_EXPORT ScopedPlatformHandle {
     other.handle_ = temp;
   }
 
-  PlatformHandle release() MOJO_WARN_UNUSED_RESULT {
+  PlatformHandle release() WARN_UNUSED_RESULT {
     PlatformHandle rv = handle_;
     handle_ = PlatformHandle();
     return rv;
@@ -55,6 +53,8 @@ class MOJO_SYSTEM_IMPL_EXPORT ScopedPlatformHandle {
 
  private:
   PlatformHandle handle_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedPlatformHandle);
 };
 
 }  // namespace edk

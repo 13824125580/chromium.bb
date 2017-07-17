@@ -8,11 +8,12 @@
 #include "core/frame/FrameHost.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/TopControls.h"
 #include "core/html/HTMLBodyElement.h"
 #include "core/html/HTMLElement.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/LayoutObject.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/page/Page.h"
 #include "platform/PlatformGestureEvent.h"
@@ -20,8 +21,10 @@
 #include "platform/geometry/DoubleRect.h"
 #include "platform/testing/URLTestHelpers.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebCachePolicy.h"
 #include "public/platform/WebLayerTreeView.h"
-#include "public/platform/WebUnitTestSupport.h"
+#include "public/platform/WebURLLoaderMockFactory.h"
+#include "public/web/WebCache.h"
 #include "public/web/WebContextMenuData.h"
 #include "public/web/WebDocument.h"
 #include "public/web/WebFrameClient.h"
@@ -116,7 +119,7 @@ public:
     {
         if (!overrideSettingsFunc)
             overrideSettingsFunc = &configureSettings;
-        m_helper.initialize(true, 0, &m_mockWebViewClient, overrideSettingsFunc);
+        m_helper.initialize(true, nullptr, &m_mockWebViewClient, nullptr, overrideSettingsFunc);
         webViewImpl()->setDefaultPageScaleLimits(1, 4);
     }
 
@@ -124,13 +127,14 @@ public:
     {
         if (!overrideSettingsFunc)
             overrideSettingsFunc = &configureAndroidSettings;
-        m_helper.initialize(true, 0, &m_mockWebViewClient, overrideSettingsFunc);
+        m_helper.initialize(true, nullptr, &m_mockWebViewClient, nullptr, overrideSettingsFunc);
         webViewImpl()->setDefaultPageScaleLimits(0.25f, 5);
     }
 
     ~VisualViewportTest() override
     {
-        Platform::current()->unitTestSupport()->unregisterAllMockedURLs();
+        Platform::current()->getURLLoaderMockFactory()->unregisterAllURLs();
+        WebCache::clear();
     }
 
     void navigateTo(const std::string& url)
@@ -150,9 +154,9 @@ public:
 
     WebLayer* getRootScrollLayer()
     {
-        PaintLayerCompositor* compositor = frame()->contentLayoutObject()->compositor();
-        ASSERT(compositor);
-        ASSERT(compositor->scrollLayer());
+        PaintLayerCompositor* compositor = frame()->contentLayoutItem().compositor();
+        DCHECK(compositor);
+        DCHECK(compositor->scrollLayer());
 
         WebLayer* webScrollLayer = compositor->scrollLayer()->platformLayer();
         return webScrollLayer;
@@ -164,7 +168,6 @@ public:
     static void configureSettings(WebSettings* settings)
     {
         settings->setJavaScriptEnabled(true);
-        settings->setAcceleratedCompositingEnabled(true);
         settings->setPreferCompositingToLCDTextEnabled(true);
     }
 
@@ -209,20 +212,9 @@ INSTANTIATE_TEST_CASE_P(All, ParameterizedVisualViewportTest, ::testing::Values(
     DefaultSettingOverride,
     RootLayerScrollsSettingOverride));
 
-
-// Disable these tests on Mac OSX ASAN due to all these tests failing because of
-// a user-after-free. crbug.com/582755.
-#if OS(MACOSX) && defined(ADDRESS_SANITIZER)
-#define MAYBE_TEST_P(test) TEST_P(ParameterizedVisualViewportTest, DISABLED_##test)
-#define MAYBE_TEST_F(test) TEST_F(VisualViewportTest, DISABLED_##test)
-#else
-#define MAYBE_TEST_P(test) TEST_P(ParameterizedVisualViewportTest, test)
-#define MAYBE_TEST_F(test) TEST_F(VisualViewportTest, test)
-#endif
-
 // Test that resizing the VisualViewport works as expected and that resizing the
 // WebView resizes the VisualViewport.
-MAYBE_TEST_P(TestResize)
+TEST_P(ParameterizedVisualViewportTest, TestResize)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -255,7 +247,7 @@ MAYBE_TEST_P(TestResize)
 // unchanged from the user's perspective (shrinking the FrameView will clamp
 // the VisualViewport so we need to counter scroll the FrameView to make it
 // appear to stay still). This caused bugs like crbug.com/453859.
-MAYBE_TEST_P(TestResizeAtFullyScrolledPreservesViewportLocation)
+TEST_P(ParameterizedVisualViewportTest, TestResizeAtFullyScrolledPreservesViewportLocation)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(800, 600));
@@ -276,24 +268,24 @@ MAYBE_TEST_P(TestResizeAtFullyScrolledPreservesViewportLocation)
     ASSERT_POINT_EQ(FloatPoint(400, 300), visualViewport.location());
     ASSERT_POINT_EQ(DoublePoint(200, 1400), frameView.layoutViewportScrollableArea()->scrollPositionDouble());
 
-    DoublePoint expectedLocation = frameView.scrollableArea()->visibleContentRectDouble().location();
+    DoublePoint expectedLocation = frameView.getScrollableArea()->visibleContentRectDouble().location();
 
     // Shrink the WebView, this should cause both viewports to shrink and
     // WebView should do whatever it needs to do to preserve the visible
     // location.
     webViewImpl()->resize(IntSize(700, 550));
 
-    EXPECT_POINT_EQ(expectedLocation, frameView.scrollableArea()->visibleContentRectDouble().location());
+    EXPECT_POINT_EQ(expectedLocation, frameView.getScrollableArea()->visibleContentRectDouble().location());
 
     webViewImpl()->resize(IntSize(800, 600));
 
-    EXPECT_POINT_EQ(expectedLocation, frameView.scrollableArea()->visibleContentRectDouble().location());
+    EXPECT_POINT_EQ(expectedLocation, frameView.getScrollableArea()->visibleContentRectDouble().location());
 }
 
 
 // Test that the VisualViewport works as expected in case of a scaled
 // and scrolled viewport - scroll down.
-MAYBE_TEST_P(TestResizeAfterVerticalScroll)
+TEST_P(ParameterizedVisualViewportTest, TestResizeAfterVerticalScroll)
 {
     /*
                  200                                 200
@@ -359,7 +351,7 @@ MAYBE_TEST_P(TestResizeAfterVerticalScroll)
 
 // Test that the VisualViewport works as expected in case if a scaled
 // and scrolled viewport - scroll right.
-MAYBE_TEST_P(TestResizeAfterHorizontalScroll)
+TEST_P(ParameterizedVisualViewportTest, TestResizeAfterHorizontalScroll)
 {
     /*
                  200                                 200
@@ -422,24 +414,22 @@ MAYBE_TEST_P(TestResizeAfterHorizontalScroll)
     EXPECT_FLOAT_POINT_EQ(FloatPoint(150, 0), visualViewport.location());
 }
 
-static void disableAcceleratedCompositing(WebSettings* settings)
-{
-    VisualViewportTest::configureSettings(settings);
-    // FIXME: This setting is being removed, so this test needs to be rewritten to
-    // do something else. crbug.com/173949
-    settings->setAcceleratedCompositingEnabled(false);
-}
-
 // Test that the container layer gets sized properly if the WebView is resized
 // prior to the VisualViewport being attached to the layer tree.
-MAYBE_TEST_P(TestWebViewResizedBeforeAttachment)
+TEST_P(ParameterizedVisualViewportTest, TestWebViewResizedBeforeAttachment)
 {
-    initializeWithDesktopSettings(disableAcceleratedCompositing);
+    initializeWithDesktopSettings();
+    FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
+    GraphicsLayer* rootGraphicsLayer =
+        frameView.layoutView()->compositor()->rootGraphicsLayer();
+
+    // Make sure that a resize that comes in while there's no root layer is
+    // honoured when we attach to the layer tree.
+    webViewImpl()->setRootGraphicsLayer(nullptr);
     webViewImpl()->resize(IntSize(320, 240));
+    webViewImpl()->setRootGraphicsLayer(rootGraphicsLayer);
 
     navigateTo("about:blank");
-    forceFullCompositingUpdate();
-    webViewImpl()->settings()->setAcceleratedCompositingEnabled(true);
     webViewImpl()->updateAllLifecyclePhases();
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
@@ -448,7 +438,7 @@ MAYBE_TEST_P(TestWebViewResizedBeforeAttachment)
 
 // Make sure that the visibleRect method acurately reflects the scale and scroll location
 // of the viewport.
-MAYBE_TEST_P(TestVisibleRect)
+TEST_P(ParameterizedVisualViewportTest, TestVisibleRect)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -499,7 +489,7 @@ MAYBE_TEST_P(TestVisibleRect)
 
 // Make sure that the visibleRectInDocument method acurately reflects the scale
 // and scroll location of the viewport relative to the document.
-MAYBE_TEST_P(TestVisibleRectInDocument)
+TEST_P(ParameterizedVisualViewportTest, TestVisibleRectInDocument)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(100, 400));
@@ -520,8 +510,11 @@ MAYBE_TEST_P(TestVisibleRectInDocument)
     EXPECT_FLOAT_RECT_EQ(FloatRect(50, 115, 50, 200), visualViewport.visibleRectInDocument());
 }
 
-MAYBE_TEST_P(TestFractionalScrollOffsetIsNotOverwritten)
+TEST_P(ParameterizedVisualViewportTest, TestFractionalScrollOffsetIsNotOverwritten)
 {
+    bool origFractionalOffsetsEnabled = RuntimeEnabledFeatures::fractionalScrollOffsetsEnabled();
+    RuntimeEnabledFeatures::setFractionalScrollOffsetsEnabled(true);
+
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(200, 250));
 
@@ -533,11 +526,13 @@ MAYBE_TEST_P(TestFractionalScrollOffsetIsNotOverwritten)
     webViewImpl()->applyViewportDeltas(WebFloatSize(), WebFloatSize(10, 20), WebFloatSize(), 1, 0);
 
     EXPECT_EQ(30.5, frameView.layoutViewportScrollableArea()->scrollPositionDouble().y());
+
+    RuntimeEnabledFeatures::setFractionalScrollOffsetsEnabled(origFractionalOffsetsEnabled);
 }
 
 // Test that the viewport's scroll offset is always appropriately bounded such that the
 // visual viewport always stays within the bounds of the main frame.
-MAYBE_TEST_P(TestOffsetClamping)
+TEST_P(ParameterizedVisualViewportTest, TestOffsetClamping)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -582,7 +577,7 @@ MAYBE_TEST_P(TestOffsetClamping)
 
 // Test that the viewport can be scrolled around only within the main frame in the presence
 // of viewport resizes, as would be the case if the on screen keyboard came up.
-MAYBE_TEST_P(TestOffsetClampingWithResize)
+TEST_P(ParameterizedVisualViewportTest, TestOffsetClampingWithResize)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -634,7 +629,7 @@ MAYBE_TEST_P(TestOffsetClampingWithResize)
 
 // Test that the viewport is scrollable but bounded appropriately within the main frame
 // when we apply both scaling and resizes.
-MAYBE_TEST_P(TestOffsetClampingWithResizeAndScale)
+TEST_P(ParameterizedVisualViewportTest, TestOffsetClampingWithResizeAndScale)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -680,7 +675,7 @@ MAYBE_TEST_P(TestOffsetClampingWithResizeAndScale)
 // The main FrameView's size should be set such that its the size of the visual viewport
 // at minimum scale. If there's no explicit minimum scale set, the FrameView should be
 // set to the content width and height derived by the aspect ratio.
-MAYBE_TEST_P(TestFrameViewSizedToContent)
+TEST_P(ParameterizedVisualViewportTest, TestFrameViewSizedToContent)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -699,7 +694,7 @@ MAYBE_TEST_P(TestFrameViewSizedToContent)
 // The main FrameView's size should be set such that its the size of the visual viewport
 // at minimum scale. On Desktop, the minimum scale is set at 1 so make sure the FrameView
 // is sized to the viewport.
-MAYBE_TEST_P(TestFrameViewSizedToMinimumScale)
+TEST_P(ParameterizedVisualViewportTest, TestFrameViewSizedToMinimumScale)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -716,7 +711,7 @@ MAYBE_TEST_P(TestFrameViewSizedToMinimumScale)
 
 // Test that attaching a new frame view resets the size of the inner viewport scroll
 // layer. crbug.com/423189.
-MAYBE_TEST_P(TestAttachingNewFrameSetsInnerScrollLayerSize)
+TEST_P(ParameterizedVisualViewportTest, TestAttachingNewFrameSetsInnerScrollLayerSize)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -750,7 +745,7 @@ MAYBE_TEST_P(TestAttachingNewFrameSetsInnerScrollLayerSize)
 // The main FrameView's size should be set such that its the size of the visual viewport
 // at minimum scale. Test that the FrameView is appropriately sized in the presence
 // of a viewport <meta> tag.
-MAYBE_TEST_P(TestFrameViewSizedToViewportMetaMinimumScale)
+TEST_P(ParameterizedVisualViewportTest, TestFrameViewSizedToViewportMetaMinimumScale)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(320, 240));
@@ -766,7 +761,7 @@ MAYBE_TEST_P(TestFrameViewSizedToViewportMetaMinimumScale)
 }
 
 // Test that the visual viewport still gets sized in AutoSize/AutoResize mode.
-MAYBE_TEST_P(TestVisualViewportGetsSizeInAutoSizeMode)
+TEST_P(ParameterizedVisualViewportTest, TestVisualViewportGetsSizeInAutoSizeMode)
 {
     initializeWithDesktopSettings();
 
@@ -782,7 +777,7 @@ MAYBE_TEST_P(TestVisualViewportGetsSizeInAutoSizeMode)
 }
 
 // Test that the text selection handle's position accounts for the visual viewport.
-MAYBE_TEST_P(TestTextSelectionHandles)
+TEST_P(ParameterizedVisualViewportTest, TestTextSelectionHandles)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(500, 800));
@@ -816,7 +811,7 @@ MAYBE_TEST_P(TestTextSelectionHandles)
 }
 
 // Test that the HistoryItem for the page stores the visual viewport's offset and scale.
-MAYBE_TEST_P(TestSavedToHistoryItem)
+TEST_P(ParameterizedVisualViewportTest, TestSavedToHistoryItem)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(200, 300));
@@ -840,7 +835,7 @@ MAYBE_TEST_P(TestSavedToHistoryItem)
 }
 
 // Test restoring a HistoryItem properly restores the visual viewport's state.
-MAYBE_TEST_P(TestRestoredFromHistoryItem)
+TEST_P(ParameterizedVisualViewportTest, TestRestoredFromHistoryItem)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(200, 300));
@@ -854,7 +849,7 @@ MAYBE_TEST_P(TestRestoredFromHistoryItem)
     item.setVisualViewportScrollOffset(WebFloatPoint(100, 120));
     item.setPageScaleFactor(2);
 
-    FrameTestHelpers::loadHistoryItem(webViewImpl()->mainFrame(), item, WebHistoryDifferentDocumentLoad, WebURLRequest::UseProtocolCachePolicy);
+    FrameTestHelpers::loadHistoryItem(webViewImpl()->mainFrame(), item, WebHistoryDifferentDocumentLoad, WebCachePolicy::UseProtocolCachePolicy);
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     EXPECT_EQ(2, visualViewport.scale());
@@ -864,7 +859,7 @@ MAYBE_TEST_P(TestRestoredFromHistoryItem)
 
 // Test restoring a HistoryItem without the visual viewport offset falls back to distributing
 // the scroll offset between the main frame and the visual viewport.
-MAYBE_TEST_F(TestRestoredFromLegacyHistoryItem)
+TEST_F(VisualViewportTest, TestRestoredFromLegacyHistoryItem)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(100, 150));
@@ -881,7 +876,7 @@ MAYBE_TEST_F(TestRestoredFromLegacyHistoryItem)
     item.setScrollOffset(WebPoint(120, 180));
     item.setPageScaleFactor(2);
 
-    FrameTestHelpers::loadHistoryItem(webViewImpl()->mainFrame(), item, WebHistoryDifferentDocumentLoad, WebURLRequest::UseProtocolCachePolicy);
+    FrameTestHelpers::loadHistoryItem(webViewImpl()->mainFrame(), item, WebHistoryDifferentDocumentLoad, WebCachePolicy::UseProtocolCachePolicy);
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     EXPECT_EQ(2, visualViewport.scale());
@@ -891,7 +886,7 @@ MAYBE_TEST_F(TestRestoredFromLegacyHistoryItem)
 
 // Test that navigation to a new page with a different sized main frame doesn't
 // clobber the history item's main frame scroll offset. crbug.com/371867
-MAYBE_TEST_P(TestNavigateToSmallerFrameViewHistoryItemClobberBug)
+TEST_P(ParameterizedVisualViewportTest, TestNavigateToSmallerFrameViewHistoryItemClobberBug)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(400, 400));
@@ -909,7 +904,7 @@ MAYBE_TEST_P(TestNavigateToSmallerFrameViewHistoryItemClobberBug)
     visualViewport.setScale(2);
     visualViewport.setLocation(FloatPoint(350, 350));
 
-    RefPtrWillBePersistent<HistoryItem> firstItem = webViewImpl()->mainFrameImpl()->frame()->loader().currentItem();
+    Persistent<HistoryItem> firstItem = webViewImpl()->mainFrameImpl()->frame()->loader().currentItem();
     EXPECT_POINT_EQ(IntPoint(0, 1000), firstItem->scrollPoint());
 
     // Now navigate to a page which causes a smaller frameView. Make sure that
@@ -925,7 +920,7 @@ MAYBE_TEST_P(TestNavigateToSmallerFrameViewHistoryItemClobberBug)
 
 // Test that the coordinates sent into moveRangeSelection are offset by the
 // visual viewport's location.
-MAYBE_TEST_P(DISABLED_TestWebFrameRangeAccountsForVisualViewportScroll)
+TEST_P(ParameterizedVisualViewportTest, DISABLED_TestWebFrameRangeAccountsForVisualViewportScroll)
 {
     initializeWithDesktopSettings();
     webViewImpl()->settings()->setDefaultFontSize(12);
@@ -958,8 +953,8 @@ MAYBE_TEST_P(DISABLED_TestWebFrameRangeAccountsForVisualViewportScroll)
     EXPECT_EQ("t ", mainFrame->selectionAsText().utf8());
 }
 
-// Test that the scrollFocusedNodeIntoRect method works with the visual viewport.
-MAYBE_TEST_P(DISABLED_TestScrollFocusedNodeIntoRect)
+// Test that the scrollFocusedEditableElementIntoRect method works with the visual viewport.
+TEST_P(ParameterizedVisualViewportTest, DISABLED_TestScrollFocusedEditableElementIntoRect)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(500, 300));
@@ -971,7 +966,7 @@ MAYBE_TEST_P(DISABLED_TestScrollFocusedNodeIntoRect)
     webViewImpl()->resizeVisualViewport(IntSize(200, 100));
     webViewImpl()->setInitialFocus(false);
     visualViewport.setLocation(FloatPoint());
-    webViewImpl()->scrollFocusedNodeIntoRect(IntRect(0, 0, 500, 200));
+    webViewImpl()->scrollFocusedEditableElementIntoRect(IntRect(0, 0, 500, 200));
 
     EXPECT_POINT_EQ(IntPoint(0, frame()->view()->maximumScrollPosition().y()),
         frame()->view()->scrollPosition());
@@ -983,7 +978,7 @@ MAYBE_TEST_P(DISABLED_TestScrollFocusedNodeIntoRect)
     visualViewport.setLocation(FloatPoint(0, 0));
 
     webViewImpl()->setPageScaleFactor(2);
-    webViewImpl()->scrollFocusedNodeIntoRect(IntRect(0, 0, 500, 200));
+    webViewImpl()->scrollFocusedEditableElementIntoRect(IntRect(0, 0, 500, 200));
     EXPECT_POINT_EQ(IntPoint(0, frame()->view()->maximumScrollPosition().y()),
         frame()->view()->scrollPosition());
     EXPECT_FLOAT_POINT_EQ(FloatPoint(125, 150), visualViewport.visibleRect().location());
@@ -998,13 +993,13 @@ MAYBE_TEST_P(DISABLED_TestScrollFocusedNodeIntoRect)
     visualViewport.setLocation(FloatPoint(30, 50));
 
     webViewImpl()->setPageScaleFactor(2);
-    webViewImpl()->scrollFocusedNodeIntoRect(IntRect(0, 0, 500, 200));
+    webViewImpl()->scrollFocusedEditableElementIntoRect(IntRect(0, 0, 500, 200));
     EXPECT_POINT_EQ(IntPoint(200-30-75, 600-50-65), frame()->view()->scrollPosition());
     EXPECT_FLOAT_POINT_EQ(FloatPoint(30, 50), visualViewport.visibleRect().location());
 }
 
 // Test that resizing the WebView causes ViewportConstrained objects to relayout.
-MAYBE_TEST_P(TestWebViewResizeCausesViewportConstrainedLayout)
+TEST_P(ParameterizedVisualViewportTest, TestWebViewResizeCausesViewportConstrainedLayout)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(500, 300));
@@ -1021,7 +1016,7 @@ MAYBE_TEST_P(TestWebViewResizeCausesViewportConstrainedLayout)
     EXPECT_TRUE(navbar->needsLayout());
 }
 
-class MockWebFrameClient : public WebFrameClient {
+class MockWebFrameClient : public FrameTestHelpers::TestWebFrameClient {
 public:
     MOCK_METHOD1(showContextMenu, void(const WebContextMenuData&));
     MOCK_METHOD1(didChangeScrollOffset, void(WebLocalFrame*));
@@ -1037,7 +1032,7 @@ MATCHER_P2(ContextMenuAtLocation, x, y,
 
 // Test that the context menu's location is correct in the presence of visual
 // viewport offset.
-MAYBE_TEST_P(TestContextMenuShownInCorrectLocation)
+TEST_P(ParameterizedVisualViewportTest, TestContextMenuShownInCorrectLocation)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(200, 300));
@@ -1090,7 +1085,7 @@ MAYBE_TEST_P(TestContextMenuShownInCorrectLocation)
 }
 
 // Test that the client is notified if page scroll events.
-MAYBE_TEST_P(TestClientNotifiedOfScrollEvents)
+TEST_P(ParameterizedVisualViewportTest, TestClientNotifiedOfScrollEvents)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(200, 300));
@@ -1122,7 +1117,7 @@ MAYBE_TEST_P(TestClientNotifiedOfScrollEvents)
     webViewImpl()->mainFrameImpl()->setClient(oldClient);
 }
 
-// Tests that calling scroll into view on a visible element doesn cause
+// Tests that calling scroll into view on a visible element doesn't cause
 // a scroll due to a fractional offset. Bug crbug.com/463356.
 TEST_P(ParameterizedVisualViewportTest, ScrollIntoViewFractionalOffset)
 {
@@ -1146,14 +1141,14 @@ TEST_P(ParameterizedVisualViewportTest, ScrollIntoViewFractionalOffset)
     layoutViewportScrollableArea->setScrollPosition(DoublePoint(0, 900.75), ProgrammaticScroll);
     inputBox->scrollIntoViewIfNeeded(false);
 
-    EXPECT_POINT_EQ(DoublePoint(0, 900.75), layoutViewportScrollableArea->scrollPositionDouble());
+    EXPECT_POINT_EQ(DoublePoint(0, 900), layoutViewportScrollableArea->scrollPositionDouble());
     EXPECT_POINT_EQ(FloatPoint(250.25f, 100.25f), visualViewport.location());
 
     // Change the fractional part of the frameview to one that would round down.
     layoutViewportScrollableArea->setScrollPosition(DoublePoint(0, 900.125), ProgrammaticScroll);
     inputBox->scrollIntoViewIfNeeded(false);
 
-    EXPECT_POINT_EQ(DoublePoint(0, 900.125), layoutViewportScrollableArea->scrollPositionDouble());
+    EXPECT_POINT_EQ(DoublePoint(0, 900), layoutViewportScrollableArea->scrollPositionDouble());
     EXPECT_POINT_EQ(FloatPoint(250.25f, 100.25f), visualViewport.location());
 
     // Repeat both tests above with the visual viewport at a high fractional.
@@ -1161,14 +1156,14 @@ TEST_P(ParameterizedVisualViewportTest, ScrollIntoViewFractionalOffset)
     layoutViewportScrollableArea->setScrollPosition(DoublePoint(0, 900.75), ProgrammaticScroll);
     inputBox->scrollIntoViewIfNeeded(false);
 
-    EXPECT_POINT_EQ(DoublePoint(0, 900.75), layoutViewportScrollableArea->scrollPositionDouble());
+    EXPECT_POINT_EQ(DoublePoint(0, 900), layoutViewportScrollableArea->scrollPositionDouble());
     EXPECT_POINT_EQ(FloatPoint(250.875f, 100.875f), visualViewport.location());
 
     // Change the fractional part of the frameview to one that would round down.
     layoutViewportScrollableArea->setScrollPosition(DoublePoint(0, 900.125), ProgrammaticScroll);
     inputBox->scrollIntoViewIfNeeded(false);
 
-    EXPECT_POINT_EQ(DoublePoint(0, 900.125), layoutViewportScrollableArea->scrollPositionDouble());
+    EXPECT_POINT_EQ(DoublePoint(0, 900), layoutViewportScrollableArea->scrollPositionDouble());
     EXPECT_POINT_EQ(FloatPoint(250.875f, 100.875f), visualViewport.location());
 
     // Both viewports with a 0.5 fraction.
@@ -1176,24 +1171,23 @@ TEST_P(ParameterizedVisualViewportTest, ScrollIntoViewFractionalOffset)
     layoutViewportScrollableArea->setScrollPosition(DoublePoint(0, 900.5), ProgrammaticScroll);
     inputBox->scrollIntoViewIfNeeded(false);
 
-    EXPECT_POINT_EQ(DoublePoint(0, 900.5), layoutViewportScrollableArea->scrollPositionDouble());
+    EXPECT_POINT_EQ(DoublePoint(0, 900), layoutViewportScrollableArea->scrollPositionDouble());
     EXPECT_POINT_EQ(FloatPoint(250.5f, 100.5f), visualViewport.location());
 }
 
 // Top controls can make an unscrollable page temporarily scrollable, causing
 // a scroll clamp when the page is resized. Make sure this bug is fixed.
 // crbug.com/437620
-MAYBE_TEST_F(TestResizeDoesntChangeScrollOffset)
+TEST_F(VisualViewportTest, TestResizeDoesntChangeScrollOffset)
 {
+    RuntimeEnabledFeatures::setInertTopControlsEnabled(false);
     initializeWithAndroidSettings();
-    webViewImpl()->resize(IntSize(980, 650));
+    webViewImpl()->resizeWithTopControls(IntSize(980, 650), 20, false);
 
     navigateTo("about:blank");
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
-
-    webViewImpl()->setTopControlsHeight(20, false);
 
     // Outer viewport isn't scrollable
     EXPECT_SIZE_EQ(IntSize(980, 650), frameView.visibleContentRect().size());
@@ -1206,8 +1200,7 @@ MAYBE_TEST_F(TestResizeDoesntChangeScrollOffset)
 
     EXPECT_EQ(20, frameView.layoutViewportScrollableArea()->scrollPosition().y());
 
-    webViewImpl()->setTopControlsHeight(20, true);
-    webViewImpl()->resize(WebSize(980, 630));
+    webViewImpl()->resizeWithTopControls(WebSize(980, 630), 20, true);
 
     EXPECT_EQ(0, frameView.layoutViewportScrollableArea()->scrollPosition().y());
     EXPECT_EQ(60, visualViewport.location().y());
@@ -1222,18 +1215,16 @@ static IntPoint expectedMaxFrameViewScrollOffset(VisualViewport& visualViewport,
         frameView.contentsSize().height() - newHeight);
 }
 
-MAYBE_TEST_F(TestTopControlsAdjustment)
+TEST_F(VisualViewportTest, TestTopControlsAdjustment)
 {
     initializeWithAndroidSettings();
-    webViewImpl()->resize(IntSize(500, 450));
+    webViewImpl()->resizeWithTopControls(IntSize(500, 450), 20, false);
 
     registerMockedHttpURLLoad("content-width-1000.html");
     navigateTo(m_baseURL + "content-width-1000.html");
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
-
-    webViewImpl()->setTopControlsHeight(20, false);
 
     visualViewport.setScale(1);
     EXPECT_SIZE_EQ(IntSize(500, 450), visualViewport.visibleRect().size());
@@ -1259,9 +1250,9 @@ MAYBE_TEST_F(TestTopControlsAdjustment)
     webViewImpl()->applyViewportDeltas(WebFloatSize(), WebFloatSize(), WebFloatSize(), 1, -10.5f / 20);
     EXPECT_FLOAT_SIZE_EQ(FloatSize(500, 440.5f), visualViewport.visibleRect().size());
 
-    // maximumScrollPosition floors the final values.
+    // maximumScrollPosition |ceil|s the top controls adjustment.
     visualViewport.move(FloatPoint(10000, 10000));
-    EXPECT_FLOAT_POINT_EQ(FloatPoint(500, 881 - 440.5f), visualViewport.location());
+    EXPECT_FLOAT_POINT_EQ(FloatPoint(500, 881 - 441), visualViewport.location());
 
     // The outer viewport (FrameView) should be affected as well.
     frameView.scrollBy(IntSize(10000, 10000), UserScroll);
@@ -1270,18 +1261,16 @@ MAYBE_TEST_F(TestTopControlsAdjustment)
         frameView.scrollPosition());
 }
 
-MAYBE_TEST_F(TestTopControlsAdjustmentWithScale)
+TEST_F(VisualViewportTest, TestTopControlsAdjustmentWithScale)
 {
     initializeWithAndroidSettings();
-    webViewImpl()->resize(IntSize(500, 450));
+    webViewImpl()->resizeWithTopControls(IntSize(500, 450), 20, false);
 
     registerMockedHttpURLLoad("content-width-1000.html");
     navigateTo(m_baseURL + "content-width-1000.html");
 
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
-
-    webViewImpl()->setTopControlsHeight(20, false);
 
     visualViewport.setScale(2);
     EXPECT_SIZE_EQ(IntSize(250, 225), visualViewport.visibleRect().size());
@@ -1333,10 +1322,25 @@ MAYBE_TEST_F(TestTopControlsAdjustmentWithScale)
 
 }
 
-MAYBE_TEST_F(TestTopControlsAdjustmentAndResize)
+// Tests that a scroll all the way to the bottom of the page, while hiding the
+// top controls doesn't cause a clamp in the viewport scroll offset when the
+// top controls initiated resize occurs.
+TEST_F(VisualViewportTest, TestTopControlsAdjustmentAndResize)
 {
+    int topControlsHeight = 20;
+    int visualViewportHeight = 450;
+    int layoutViewportHeight = 900;
+    float pageScale = 2;
+    float minPageScale = 0.5;
+
     initializeWithAndroidSettings();
-    webViewImpl()->resize(IntSize(500, 450));
+
+    // Initialize with top controls showing and shrinking the Blink size.
+    webViewImpl()->resizeWithTopControls(
+        WebSize(500, visualViewportHeight - topControlsHeight),
+        20,
+        true);
+    webViewImpl()->topControls().setShownRatio(1);
 
     registerMockedHttpURLLoad("content-width-1000.html");
     navigateTo(m_baseURL + "content-width-1000.html");
@@ -1344,46 +1348,150 @@ MAYBE_TEST_F(TestTopControlsAdjustmentAndResize)
     VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
     FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
 
-    visualViewport.setScale(2);
-    EXPECT_SIZE_EQ(IntSize(250, 225), visualViewport.visibleRect().size());
-    EXPECT_SIZE_EQ(IntSize(1000, 900), frameView.frameRect().size());
+    visualViewport.setScale(pageScale);
+    EXPECT_SIZE_EQ(
+        IntSize(250, (visualViewportHeight - topControlsHeight) / pageScale),
+        visualViewport.visibleRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(1000, layoutViewportHeight - topControlsHeight / minPageScale),
+        frameView.frameRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(500, visualViewportHeight - topControlsHeight),
+        visualViewport.size());
 
-    webViewImpl()->setTopControlsHeight(20, false);
-
-    webViewImpl()->applyViewportDeltas(WebFloatSize(), WebFloatSize(), WebFloatSize(), 1, 1);
-    EXPECT_SIZE_EQ(IntSize(500, 450), visualViewport.size());
-    EXPECT_SIZE_EQ(IntSize(250, 215), visualViewport.visibleRect().size());
-
-    // Scroll all the way to the bottom.
+    // Scroll all the way to the bottom, hiding the top controls in the process.
     visualViewport.move(FloatPoint(10000, 10000));
     frameView.scrollBy(IntSize(10000, 10000), UserScroll);
-    IntPoint frameViewExpected = expectedMaxFrameViewScrollOffset(visualViewport, frameView);
-    FloatPoint visualViewportExpected = FloatPoint(750, 860 - 215);
+    webViewImpl()->topControls().setShownRatio(0);
+
+    EXPECT_SIZE_EQ(
+        IntSize(250, visualViewportHeight / pageScale),
+        visualViewport.visibleRect().size());
+
+    IntPoint frameViewExpected =
+        expectedMaxFrameViewScrollOffset(visualViewport, frameView);
+    FloatPoint visualViewportExpected =
+        FloatPoint(
+            750,
+            layoutViewportHeight - visualViewportHeight / pageScale);
+
     EXPECT_POINT_EQ(visualViewportExpected, visualViewport.location());
     EXPECT_POINT_EQ(frameViewExpected, frameView.scrollPosition());
 
-    // Resize the widget to match the top controls adjustment. Ensure that scroll
-    // offsets don't get clamped in the the process.
-    webViewImpl()->setTopControlsHeight(20, true);
-    webViewImpl()->resize(WebSize(500, 430));
+    FloatPoint totalExpected = visualViewportExpected + frameViewExpected;
 
-    EXPECT_SIZE_EQ(IntSize(500, 430), visualViewport.size());
-    EXPECT_SIZE_EQ(IntSize(250, 215), visualViewport.visibleRect().size());
-    EXPECT_SIZE_EQ(IntSize(1000, 860), frameView.frameRect().size());
+    // Resize the widget to match the top controls adjustment. Ensure that the
+    // total offset (i.e. what the user sees) doesn't change because of clamping
+    // the offsets to valid values.
+    webViewImpl()->resizeWithTopControls(
+        WebSize(500, visualViewportHeight),
+        20,
+        false);
 
-    EXPECT_POINT_EQ(frameViewExpected, frameView.scrollPosition());
+    EXPECT_SIZE_EQ(IntSize(500, visualViewportHeight), visualViewport.size());
+    EXPECT_SIZE_EQ(
+        IntSize(250, visualViewportHeight / pageScale),
+        visualViewport.visibleRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(1000, layoutViewportHeight),
+        frameView.frameRect().size());
+    EXPECT_POINT_EQ(
+        totalExpected,
+        frameView.scrollPosition() + visualViewport.location());
+}
+
+// Tests that a scroll all the way to the bottom while showing the top controls
+// doesn't cause a clamp to the viewport scroll offset when the top controls
+// initiated resize occurs.
+TEST_F(VisualViewportTest, TestTopControlsShrinkAdjustmentAndResize)
+{
+    int topControlsHeight = 20;
+    int visualViewportHeight = 500;
+    int layoutViewportHeight = 1000;
+    int contentHeight = 2000;
+    float pageScale = 2;
+    float minPageScale = 0.5;
+
+    initializeWithAndroidSettings();
+
+    // Initialize with top controls hidden and not shrinking the Blink size.
+    webViewImpl()->resizeWithTopControls(
+        IntSize(500, visualViewportHeight),
+        20,
+        false);
+    webViewImpl()->topControls().setShownRatio(0);
+
+    registerMockedHttpURLLoad("content-width-1000.html");
+    navigateTo(m_baseURL + "content-width-1000.html");
+
+    VisualViewport& visualViewport = frame()->page()->frameHost().visualViewport();
+    FrameView& frameView = *webViewImpl()->mainFrameImpl()->frameView();
+
+    visualViewport.setScale(pageScale);
+    EXPECT_SIZE_EQ(
+        IntSize(250, visualViewportHeight / pageScale),
+        visualViewport.visibleRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(1000, layoutViewportHeight),
+        frameView.frameRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(500, visualViewportHeight),
+        visualViewport.size());
+
+    // Scroll all the way to the bottom, showing the the top controls in the
+    // process. (This could happen via window.scrollTo during a scroll, for
+    // example).
+    webViewImpl()->topControls().setShownRatio(1);
+    visualViewport.move(FloatPoint(10000, 10000));
+    frameView.scrollBy(IntSize(10000, 10000), UserScroll);
+
+    EXPECT_SIZE_EQ(
+        IntSize(250, (visualViewportHeight - topControlsHeight) / pageScale),
+        visualViewport.visibleRect().size());
+
+    IntPoint frameViewExpected = IntPoint(0,
+        contentHeight
+            - (layoutViewportHeight - topControlsHeight / minPageScale));
+    FloatPoint visualViewportExpected =
+        FloatPoint(750,
+            (layoutViewportHeight - topControlsHeight / minPageScale
+            - visualViewport.visibleRect().height()));
+
     EXPECT_POINT_EQ(visualViewportExpected, visualViewport.location());
+    EXPECT_POINT_EQ(frameViewExpected, frameView.scrollPosition());
+
+    FloatPoint totalExpected = visualViewportExpected + frameViewExpected;
+
+    // Resize the widget to match the top controls adjustment. Ensure that the
+    // total offset (i.e. what the user sees) doesn't change because of clamping
+    // the offsets to valid values.
+    webViewImpl()->resizeWithTopControls(
+        WebSize(500, visualViewportHeight - topControlsHeight),
+        20,
+        true);
+
+    EXPECT_SIZE_EQ(
+        IntSize(500, visualViewportHeight - topControlsHeight),
+        visualViewport.size());
+    EXPECT_SIZE_EQ(
+        IntSize(250, (visualViewportHeight - topControlsHeight) / pageScale),
+        visualViewport.visibleRect().size());
+    EXPECT_SIZE_EQ(
+        IntSize(1000, layoutViewportHeight - topControlsHeight / minPageScale),
+        frameView.frameRect().size());
+    EXPECT_POINT_EQ(
+        totalExpected,
+        frameView.scrollPosition() + visualViewport.location());
 }
 
 // Tests that a resize due to top controls hiding doesn't incorrectly clamp the
 // main frame's scroll offset. crbug.com/428193.
-MAYBE_TEST_F(TestTopControlHidingResizeDoesntClampMainFrame)
+TEST_F(VisualViewportTest, TestTopControlHidingResizeDoesntClampMainFrame)
 {
     initializeWithAndroidSettings();
-    webViewImpl()->setTopControlsHeight(500, false);
+    webViewImpl()->resizeWithTopControls(webViewImpl()->size(), 500, false);
     webViewImpl()->applyViewportDeltas(WebFloatSize(), WebFloatSize(), WebFloatSize(), 1, 1);
-    webViewImpl()->setTopControlsHeight(500, true);
-    webViewImpl()->resize(IntSize(1000, 1000));
+    webViewImpl()->resizeWithTopControls(WebSize(1000, 1000), 500, true);
 
     registerMockedHttpURLLoad("content-width-1000.html");
     navigateTo(m_baseURL + "content-width-1000.html");
@@ -1397,14 +1505,13 @@ MAYBE_TEST_F(TestTopControlHidingResizeDoesntClampMainFrame)
     EXPECT_EQ(500, frameView.scrollPositionDouble().y());
 
     // Now send the resize, make sure the scroll offset doesn't change.
-    webViewImpl()->setTopControlsHeight(500, false);
-    webViewImpl()->resize(IntSize(1000, 1500));
+    webViewImpl()->resizeWithTopControls(WebSize(1000, 1500), 500, false);
     EXPECT_EQ(500, frameView.scrollPositionDouble().y());
 }
 
 // Tests that the layout viewport's scroll layer bounds are updated in a compositing
 // change update. crbug.com/423188.
-MAYBE_TEST_P(TestChangingContentSizeAffectsScrollBounds)
+TEST_P(ParameterizedVisualViewportTest, TestChangingContentSizeAffectsScrollBounds)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(100, 150));
@@ -1426,7 +1533,7 @@ MAYBE_TEST_P(TestChangingContentSizeAffectsScrollBounds)
 
 // Tests that resizing the visual viepwort keeps its bounds within the outer
 // viewport.
-MAYBE_TEST_P(ResizeVisualViewportStaysWithinOuterViewport)
+TEST_P(ParameterizedVisualViewportTest, ResizeVisualViewportStaysWithinOuterViewport)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(100, 200));
@@ -1446,7 +1553,7 @@ MAYBE_TEST_P(ResizeVisualViewportStaysWithinOuterViewport)
     EXPECT_EQ(0, visualViewport.location().y());
 }
 
-MAYBE_TEST_P(ElementBoundsInViewportSpaceAccountsForViewport)
+TEST_P(ParameterizedVisualViewportTest, ElementBoundsInViewportSpaceAccountsForViewport)
 {
     initializeWithAndroidSettings();
 
@@ -1556,7 +1663,7 @@ TEST_P(ParameterizedVisualViewportTest, bodyAndWindowScrollPropertiesAccountForV
 
 // Tests that when a new frame is created, it is created with the intended
 // size (i.e. viewport at minimum scale, 100x200 / 0.5).
-MAYBE_TEST_P(TestMainFrameInitializationSizing)
+TEST_P(ParameterizedVisualViewportTest, TestMainFrameInitializationSizing)
 {
     initializeWithAndroidSettings();
 
@@ -1577,7 +1684,7 @@ MAYBE_TEST_P(TestMainFrameInitializationSizing)
 }
 
 // Tests that the maximum scroll offset of the viewport can be fractional.
-MAYBE_TEST_P(FractionalMaxScrollOffset)
+TEST_P(ParameterizedVisualViewportTest, FractionalMaxScrollOffset)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(101, 201));
@@ -1596,7 +1703,7 @@ MAYBE_TEST_P(FractionalMaxScrollOffset)
 // Tests that the slow scrolling after an impl scroll on the visual viewport
 // is continuous. crbug.com/453460 was caused by the impl-path not updating the
 // ScrollAnimatorBase class.
-MAYBE_TEST_P(SlowScrollAfterImplScroll)
+TEST_P(ParameterizedVisualViewportTest, SlowScrollAfterImplScroll)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(800, 600));
@@ -1621,7 +1728,7 @@ MAYBE_TEST_P(SlowScrollAfterImplScroll)
         IntPoint(0, 0),
         IntSize(5, 5),
         0, PlatformEvent::NoModifiers, PlatformGestureSourceTouchpad);
-    gsu.setScrollGestureData(-50, -60, ScrollByPrecisePixel, 1, 1, false, false, -1 /* null plugin id */);
+    gsu.setScrollGestureData(-50, -60, ScrollByPrecisePixel, 1, 1, ScrollInertialPhaseUnknown, false, -1 /* null plugin id */);
 
     frame()->eventHandler().handleGestureEvent(gsu);
 
@@ -1635,7 +1742,7 @@ static void accessibilitySettings(WebSettings* settings)
     settings->setAccessibilityEnabled(true);
 }
 
-MAYBE_TEST_P(AccessibilityHitTestWhileZoomedIn)
+TEST_P(ParameterizedVisualViewportTest, AccessibilityHitTestWhileZoomedIn)
 {
     initializeWithDesktopSettings(accessibilitySettings);
 
@@ -1664,7 +1771,7 @@ MAYBE_TEST_P(AccessibilityHitTestWhileZoomedIn)
 }
 
 // Tests that the maximum scroll offset of the viewport can be fractional.
-MAYBE_TEST_P(TestCoordinateTransforms)
+TEST_P(ParameterizedVisualViewportTest, TestCoordinateTransforms)
 {
     initializeWithAndroidSettings();
     webViewImpl()->resize(IntSize(800, 600));
@@ -1704,7 +1811,7 @@ MAYBE_TEST_P(TestCoordinateTransforms)
 // More specifically, it checks that the innerWidth and innerHeight window
 // properties will trigger a layout which will cause an update to viewport
 // constraints and a refreshed initial scale. crbug.com/466718
-MAYBE_TEST_P(WindowDimensionsOnLoad)
+TEST_P(ParameterizedVisualViewportTest, WindowDimensionsOnLoad)
 {
     initializeWithAndroidSettings();
     registerMockedHttpURLLoad("window_dimensions.html");
@@ -1712,7 +1819,7 @@ MAYBE_TEST_P(WindowDimensionsOnLoad)
     navigateTo(m_baseURL + "window_dimensions.html");
 
     Element* output = frame()->document()->getElementById("output");
-    ASSERT(output);
+    DCHECK(output);
     EXPECT_EQ(std::string("1600x1200"), std::string(output->innerHTML().ascii().data()));
 }
 
@@ -1720,7 +1827,7 @@ MAYBE_TEST_P(WindowDimensionsOnLoad)
 // width for a very wide page. That is, make that innerWidth/Height actually
 // trigger a layout of the content, and not just an update of the viepwort.
 // crbug.com/466718
-MAYBE_TEST_P(WindowDimensionsOnLoadWideContent)
+TEST_P(ParameterizedVisualViewportTest, WindowDimensionsOnLoadWideContent)
 {
     initializeWithAndroidSettings();
     registerMockedHttpURLLoad("window_dimensions_wide_div.html");
@@ -1728,11 +1835,11 @@ MAYBE_TEST_P(WindowDimensionsOnLoadWideContent)
     navigateTo(m_baseURL + "window_dimensions_wide_div.html");
 
     Element* output = frame()->document()->getElementById("output");
-    ASSERT(output);
+    DCHECK(output);
     EXPECT_EQ(std::string("2000x1500"), std::string(output->innerHTML().ascii().data()));
 }
 
-MAYBE_TEST_P(PinchZoomGestureScrollsVisualViewportOnly)
+TEST_P(ParameterizedVisualViewportTest, PinchZoomGestureScrollsVisualViewportOnly)
 {
     initializeWithDesktopSettings();
     webViewImpl()->resize(IntSize(100, 100));

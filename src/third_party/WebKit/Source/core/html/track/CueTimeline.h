@@ -28,15 +28,14 @@ typedef Vector<CueInterval> CueList;
 
 // This class manages the timeline and rendering updates of cues associated
 // with TextTracks. Owned by a HTMLMediaElement.
-class CueTimeline final : public NoBaseWillBeGarbageCollectedFinalized<CueTimeline> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CueTimeline);
+class CueTimeline final : public GarbageCollectedFinalized<CueTimeline> {
 public:
     CueTimeline(HTMLMediaElement&);
 
     void addCues(TextTrack*, const TextTrackCueList*);
-    void addCue(TextTrack*, PassRefPtrWillBeRawPtr<TextTrackCue>);
+    void addCue(TextTrack*, TextTrackCue*);
     void removeCues(TextTrack*, const TextTrackCueList*);
-    void removeCue(TextTrack*, PassRefPtrWillBeRawPtr<TextTrackCue>);
+    void removeCue(TextTrack*, TextTrackCue*);
 
     void hideCues(TextTrack*, const TextTrackCueList*);
 
@@ -53,10 +52,10 @@ public:
 private:
     HTMLMediaElement& mediaElement() const { return *m_mediaElement; }
 
-    void addCueInternal(PassRefPtrWillBeRawPtr<TextTrackCue>);
-    void removeCueInternal(PassRefPtrWillBeRawPtr<TextTrackCue>);
+    void addCueInternal(TextTrackCue*);
+    void removeCueInternal(TextTrackCue*);
 
-    RawPtrWillBeMember<HTMLMediaElement> m_mediaElement;
+    Member<HTMLMediaElement> m_mediaElement;
 
     CueIntervalTree m_cueTree;
 
@@ -76,12 +75,12 @@ public:
     }
     ~TrackDisplayUpdateScope()
     {
-        ASSERT(m_cueTimeline);
+        DCHECK(m_cueTimeline);
         m_cueTimeline->endIgnoringUpdateRequests();
     }
 
 private:
-    RawPtrWillBeMember<CueTimeline> m_cueTimeline;
+    Member<CueTimeline> m_cueTimeline;
 };
 
 #ifndef NDEBUG

@@ -155,7 +155,7 @@ bool ProfileSyncServiceHarness::SetupSync(
 
   // Tell the sync service that setup is in progress so we don't start syncing
   // until we've finished configuration.
-  service()->SetSetupInProgress(true);
+  sync_blocker_ = service()->GetSetupInProgressHandle();
 
   DCHECK(!username_.empty());
   if (signin_type_ == SigninType::UI_SIGNIN) {
@@ -186,7 +186,7 @@ bool ProfileSyncServiceHarness::SetupSync(
 
   // Choose the datatypes to be synced. If all datatypes are to be synced,
   // set sync_everything to true; otherwise, set it to false.
-  bool sync_everything = synced_datatypes.Equals(syncer::UserSelectableTypes());
+  bool sync_everything = (synced_datatypes == syncer::UserSelectableTypes());
   service()->OnUserChoseDatatypes(sync_everything, synced_datatypes);
 
   // Notify ProfileSyncService that we are done with configuration.
@@ -305,7 +305,7 @@ bool ProfileSyncServiceHarness::IsSyncDisabled() const {
 }
 
 void ProfileSyncServiceHarness::FinishSyncSetup() {
-  service()->SetSetupInProgress(false);
+  sync_blocker_.reset();
   service()->SetFirstSetupComplete();
 }
 
@@ -465,7 +465,7 @@ bool ProfileSyncServiceHarness::IsTypePreferred(syncer::ModelType type) {
 }
 
 std::string ProfileSyncServiceHarness::GetServiceStatus() {
-  scoped_ptr<base::DictionaryValue> value(
+  std::unique_ptr<base::DictionaryValue> value(
       sync_driver::sync_ui_util::ConstructAboutInformation(
           service(), service()->signin(), chrome::GetChannel()));
   std::string service_status;

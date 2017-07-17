@@ -26,10 +26,11 @@
 #include "bindings/core/v8/ScriptState.h"
 #include "platform/PlatformKeyboardEvent.h"
 #include "platform/WindowsKeyboardCodes.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
-static inline const AtomicString& eventTypeForKeyboardEventType(PlatformEvent::Type type)
+static inline const AtomicString& eventTypeForKeyboardEventType(PlatformEvent::EventType type)
 {
     switch (type) {
         case PlatformEvent::KeyUp:
@@ -52,18 +53,18 @@ static inline KeyboardEvent::KeyLocationCode keyLocationCode(const PlatformKeybo
 {
     if (key.isKeypad())
         return KeyboardEvent::DOM_KEY_LOCATION_NUMPAD;
-    if (key.modifiers() & PlatformEvent::IsLeft)
+    if (key.getModifiers() & PlatformEvent::IsLeft)
         return KeyboardEvent::DOM_KEY_LOCATION_LEFT;
-    if (key.modifiers() & PlatformEvent::IsRight)
+    if (key.getModifiers() & PlatformEvent::IsRight)
         return KeyboardEvent::DOM_KEY_LOCATION_RIGHT;
     return KeyboardEvent::DOM_KEY_LOCATION_STANDARD;
 }
 
-PassRefPtrWillBeRawPtr<KeyboardEvent> KeyboardEvent::create(ScriptState* scriptState, const AtomicString& type, const KeyboardEventInit& initializer)
+KeyboardEvent* KeyboardEvent::create(ScriptState* scriptState, const AtomicString& type, const KeyboardEventInit& initializer)
 {
     if (scriptState->world().isIsolatedWorld())
         UIEventWithKeyState::didCreateEventInIsolatedWorld(initializer.ctrlKey(), initializer.altKey(), initializer.shiftKey(), initializer.metaKey());
-    return adoptRefWillBeNoop(new KeyboardEvent(type, initializer));
+    return new KeyboardEvent(type, initializer);
 }
 
 KeyboardEvent::KeyboardEvent()
@@ -73,8 +74,8 @@ KeyboardEvent::KeyboardEvent()
 }
 
 KeyboardEvent::KeyboardEvent(const PlatformKeyboardEvent& key, AbstractView* view)
-    : UIEventWithKeyState(eventTypeForKeyboardEventType(key.type()), true, true, view, 0, key.modifiers(), key.timestamp(), InputDeviceCapabilities::doesntFireTouchEventsSourceCapabilities())
-    , m_keyEvent(adoptPtr(new PlatformKeyboardEvent(key)))
+    : UIEventWithKeyState(eventTypeForKeyboardEventType(key.type()), true, true, view, 0, key.getModifiers(), key.timestamp(), InputDeviceCapabilities::doesntFireTouchEventsSourceCapabilities())
+    , m_keyEvent(wrapUnique(new PlatformKeyboardEvent(key)))
     , m_keyIdentifier(key.keyIdentifier())
     , m_code(key.code())
     , m_key(key.key())
@@ -117,7 +118,7 @@ KeyboardEvent::~KeyboardEvent()
 void KeyboardEvent::initKeyboardEvent(ScriptState* scriptState, const AtomicString& type, bool canBubble, bool cancelable, AbstractView* view,
     const String& keyIdentifier, unsigned location, bool ctrlKey, bool altKey, bool shiftKey, bool metaKey)
 {
-    if (dispatched())
+    if (isBeingDispatched())
         return;
 
     if (scriptState->world().isIsolatedWorld())

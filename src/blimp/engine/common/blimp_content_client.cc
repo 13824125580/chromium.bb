@@ -4,21 +4,11 @@
 
 #include "blimp/engine/common/blimp_content_client.h"
 
-#include "components/version_info/version_info.h"
-#include "content/public/common/user_agent.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace blimp {
 namespace engine {
-
-std::string GetBlimpEngineUserAgent() {
-  // TODO(haibinlu): Use Client's Android version. crbug.com/589917
-  const char kAndroidInfoStr[] = "Linux; Android 5.1.1";
-  return content::BuildUserAgentFromOSAndProduct(
-      kAndroidInfoStr,
-      version_info::GetProductNameAndVersionForUserAgent() + " Mobile");
-}
 
 BlimpContentClient::~BlimpContentClient() {}
 
@@ -37,7 +27,7 @@ base::StringPiece BlimpContentClient::GetDataResource(
       resource_id, scale_factor);
 }
 
-base::RefCountedStaticMemory* BlimpContentClient::GetDataResourceBytes(
+base::RefCountedMemory* BlimpContentClient::GetDataResourceBytes(
     int resource_id) const {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
       resource_id);

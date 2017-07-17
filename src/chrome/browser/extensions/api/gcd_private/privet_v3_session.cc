@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/gcd_private/privet_v3_context_getter.h"
 #include "crypto/hmac.h"
 #include "crypto/p224_spake.h"
@@ -78,7 +78,7 @@ bool ContainsString(const base::DictionaryValue& dictionary,
   if (!dictionary.GetList(key, &list_of_string))
     return false;
 
-  for (const base::Value* value : *list_of_string) {
+  for (const auto& value : *list_of_string) {
     std::string string_value;
     if (value->GetAsString(&string_value) && string_value == expected_value)
       return true;
@@ -86,7 +86,7 @@ bool ContainsString(const base::DictionaryValue& dictionary,
   return false;
 }
 
-scoped_ptr<base::DictionaryValue> GetJson(const net::URLFetcher* source) {
+std::unique_ptr<base::DictionaryValue> GetJson(const net::URLFetcher* source) {
   if (!source->GetStatus().is_success())
     return nullptr;
 
@@ -128,7 +128,7 @@ class PrivetV3Session::FetcherDelegate : public net::URLFetcherDelegate {
   void ReplyAndDestroyItself(Result result, const base::DictionaryValue& value);
   void OnTimeout();
 
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   base::WeakPtr<PrivetV3Session> session_;
   MessageCallback callback_;
 
@@ -152,7 +152,7 @@ void PrivetV3Session::FetcherDelegate::OnURLFetchComplete(
           << ", error: " << source->GetStatus().error()
           << ", response code: " << source->GetResponseCode();
 
-  scoped_ptr<base::DictionaryValue> value = GetJson(source);
+  std::unique_ptr<base::DictionaryValue> value = GetJson(source);
   if (!value) {
     return ReplyAndDestroyItself(Result::STATUS_CONNECTIONERROR,
                                  base::DictionaryValue());

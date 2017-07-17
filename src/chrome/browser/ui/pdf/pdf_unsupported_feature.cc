@@ -4,9 +4,12 @@
 
 #include "chrome/browser/ui/pdf/pdf_unsupported_feature.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -94,7 +97,8 @@ bool PDFEnableAdobeReaderPromptClient::ShouldExpire(
       ui::PageTransitionStripQualifier(details.entry->GetTransitionType());
   // We don't want to expire on a reload, because that is how we open the PDF in
   // Reader.
-  return !details.is_in_page && transition != ui::PAGE_TRANSITION_RELOAD;
+  return !details.is_in_page &&
+         !ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD);
 }
 
 void PDFEnableAdobeReaderPromptClient::Accept() {
@@ -144,7 +148,7 @@ void OpenUsingReader(WebContents* web_contents,
   pdf::PDFWebContentsHelper* pdf_tab_helper =
       pdf::PDFWebContentsHelper::FromWebContents(web_contents);
   if (client)
-    pdf_tab_helper->ShowOpenInReaderPrompt(make_scoped_ptr(client));
+    pdf_tab_helper->ShowOpenInReaderPrompt(base::WrapUnique(client));
 }
 
 // An interstitial to be used when the user chooses to open a PDF using Adobe
@@ -208,7 +212,7 @@ class PDFUnsupportedFeatureInterstitial
     } else if (command == "2") {
       content::RecordAction(
           UserMetricsAction("PDF_ReaderInterstitialIgnore"));
-      // Pretend that the plugin is up-to-date so that we don't block it.
+      // Pretend that the plugin is up to date so that we don't block it.
       reader_webplugininfo_.version = base::ASCIIToUTF16("11.0.0.0");
       OpenUsingReader(web_contents_, reader_webplugininfo_, NULL);
     } else {
@@ -323,11 +327,11 @@ void MaybeShowOpenPDFInReaderPrompt(WebContents* web_contents,
   if (!reader_info.is_installed || !reader_info.is_enabled)
     return;
 
-  scoped_ptr<pdf::OpenPDFInReaderPromptClient> prompt(
+  std::unique_ptr<pdf::OpenPDFInReaderPromptClient> prompt(
       new PDFUnsupportedFeaturePromptClient(web_contents, reader_info));
   pdf::PDFWebContentsHelper* pdf_tab_helper =
       pdf::PDFWebContentsHelper::FromWebContents(web_contents);
-  pdf_tab_helper->ShowOpenInReaderPrompt(prompt.Pass());
+  pdf_tab_helper->ShowOpenInReaderPrompt(std::move(prompt));
 }
 
 void GotPluginsCallback(int process_id,

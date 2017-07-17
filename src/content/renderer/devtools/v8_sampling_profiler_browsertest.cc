@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/devtools/v8_sampling_profiler.h"
+
 #include <stddef.h>
+
+#include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/memory/ref_counted_memory.h"
@@ -10,7 +14,6 @@
 #include "base/trace_event/trace_buffer.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/test/render_view_test.h"
-#include "content/renderer/devtools/v8_sampling_profiler.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -37,7 +40,9 @@ class V8SamplingProfilerTest : public RenderViewTest {
   void KickV8() { ExecuteJavaScriptForTests("1"); }
 
   void SyncFlush(TraceLog* trace_log) {
-    base::WaitableEvent flush_complete_event(false, false);
+    base::WaitableEvent flush_complete_event(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     trace_log->Flush(
         base::Bind(&V8SamplingProfilerTest::OnTraceDataCollected,
                    base::Unretained(static_cast<V8SamplingProfilerTest*>(this)),
@@ -56,7 +61,7 @@ class V8SamplingProfilerTest : public RenderViewTest {
     trace_buffer_.AddFragment(events_str->data());
     trace_buffer_.Finish();
 
-    scoped_ptr<Value> root;
+    std::unique_ptr<Value> root;
     root = base::JSONReader::Read(
         json_output_.json_output,
         base::JSON_PARSE_RFC | base::JSON_DETACHABLE_CHILDREN);
@@ -71,9 +76,9 @@ class V8SamplingProfilerTest : public RenderViewTest {
 
     // Move items into our aggregate collection
     while (root_list->GetSize()) {
-      scoped_ptr<Value> item;
+      std::unique_ptr<Value> item;
       root_list->Remove(0, &item);
-      trace_parsed_.Append(item.release());
+      trace_parsed_.Append(std::move(item));
     }
 
     if (!has_more_events)
@@ -114,7 +119,7 @@ class V8SamplingProfilerTest : public RenderViewTest {
     return events_count;
   }
 
-  scoped_ptr<V8SamplingProfiler> sampling_profiler_;
+  std::unique_ptr<V8SamplingProfiler> sampling_profiler_;
   base::Lock lock_;
 
   ListValue trace_parsed_;

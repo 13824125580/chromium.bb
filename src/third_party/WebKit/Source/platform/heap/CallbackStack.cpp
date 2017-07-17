@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 #include "platform/heap/CallbackStack.h"
-#include "wtf/PageAllocator.h"
+#include "wtf/allocator/PageAllocator.h"
 
 namespace blink {
+
+size_t const CallbackStack::kMinimalBlockSize = WTF::kPageAllocationGranularity / sizeof(CallbackStack::Item);
 
 CallbackStack::Block::Block(Block* next, size_t blockSize)
     : m_blockSize(blockSize)
@@ -43,11 +45,15 @@ void CallbackStack::Block::clear()
 
 void CallbackStack::Block::decommit()
 {
+    reset();
+    WTF::discardSystemPages(m_buffer, m_blockSize * sizeof(Item));
+}
+
+void CallbackStack::Block::reset()
+{
 #if ENABLE(ASSERT)
     clear();
 #endif
-    WTF::discardSystemPages(m_buffer, m_blockSize * sizeof(Item));
-
     m_current = &m_buffer[0];
     m_next = nullptr;
 }
@@ -86,6 +92,17 @@ CallbackStack::~CallbackStack()
     delete m_first;
     m_first = nullptr;
     m_last = nullptr;
+}
+
+void CallbackStack::clear()
+{
+    Block* next;
+    for (Block* current = m_first->next(); current; current = next) {
+        next = current->next();
+        delete current;
+    }
+    m_first->reset();
+    m_last = m_first;
 }
 
 void CallbackStack::decommit()

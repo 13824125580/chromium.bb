@@ -4,17 +4,19 @@
 
 #include "components/bookmarks/managed/managed_bookmarks_tracker.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node.h"
+#include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/mock_bookmark_model_observer.h"
@@ -38,15 +40,13 @@ class ManagedBookmarksTrackerTest : public testing::Test {
   ~ManagedBookmarksTrackerTest() override {}
 
   void SetUp() override {
-    prefs_.registry()->RegisterListPref(prefs::kManagedBookmarks);
-    prefs_.registry()->RegisterListPref(prefs::kSupervisedBookmarks);
-    prefs_.registry()->RegisterListPref(prefs::kBookmarkEditorExpandedNodes);
+    RegisterManagedBookmarksPrefs(prefs_.registry());
   }
 
   void TearDown() override {
     if (model_)
       model_->RemoveObserver(&observer_);
-    loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void CreateModel(bool is_supervised) {
@@ -64,13 +64,13 @@ class ManagedBookmarksTrackerTest : public testing::Test {
     BookmarkPermanentNodeList extra_nodes;
     extra_nodes.push_back(managed_node);
 
-    scoped_ptr<TestBookmarkClient> client(new TestBookmarkClient);
+    std::unique_ptr<TestBookmarkClient> client(new TestBookmarkClient);
     client->SetExtraNodesToLoad(std::move(extra_nodes));
     model_.reset(new BookmarkModel(std::move(client)));
 
     model_->AddObserver(&observer_);
     EXPECT_CALL(observer_, BookmarkModelLoaded(model_.get(), _));
-    model_->Load(&prefs_, std::string(), base::FilePath(),
+    model_->Load(&prefs_, base::FilePath(),
                  base::ThreadTaskRunnerHandle::Get(),
                  base::ThreadTaskRunnerHandle::Get());
     test::WaitForBookmarkModelToLoad(model_.get());
@@ -172,10 +172,10 @@ class ManagedBookmarksTrackerTest : public testing::Test {
 
   base::MessageLoop loop_;
   TestingPrefServiceSimple prefs_;
-  scoped_ptr<BookmarkModel> model_;
+  std::unique_ptr<BookmarkModel> model_;
   MockBookmarkModelObserver observer_;
   BookmarkPermanentNode* managed_node_;
-  scoped_ptr<ManagedBookmarksTracker> managed_bookmarks_tracker_;
+  std::unique_ptr<ManagedBookmarksTracker> managed_bookmarks_tracker_;
 };
 
 TEST_F(ManagedBookmarksTrackerTest, Empty) {
@@ -195,7 +195,24 @@ TEST_F(ManagedBookmarksTrackerTest, LoadInitial) {
   EXPECT_FALSE(managed_node()->empty());
   EXPECT_TRUE(managed_node()->IsVisible());
 
-  scoped_ptr<base::DictionaryValue> expected(CreateExpectedTree());
+  std::unique_ptr<base::DictionaryValue> expected(CreateExpectedTree());
+  EXPECT_TRUE(NodeMatchesValue(managed_node(), expected.get()));
+}
+
+TEST_F(ManagedBookmarksTrackerTest, LoadInitialWithTitle) {
+  // Set the managed folder title.
+  const char kExpectedFolderName[] = "foo";
+  prefs_.SetString(prefs::kManagedBookmarksFolderName, kExpectedFolderName);
+  // Set a policy before loading the model.
+  prefs_.SetManagedPref(prefs::kManagedBookmarks, CreateTestTree());
+  CreateModel(false /* is_supervised */);
+  EXPECT_TRUE(model_->bookmark_bar_node()->empty());
+  EXPECT_TRUE(model_->other_node()->empty());
+  EXPECT_FALSE(managed_node()->empty());
+  EXPECT_TRUE(managed_node()->IsVisible());
+
+  std::unique_ptr<base::DictionaryValue> expected(
+      CreateFolder(kExpectedFolderName, CreateTestTree()));
   EXPECT_TRUE(NodeMatchesValue(managed_node(), expected.get()));
 }
 
@@ -220,10 +237,10 @@ TEST_F(ManagedBookmarksTrackerTest, SwapNodes) {
   CreateModel(false /* is_supervised */);
 
   // Swap the Google bookmark with the Folder.
-  scoped_ptr<base::ListValue> updated(CreateTestTree());
-  scoped_ptr<base::Value> removed;
+  std::unique_ptr<base::ListValue> updated(CreateTestTree());
+  std::unique_ptr<base::Value> removed;
   ASSERT_TRUE(updated->Remove(0, &removed));
-  updated->Append(removed.release());
+  updated->Append(std::move(removed));
 
   // These two nodes should just be swapped.
   const BookmarkNode* parent = managed_node();
@@ -232,7 +249,7 @@ TEST_F(ManagedBookmarksTrackerTest, SwapNodes) {
   Mock::VerifyAndClearExpectations(&observer_);
 
   // Verify the final tree.
-  scoped_ptr<base::DictionaryValue> expected(
+  std::unique_ptr<base::DictionaryValue> expected(
       CreateFolder(GetManagedFolderTitle(), updated.release()));
   EXPECT_TRUE(NodeMatchesValue(managed_node(), expected.get()));
 }
@@ -242,7 +259,7 @@ TEST_F(ManagedBookmarksTrackerTest, RemoveNode) {
   CreateModel(false /* is_supervised */);
 
   // Remove the Folder.
-  scoped_ptr<base::ListValue> updated(CreateTestTree());
+  std::unique_ptr<base::ListValue> updated(CreateTestTree());
   ASSERT_TRUE(updated->Remove(1, NULL));
 
   const BookmarkNode* parent = managed_node();
@@ -251,7 +268,7 @@ TEST_F(ManagedBookmarksTrackerTest, RemoveNode) {
   Mock::VerifyAndClearExpectations(&observer_);
 
   // Verify the final tree.
-  scoped_ptr<base::DictionaryValue> expected(
+  std::unique_ptr<base::DictionaryValue> expected(
       CreateFolder(GetManagedFolderTitle(), updated.release()));
   EXPECT_TRUE(NodeMatchesValue(managed_node(), expected.get()));
 }
@@ -261,7 +278,7 @@ TEST_F(ManagedBookmarksTrackerTest, CreateNewNodes) {
   CreateModel(false /* is_supervised */);
 
   // Put all the nodes inside another folder.
-  scoped_ptr<base::ListValue> updated(new base::ListValue);
+  std::unique_ptr<base::ListValue> updated(new base::ListValue);
   updated->Append(CreateFolder("Container", CreateTestTree()));
 
   EXPECT_CALL(observer_, BookmarkNodeAdded(model_.get(), _, _)).Times(5);
@@ -274,7 +291,7 @@ TEST_F(ManagedBookmarksTrackerTest, CreateNewNodes) {
   Mock::VerifyAndClearExpectations(&observer_);
 
   // Verify the final tree.
-  scoped_ptr<base::DictionaryValue> expected(
+  std::unique_ptr<base::DictionaryValue> expected(
       CreateFolder(GetManagedFolderTitle(), updated.release()));
   EXPECT_TRUE(NodeMatchesValue(managed_node(), expected.get()));
 }

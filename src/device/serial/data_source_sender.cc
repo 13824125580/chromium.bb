@@ -6,10 +6,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace device {
 
@@ -99,7 +102,6 @@ void DataSourceSender::ShutDown() {
 }
 
 DataSourceSender::~DataSourceSender() {
-  DCHECK(shut_down_);
 }
 
 void DataSourceSender::Init(uint32_t buffer_size) {
@@ -138,7 +140,7 @@ void DataSourceSender::GetMoreData() {
 void DataSourceSender::Done(const std::vector<char>& data) {
   DoneInternal(data);
   if (!shut_down_ && available_buffer_capacity_) {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&DataSourceSender::GetMoreData, weak_factory_.GetWeakPtr()));
   }
@@ -186,7 +188,7 @@ void DataSourceSender::PendingSend::GetData(uint32_t num_bytes) {
   DCHECK(!buffer_in_use_);
   buffer_in_use_ = true;
   data_.resize(num_bytes);
-  callback_.Run(scoped_ptr<WritableBuffer>(
+  callback_.Run(std::unique_ptr<WritableBuffer>(
       new Buffer(sender_, this, &data_[0], num_bytes)));
 }
 

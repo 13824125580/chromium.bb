@@ -16,6 +16,13 @@ const char kInstallDate[] = "uninstall_metrics.installation_date2";
 // new prefs to do a one-time reset of the previous values.
 const char kMetricsClientID[] = "user_experience_metrics.client_id2";
 
+// An enum value indicating the default value of the enable metrics reporting
+// checkbox shown during first-run. If it's opt-in, then the checkbox defaulted
+// to unchecked, if it's opt-out, then it defaulted to checked. This value is
+// only recorded during first-run, so older clients will not set it. The enum
+// used for the value is metrics::MetricsServiceClient::EnableMetricsDefault.
+const char kMetricsDefaultOptIn[] = "user_experience_metrics.default_opt_in";
+
 // Array of strings that are each UMA logs that were supposed to be sent in the
 // first minute of a browser session. These logs include things like crash count
 // info, etc.
@@ -168,6 +175,14 @@ const char kUninstallLaunchCount[] = "uninstall_metrics.launch_count";
 const char kUninstallMetricsPageLoadCount[] =
     "uninstall_metrics.page_load_count";
 const char kUninstallMetricsUptimeSec[] = "uninstall_metrics.uptime_sec";
+
+// Dictionary for measuring cellular data used by UMA service during last 7
+// days.
+const char kUmaCellDataUse[] = "user_experience_metrics.uma_cell_datause";
+
+// Dictionary for measuring cellular data used by user including chrome services
+// per day.
+const char kUserCellDataUse[] = "user_experience_metrics.user_call_datause";
 
 }  // namespace prefs
 }  // namespace metrics

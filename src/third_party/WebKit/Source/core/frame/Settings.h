@@ -28,12 +28,15 @@
 #define Settings_h
 
 #include "bindings/core/v8/V8CacheOptions.h"
+#include "bindings/core/v8/V8CacheStrategiesForCacheStorage.h"
 #include "core/CoreExport.h"
 #include "core/SettingsMacros.h"
 #include "core/editing/EditingBehaviorTypes.h"
 #include "core/editing/SelectionStrategy.h"
+#include "core/events/AddEventListenerOptionsDefaults.h"
 #include "core/frame/SettingsDelegate.h"
 #include "core/html/track/TextTrackKindUserPreference.h"
+#include "core/loader/FrameLoaderTypes.h"
 #include "platform/Timer.h"
 #include "platform/fonts/GenericFontFamilySettings.h"
 #include "platform/geometry/IntSize.h"
@@ -41,15 +44,16 @@
 #include "platform/weborigin/KURL.h"
 #include "public/platform/PointerProperties.h"
 #include "public/platform/WebDisplayMode.h"
-#include "wtf/HashSet.h"
-#include "wtf/RefCounted.h"
+#include "public/platform/WebViewportStyle.h"
+#include <memory>
 
 namespace blink {
 
 class CORE_EXPORT Settings {
-    WTF_MAKE_NONCOPYABLE(Settings); USING_FAST_MALLOC(Settings);
+    WTF_MAKE_NONCOPYABLE(Settings);
+    USING_FAST_MALLOC(Settings);
 public:
-    static PassOwnPtr<Settings> create();
+    static std::unique_ptr<Settings> create();
 
     GenericFontFamilySettings& genericFontFamilySettings() { return m_genericFontFamilySettings; }
     void notifyGenericFontFamilyChange() { invalidate(SettingsDelegate::FontFamilyChange); }
@@ -67,11 +71,6 @@ public:
     static void setMockScrollbarsEnabled(bool flag);
     static bool mockScrollbarsEnabled();
 
-    // FIXME: naming_utilities.py isn't smart enough to handle OpenGL yet.
-    // It could handle "GL", but that seems a bit overly broad.
-    void setOpenGLMultisamplingEnabled(bool flag);
-    bool openGLMultisamplingEnabled() { return m_openGLMultisamplingEnabled; }
-
     void setDelegate(SettingsDelegate*);
 
 private:
@@ -82,7 +81,6 @@ private:
     SettingsDelegate* m_delegate;
 
     GenericFontFamilySettings m_genericFontFamilySettings;
-    bool m_openGLMultisamplingEnabled : 1;
     IntSize m_textAutosizingWindowSizeOverride;
     bool m_textAutosizingEnabled : 1;
 

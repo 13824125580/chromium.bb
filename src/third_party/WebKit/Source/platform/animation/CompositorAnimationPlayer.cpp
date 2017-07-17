@@ -7,7 +7,7 @@
 #include "cc/animation/animation_id_provider.h"
 #include "cc/animation/animation_timeline.h"
 #include "platform/animation/CompositorAnimation.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
+#include "platform/animation/CompositorAnimationDelegate.h"
 #include "public/platform/WebLayer.h"
 
 namespace blink {
@@ -32,25 +32,25 @@ cc::AnimationPlayer* CompositorAnimationPlayer::animationPlayer() const
     return m_animationPlayer.get();
 }
 
-void CompositorAnimationPlayer::setAnimationDelegate(WebCompositorAnimationDelegate* delegate)
+void CompositorAnimationPlayer::setAnimationDelegate(CompositorAnimationDelegate* delegate)
 {
     m_delegate = delegate;
-    m_animationPlayer->set_layer_animation_delegate(delegate ? this : nullptr);
+    m_animationPlayer->set_animation_delegate(delegate ? this : nullptr);
 }
 
-void CompositorAnimationPlayer::attachLayer(WebLayer* webLayer)
+void CompositorAnimationPlayer::attachElement(const CompositorElementId& id)
 {
-    m_animationPlayer->AttachLayer(webLayer->id());
+    m_animationPlayer->AttachElement(id);
 }
 
-void CompositorAnimationPlayer::detachLayer()
+void CompositorAnimationPlayer::detachElement()
 {
-    m_animationPlayer->DetachLayer();
+    m_animationPlayer->DetachElement();
 }
 
-bool CompositorAnimationPlayer::isLayerAttached() const
+bool CompositorAnimationPlayer::isElementAttached() const
 {
-    return m_animationPlayer->layer_id() != 0;
+    return !!m_animationPlayer->element_id();
 }
 
 void CompositorAnimationPlayer::addAnimation(CompositorAnimation* animation)
@@ -59,17 +59,17 @@ void CompositorAnimationPlayer::addAnimation(CompositorAnimation* animation)
     delete animation;
 }
 
-void CompositorAnimationPlayer::removeAnimation(int animationId)
+void CompositorAnimationPlayer::removeAnimation(uint64_t animationId)
 {
     m_animationPlayer->RemoveAnimation(animationId);
 }
 
-void CompositorAnimationPlayer::pauseAnimation(int animationId, double timeOffset)
+void CompositorAnimationPlayer::pauseAnimation(uint64_t animationId, double timeOffset)
 {
     m_animationPlayer->PauseAnimation(animationId, timeOffset);
 }
 
-void CompositorAnimationPlayer::abortAnimation(int animationId)
+void CompositorAnimationPlayer::abortAnimation(uint64_t animationId)
 {
     m_animationPlayer->AbortAnimation(animationId);
 }
@@ -105,7 +105,7 @@ void CompositorAnimationPlayer::NotifyAnimationTakeover(
     base::TimeTicks monotonicTime,
     cc::TargetProperty::Type,
     double animationStartTime,
-    scoped_ptr<cc::AnimationCurve> curve)
+    std::unique_ptr<cc::AnimationCurve> curve)
 {
     if (m_delegate) {
         m_delegate->notifyAnimationTakeover(

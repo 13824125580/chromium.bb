@@ -2,20 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <ostream>
 #include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/ip_address.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/test_data_directory.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_data_stream.h"
+#include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/multi_log_ct_verifier.h"
 #include "net/dns/mapped_host_resolver.h"
@@ -29,8 +30,10 @@
 #include "net/proxy/proxy_service.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
+#include "net/ssl/default_channel_id_store.h"
 #include "net/ssl/ssl_config_service_defaults.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/tools/quic/quic_in_memory_cache.h"
 #include "net/tools/quic/quic_server.h"
 #include "net/tools/quic/test_tools/quic_in_memory_cache_peer.h"
@@ -61,7 +64,7 @@ class TestTransactionFactory : public HttpTransactionFactory {
 
   // HttpTransactionFactory methods
   int CreateTransaction(RequestPriority priority,
-                        scoped_ptr<HttpTransaction>* trans) override {
+                        std::unique_ptr<HttpTransaction>* trans) override {
     trans->reset(new HttpNetworkTransaction(priority, session_.get()));
     return OK;
   }
@@ -71,7 +74,7 @@ class TestTransactionFactory : public HttpTransactionFactory {
   HttpNetworkSession* GetSession() override { return session_.get(); };
 
  private:
-  scoped_ptr<HttpNetworkSession> session_;
+  std::unique_ptr<HttpNetworkSession> session_;
 };
 
 struct TestParams {
@@ -116,10 +119,15 @@ class QuicEndToEndTest : public ::testing::TestWithParam<TestParams> {
     params_.cert_verifier = &cert_verifier_;
     params_.transport_security_state = &transport_security_state_;
     params_.cert_transparency_verifier = cert_transparency_verifier_.get();
+    params_.ct_policy_enforcer = &ct_policy_enforcer_;
     params_.proxy_service = proxy_service_.get();
     params_.ssl_config_service = ssl_config_service_.get();
     params_.http_auth_handler_factory = auth_handler_factory_.get();
-    params_.http_server_properties = http_server_properties.GetWeakPtr();
+    params_.http_server_properties = &http_server_properties_;
+    channel_id_service_.reset(
+        new ChannelIDService(new DefaultChannelIDStore(nullptr),
+                             base::ThreadTaskRunnerHandle::Get()));
+    params_.channel_id_service = channel_id_service_.get();
 
     CertVerifyResult verify_result;
     verify_result.verified_cert = ImportCertFromFile(
@@ -154,8 +162,8 @@ class QuicEndToEndTest : public ::testing::TestWithParam<TestParams> {
 
     // To simplify the test, and avoid the race with the HTTP request, we force
     // QUIC for these requests.
-    params_.origin_to_force_quic_on =
-        HostPortPair::FromString("test.example.com:443");
+    params_.origins_to_force_quic_on.insert(
+        HostPortPair::FromString("test.example.com:443"));
 
     transaction_factory_.reset(new TestTransactionFactory(params_));
   }
@@ -172,9 +180,10 @@ class QuicEndToEndTest : public ::testing::TestWithParam<TestParams> {
         kInitialStreamFlowControlWindowForTest);
     server_config_.SetInitialSessionFlowControlWindowToSend(
         kInitialSessionFlowControlWindowForTest);
+    server_config_options_.token_binding_enabled = true;
     QuicServer* server =
         new QuicServer(CryptoTestUtils::ProofSourceForTesting(), server_config_,
-                       QuicSupportedVersions());
+                       server_config_options_, QuicSupportedVersions());
     server_thread_.reset(new ServerThread(server, server_address_,
                                           strike_register_no_startup_period_));
     server_thread_->Initialize();
@@ -217,8 +226,8 @@ class QuicEndToEndTest : public ::testing::TestWithParam<TestParams> {
   // Initializes |request_| for a post of |length| bytes.
   void InitializePostRequest(size_t length) {
     GenerateBody(length);
-    std::vector<scoped_ptr<UploadElementReader>> element_readers;
-    element_readers.push_back(make_scoped_ptr(new UploadBytesElementReader(
+    std::vector<std::unique_ptr<UploadElementReader>> element_readers;
+    element_readers.push_back(base::WrapUnique(new UploadBytesElementReader(
         request_body_.data(), request_body_.length())));
     upload_data_stream_.reset(
         new ElementsUploadDataStream(std::move(element_readers), 0));
@@ -238,24 +247,27 @@ class QuicEndToEndTest : public ::testing::TestWithParam<TestParams> {
     EXPECT_EQ(body, consumer.content());
   }
 
-  scoped_ptr<MockHostResolver> host_resolver_impl_;
+  std::unique_ptr<MockHostResolver> host_resolver_impl_;
   MappedHostResolver host_resolver_;
   MockCertVerifier cert_verifier_;
+  std::unique_ptr<ChannelIDService> channel_id_service_;
   TransportSecurityState transport_security_state_;
-  scoped_ptr<CTVerifier> cert_transparency_verifier_;
+  std::unique_ptr<CTVerifier> cert_transparency_verifier_;
+  CTPolicyEnforcer ct_policy_enforcer_;
   scoped_refptr<SSLConfigServiceDefaults> ssl_config_service_;
-  scoped_ptr<ProxyService> proxy_service_;
-  scoped_ptr<HttpAuthHandlerFactory> auth_handler_factory_;
-  HttpServerPropertiesImpl http_server_properties;
+  std::unique_ptr<ProxyService> proxy_service_;
+  std::unique_ptr<HttpAuthHandlerFactory> auth_handler_factory_;
+  HttpServerPropertiesImpl http_server_properties_;
   HttpNetworkSession::Params params_;
-  scoped_ptr<TestTransactionFactory> transaction_factory_;
+  std::unique_ptr<TestTransactionFactory> transaction_factory_;
   HttpRequestInfo request_;
   std::string request_body_;
-  scoped_ptr<UploadDataStream> upload_data_stream_;
-  scoped_ptr<ServerThread> server_thread_;
+  std::unique_ptr<UploadDataStream> upload_data_stream_;
+  std::unique_ptr<ServerThread> server_thread_;
   IPEndPoint server_address_;
   std::string server_hostname_;
   QuicConfig server_config_;
+  QuicCryptoServerConfig::ConfigOptions server_config_options_;
   bool server_started_;
   bool strike_register_no_startup_period_;
 };
@@ -277,6 +289,26 @@ TEST_P(QuicEndToEndTest, LargeGetWithNoPacketLoss) {
   base::MessageLoop::current()->Run();
 
   CheckResponse(consumer, "HTTP/1.1 200", response);
+}
+
+TEST_P(QuicEndToEndTest, TokenBinding) {
+  // Enable token binding and re-initialize the TestTransactionFactory.
+  params_.enable_token_binding = true;
+  transaction_factory_.reset(new TestTransactionFactory(params_));
+
+  AddToCache(request_.url.PathForRequest(), 200, "OK", kResponseBody);
+
+  TestTransactionConsumer consumer(DEFAULT_PRIORITY,
+                                   transaction_factory_.get());
+  consumer.Start(&request_, BoundNetLog());
+
+  // Will terminate when the last consumer completes.
+  base::MessageLoop::current()->Run();
+
+  CheckResponse(consumer, "HTTP/1.1 200", kResponseBody);
+  HttpRequestHeaders headers;
+  ASSERT_TRUE(consumer.transaction()->GetFullRequestHeaders(&headers));
+  EXPECT_TRUE(headers.HasHeader(HttpRequestHeaders::kTokenBinding));
 }
 
 // crbug.com/559173

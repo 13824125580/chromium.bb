@@ -5,6 +5,7 @@
 package org.chromium.content.browser.input;
 
 import android.content.res.Configuration;
+import android.os.Build;
 import android.os.ResultReceiver;
 import android.os.SystemClock;
 import android.text.SpannableString;
@@ -24,6 +25,7 @@ import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.blink_public.web.WebInputEventModifier;
 import org.chromium.blink_public.web.WebInputEventType;
+import org.chromium.content.browser.RenderCoordinates;
 import org.chromium.ui.base.ime.TextInputType;
 import org.chromium.ui.picker.InputDialogContainer;
 
@@ -94,6 +96,11 @@ public class ImeAdapter {
     private ChromiumBaseInputConnection.Factory mInputConnectionFactory;
 
     private final ImeAdapterDelegate mViewEmbedder;
+    // This holds the information necessary for constructing CursorAnchorInfo, and notifies to
+    // InputMethodManager on appropriate timing, depending on how IME requested the information
+    // via InputConnection. The update request is per InputConnection, hence for each time it is
+    // re-created, the monitoring status will be reset.
+    private final CursorAnchorInfoController mCursorAnchorInfoController;
 
     private int mTextInputType = TextInputType.NONE;
     private int mTextInputFlags;
@@ -103,6 +110,9 @@ public class ImeAdapter {
 
     private int mLastSelectionStart;
     private int mLastSelectionEnd;
+    private String mLastText;
+    private int mLastCompositionStart;
+    private int mLastCompositionEnd;
 
     /**
      * @param wrapper InputMethodManagerWrapper that should receive all the call directed to
@@ -115,6 +125,34 @@ public class ImeAdapter {
         // Deep copy newConfig so that we can notice the difference.
         mCurrentConfig = new Configuration(
                 mViewEmbedder.getAttachedView().getResources().getConfiguration());
+        // CursorAnchroInfo is supported only after L.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            mCursorAnchorInfoController = CursorAnchorInfoController.create(wrapper,
+                    new CursorAnchorInfoController.ComposingTextDelegate() {
+                        @Override
+                        public CharSequence getText() {
+                            return mLastText;
+                        }
+                        @Override
+                        public int getSelectionStart() {
+                            return mLastSelectionStart;
+                        }
+                        @Override
+                        public int getSelectionEnd() {
+                            return mLastSelectionEnd;
+                        }
+                        @Override
+                        public int getComposingTextStart() {
+                            return mLastCompositionStart;
+                        }
+                        @Override
+                        public int getComposingTextEnd() {
+                            return mLastCompositionEnd;
+                        }
+                    });
+        } else {
+            mCursorAnchorInfoController = null;
+        }
     }
 
     private boolean isImeThreadEnabled() {
@@ -145,20 +183,26 @@ public class ImeAdapter {
         // not on an editable node. Even when we return null here, key events can still go
         // through ImeAdapter#dispatchKeyEvent().
         if (mTextInputType == TextInputType.NONE) {
-            // Unblock if view loses focus, no input form or content editable is focused, or render
-            // crashes, or navigates to another page, etc.
-            // Even when InputConnection methods are blocked IMM can still call this.
-            if (mInputConnection != null) mInputConnection.unblockOnUiThread();
-            mInputConnection = null;
+            setInputConnection(null);
             if (DEBUG_LOGS) Log.w(TAG, "onCreateInputConnection returns null.");
             return null;
         }
         if (mInputConnectionFactory == null) return null;
-        mInputConnection = mInputConnectionFactory.initializeAndGet(
+        setInputConnection(mInputConnectionFactory.initializeAndGet(
                 mViewEmbedder.getAttachedView(), this, mTextInputType, mTextInputFlags,
-                mLastSelectionStart, mLastSelectionEnd, outAttrs);
+                mLastSelectionStart, mLastSelectionEnd, outAttrs));
         if (DEBUG_LOGS) Log.w(TAG, "onCreateInputConnection: " + mInputConnection);
+        if (mCursorAnchorInfoController != null) {
+            mCursorAnchorInfoController.resetMonitoringState();
+        }
         return mInputConnection;
+    }
+
+    private void setInputConnection(ChromiumBaseInputConnection inputConnection) {
+        if (mInputConnection == inputConnection) return;
+        // The previous input connection might be waiting for state update.
+        if (mInputConnection != null) mInputConnection.unblockOnUiThread();
+        mInputConnection = inputConnection;
     }
 
     /**
@@ -169,6 +213,9 @@ public class ImeAdapter {
     @VisibleForTesting
     public void setInputMethodManagerWrapperForTest(InputMethodManagerWrapper immw) {
         mInputMethodManagerWrapper = immw;
+        if (mCursorAnchorInfoController != null) {
+            mCursorAnchorInfoController.setInputMethodManagerWrapperForTest(immw);
+        }
     }
 
     @VisibleForTesting
@@ -254,8 +301,18 @@ public class ImeAdapter {
      */
     public void updateState(String text, int selectionStart, int selectionEnd, int compositionStart,
             int compositionEnd, boolean isNonImeChange) {
+        if (mCursorAnchorInfoController != null && (!TextUtils.equals(mLastText, text)
+                || mLastSelectionStart != selectionStart || mLastSelectionEnd != selectionEnd
+                || mLastCompositionStart != compositionStart
+                || mLastCompositionEnd != compositionEnd)) {
+            mCursorAnchorInfoController.invalidateLastCursorAnchorInfo();
+        }
+        mLastText = text;
         mLastSelectionStart = selectionStart;
         mLastSelectionEnd = selectionEnd;
+        mLastCompositionStart = compositionStart;
+        mLastCompositionEnd = compositionEnd;
+
         if (mInputConnection == null) return;
         boolean singleLine = mTextInputType != TextInputType.TEXT_AREA
                 && mTextInputType != TextInputType.CONTENT_EDITABLE;
@@ -269,6 +326,7 @@ public class ImeAdapter {
      * @param nativeImeAdapter The pointer to the native ImeAdapter object.
      */
     public void attach(long nativeImeAdapter) {
+        if (DEBUG_LOGS) Log.d(TAG, "attach");
         if (mNativeImeAdapterAndroid == nativeImeAdapter) return;
         if (mNativeImeAdapterAndroid != 0) {
             nativeResetImeAdapter(mNativeImeAdapterAndroid);
@@ -338,12 +396,43 @@ public class ImeAdapter {
     }
 
     /**
+     * Call this when window's focus has changed.
+     * @param gainFocus True if we're gaining focus.
+     */
+    public void onWindowFocusChanged(boolean gainFocus) {
+        if (mInputConnectionFactory != null) {
+            mInputConnectionFactory.onWindowFocusChanged(gainFocus);
+        }
+    }
+
+    /**
+     * Call this when view is detached from window
+     */
+    public void onViewAttachedToWindow() {
+        if (mInputConnectionFactory != null) {
+            mInputConnectionFactory.onViewAttachedToWindow();
+        }
+    }
+
+    /**
+     * Call this when view is detached from window
+     */
+    public void onViewDetachedFromWindow() {
+        if (mInputConnectionFactory != null) {
+            mInputConnectionFactory.onViewDetachedFromWindow();
+        }
+    }
+
+    /**
      * Call this when view's focus has changed.
      * @param gainFocus True if we're gaining focus.
      */
     public void onViewFocusChanged(boolean gainFocus) {
         if (DEBUG_LOGS) Log.w(TAG, "onViewFocusChanged: gainFocus [%b]", gainFocus);
-        if (!gainFocus) reset();
+        if (!gainFocus) resetAndHideKeyboard();
+        if (mInputConnectionFactory != null) {
+            mInputConnectionFactory.onViewFocusChanged(gainFocus);
+        }
     }
 
     /**
@@ -382,8 +471,8 @@ public class ImeAdapter {
     /**
      * Resets IME adapter and hides keyboard. Note that this will also unblock input connection.
      */
-    public void reset() {
-        if (DEBUG_LOGS) Log.w(TAG, "reset");
+    public void resetAndHideKeyboard() {
+        if (DEBUG_LOGS) Log.w(TAG, "resetAndHideKeyboard");
         mTextInputType = TextInputType.NONE;
         mTextInputFlags = 0;
         // This will trigger unblocking if necessary.
@@ -452,7 +541,8 @@ public class ImeAdapter {
                 flags));
     }
 
-    boolean sendCompositionToNative(CharSequence text, int newCursorPosition, boolean isCommit) {
+    boolean sendCompositionToNative(
+            CharSequence text, int newCursorPosition, boolean isCommit, int unicodeFromKeyEvent) {
         if (mNativeImeAdapterAndroid == 0) return false;
 
         // One WebView app detects Enter in JS by looking at KeyDown (http://crbug/577967).
@@ -465,7 +555,7 @@ public class ImeAdapter {
         mViewEmbedder.onImeEvent();
         long timestampMs = SystemClock.uptimeMillis();
         nativeSendSyntheticKeyEvent(mNativeImeAdapterAndroid, WebInputEventType.RawKeyDown,
-                timestampMs, COMPOSITION_KEY_CODE, 0, 0);
+                timestampMs, COMPOSITION_KEY_CODE, 0, unicodeFromKeyEvent);
 
         if (isCommit) {
             nativeCommitText(mNativeImeAdapterAndroid, text.toString());
@@ -474,8 +564,8 @@ public class ImeAdapter {
                     mNativeImeAdapterAndroid, text, text.toString(), newCursorPosition);
         }
 
-        nativeSendSyntheticKeyEvent(mNativeImeAdapterAndroid, WebInputEventType.KeyUp,
-                timestampMs, COMPOSITION_KEY_CODE, 0, 0);
+        nativeSendSyntheticKeyEvent(mNativeImeAdapterAndroid, WebInputEventType.KeyUp, timestampMs,
+                COMPOSITION_KEY_CODE, 0, unicodeFromKeyEvent);
         return true;
     }
 
@@ -555,6 +645,12 @@ public class ImeAdapter {
     @CalledByNative
     private void focusedNodeChanged(boolean isEditable) {
         if (DEBUG_LOGS) Log.w(TAG, "focusedNodeChanged: isEditable [%b]", isEditable);
+
+        // Update controller before the connection is restarted.
+        if (mCursorAnchorInfoController != null) {
+            mCursorAnchorInfoController.focusedNodeChanged(isEditable);
+        }
+
         if (mTextInputType != TextInputType.NONE && mInputConnection != null && isEditable) {
             restartInput();
         }
@@ -568,6 +664,36 @@ public class ImeAdapter {
         // You won't get state update anyways.
         if (mInputConnection == null) return false;
         return nativeRequestTextInputStateUpdate(mNativeImeAdapterAndroid);
+    }
+
+    /**
+     * Notified when IME requested Chrome to change the cursor update mode.
+     */
+    public boolean onRequestCursorUpdates(int cursorUpdateMode) {
+        if (mCursorAnchorInfoController == null) return false;
+        return mCursorAnchorInfoController.onRequestCursorUpdates(cursorUpdateMode,
+                mViewEmbedder.getAttachedView());
+    }
+
+    /**
+     * Notified when a frame has been produced by the renderer and all the associated metadata.
+     * @param renderCoordinates coordinate information to convert CSS (document) coordinates to
+     *                          View-local Physical (screen) coordinates
+     * @param hasInsertionMarker Whether the insertion marker is visible or not.
+     * @param insertionMarkerHorizontal X coordinates (in view-local DIP pixels) of the insertion
+     *                                  marker if it exists. Will be ignored otherwise.
+     * @param insertionMarkerTop Y coordinates (in view-local DIP pixels) of the top of the
+     *                           insertion marker if it exists. Will be ignored otherwise.
+     * @param insertionMarkerBottom Y coordinates (in view-local DIP pixels) of the bottom of
+     *                              the insertion marker if it exists. Will be ignored otherwise.
+     */
+    public void onUpdateFrameInfo(RenderCoordinates renderCoordinates, boolean hasInsertionMarker,
+            boolean isInsertionMarkerVisible, float insertionMarkerHorizontal,
+            float insertionMarkerTop, float insertionMarkerBottom) {
+        if (mCursorAnchorInfoController == null) return;
+        mCursorAnchorInfoController.onUpdateFrameInfo(renderCoordinates, hasInsertionMarker,
+                isInsertionMarkerVisible, insertionMarkerHorizontal, insertionMarkerTop,
+                insertionMarkerBottom, mViewEmbedder.getAttachedView());
     }
 
     @CalledByNative
@@ -599,9 +725,18 @@ public class ImeAdapter {
     }
 
     @CalledByNative
+    private void setCharacterBounds(float[] characterBounds) {
+        if (mCursorAnchorInfoController == null) return;
+        mCursorAnchorInfoController.setCompositionCharacterBounds(characterBounds);
+    }
+
+    @CalledByNative
     private void detach() {
         if (DEBUG_LOGS) Log.w(TAG, "detach");
         mNativeImeAdapterAndroid = 0;
+        if (mCursorAnchorInfoController != null) {
+            mCursorAnchorInfoController.focusedNodeChanged(false);
+        }
     }
 
     private native boolean nativeSendSyntheticKeyEvent(long nativeImeAdapterAndroid,

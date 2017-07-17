@@ -101,6 +101,13 @@ int LossPercent() {
   return static_cast<int>(FLAGS_loss_percent);
 }
 
+DEFINE_int32(avg_burst_loss_length,
+             -1,
+             "Average burst length of lost packets.");
+int AvgBurstLossLength() {
+  return static_cast<int>(FLAGS_avg_burst_loss_length);
+}
+
 DEFINE_int32(link_capacity,
              0,
              "Capacity (kbps) of the fake link. 0 means infinite.");
@@ -178,6 +185,8 @@ DEFINE_bool(send_side_bwe, true, "Use send-side bandwidth estimation");
 
 DEFINE_bool(allow_reordering, false, "Allow packet reordering to occur");
 
+DEFINE_bool(use_fec, false, "Use forward error correction.");
+
 DEFINE_string(
     force_fieldtrials,
     "",
@@ -199,6 +208,7 @@ std::string Clip() {
 void Loopback() {
   FakeNetworkPipe::Config pipe_config;
   pipe_config.loss_percent = flags::LossPercent();
+  pipe_config.avg_burst_loss_length = flags::AvgBurstLossLength();
   pipe_config.link_capacity_kbps = flags::LinkCapacityKbps();
   pipe_config.queue_length_packets = flags::QueueSize();
   pipe_config.queue_delay_ms = flags::AvgPropagationDelayMs();
@@ -216,7 +226,9 @@ void Loopback() {
        flags::MaxBitrateKbps() * 1000, flags::Codec(),
        flags::NumTemporalLayers(), flags::SelectedTL(),
        0,  // No min transmit bitrate.
-       call_bitrate_config, flags::FLAGS_send_side_bwe},
+       call_bitrate_config,
+       flags::FLAGS_send_side_bwe,
+       flags::FLAGS_use_fec},
       {flags::Clip()},
       {},  // Screenshare specific.
       {"video", 0.0, 0.0, flags::DurationSecs(), flags::OutputFilename(),

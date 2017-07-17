@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
@@ -23,16 +24,16 @@
 #include "chrome/browser/ui/views/frame/native_browser_frame_factory.h"
 #include "chrome/browser/ui/views/frame/system_menu_model_builder.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
+#include "chrome/common/chrome_switches.h"
 #include "ui/base/hit_test.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/font_list.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/native_widget.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
 #endif
 
@@ -79,6 +80,15 @@ void BrowserFrame::InitBrowserFrame() {
     chrome::GetSavedWindowBoundsAndShowState(browser_view_->browser(),
                                              &params.bounds,
                                              &params.show_state);
+
+    params.workspace = browser_view_->browser()->initial_workspace();
+    const base::CommandLine& parsed_command_line =
+        *base::CommandLine::ForCurrentProcess();
+
+    if (parsed_command_line.HasSwitch(switches::kWindowWorkspace)) {
+      params.workspace =
+          parsed_command_line.GetSwitchValueASCII(switches::kWindowWorkspace);
+    }
   }
 
   Init(params);
@@ -123,7 +133,7 @@ views::View* BrowserFrame::GetLocationIconView() const {
   return browser_frame_view_->GetLocationIconView();
 }
 
-views::View* BrowserFrame::GetFrameView() const {
+BrowserNonClientFrameView* BrowserFrame::GetFrameView() const {
   return browser_frame_view_;
 }
 
@@ -209,6 +219,11 @@ void BrowserFrame::OnNativeWidgetActivationChanged(bool active) {
   Widget::OnNativeWidgetActivationChanged(active);
 }
 
+void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
+  chrome::SaveWindowWorkspace(browser_view_->browser(), GetWorkspace());
+  Widget::OnNativeWidgetWorkspaceChanged();
+}
+
 void BrowserFrame::ShowContextMenuForView(views::View* source,
                                           const gfx::Point& p,
                                           ui::MenuSourceType source_type) {
@@ -240,7 +255,7 @@ void BrowserFrame::ShowContextMenuForView(views::View* source,
 ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
 #if defined(OS_CHROMEOS)
   ash::SessionStateDelegate* delegate =
-      ash::Shell::GetInstance()->session_state_delegate();
+      ash::WmShell::Get()->GetSessionStateDelegate();
   if (delegate && delegate->NumberOfLoggedInUsers() > 1) {
     // In Multi user mode, the number of users as well as the order of users
     // can change. Coming here we have more then one user and since the menu
@@ -255,10 +270,6 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
     menu_model_builder_->Init();
   }
   return menu_model_builder_->menu_model();
-}
-
-AvatarMenuButton* BrowserFrame::GetAvatarMenuButton() {
-  return browser_frame_view_->avatar_button();
 }
 
 views::View* BrowserFrame::GetNewAvatarMenuButton() {

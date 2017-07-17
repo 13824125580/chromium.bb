@@ -13,7 +13,9 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "sync/engine/backoff_delay_provider.h"
 #include "sync/engine/syncer.h"
 #include "sync/protocol/proto_enum_conversions.h"
@@ -226,7 +228,7 @@ void SyncSchedulerImpl::OnServerConnectionErrorFixed() {
 
 void SyncSchedulerImpl::Start(Mode mode, base::Time last_poll_time) {
   DCHECK(CalledOnValidThread());
-  std::string thread_name = base::MessageLoop::current()->thread_name();
+  std::string thread_name = base::PlatformThread::GetName();
   if (thread_name.empty())
     thread_name = "<Main thread>";
   SDVLOG(2) << "Start called from thread "
@@ -279,7 +281,8 @@ ModelTypeSet SyncSchedulerImpl::GetEnabledAndUnthrottledTypes() {
 
 void SyncSchedulerImpl::SendInitialSnapshot() {
   DCHECK(CalledOnValidThread());
-  scoped_ptr<SyncSession> dummy(SyncSession::Build(session_context_, this));
+  std::unique_ptr<SyncSession> dummy(
+      SyncSession::Build(session_context_, this));
   SyncCycleEvent event(SyncCycleEvent::STATUS_CHANGED);
   event.snapshot = dummy->TakeSnapshot();
   FOR_EACH_OBSERVER(SyncEngineEventListener,
@@ -417,7 +420,7 @@ void SyncSchedulerImpl::ScheduleLocalRefreshRequest(
 
 void SyncSchedulerImpl::ScheduleInvalidationNudge(
     syncer::ModelType model_type,
-    scoped_ptr<InvalidationInterface> invalidation,
+    std::unique_ptr<InvalidationInterface> invalidation,
     const tracked_objects::Location& nudge_location) {
   DCHECK(CalledOnValidThread());
 
@@ -500,7 +503,8 @@ void SyncSchedulerImpl::DoNudgeSyncSessionJob(JobPriority priority) {
 
   DVLOG(2) << "Will run normal mode sync cycle with types "
            << ModelTypeSetToString(session_context_->GetEnabledTypes());
-  scoped_ptr<SyncSession> session(SyncSession::Build(session_context_, this));
+  std::unique_ptr<SyncSession> session(
+      SyncSession::Build(session_context_, this));
   bool success = syncer_->NormalSyncShare(
       GetEnabledAndUnthrottledTypes(), &nudge_tracker_, session.get());
 
@@ -536,7 +540,8 @@ void SyncSchedulerImpl::DoConfigurationSyncSessionJob(JobPriority priority) {
 
   SDVLOG(2) << "Will run configure SyncShare with types "
             << ModelTypeSetToString(session_context_->GetEnabledTypes());
-  scoped_ptr<SyncSession> session(SyncSession::Build(session_context_, this));
+  std::unique_ptr<SyncSession> session(
+      SyncSession::Build(session_context_, this));
   bool success = syncer_->ConfigureSyncShare(
       pending_configure_params_->types_to_download,
       pending_configure_params_->source,
@@ -566,7 +571,8 @@ void SyncSchedulerImpl::DoClearServerDataSyncSessionJob(JobPriority priority) {
     return;
   }
 
-  scoped_ptr<SyncSession> session(SyncSession::Build(session_context_, this));
+  std::unique_ptr<SyncSession> session(
+      SyncSession::Build(session_context_, this));
   const bool success = syncer_->PostClearServerData(session.get());
   if (!success) {
     HandleFailure(session->status_controller().model_neutral_state());
@@ -611,7 +617,8 @@ void SyncSchedulerImpl::HandleFailure(
 void SyncSchedulerImpl::DoPollSyncSessionJob() {
   SDVLOG(2) << "Polling with types "
             << ModelTypeSetToString(GetEnabledAndUnthrottledTypes());
-  scoped_ptr<SyncSession> session(SyncSession::Build(session_context_, this));
+  std::unique_ptr<SyncSession> session(
+      SyncSession::Build(session_context_, this));
   bool success = syncer_->PollSyncShare(
       GetEnabledAndUnthrottledTypes(),
       session.get());
@@ -741,9 +748,9 @@ void SyncSchedulerImpl::TryCanaryJob() {
 void SyncSchedulerImpl::TrySyncSessionJob() {
   // Post call to TrySyncSessionJobImpl on current thread. Later request for
   // access token will be here.
-  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
-      &SyncSchedulerImpl::TrySyncSessionJobImpl,
-      weak_ptr_factory_.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&SyncSchedulerImpl::TrySyncSessionJobImpl,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void SyncSchedulerImpl::TrySyncSessionJobImpl() {

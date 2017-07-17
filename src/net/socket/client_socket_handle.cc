@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/net_errors.h"
 #include "net/socket/client_socket_pool.h"
 
@@ -22,9 +23,7 @@ ClientSocketHandle::ClientSocketHandle()
       reuse_type_(ClientSocketHandle::UNUSED),
       callback_(base::Bind(&ClientSocketHandle::OnIOComplete,
                            base::Unretained(this))),
-      is_ssl_error_(false),
-      ssl_failure_state_(SSL_FAILURE_NONE) {
-}
+      is_ssl_error_(false) {}
 
 ClientSocketHandle::~ClientSocketHandle() {
   Reset();
@@ -75,7 +74,6 @@ void ClientSocketHandle::ResetInternal(bool cancel) {
 void ClientSocketHandle::ResetErrorState() {
   is_ssl_error_ = false;
   ssl_error_response_info_ = HttpResponseInfo();
-  ssl_failure_state_ = SSL_FAILURE_NONE;
   pending_http_proxy_connection_.reset();
 }
 
@@ -135,18 +133,19 @@ bool ClientSocketHandle::GetLoadTimingInfo(
   return true;
 }
 
-void ClientSocketHandle::SetSocket(scoped_ptr<StreamSocket> s) {
+void ClientSocketHandle::SetSocket(std::unique_ptr<StreamSocket> s) {
   socket_ = std::move(s);
 }
 
 void ClientSocketHandle::OnIOComplete(int result) {
+  TRACE_EVENT0("net", "ClientSocketHandle::OnIOComplete");
   CompletionCallback callback = user_callback_;
   user_callback_.Reset();
   HandleInitCompletion(result);
   callback.Run(result);
 }
 
-scoped_ptr<StreamSocket> ClientSocketHandle::PassSocket() {
+std::unique_ptr<StreamSocket> ClientSocketHandle::PassSocket() {
   return std::move(socket_);
 }
 

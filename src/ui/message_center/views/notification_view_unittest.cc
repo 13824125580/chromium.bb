@@ -4,8 +4,9 @@
 
 #include "ui/message_center/views/notification_view.h"
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -24,6 +25,7 @@
 #include "ui/message_center/notification_types.h"
 #include "ui/message_center/views/constants.h"
 #include "ui/message_center/views/message_center_controller.h"
+#include "ui/message_center/views/message_view_factory.h"
 #include "ui/message_center/views/notification_button.h"
 #include "ui/message_center/views/proportional_image_view.h"
 #include "ui/views/controls/button/image_button.h"
@@ -34,17 +36,18 @@
 
 namespace {
 
-scoped_ptr<ui::GestureEvent> GenerateGestureEvent(ui::EventType type) {
+std::unique_ptr<ui::GestureEvent> GenerateGestureEvent(ui::EventType type) {
   ui::GestureEventDetails detail(type);
-  scoped_ptr<ui::GestureEvent> event(
-      new ui::GestureEvent(0, 0, 0, base::TimeDelta(), detail));
+  std::unique_ptr<ui::GestureEvent> event(
+      new ui::GestureEvent(0, 0, 0, base::TimeTicks(), detail));
   return event;
 }
 
-scoped_ptr<ui::GestureEvent> GenerateGestureVerticalScrollUpdateEvent(int dx) {
+std::unique_ptr<ui::GestureEvent> GenerateGestureVerticalScrollUpdateEvent(
+    int dx) {
   ui::GestureEventDetails detail(ui::ET_GESTURE_SCROLL_UPDATE, dx, 0);
-  scoped_ptr<ui::GestureEvent> event(
-      new ui::GestureEvent(0, 0, 0, base::TimeDelta(), detail));
+  std::unique_ptr<ui::GestureEvent> event(
+      new ui::GestureEvent(0, 0, 0, base::TimeTicks(), detail));
   return event;
 }
 
@@ -83,7 +86,7 @@ class NotificationViewTest : public views::ViewsTestBase,
   void ClickOnNotification(const std::string& notification_id) override;
   void RemoveNotification(const std::string& notification_id,
                           bool by_user) override;
-  scoped_ptr<ui::MenuModel> CreateMenuModel(
+  std::unique_ptr<ui::MenuModel> CreateMenuModel(
       const NotifierId& notifier_id,
       const base::string16& display_source) override;
   bool HasClickedListener(const std::string& notification_id) override;
@@ -177,12 +180,11 @@ class NotificationViewTest : public views::ViewsTestBase,
   }
 
   views::ImageButton* GetCloseButton() {
-    return notification_view()->close_button_.get();
+    return notification_view()->close_button();
   }
 
   void UpdateNotificationViews() {
-    notification_view()->CreateOrUpdateViews(*notification());
-    notification_view()->Layout();
+    notification_view()->UpdateWithNotification(*notification());
   }
 
   float GetNotificationScrollAmount() const {
@@ -198,9 +200,9 @@ class NotificationViewTest : public views::ViewsTestBase,
  private:
   std::set<std::string> removed_ids_;
 
-  scoped_ptr<RichNotificationData> data_;
-  scoped_ptr<Notification> notification_;
-  scoped_ptr<NotificationView> notification_view_;
+  std::unique_ptr<RichNotificationData> data_;
+  std::unique_ptr<Notification> notification_;
+  std::unique_ptr<NotificationView> notification_view_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationViewTest);
 };
@@ -226,8 +228,8 @@ void NotificationViewTest::SetUp() {
   notification_->set_image(CreateTestImage(320, 240));
 
   // Then create a new NotificationView with that single notification.
-  notification_view_.reset(
-      NotificationView::Create(this, *notification_, true));
+  notification_view_.reset(static_cast<NotificationView*>(
+      MessageViewFactory::Create(this, *notification_, true)));
   notification_view_->set_owned_by_client();
 
   views::Widget::InitParams init_params(
@@ -256,7 +258,7 @@ void NotificationViewTest::RemoveNotification(
   removed_ids_.insert(notification_id);
 }
 
-scoped_ptr<ui::MenuModel> NotificationViewTest::CreateMenuModel(
+std::unique_ptr<ui::MenuModel> NotificationViewTest::CreateMenuModel(
     const NotifierId& notifier_id,
     const base::string16& display_source) {
   // For this test, this method should not be invoked.
@@ -355,42 +357,33 @@ TEST_F(NotificationViewTest, TestIconSizing) {
   notification()->set_type(NOTIFICATION_TYPE_SIMPLE);
   ProportionalImageView* view = notification_view()->icon_view_;
 
-  // Icons smaller than the legacy size should be scaled up to it.
-  notification()->set_icon(CreateTestImage(kLegacyIconSize / 2,
-                                           kLegacyIconSize / 2));
+  // Icons smaller than the maximum size should remain unscaled.
+  notification()->set_icon(CreateTestImage(kNotificationIconSize / 2,
+                                           kNotificationIconSize / 4));
   UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kLegacyIconSize, kLegacyIconSize).ToString(),
+  EXPECT_EQ(gfx::Size(kNotificationIconSize / 2,
+                      kNotificationIconSize / 4).ToString(),
             GetImagePaintSize(view).ToString());
 
-  // Icons at the legacy size should be unscaled.
-  notification()->set_icon(CreateTestImage(kLegacyIconSize, kLegacyIconSize));
+  // Icons of exactly the intended icon size should remain unscaled.
+  notification()->set_icon(CreateTestImage(kNotificationIconSize,
+                                           kNotificationIconSize));
   UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kLegacyIconSize, kLegacyIconSize).ToString(),
+  EXPECT_EQ(gfx::Size(kNotificationIconSize, kNotificationIconSize).ToString(),
             GetImagePaintSize(view).ToString());
 
-  // Icons slightly smaller than the preferred size should be scaled down to the
-  // legacy size to avoid having tiny borders (http://crbug.com/232966).
-  notification()->set_icon(CreateTestImage(kIconSize - 1, kIconSize - 1));
+  // Icons over the maximum size should be scaled down, maintaining proportions.
+  notification()->set_icon(CreateTestImage(2 * kNotificationIconSize,
+                                           2 * kNotificationIconSize));
   UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kLegacyIconSize, kLegacyIconSize).ToString(),
+  EXPECT_EQ(gfx::Size(kNotificationIconSize, kNotificationIconSize).ToString(),
             GetImagePaintSize(view).ToString());
 
-  // Icons at the preferred size or above should be scaled down to the preferred
-  // size.
-  notification()->set_icon(CreateTestImage(kIconSize, kIconSize));
+  notification()->set_icon(CreateTestImage(4 * kNotificationIconSize,
+                                           2 * kNotificationIconSize));
   UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kIconSize, kIconSize).ToString(),
-            GetImagePaintSize(view).ToString());
-
-  notification()->set_icon(CreateTestImage(2 * kIconSize, 2 * kIconSize));
-  UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kIconSize, kIconSize).ToString(),
-            GetImagePaintSize(view).ToString());
-
-  // Large, non-square images' aspect ratios should be preserved.
-  notification()->set_icon(CreateTestImage(4 * kIconSize, 2 * kIconSize));
-  UpdateNotificationViews();
-  EXPECT_EQ(gfx::Size(kIconSize, kIconSize / 2).ToString(),
+  EXPECT_EQ(gfx::Size(kNotificationIconSize,
+                      kNotificationIconSize / 2).ToString(),
             GetImagePaintSize(view).ToString());
 }
 

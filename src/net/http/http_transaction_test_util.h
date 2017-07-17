@@ -54,10 +54,14 @@ enum {
   TEST_MODE_SLOW_READ = 1 << 5
 };
 
-typedef void (*MockTransactionHandler)(const HttpRequestInfo* request,
-                                       std::string* response_status,
-                                       std::string* response_headers,
-                                       std::string* response_data);
+using MockTransactionReadHandler = int (*)(int64_t content_length,
+                                           int64_t offset,
+                                           IOBuffer* buf,
+                                           int buf_len);
+using MockTransactionHandler = void (*)(const HttpRequestInfo* request,
+                                        std::string* response_status,
+                                        std::string* response_headers,
+                                        std::string* response_data);
 
 struct MockTransaction {
   const char* url;
@@ -73,6 +77,7 @@ struct MockTransaction {
   const char* data;
   int test_mode;
   MockTransactionHandler handler;
+  MockTransactionReadHandler read_handler;
   scoped_refptr<X509Certificate> cert;
   CertStatus cert_status;
   int ssl_connection_status;
@@ -133,6 +138,7 @@ class TestTransactionConsumer {
   const HttpResponseInfo* response_info() const {
     return trans_->GetResponseInfo();
   }
+  const HttpTransaction* transaction() const { return trans_.get(); }
   const std::string& content() const { return content_; }
 
  private:
@@ -151,7 +157,7 @@ class TestTransactionConsumer {
   void OnIOComplete(int result);
 
   State state_;
-  scoped_ptr<HttpTransaction> trans_;
+  std::unique_ptr<HttpTransaction> trans_;
   std::string content_;
   scoped_refptr<IOBuffer> read_buf_;
   int error_;
@@ -227,8 +233,8 @@ class MockNetworkTransaction
   void SetBeforeNetworkStartCallback(
       const BeforeNetworkStartCallback& callback) override;
 
-  void SetBeforeProxyHeadersSentCallback(
-      const BeforeProxyHeadersSentCallback& callback) override;
+  void SetBeforeHeadersSentCallback(
+      const BeforeHeadersSentCallback& callback) override;
 
   int ResumeNetworkStart() override;
 
@@ -257,10 +263,13 @@ class MockNetworkTransaction
   const HttpRequestInfo* request_;
   HttpResponseInfo response_;
   std::string data_;
-  int data_cursor_;
+  int64_t data_cursor_;
+  int64_t content_length_;
   int test_mode_;
   RequestPriority priority_;
+  MockTransactionReadHandler read_handler_;
   CreateHelper* websocket_handshake_stream_create_helper_;
+  BeforeNetworkStartCallback before_network_start_callback_;
   base::WeakPtr<MockNetworkLayer> transaction_factory_;
   int64_t received_bytes_;
   int64_t sent_bytes_;
@@ -288,6 +297,10 @@ class MockNetworkLayer : public HttpTransactionFactory,
   void TransactionDoneReading();
   void TransactionStopCaching();
 
+  // Resets the transaction count. Can be called after test setup in order to
+  // make test expectations independent of how test setup is performed.
+  void ResetTransactionCount();
+
   // Returns the last priority passed to CreateTransaction, or
   // DEFAULT_PRIORITY if it hasn't been called yet.
   RequestPriority last_create_transaction_priority() const {
@@ -311,7 +324,7 @@ class MockNetworkLayer : public HttpTransactionFactory,
 
   // HttpTransactionFactory:
   int CreateTransaction(RequestPriority priority,
-                        scoped_ptr<HttpTransaction>* trans) override;
+                        std::unique_ptr<HttpTransaction>* trans) override;
   HttpCache* GetCache() override;
   HttpNetworkSession* GetSession() override;
 

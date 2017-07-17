@@ -5,38 +5,20 @@
 #ifndef CompositorAnimationCurve_h
 #define CompositorAnimationCurve_h
 
-#include "base/memory/scoped_ptr.h"
 #include "platform/PlatformExport.h"
 
+#include <memory>
+
 namespace cc {
-class TimingFunction;
+class AnimationCurve;
 }
 
 namespace blink {
 
 class PLATFORM_EXPORT CompositorAnimationCurve {
 public:
-    enum TimingFunctionType {
-        TimingFunctionTypeEase,
-        TimingFunctionTypeEaseIn,
-        TimingFunctionTypeEaseOut,
-        TimingFunctionTypeEaseInOut,
-        TimingFunctionTypeLinear
-    };
-
-    enum AnimationCurveType {
-        AnimationCurveTypeFilter,
-        AnimationCurveTypeFloat,
-        AnimationCurveTypeScrollOffset,
-        AnimationCurveTypeTransform,
-    };
-
     virtual ~CompositorAnimationCurve() {}
-
-    virtual AnimationCurveType type() const = 0;
-
-protected:
-    static scoped_ptr<cc::TimingFunction> createTimingFunction(TimingFunctionType);
+    virtual std::unique_ptr<cc::AnimationCurve> cloneToAnimationCurve() const = 0;
 };
 
 } // namespace blink

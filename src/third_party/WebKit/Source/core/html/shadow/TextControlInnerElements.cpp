@@ -27,6 +27,7 @@
 #include "core/html/shadow/TextControlInnerElements.h"
 
 #include "core/HTMLNames.h"
+#include "core/css/resolver/StyleAdjuster.h"
 #include "core/dom/Document.h"
 #include "core/dom/NodeComputedStyle.h"
 #include "core/events/MouseEvent.h"
@@ -37,7 +38,6 @@
 #include "core/html/shadow/ShadowElementNames.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/LayoutTextControlSingleLine.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutTextControlItem.h"
 #include "platform/UserGestureIndicator.h"
 
@@ -50,11 +50,11 @@ TextControlInnerContainer::TextControlInnerContainer(Document& document)
 {
 }
 
-PassRefPtrWillBeRawPtr<TextControlInnerContainer> TextControlInnerContainer::create(Document& document)
+TextControlInnerContainer* TextControlInnerContainer::create(Document& document)
 {
-    RefPtrWillBeRawPtr<TextControlInnerContainer> element = adoptRefWillBeNoop(new TextControlInnerContainer(document));
+    TextControlInnerContainer* element = new TextControlInnerContainer(document);
     element->setAttribute(idAttr, ShadowElementNames::textFieldContainer());
-    return element.release();
+    return element;
 }
 
 LayoutObject* TextControlInnerContainer::createLayoutObject(const ComputedStyle&)
@@ -70,11 +70,11 @@ EditingViewPortElement::EditingViewPortElement(Document& document)
     setHasCustomStyleCallbacks();
 }
 
-PassRefPtrWillBeRawPtr<EditingViewPortElement> EditingViewPortElement::create(Document& document)
+EditingViewPortElement* EditingViewPortElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<EditingViewPortElement> element = adoptRefWillBeNoop(new EditingViewPortElement(document));
+    EditingViewPortElement* element = new EditingViewPortElement(document);
     element->setAttribute(idAttr, ShadowElementNames::editingViewPort());
-    return element.release();
+    return element;
 }
 
 PassRefPtr<ComputedStyle> EditingViewPortElement::customStyleForLayoutObject()
@@ -105,11 +105,11 @@ inline TextControlInnerEditorElement::TextControlInnerEditorElement(Document& do
     setHasCustomStyleCallbacks();
 }
 
-PassRefPtrWillBeRawPtr<TextControlInnerEditorElement> TextControlInnerEditorElement::create(Document& document)
+TextControlInnerEditorElement* TextControlInnerEditorElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<TextControlInnerEditorElement> element = adoptRefWillBeNoop(new TextControlInnerEditorElement(document));
+    TextControlInnerEditorElement* element = new TextControlInnerEditorElement(document);
     element->setAttribute(idAttr, ShadowElementNames::innerEditor());
-    return element.release();
+    return element;
 }
 
 void TextControlInnerEditorElement::defaultEventHandler(Event* event)
@@ -142,55 +142,11 @@ PassRefPtr<ComputedStyle> TextControlInnerEditorElement::customStyleForLayoutObj
     if (!parentLayoutObject || !parentLayoutObject->isTextControl())
         return originalStyleForLayoutObject();
     LayoutTextControlItem textControlLayoutItem = LayoutTextControlItem(toLayoutTextControl(parentLayoutObject));
-    return textControlLayoutItem.createInnerEditorStyle(textControlLayoutItem.styleRef());
-}
-
-// ----------------------------
-
-inline SearchFieldDecorationElement::SearchFieldDecorationElement(Document& document)
-    : HTMLDivElement(document)
-{
-}
-
-PassRefPtrWillBeRawPtr<SearchFieldDecorationElement> SearchFieldDecorationElement::create(Document& document)
-{
-    RefPtrWillBeRawPtr<SearchFieldDecorationElement> element = adoptRefWillBeNoop(new SearchFieldDecorationElement(document));
-    element->setAttribute(idAttr, ShadowElementNames::searchDecoration());
-    return element.release();
-}
-
-const AtomicString& SearchFieldDecorationElement::shadowPseudoId() const
-{
-    DEFINE_STATIC_LOCAL(AtomicString, resultsDecorationId, ("-webkit-search-results-decoration", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(AtomicString, decorationId, ("-webkit-search-decoration", AtomicString::ConstructFromLiteral));
-    Element* host = shadowHost();
-    if (!host)
-        return resultsDecorationId;
-    if (isHTMLInputElement(*host)) {
-        if (toHTMLInputElement(host)->maxResults() < 0)
-            return decorationId;
-        return resultsDecorationId;
-    }
-    return resultsDecorationId;
-}
-
-void SearchFieldDecorationElement::defaultEventHandler(Event* event)
-{
-    // On mousedown, focus the search field
-    HTMLInputElement* input = toHTMLInputElement(shadowHost());
-    if (input && event->type() == EventTypeNames::mousedown && event->isMouseEvent() && toMouseEvent(event)->button() == LeftButton) {
-        input->focus();
-        input->select(NotDispatchSelectEvent);
-        event->setDefaultHandled();
-    }
-
-    if (!event->defaultHandled())
-        HTMLDivElement::defaultEventHandler(event);
-}
-
-bool SearchFieldDecorationElement::willRespondToMouseClickEvents()
-{
-    return true;
+    RefPtr<ComputedStyle> innerEditorStyle = textControlLayoutItem.createInnerEditorStyle(textControlLayoutItem.styleRef());
+    // Using StyleAdjuster::adjustComputedStyle updates unwanted style. We'd like
+    // to apply only editing-related.
+    StyleAdjuster::adjustStyleForEditing(*innerEditorStyle);
+    return innerEditorStyle.release();
 }
 
 // ----------------------------
@@ -201,12 +157,12 @@ inline SearchFieldCancelButtonElement::SearchFieldCancelButtonElement(Document& 
 {
 }
 
-PassRefPtrWillBeRawPtr<SearchFieldCancelButtonElement> SearchFieldCancelButtonElement::create(Document& document)
+SearchFieldCancelButtonElement* SearchFieldCancelButtonElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<SearchFieldCancelButtonElement> element = adoptRefWillBeNoop(new SearchFieldCancelButtonElement(document));
-    element->setShadowPseudoId(AtomicString("-webkit-search-cancel-button", AtomicString::ConstructFromLiteral));
+    SearchFieldCancelButtonElement* element = new SearchFieldCancelButtonElement(document);
+    element->setShadowPseudoId(AtomicString("-webkit-search-cancel-button"));
     element->setAttribute(idAttr, ShadowElementNames::clearButton());
-    return element.release();
+    return element;
 }
 
 void SearchFieldCancelButtonElement::detach(const AttachContext& context)
@@ -222,7 +178,7 @@ void SearchFieldCancelButtonElement::detach(const AttachContext& context)
 void SearchFieldCancelButtonElement::defaultEventHandler(Event* event)
 {
     // If the element is visible, on mouseup, clear the value, and set selection
-    RefPtrWillBeRawPtr<HTMLInputElement> input(toHTMLInputElement(shadowHost()));
+    HTMLInputElement* input(toHTMLInputElement(shadowHost()));
     if (!input || input->isDisabledOrReadOnly()) {
         if (!event->defaultHandled())
             HTMLDivElement::defaultEventHandler(event);

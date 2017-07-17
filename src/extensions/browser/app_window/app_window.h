@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/sessions/core/session_id.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
@@ -34,6 +34,7 @@ class DictionaryValue;
 
 namespace content {
 class BrowserContext;
+class RenderFrameHost;
 class WebContents;
 }
 
@@ -58,6 +59,7 @@ class AppWindowContents {
 
   // Called to initialize the WebContents, before the app window is created.
   virtual void Initialize(content::BrowserContext* context,
+                          content::RenderFrameHost* creator_frame,
                           const GURL& url) = 0;
 
   // Called to load the contents, after the app window is created.
@@ -219,6 +221,7 @@ class AppWindow : public content::WebContentsDelegate,
   // |app_window_contents| will become owned by AppWindow.
   void Init(const GURL& url,
             AppWindowContents* app_window_contents,
+            content::RenderFrameHost* creator_frame,
             const CreateParams& params);
 
   const std::string& window_key() const { return window_key_; }
@@ -269,7 +272,7 @@ class AppWindow : public content::WebContentsDelegate,
   void SetAppIconUrl(const GURL& icon_url);
 
   // Set the window shape. Passing a NULL |region| sets the default shape.
-  void UpdateShape(scoped_ptr<SkRegion> region);
+  void UpdateShape(std::unique_ptr<SkRegion> region);
 
   // Called from the render interface to modify the draggable regions.
   void UpdateDraggableRegions(const std::vector<DraggableRegion>& regions);
@@ -365,7 +368,8 @@ class AppWindow : public content::WebContentsDelegate,
   // remove this TODO.
   bool is_ime_window() const { return is_ime_window_; }
 
-  void SetAppWindowContentsForTesting(scoped_ptr<AppWindowContents> contents) {
+  void SetAppWindowContentsForTesting(
+      std::unique_ptr<AppWindowContents> contents) {
     app_window_contents_ = std::move(contents);
   }
 
@@ -383,7 +387,7 @@ class AppWindow : public content::WebContentsDelegate,
       content::WebContents* web_contents,
       SkColor color,
       const std::vector<content::ColorSuggestion>& suggestions) override;
-  void RunFileChooser(content::WebContents* tab,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   bool IsPopupOrPanel(const content::WebContents* source) const override;
   void MoveContents(content::WebContents* source,
@@ -424,6 +428,9 @@ class AppWindow : public content::WebContentsDelegate,
                           bool last_unlocked_by_target) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
+  std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
+      content::RenderFrameHost* frame,
+      const content::BluetoothChooser::EventHandler& event_handler) override;
 
   // content::WebContentsObserver implementation.
   void RenderViewCreated(content::RenderViewHost* render_view_host) override;
@@ -513,12 +520,12 @@ class AppWindow : public content::WebContentsDelegate,
   GURL app_icon_url_;
 
   // An object to load the app's icon as an extension resource.
-  scoped_ptr<IconImage> app_icon_image_;
+  std::unique_ptr<IconImage> app_icon_image_;
 
-  scoped_ptr<NativeAppWindow> native_app_window_;
-  scoped_ptr<AppWindowContents> app_window_contents_;
-  scoped_ptr<AppDelegate> app_delegate_;
-  scoped_ptr<AppWebContentsHelper> helper_;
+  std::unique_ptr<NativeAppWindow> native_app_window_;
+  std::unique_ptr<AppWindowContents> app_window_contents_;
+  std::unique_ptr<AppDelegate> app_delegate_;
+  std::unique_ptr<AppWebContentsHelper> helper_;
 
   // The initial url this AppWindow was navigated to.
   GURL initial_url_;

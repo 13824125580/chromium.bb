@@ -8,6 +8,7 @@
 
 #include "base/format_macros.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -240,10 +241,7 @@ bool ClickElement(const WebDocument& document,
 
   switch (element_descriptor.retrieval_method) {
     case WebElementDescriptor::CSS_SELECTOR: {
-      WebExceptionCode ec = 0;
-      element = document.querySelector(web_descriptor, ec);
-      if (ec)
-        DVLOG(1) << "Query selector failed. Error code: " << ec << ".";
+      element = document.querySelector(web_descriptor);
       break;
     }
     case WebElementDescriptor::ID:
@@ -1060,7 +1058,10 @@ class FormAutofillTest : public ChromeRenderViewTest {
   void TestFillFormNonEmptyField(const char* html,
                                  bool unowned,
                                  const char* initial_lastname,
-                                 const char* initial_email) {
+                                 const char* initial_email,
+                                 const char* placeholder_firstname,
+                                 const char* placeholder_lastname,
+                                 const char* placeholder_email) {
     LoadHTML(html);
     WebFrame* web_frame = GetMainFrame();
     ASSERT_NE(nullptr, web_frame);
@@ -1096,6 +1097,10 @@ class FormAutofillTest : public ChromeRenderViewTest {
 
     expected.name = ASCIIToUTF16("firstname");
     expected.value = ASCIIToUTF16("Wy");
+    if (placeholder_firstname) {
+      expected.label = ASCIIToUTF16(placeholder_firstname);
+      expected.placeholder = ASCIIToUTF16(placeholder_firstname);
+    }
     expected.is_autofilled = false;
     EXPECT_FORM_FIELD_DATA_EQUALS(expected, fields[0]);
 
@@ -1103,6 +1108,10 @@ class FormAutofillTest : public ChromeRenderViewTest {
     if (initial_lastname) {
       expected.label = ASCIIToUTF16(initial_lastname);
       expected.value = ASCIIToUTF16(initial_lastname);
+    } else if (placeholder_lastname) {
+      expected.label = ASCIIToUTF16(placeholder_lastname);
+      expected.placeholder = ASCIIToUTF16(placeholder_lastname);
+      expected.value = ASCIIToUTF16(placeholder_lastname);
     } else {
       expected.label.clear();
       expected.value.clear();
@@ -1114,6 +1123,10 @@ class FormAutofillTest : public ChromeRenderViewTest {
     if (initial_email) {
       expected.label = ASCIIToUTF16(initial_email);
       expected.value = ASCIIToUTF16(initial_email);
+    } else if (placeholder_email) {
+      expected.label = ASCIIToUTF16(placeholder_email);
+      expected.placeholder = ASCIIToUTF16(placeholder_email);
+      expected.value = ASCIIToUTF16(placeholder_email);
     } else {
       expected.label.clear();
       expected.value.clear();
@@ -1152,19 +1165,37 @@ class FormAutofillTest : public ChromeRenderViewTest {
 
     expected.name = ASCIIToUTF16("firstname");
     expected.value = ASCIIToUTF16("Wyatt");
-    expected.label.clear();
+    if (placeholder_firstname) {
+      expected.label = ASCIIToUTF16(placeholder_firstname);
+      expected.placeholder = ASCIIToUTF16(placeholder_firstname);
+    } else {
+      expected.label.clear();
+      expected.placeholder.clear();
+    }
     expected.is_autofilled = true;
     EXPECT_FORM_FIELD_DATA_EQUALS(expected, fields2[0]);
 
     expected.name = ASCIIToUTF16("lastname");
     expected.value = ASCIIToUTF16("Earp");
-    expected.label.clear();
+    if (placeholder_lastname) {
+      expected.label = ASCIIToUTF16(placeholder_lastname);
+      expected.placeholder = ASCIIToUTF16(placeholder_lastname);
+    } else {
+      expected.label.clear();
+      expected.placeholder.clear();
+    }
     expected.is_autofilled = true;
     EXPECT_FORM_FIELD_DATA_EQUALS(expected, fields2[1]);
 
     expected.name = ASCIIToUTF16("email");
     expected.value = ASCIIToUTF16("wyatt@example.com");
-    expected.label.clear();
+    if (placeholder_email) {
+      expected.label = ASCIIToUTF16(placeholder_email);
+      expected.placeholder = ASCIIToUTF16(placeholder_email);
+    } else {
+      expected.label.clear();
+      expected.placeholder.clear();
+    }
     expected.is_autofilled = true;
     EXPECT_FORM_FIELD_DATA_EQUALS(expected, fields2[2]);
 
@@ -1681,8 +1712,7 @@ TEST_F(FormAutofillTest, WebFormControlElementToClickableFormField) {
   expected.value = ASCIIToUTF16("mail");
   expected.form_control_type = "checkbox";
   expected.is_autofilled = true;
-  expected.is_checkable = true;
-  expected.is_checked = true;
+  expected.check_status = FormFieldData::CHECKED;
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, result);
 
   element = GetInputElementById("radio");
@@ -1692,8 +1722,7 @@ TEST_F(FormAutofillTest, WebFormControlElementToClickableFormField) {
   expected.value = ASCIIToUTF16("male");
   expected.form_control_type = "radio";
   expected.is_autofilled = true;
-  expected.is_checkable = true;
-  expected.is_checked = false;
+  expected.check_status = FormFieldData::CHECKABLE_BUT_UNCHECKED;
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, result);
 }
 
@@ -2204,8 +2233,16 @@ TEST_F(FormAutofillTest, WebFormElementConsiderNonControlLabelableElements) {
   EXPECT_EQ(ASCIIToUTF16("firstname"), fields[0].name);
 }
 
+// TODO(crbug.com/616730) Flaky.
+#if defined(OS_CHROMEOS) || defined(OS_MACOSX)
+#define MAYBE_WebFormElementToFormDataTooManyFields \
+  DISABLED_WebFormElementToFormDataTooManyFields
+#else
+#define MAYBE_WebFormElementToFormDataTooManyFields \
+  WebFormElementToFormDataTooManyFields
+#endif
 // We should not be able to serialize a form with too many fillable fields.
-TEST_F(FormAutofillTest, WebFormElementToFormDataTooManyFields) {
+TEST_F(FormAutofillTest, MAYBE_WebFormElementToFormDataTooManyFields) {
   std::string html =
       "<FORM name='TestForm' action='http://cnn.com' method='post'>";
   for (size_t i = 0; i < (kMaxParseableFields + 1); ++i) {
@@ -2291,6 +2328,33 @@ TEST_F(FormAutofillTest, WebFormElementToFormData_AutocompleteOff_OnField) {
   EXPECT_FALSE(form.fields[0].should_autocomplete);
   EXPECT_TRUE(form.fields[1].should_autocomplete);
   EXPECT_TRUE(form.fields[2].should_autocomplete);
+}
+
+// Tests CSS classes are set.
+TEST_F(FormAutofillTest, WebFormElementToFormData_CssClasses) {
+  LoadHTML(
+      "<FORM name='TestForm' id='form' action='http://cnn.com' method='post' "
+      "autocomplete='off'>"
+      "    <INPUT type='text' id='firstname' class='firstname_field' />"
+      "    <INPUT type='text' id='lastname' class='lastname_field' />"
+      "    <INPUT type='text' id='addressline1'  />"
+      "</FORM>");
+
+  WebFrame* frame = GetMainFrame();
+  ASSERT_NE(nullptr, frame);
+
+  WebFormElement web_form =
+      frame->document().getElementById("form").to<WebFormElement>();
+  ASSERT_FALSE(web_form.isNull());
+
+  FormData form;
+  EXPECT_TRUE(WebFormElementToFormData(web_form, WebFormControlElement(),
+                                       EXTRACT_NONE, &form, nullptr));
+
+  EXPECT_EQ(3U, form.fields.size());
+  EXPECT_EQ(ASCIIToUTF16("firstname_field"), form.fields[0].css_classes);
+  EXPECT_EQ(ASCIIToUTF16("lastname_field"), form.fields[1].css_classes);
+  EXPECT_EQ(base::string16(), form.fields[2].css_classes);
 }
 
 TEST_F(FormAutofillTest, ExtractForms) {
@@ -2408,7 +2472,7 @@ TEST_F(FormAutofillTest, OnlyExtractNewForms) {
       "newInput.setAttribute('id', 'telephone');"
       "newInput.value = '12345';"
       "document.getElementById('testform').appendChild(newInput);");
-  msg_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   forms = form_cache.ExtractNewForms();
   ASSERT_EQ(1U, forms.size());
@@ -2464,7 +2528,7 @@ TEST_F(FormAutofillTest, OnlyExtractNewForms) {
       "newForm.appendChild(newLastname);"
       "newForm.appendChild(newEmail);"
       "document.body.appendChild(newForm);");
-  msg_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   web_frame = GetMainFrame();
   forms = form_cache.ExtractNewForms();
@@ -3977,7 +4041,7 @@ TEST_F(FormAutofillTest, FillFormNonEmptyField) {
       "  <INPUT type='text' id='email'/>"
       "  <INPUT type='submit' value='Send'/>"
       "</FORM>",
-      false, nullptr, nullptr);
+      false, nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 TEST_F(FormAutofillTest, FillFormNonEmptyFieldsWithDefaultValues) {
@@ -3988,7 +4052,20 @@ TEST_F(FormAutofillTest, FillFormNonEmptyFieldsWithDefaultValues) {
       "  <INPUT type='text' id='email' value='Enter email'/>"
       "  <INPUT type='submit' value='Send'/>"
       "</FORM>",
-      false, "Enter last name", "Enter email");
+      false, "Enter last name", "Enter email", nullptr, nullptr, nullptr);
+}
+
+TEST_F(FormAutofillTest, FillFormNonEmptyFieldsWithPlaceholderValues) {
+  TestFillFormNonEmptyField(
+      "<FORM name='TestForm' action='http://abc.com' method='post'>"
+      "  <INPUT type='text' id='firstname' placeholder='First Name' "
+      "value='First Name'/>"
+      "  <INPUT type='text' id='lastname' placeholder='Last Name' value='Last "
+      "Name'/>"
+      "  <INPUT type='text' id='email' placeholder='Email' value='Email'/>"
+      "  <INPUT type='submit' value='Send'/>"
+      "</FORM>",
+      false, nullptr, nullptr, "First Name", "Last Name", "Email");
 }
 
 TEST_F(FormAutofillTest, FillFormNonEmptyFieldForUnownedForm) {
@@ -3998,7 +4075,7 @@ TEST_F(FormAutofillTest, FillFormNonEmptyFieldForUnownedForm) {
       "<INPUT type='text' id='lastname'/>"
       "<INPUT type='text' id='email'/>"
       "<INPUT type='submit' value='Send'/>",
-      true, nullptr, nullptr);
+      true, nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 TEST_F(FormAutofillTest, ClearFormWithNode) {

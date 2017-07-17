@@ -12,7 +12,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_process_type.h"
 #include "content/public/browser/render_process_host.h"
@@ -78,7 +78,6 @@ void MetricsMemoryDetails::UpdateHistograms() {
   size_t aggregate_memory = 0;
   int chrome_count = 0;
   int extension_count = 0;
-  int plugin_count = 0;
   int pepper_plugin_count = 0;
   int pepper_plugin_broker_count = 0;
   int renderer_count = 0;
@@ -91,6 +90,7 @@ void MetricsMemoryDetails::UpdateHistograms() {
     switch (browser.processes[index].process_type) {
       case content::PROCESS_TYPE_BROWSER:
         UMA_HISTOGRAM_MEMORY_KB("Memory.Browser", sample);
+        UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Browser.Large", sample);
         continue;
       case content::PROCESS_TYPE_RENDERER: {
         ProcessMemoryInformation::RendererProcessType renderer_type =
@@ -124,10 +124,6 @@ void MetricsMemoryDetails::UpdateHistograms() {
             continue;
         }
       }
-      case content::PROCESS_TYPE_PLUGIN:
-        UMA_HISTOGRAM_MEMORY_KB("Memory.Plugin", sample);
-        plugin_count++;
-        continue;
       case content::PROCESS_TYPE_UTILITY:
         UMA_HISTOGRAM_MEMORY_KB("Memory.Utility", sample);
         other_count++;
@@ -188,7 +184,6 @@ void MetricsMemoryDetails::UpdateHistograms() {
   UMA_HISTOGRAM_COUNTS_100("Memory.ChromeProcessCount", chrome_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.ExtensionProcessCount", extension_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.OtherProcessCount", other_count);
-  UMA_HISTOGRAM_COUNTS_100("Memory.PluginProcessCount", plugin_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.PepperPluginProcessCount",
                            pepper_plugin_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.PepperPluginBrokerProcessCount",
@@ -253,9 +248,6 @@ void MetricsMemoryDetails::UpdateSwapHistograms() {
             continue;
         }
       }
-      case content::PROCESS_TYPE_PLUGIN:
-        UMA_HISTOGRAM_MEMORY_KB("Memory.Swap.Plugin", sample);
-        continue;
       case content::PROCESS_TYPE_UTILITY:
         UMA_HISTOGRAM_MEMORY_KB("Memory.Swap.Utility", sample);
         continue;

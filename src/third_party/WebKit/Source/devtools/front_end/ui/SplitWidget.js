@@ -150,6 +150,8 @@ WebInspector.SplitWidget.prototype = {
      */
     setMainWidget: function(widget)
     {
+        if (this._mainWidget === widget)
+            return;
         if (this._mainWidget)
             this._mainWidget.detach();
         this._mainWidget = widget;
@@ -166,6 +168,8 @@ WebInspector.SplitWidget.prototype = {
      */
     setSidebarWidget: function(widget)
     {
+        if (this._sidebarWidget === widget)
+            return;
         if (this._sidebarWidget)
             this._sidebarWidget.detach();
         this._sidebarWidget = widget;
@@ -283,6 +287,14 @@ WebInspector.SplitWidget.prototype = {
     {
         this._sidebarMinimized = minimized;
         this.invalidateConstraints();
+    },
+
+    /**
+     * @return {boolean}
+     */
+    isSidebarMinimized: function()
+    {
+        return this._sidebarMinimized;
     },
 
     /**
@@ -760,7 +772,7 @@ WebInspector.SplitWidget.prototype = {
     hasCustomResizer: function()
     {
         var elements = this._resizerWidget.elements();
-        return elements.length > 1 || (elements.length == 1 && elements[0] !== this._resizerElement);
+        return elements.length > 1 || (elements.length === 1 && elements[0] !== this._resizerElement);
     },
 
     /**

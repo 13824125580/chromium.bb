@@ -26,26 +26,30 @@
 #ifndef MediaStreamTrack_h
 #define MediaStreamTrack_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ActiveDOMObject.h"
 #include "modules/EventTargetModules.h"
 #include "modules/ModulesExport.h"
 #include "modules/mediastream/SourceInfo.h"
 #include "platform/mediastream/MediaStreamDescriptor.h"
 #include "platform/mediastream/MediaStreamSource.h"
+#include "public/platform/WebMediaConstraints.h"
 #include "wtf/Forward.h"
+#include <memory>
 
 namespace blink {
 
 class AudioSourceProvider;
 class ExceptionState;
-class MediaStreamComponent;
+class MediaTrackConstraints;
 class MediaStreamTrackSourcesCallback;
+class MediaTrackSettings;
 
 class MODULES_EXPORT MediaStreamTrack
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<MediaStreamTrack>
+    : public EventTargetWithInlineData
+    , public ActiveScriptWrappable
     , public ActiveDOMObject
     , public MediaStreamSource::Observer {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(MediaStreamTrack);
     USING_GARBAGE_COLLECTED_MIXIN(MediaStreamTrack);
     DEFINE_WRAPPERTYPEINFO();
 public:
@@ -56,7 +60,6 @@ public:
     String id() const;
     String label() const;
     bool remote() const;
-    bool readonly() const;
 
     bool enabled() const;
     void setEnabled(bool);
@@ -68,6 +71,14 @@ public:
     static void getSources(ExecutionContext*, MediaStreamTrackSourcesCallback*, ExceptionState&);
     void stopTrack(ExceptionState&);
     virtual MediaStreamTrack* clone(ExecutionContext*);
+
+    void getConstraints(MediaTrackConstraints&);
+
+    // This function is called when constrains have been successfully applied.
+    // Called from UserMediaRequest when it succeeds. It is not IDL-exposed.
+    void setConstraints(const WebMediaConstraints&);
+
+    void getSettings(MediaTrackSettings&);
 
     DEFINE_ATTRIBUTE_EVENT_LISTENER(mute);
     DEFINE_ATTRIBUTE_EVENT_LISTENER(unmute);
@@ -81,13 +92,15 @@ public:
 
     // EventTarget
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final;
 
     // ActiveDOMObject
-    bool hasPendingActivity() const override;
     void stop() override;
 
-    PassOwnPtr<AudioSourceProvider> createWebAudioSource();
+    std::unique_ptr<AudioSourceProvider> createWebAudioSource();
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -106,6 +119,7 @@ private:
     bool m_isIteratingRegisteredMediaStreams;
     bool m_stopped;
     Member<MediaStreamComponent> m_component;
+    WebMediaConstraints m_constraints;
 };
 
 typedef HeapVector<Member<MediaStreamTrack>> MediaStreamTrackVector;

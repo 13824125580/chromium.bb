@@ -12,7 +12,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
@@ -24,9 +23,9 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ApplicationStateListener;
-import org.chromium.base.BuildInfo;
+import org.chromium.base.CommandLine;
 import org.chromium.base.CommandLineInitUtil;
-import org.chromium.base.PathUtils;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ResourceExtractor;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
@@ -43,6 +42,7 @@ import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
 import org.chromium.chrome.browser.datausage.ExternalDataUseObserver;
 import org.chromium.chrome.browser.document.DocumentActivity;
 import org.chromium.chrome.browser.document.IncognitoDocumentActivity;
+import org.chromium.chrome.browser.download.DownloadController;
 import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
 import org.chromium.chrome.browser.feedback.EmptyFeedbackReporter;
@@ -54,17 +54,18 @@ import org.chromium.chrome.browser.identity.UniqueIdentificationGeneratorFactory
 import org.chromium.chrome.browser.identity.UuidBasedUniqueIdentificationGenerator;
 import org.chromium.chrome.browser.init.InvalidStartupDialog;
 import org.chromium.chrome.browser.invalidation.UniqueIdInvalidationClientNameGenerator;
+import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.metrics.VariationsSession;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.net.qualityprovider.ExternalEstimateProviderAndroid;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
-import org.chromium.chrome.browser.notifications.NotificationUIManager;
+import org.chromium.chrome.browser.notifications.NotificationPlatformBridge;
 import org.chromium.chrome.browser.omaha.RequestGenerator;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
 import org.chromium.chrome.browser.physicalweb.PhysicalWebBleClient;
+import org.chromium.chrome.browser.physicalweb.PhysicalWebEnvironment;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
-import org.chromium.chrome.browser.preferences.AccessibilityPreferences;
 import org.chromium.chrome.browser.preferences.LocationSettings;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
@@ -79,6 +80,7 @@ import org.chromium.chrome.browser.services.AccountsChangedReceiver;
 import org.chromium.chrome.browser.services.AndroidEduOwnerCheckCallback;
 import org.chromium.chrome.browser.services.GoogleServicesManager;
 import org.chromium.chrome.browser.share.ShareHelper;
+import org.chromium.chrome.browser.signin.GoogleActivityController;
 import org.chromium.chrome.browser.sync.GmsCoreSyncListener;
 import org.chromium.chrome.browser.sync.SyncController;
 import org.chromium.chrome.browser.tab.AuthenticatorNavigationInterceptor;
@@ -89,10 +91,12 @@ import org.chromium.chrome.browser.tabmodel.document.DocumentTabModelSelector;
 import org.chromium.chrome.browser.tabmodel.document.StorageDelegate;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
 import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.webapps.WebApkBuilder;
 import org.chromium.content.app.ContentApplication;
+import org.chromium.content.browser.ChildProcessCreationParams;
 import org.chromium.content.browser.ChildProcessLauncher;
 import org.chromium.content.browser.ContentViewStatics;
-import org.chromium.content.browser.DownloadController;
+import org.chromium.content.common.ContentSwitches;
 import org.chromium.policy.AppRestrictionsProvider;
 import org.chromium.policy.CombinedPolicyProvider;
 import org.chromium.policy.CombinedPolicyProvider.PolicyChangeListener;
@@ -119,8 +123,6 @@ public class ChromeApplication extends ContentApplication {
             "com.google.android.apps.chrome.ChromeMobileApplication.BOOT_TIMESTAMP";
     private static final long BOOT_TIMESTAMP_MARGIN_MS = 1000;
     private static final String PREF_LOCALE = "locale";
-    private static final float FLOAT_EPSILON = 0.001f;
-    private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "chrome";
     private static final String DEV_TOOLS_SERVER_SOCKET_PREFIX = "chrome";
     private static final String SESSIONS_UUID_PREF_KEY = "chromium.sync.sessions.id";
 
@@ -193,7 +195,7 @@ public class ChromeApplication extends ContentApplication {
      * This is called during early initialization in order to set up ChildProcessLauncher
      * for certain Chrome packaging configurations
      */
-    public ChildProcessLauncher.ChildProcessCreationParams getChildProcessCreationParams() {
+    public ChildProcessCreationParams getChildProcessCreationParams() {
         return null;
     }
 
@@ -206,6 +208,8 @@ public class ChromeApplication extends ContentApplication {
     public void onCreate() {
         UmaUtils.recordMainEntryPointTime();
         super.onCreate();
+        ContextUtils.initApplicationContext(this);
+
         UiUtils.setKeyboardShowingDelegate(new UiUtils.KeyboardShowingDelegate() {
             @Override
             public boolean disableKeyboardCheck(Context context, View view) {
@@ -270,7 +274,7 @@ public class ChromeApplication extends ContentApplication {
         ChildProcessLauncher.onBroughtToForeground();
         mBackgroundProcessing.startTimers();
         updatePasswordEchoState();
-        updateFontSize();
+        FontSizePrefs.getInstance(this).onSystemFontScaleChanged();
         updateAcceptLanguages();
         mVariationsSession.start(getApplicationContext());
         mPowerBroadcastReceiver.onForegroundSessionStart();
@@ -279,7 +283,7 @@ public class ChromeApplication extends ContentApplication {
         // TODO(johnme): Add other reasons (and switch to recordEnumeratedHistogram).
         RecordHistogram.recordBooleanHistogram(
                 "Startup.BringToForegroundReason",
-                NotificationUIManager.wasNotificationRecentlyClicked());
+                NotificationPlatformBridge.wasNotificationRecentlyClicked());
     }
 
     /**
@@ -359,6 +363,13 @@ public class ChromeApplication extends ContentApplication {
     }
 
     /**
+     * Returns factory for building WebAPKs.
+     */
+    public WebApkBuilder createWebApkBuilder() {
+        return null;
+    }
+
+    /**
      * Return a {@link AuthenticatorNavigationInterceptor} for the given {@link Tab}.
      * This can be null if there are no applicable interceptor to be built.
      */
@@ -421,10 +432,7 @@ public class ChromeApplication extends ContentApplication {
         // The ResourceExtractor is only needed by the browser process, but this will have no
         // impact on the renderer process construction.
         ResourceBundle.initializeLocalePaks(this, R.array.locale_paks);
-        if (!BuildInfo.hasLanguageApkSplits(this)) {
-            ResourceExtractor.setResourcesToExtract(ResourceBundle.getActiveLocaleResources());
-        }
-        PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX, this);
+        ResourceExtractor.setResourcesToExtract(ResourceBundle.getActiveLocaleResources());
     }
 
     /**
@@ -456,8 +464,13 @@ public class ChromeApplication extends ContentApplication {
 
         startApplicationActivityTracker();
 
-        DownloadController.setDownloadNotificationService(
-                DownloadManagerService.getDownloadManagerService(this));
+        // Add process check to diagnose http://crbug.com/606309. Remove this after the bug is
+        // fixed.
+        assert !CommandLine.getInstance().hasSwitch(ContentSwitches.SWITCH_PROCESS_TYPE);
+        if (!CommandLine.getInstance().hasSwitch(ContentSwitches.SWITCH_PROCESS_TYPE)) {
+            DownloadController.setDownloadNotificationService(
+                    DownloadManagerService.getDownloadManagerService(this));
+        }
 
         if (ApiCompatibilityUtils.isPrintingSupported()) {
             mPrintingController = PrintingControllerFactory.create(getApplicationContext());
@@ -592,7 +605,7 @@ public class ChromeApplication extends ContentApplication {
      */
     protected void removeSessionCookies() {
         long lastKnownBootTimestamp =
-                PreferenceManager.getDefaultSharedPreferences(this).getLong(PREF_BOOT_TIMESTAMP, 0);
+                ContextUtils.getAppSharedPreferences().getLong(PREF_BOOT_TIMESTAMP, 0);
         long bootTimestamp = System.currentTimeMillis() - SystemClock.uptimeMillis();
         long difference = bootTimestamp - lastKnownBootTimestamp;
 
@@ -600,7 +613,7 @@ public class ChromeApplication extends ContentApplication {
         if (Math.abs(difference) > BOOT_TIMESTAMP_MARGIN_MS) {
             nativeRemoveSessionCookies();
 
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
             SharedPreferences.Editor editor = prefs.edit();
             editor.putLong(PREF_BOOT_TIMESTAMP, bootTimestamp);
             editor.apply();
@@ -649,10 +662,17 @@ public class ChromeApplication extends ContentApplication {
     }
 
     /**
-     * @return A new PhysicalWebBleClient instance.
+     * @return A new {@link PhysicalWebBleClient} instance.
      */
     public PhysicalWebBleClient createPhysicalWebBleClient() {
         return new PhysicalWebBleClient();
+    }
+
+    /**
+     * @return A new {@link PhysicalWebEnvironment} instance.
+     */
+    public PhysicalWebEnvironment createPhysicalWebEnvironment() {
+        return new PhysicalWebEnvironment();
     }
 
     /**
@@ -663,12 +683,23 @@ public class ChromeApplication extends ContentApplication {
         return mPrintingController;
     }
 
+    public AppLinkHandler createAppLinkHandler() {
+        return new AppLinkHandler();
+    }
+
     /**
      * @return An instance of {@link GSAHelper} that handles the start point of chrome's integration
      *         with GSA.
      */
     public GSAHelper createGsaHelper() {
         return new GSAHelper();
+    }
+
+    /**
+     * @return An instance of {@link LocaleManager} that handles customized locale related logic.
+     */
+    public LocaleManager createLocaleManager() {
+        return new LocaleManager();
     }
 
    /**
@@ -728,6 +759,13 @@ public class ChromeApplication extends ContentApplication {
     }
 
     /**
+    * @return An instance of GoogleActivityController.
+    */
+    public GoogleActivityController createGoogleActivityController() {
+        return new GoogleActivityController();
+    }
+
+    /**
      * @return An instance of AppDetailsDelegate that can be queried about app information for the
      *         App Banner feature.  Will be null if one is unavailable.
      */
@@ -777,41 +815,6 @@ public class ChromeApplication extends ContentApplication {
     }
 
     /**
-     * Update the font size after changing the Android accessibility system setting.  Doing so kills
-     * the Activities but it doesn't kill the ChromeApplication, so this should be called in
-     * {@link #onStart} instead of {@link #initialize}.
-     */
-    private void updateFontSize() {
-        // This method is currently broken. http://crbug.com/439108
-        // Skip it (with the consequence of not updating the text scaling factor when the user
-        // changes system font size) rather than incurring the broken behavior.
-        // TODO(newt): fix this.
-        if (true) return;
-
-        FontSizePrefs fontSizePrefs = FontSizePrefs.getInstance(getApplicationContext());
-
-        // Set font scale factor as the product of the system and browser scale settings.
-        float browserTextScale = PreferenceManager
-                .getDefaultSharedPreferences(this)
-                .getFloat(AccessibilityPreferences.PREF_TEXT_SCALE, 1.0f);
-        float fontScale = getResources().getConfiguration().fontScale * browserTextScale;
-
-        float scaleDelta = Math.abs(fontScale - fontSizePrefs.getFontScaleFactor());
-        if (scaleDelta >= FLOAT_EPSILON) {
-            fontSizePrefs.setFontScaleFactor(fontScale);
-        }
-
-        // If force enable zoom has not been manually set, set it automatically based on
-        // font scale factor.
-        boolean shouldForceZoom =
-                fontScale >= AccessibilityPreferences.FORCE_ENABLE_ZOOM_THRESHOLD_MULTIPLIER;
-        if (!fontSizePrefs.getUserSetForceEnableZoom()
-                && fontSizePrefs.getForceEnableZoom() != shouldForceZoom) {
-            fontSizePrefs.setForceEnableZoom(shouldForceZoom);
-        }
-    }
-
-    /**
      * Update the accept languages after changing Android locale setting. Doing so kills the
      * Activities but it doesn't kill the ChromeApplication, so this should be called in
      * {@link #onStart} instead of {@link #initialize}.
@@ -832,11 +835,11 @@ public class ChromeApplication extends ContentApplication {
     }
 
     private boolean hasLocaleChanged(String newLocale) {
-        String previousLocale = PreferenceManager.getDefaultSharedPreferences(this).getString(
+        String previousLocale = ContextUtils.getAppSharedPreferences().getString(
                 PREF_LOCALE, "");
 
         if (!previousLocale.equals(newLocale)) {
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
             SharedPreferences.Editor editor = prefs.edit();
             editor.putString(PREF_LOCALE, newLocale);
             editor.apply();
@@ -865,7 +868,7 @@ public class ChromeApplication extends ContentApplication {
      */
     private void cacheNativeFlags() {
         if (sIsFinishedCachingNativeFlags) return;
-        FeatureUtilities.cacheHerbFlavor();
+        FeatureUtilities.cacheNativeFlags(this);
         sIsFinishedCachingNativeFlags = true;
     }
 }

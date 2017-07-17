@@ -26,6 +26,7 @@
 #ifndef HTMLDocumentParser_h
 #define HTMLDocumentParser_h
 
+#include "bindings/core/v8/DocumentWriteEvaluator.h"
 #include "core/dom/ParserContentPolicy.h"
 #include "core/dom/ScriptableDocumentParser.h"
 #include "core/fetch/ResourceClient.h"
@@ -46,9 +47,9 @@
 #include "core/html/parser/XSSAuditorDelegate.h"
 #include "platform/text/SegmentedString.h"
 #include "wtf/Deque.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/WeakPtr.h"
 #include "wtf/text/TextPosition.h"
+#include <memory>
 
 namespace blink {
 
@@ -67,12 +68,11 @@ class ParsedChunkQueue;
 class PumpSession;
 
 class HTMLDocumentParser :  public ScriptableDocumentParser, private HTMLScriptRunnerHost {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(HTMLDocumentParser);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLDocumentParser);
+    USING_GARBAGE_COLLECTED_MIXIN(HTMLDocumentParser);
 public:
-    static PassRefPtrWillBeRawPtr<HTMLDocumentParser> create(HTMLDocument& document, bool reportErrors, ParserSynchronizationPolicy backgroundParsingPolicy)
+    static HTMLDocumentParser* create(HTMLDocument& document, ParserSynchronizationPolicy backgroundParsingPolicy)
     {
-        return adoptRefWillBeNoop(new HTMLDocumentParser(document, reportErrors, backgroundParsingPolicy));
+        return new HTMLDocumentParser(document, backgroundParsingPolicy);
     }
     ~HTMLDocumentParser() override;
     DECLARE_VIRTUAL_TRACE();
@@ -94,30 +94,31 @@ public:
     struct ParsedChunk {
         USING_FAST_MALLOC(ParsedChunk);
     public:
-        OwnPtr<CompactHTMLTokenStream> tokens;
+        std::unique_ptr<CompactHTMLTokenStream> tokens;
         PreloadRequestStream preloads;
+        ViewportDescriptionWrapper viewport;
         XSSInfoStream xssInfos;
         HTMLTokenizer::State tokenizerState;
         HTMLTreeBuilderSimulator::State treeBuilderState;
         HTMLInputCheckpoint inputCheckpoint;
         TokenPreloadScannerCheckpoint preloadScannerCheckpoint;
         bool startingScript;
+        // Indices into |tokens|.
+        Vector<int> likelyDocumentWriteScriptIndices;
     };
     void notifyPendingParsedChunks();
     void didReceiveEncodingDataFromBackgroundParser(const DocumentEncodingData&);
 
     void appendBytes(const char* bytes, size_t length) override;
     void flush() final;
-    void setDecoder(PassOwnPtr<TextResourceDecoder>) final;
-
-    UseCounter* useCounter() { return UseCounter::getFrom(contextForParsingSession()); }
+    void setDecoder(std::unique_ptr<TextResourceDecoder>) final;
 
 protected:
     void insert(const SegmentedString&) final;
     void append(const String&) override;
     void finish() final;
 
-    HTMLDocumentParser(HTMLDocument&, bool reportErrors, ParserSynchronizationPolicy);
+    HTMLDocumentParser(HTMLDocument&, ParserSynchronizationPolicy);
     HTMLDocumentParser(DocumentFragment*, Element* contextElement, ParserContentPolicy);
 
     HTMLTreeBuilder* treeBuilder() const { return m_treeBuilder.get(); }
@@ -125,20 +126,20 @@ protected:
     void forcePlaintextForTextDocument();
 
 private:
-    static PassRefPtrWillBeRawPtr<HTMLDocumentParser> create(DocumentFragment* fragment, Element* contextElement, ParserContentPolicy parserContentPolicy)
+    static HTMLDocumentParser* create(DocumentFragment* fragment, Element* contextElement, ParserContentPolicy parserContentPolicy)
     {
-        return adoptRefWillBeNoop(new HTMLDocumentParser(fragment, contextElement, parserContentPolicy));
+        return new HTMLDocumentParser(fragment, contextElement, parserContentPolicy);
     }
 
     // DocumentParser
     void detach() final;
     bool hasInsertionPoint() final;
-    bool processingData() const final;
     void prepareToStopParsing() final;
     void stopParsing() final;
     bool isWaitingForScripts() const final;
     bool isExecutingScript() const final;
     void executeScriptsWaitingForResources() final;
+    void documentElementAvailable() override;
 
     // HTMLScriptRunnerHost
     void notifyScriptLoaded(Resource*) final;
@@ -148,12 +149,10 @@ private:
 
     void startBackgroundParser();
     void stopBackgroundParser();
-    void validateSpeculations(PassOwnPtr<ParsedChunk> lastChunk);
-    void discardSpeculationsAndResumeFrom(PassOwnPtr<ParsedChunk> lastChunk, PassOwnPtr<HTMLToken>, PassOwnPtr<HTMLTokenizer>);
-    size_t processParsedChunkFromBackgroundParser(PassOwnPtr<ParsedChunk>);
+    void validateSpeculations(std::unique_ptr<ParsedChunk> lastChunk);
+    void discardSpeculationsAndResumeFrom(std::unique_ptr<ParsedChunk> lastChunk, std::unique_ptr<HTMLToken>, std::unique_ptr<HTMLTokenizer>);
+    size_t processParsedChunkFromBackgroundParser(std::unique_ptr<ParsedChunk>);
     void pumpPendingSpeculations();
-
-    Document* contextForParsingSession();
 
     bool canTakeNextToken();
     void pumpTokenizer();
@@ -176,19 +175,39 @@ private:
     bool inPumpSession() const { return m_pumpSessionNestingLevel > 0; }
     bool shouldDelayEnd() const { return inPumpSession() || isWaitingForScripts() || isScheduledForResume() || isExecutingScript(); }
 
+    std::unique_ptr<HTMLPreloadScanner> createPreloadScanner();
+
+    int preloadInsertion(const SegmentedString& source);
+    void evaluateAndPreloadScriptForDocumentWrite(const String& source);
+
+    // Temporary enum for the ParseHTMLOnMainThread experiment. This is used to
+    // annotate whether a given task should post a task or not on the main
+    // thread if the lookahead parser is living on the main thread.
+    enum LookaheadParserTaskSynchrony {
+        Synchronous,
+        Asynchronous,
+    };
+
+    // Setting |synchronyPolicy| to Synchronous will just call the function
+    // with the given parameters. Note, this method is completely temporary
+    // as we need to maintain both threading implementations until the
+    // ParseHTMLOnMainThread experiment finishes.
+    template <typename FunctionType, typename... Ps>
+    void postTaskToLookaheadParser(LookaheadParserTaskSynchrony synchronyPolicy, FunctionType, Ps&&... parameters);
+
     HTMLToken& token() { return *m_token; }
 
     HTMLParserOptions m_options;
     HTMLInputStream m_input;
 
-    OwnPtr<HTMLToken> m_token;
-    OwnPtr<HTMLTokenizer> m_tokenizer;
-    OwnPtrWillBeMember<HTMLScriptRunner> m_scriptRunner;
-    OwnPtrWillBeMember<HTMLTreeBuilder> m_treeBuilder;
-    OwnPtr<HTMLPreloadScanner> m_preloadScanner;
-    OwnPtr<HTMLPreloadScanner> m_insertionPreloadScanner;
-    OwnPtr<WebTaskRunner> m_loadingTaskRunner;
-    OwnPtrWillBeMember<HTMLParserScheduler> m_parserScheduler;
+    std::unique_ptr<HTMLToken> m_token;
+    std::unique_ptr<HTMLTokenizer> m_tokenizer;
+    Member<HTMLScriptRunner> m_scriptRunner;
+    Member<HTMLTreeBuilder> m_treeBuilder;
+    std::unique_ptr<HTMLPreloadScanner> m_preloadScanner;
+    std::unique_ptr<HTMLPreloadScanner> m_insertionPreloadScanner;
+    std::unique_ptr<WebTaskRunner> m_loadingTaskRunner;
+    Member<HTMLParserScheduler> m_parserScheduler;
     HTMLSourceTracker m_sourceTracker;
     TextPosition m_textPosition;
     XSSAuditor m_xssAuditor;
@@ -196,13 +215,15 @@ private:
 
     // FIXME: m_lastChunkBeforeScript, m_tokenizer, m_token, and m_input should be combined into a single state object
     // so they can be set and cleared together and passed between threads together.
-    OwnPtr<ParsedChunk> m_lastChunkBeforeScript;
-    Deque<OwnPtr<ParsedChunk>> m_speculations;
+    std::unique_ptr<ParsedChunk> m_lastChunkBeforeScript;
+    Deque<std::unique_ptr<ParsedChunk>> m_speculations;
     WeakPtrFactory<HTMLDocumentParser> m_weakFactory;
     WeakPtr<BackgroundHTMLParser> m_backgroundParser;
-    OwnPtrWillBeMember<HTMLResourcePreloader> m_preloader;
+    Member<HTMLResourcePreloader> m_preloader;
     PreloadRequestStream m_queuedPreloads;
+    Vector<String> m_queuedDocumentWriteScripts;
     RefPtr<ParsedChunkQueue> m_parsedChunkQueue;
+    std::unique_ptr<DocumentWriteEvaluator> m_evaluator;
 
     bool m_shouldUseThreading;
     bool m_endWasDelayed;
@@ -211,6 +232,7 @@ private:
     unsigned m_pumpSessionNestingLevel;
     unsigned m_pumpSpeculationsSessionNestingLevel;
     bool m_isParsingAtLineNumber;
+    bool m_triedLoadingLinkHeaders;
 };
 
 } // namespace blink

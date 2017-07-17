@@ -8,12 +8,11 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -235,7 +234,7 @@ TEST(ProxyScriptDeciderTest, CustomPacFails1) {
   EXPECT_EQ(kFailedDownloading,
             decider.Start(config, base::TimeDelta(), true,
                           callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 
   // Check the NetLog was filled correctly.
   TestNetLogEntry::List entries;
@@ -270,7 +269,7 @@ TEST(ProxyScriptDeciderTest, CustomPacFails2) {
   EXPECT_EQ(kFailedParsing,
             decider.Start(config, base::TimeDelta(), true,
                           callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 }
 
 // Fail downloading the custom PAC script, because the fetcher was NULL.
@@ -286,7 +285,7 @@ TEST(ProxyScriptDeciderTest, HasNullProxyScriptFetcher) {
   EXPECT_EQ(ERR_UNEXPECTED,
             decider.Start(config, base::TimeDelta(), true,
                           callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 }
 
 // Succeeds in choosing autodetect (WPAD DNS).
@@ -329,7 +328,7 @@ class ProxyScriptDeciderQuickCheckTest : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<ProxyScriptDecider> decider_;
+  std::unique_ptr<ProxyScriptDecider> decider_;
   MockHostResolver resolver_;
   Rules rules_;
   Rules::Rule rule_;
@@ -550,7 +549,7 @@ TEST(ProxyScriptDeciderTest, AutodetectFailCustomFails1) {
   EXPECT_EQ(kFailedDownloading,
             decider.Start(config, base::TimeDelta(), true,
                           callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 }
 
 // Fails at WPAD (downloading), and fails at custom PAC (parsing).
@@ -571,7 +570,7 @@ TEST(ProxyScriptDeciderTest, AutodetectFailCustomFails2) {
   EXPECT_EQ(kFailedParsing,
             decider.Start(config, base::TimeDelta(), true,
                           callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 }
 
 // This is a copy-paste of CustomPacFails1, with the exception that we give it
@@ -595,7 +594,7 @@ TEST(ProxyScriptDeciderTest, CustomPacFails1_WithPositiveDelay) {
                       true, callback.callback()));
 
   EXPECT_EQ(kFailedDownloading, callback.WaitForResult());
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 
   // Check the NetLog was filled correctly.
   TestNetLogEntry::List entries;
@@ -635,7 +634,7 @@ TEST(ProxyScriptDeciderTest, CustomPacFails1_WithNegativeDelay) {
   EXPECT_EQ(kFailedDownloading,
             decider.Start(config, base::TimeDelta::FromSeconds(-5),
                           true, callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 
   // Check the NetLog was filled correctly.
   TestNetLogEntry::List entries;
@@ -725,7 +724,7 @@ TEST(ProxyScriptDeciderTest, AutodetectDhcpFailParse) {
   // it failed downloading, not that it failed parsing.
   EXPECT_EQ(kFailedDownloading,
       decider.Start(config, base::TimeDelta(), true, callback.callback()));
-  EXPECT_EQ(nullptr, decider.script_data());
+  EXPECT_FALSE(decider.script_data());
 
   EXPECT_FALSE(decider.effective_config().has_pac_url());
 }
@@ -768,7 +767,8 @@ TEST(ProxyScriptDeciderTest, DhcpCancelledByDestructor) {
   Rules rules;
   RuleBasedProxyScriptFetcher fetcher(&rules);
 
-  scoped_ptr<AsyncFailDhcpFetcher> dhcp_fetcher(new AsyncFailDhcpFetcher());
+  std::unique_ptr<AsyncFailDhcpFetcher> dhcp_fetcher(
+      new AsyncFailDhcpFetcher());
 
   ProxyConfig config;
   config.set_auto_detect(true);
@@ -786,7 +786,7 @@ TEST(ProxyScriptDeciderTest, DhcpCancelledByDestructor) {
   // back. Before the fix linked to above, this would try to invoke on
   // the callback object provided by ProxyScriptDecider after it was
   // no longer valid.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace

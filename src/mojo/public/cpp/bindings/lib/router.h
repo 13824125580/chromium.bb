@@ -8,45 +8,48 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <queue>
 
+#include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
-#include "mojo/public/cpp/bindings/callback.h"
-#include "mojo/public/cpp/bindings/lib/connector.h"
+#include "mojo/public/cpp/bindings/connector.h"
 #include "mojo/public/cpp/bindings/lib/filter_chain.h"
-#include "mojo/public/cpp/environment/environment.h"
 
 namespace mojo {
 namespace internal {
 
+// TODO(yzshen): Consider removing this class and use MultiplexRouter in all
+// cases. crbug.com/594244
 class Router : public MessageReceiverWithResponder {
  public:
   Router(ScopedMessagePipeHandle message_pipe,
          FilterChain filters,
          bool expects_sync_requests,
-         const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter());
+         scoped_refptr<base::SingleThreadTaskRunner> runner);
   ~Router() override;
 
   // Sets the receiver to handle messages read from the message pipe that do
-  // not have the kMessageIsResponse flag set.
+  // not have the Message::kFlagIsResponse flag set.
   void set_incoming_receiver(MessageReceiverWithResponderStatus* receiver) {
     incoming_receiver_ = receiver;
   }
 
   // Sets the error handler to receive notifications when an error is
   // encountered while reading from the pipe or waiting to read from the pipe.
-  void set_connection_error_handler(const Closure& error_handler) {
-    connector_.set_connection_error_handler(error_handler);
+  void set_connection_error_handler(const base::Closure& error_handler) {
+    error_handler_ = error_handler;
   }
 
   // Returns true if an error was encountered while reading from the pipe or
   // waiting to read from the pipe.
   bool encountered_error() const {
     DCHECK(thread_checker_.CalledOnValidThread());
-    return connector_.encountered_error();
+    return encountered_error_;
   }
 
   // Is the router bound to a MessagePipe handle?
@@ -113,14 +116,15 @@ class Router : public MessageReceiverWithResponder {
  private:
   // Maps from the id of a response to the MessageReceiver that handles the
   // response.
-  using AsyncResponderMap = std::map<uint64_t, scoped_ptr<MessageReceiver>>;
+  using AsyncResponderMap =
+      std::map<uint64_t, std::unique_ptr<MessageReceiver>>;
 
   struct SyncResponseInfo {
    public:
     explicit SyncResponseInfo(bool* in_response_received);
     ~SyncResponseInfo();
 
-    scoped_ptr<Message> response;
+    std::unique_ptr<Message> response;
 
     // Points to a stack-allocated variable.
     bool* response_received;
@@ -129,7 +133,7 @@ class Router : public MessageReceiverWithResponder {
     DISALLOW_COPY_AND_ASSIGN(SyncResponseInfo);
   };
 
-  using SyncResponseMap = std::map<uint64_t, scoped_ptr<SyncResponseInfo>>;
+  using SyncResponseMap = std::map<uint64_t, std::unique_ptr<SyncResponseInfo>>;
 
   class HandleIncomingMessageThunk : public MessageReceiver {
    public:
@@ -145,8 +149,9 @@ class Router : public MessageReceiverWithResponder {
 
   bool HandleIncomingMessage(Message* message);
   void HandleQueuedMessages();
-
   bool HandleMessageInternal(Message* message);
+
+  void OnConnectionError();
 
   HandleIncomingMessageThunk thunk_;
   FilterChain filters_;
@@ -156,10 +161,12 @@ class Router : public MessageReceiverWithResponder {
   SyncResponseMap sync_responses_;
   uint64_t next_request_id_;
   bool testing_mode_;
-  std::queue<scoped_ptr<Message>> pending_messages_;
+  std::queue<std::unique_ptr<Message>> pending_messages_;
   // Whether a task has been posted to trigger processing of
   // |pending_messages_|.
   bool pending_task_for_messages_;
+  bool encountered_error_;
+  base::Closure error_handler_;
   base::ThreadChecker thread_checker_;
   base::WeakPtrFactory<Router> weak_factory_;
 };

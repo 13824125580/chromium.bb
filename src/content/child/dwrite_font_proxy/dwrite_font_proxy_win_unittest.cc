@@ -8,8 +8,9 @@
 #include <shlobj.h>
 #include <wrl.h>
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/dwrite_font_proxy_messages.h"
 #include "content/common/view_messages.h"
 #include "content/test/dwrite_font_fake_sender_win.h"
@@ -47,8 +48,7 @@ class DWriteFontProxyUnitTest : public testing::Test {
     fake_collection_ = new FakeFontCollection();
     SetupFonts(fake_collection_.get());
     mswr::MakeAndInitialize<DWriteFontCollectionProxy>(
-        &collection_, factory.Get(),
-        base::Bind(&FakeFontCollection::GetTrackingSender, fake_collection_));
+        &collection_, factory.Get(), fake_collection_->GetTrackingSender());
   }
 
   ~DWriteFontProxyUnitTest() override {
@@ -371,6 +371,39 @@ TEST_F(DWriteFontProxyUnitTest, GetFontFromFontFaceShouldFindFont) {
   collection_->GetFontFromFontFace(font_face.Get(), &found_font);
   EXPECT_NE(nullptr, found_font.Get());
   EXPECT_EQ(3u, fake_collection_->MessageCount());
+}
+
+TEST_F(DWriteFontProxyUnitTest, TestCustomFontFiles) {
+  scoped_refptr<FakeFontCollection> fonts = new FakeFontCollection();
+  FakeFont& arial = fonts->AddFont(L"Arial").AddFamilyName(L"en-us", L"Arial");
+  for (auto& path : arial_font_files) {
+    base::File file(base::FilePath(path), base::File::FLAG_OPEN |
+                                              base::File::FLAG_READ |
+                                              base::File::FLAG_EXCLUSIVE_WRITE);
+    arial.AddFileHandle(IPC::TakePlatformFileForTransit(std::move(file)));
+  }
+  mswr::ComPtr<DWriteFontCollectionProxy> collection;
+  mswr::MakeAndInitialize<DWriteFontCollectionProxy>(
+      &collection, factory.Get(), fonts->GetTrackingSender());
+
+  // Check that we can get the font family and match a font.
+  UINT32 index = UINT_MAX;
+  BOOL exists = FALSE;
+  collection->FindFamilyName(L"Arial", &index, &exists);
+  mswr::ComPtr<IDWriteFontFamily> family;
+  collection->GetFontFamily(index, &family);
+
+  mswr::ComPtr<IDWriteFont> font;
+  HRESULT hr = family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL,
+                                            DWRITE_FONT_STRETCH_NORMAL,
+                                            DWRITE_FONT_STYLE_NORMAL, &font);
+
+  EXPECT_TRUE(SUCCEEDED(hr));
+  EXPECT_NE(nullptr, font.Get());
+
+  mswr::ComPtr<IDWriteFontFace> font_face;
+  hr = font->CreateFontFace(&font_face);
+  EXPECT_TRUE(SUCCEEDED(hr));
 }
 
 }  // namespace

@@ -32,26 +32,27 @@
 #define FrameHost_h
 
 #include "core/CoreExport.h"
-#include "core/frame/PageScaleConstraintsSet.h"
-#include "core/frame/TopControls.h"
-#include "core/frame/VisualViewport.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/text/AtomicString.h"
+#include <memory>
 
 namespace blink {
 
 class ChromeClient;
-class ConsoleMessageStorage;
+class CustomElementReactionStack;
 class Deprecation;
 class EventHandlerRegistry;
+class OverscrollController;
 class Page;
+struct PageScaleConstraints;
 class PageScaleConstraintsSet;
 class Settings;
+class TopControls;
 class UseCounter;
 class Visitor;
+class VisualViewport;
 
 // FrameHost is the set of global data shared between multiple frames
 // and is provided by the embedder to each frame when created.
@@ -62,33 +63,58 @@ class Visitor;
 // browser-level concept and Blink core/ only knows about its LocalFrame (and FrameHost).
 // Separating Page from the rest of core/ through this indirection
 // allows us to slowly refactor Page without breaking the rest of core.
-class CORE_EXPORT FrameHost final : public NoBaseWillBeGarbageCollectedFinalized<FrameHost> {
-    WTF_MAKE_NONCOPYABLE(FrameHost); USING_FAST_MALLOC_WILL_BE_REMOVED(FrameHost);
+class CORE_EXPORT FrameHost final : public GarbageCollectedFinalized<FrameHost> {
+    WTF_MAKE_NONCOPYABLE(FrameHost);
 public:
-    static PassOwnPtrWillBeRawPtr<FrameHost> create(Page&);
+    static FrameHost* create(Page&);
     ~FrameHost();
 
     // Careful: This function will eventually be removed.
-    Page& page() const { return *m_page; }
-    Settings& settings() const;
-    ChromeClient& chromeClient() const;
-    UseCounter& useCounter() const;
-    Deprecation& deprecation() const;
+    Page& page();
+    const Page& page() const;
+
+    Settings& settings();
+    const Settings& settings() const;
+
+    ChromeClient& chromeClient();
+    const ChromeClient& chromeClient() const;
+
+    UseCounter& useCounter();
+    const UseCounter& useCounter() const;
+
+    Deprecation& deprecation();
+    const Deprecation& deprecation() const;
 
     // Corresponds to pixel density of the device where this Page is
     // being displayed. In multi-monitor setups this can vary between pages.
     // This value does not account for Page zoom, use LocalFrame::devicePixelRatio instead.
-    float deviceScaleFactor() const;
+    // This is to be deprecated. Use this with caution.
+    // 1) If you need to scale the content per device scale factor, this is still valid.
+    //    In use-zoom-for-dsf mode, this is always 1, and will be remove when transition is complete.
+    // 2) If you want to compute the device related measure (such as device pixel height, or the scale factor for drag image),
+    //    use ChromeClient::screenInfo() instead.
+    float deviceScaleFactorDeprecated() const;
 
-    TopControls& topControls() const;
-    VisualViewport& visualViewport() const;
-    PageScaleConstraintsSet& pageScaleConstraintsSet() const;
-    EventHandlerRegistry& eventHandlerRegistry() const;
+    TopControls& topControls();
+    const TopControls& topControls() const;
+
+    OverscrollController& overscrollController();
+    const OverscrollController& overscrollController() const;
+
+    VisualViewport& visualViewport();
+    const VisualViewport& visualViewport() const;
+
+    PageScaleConstraintsSet& pageScaleConstraintsSet();
+    const PageScaleConstraintsSet& pageScaleConstraintsSet() const;
+
+    EventHandlerRegistry& eventHandlerRegistry();
+    const EventHandlerRegistry& eventHandlerRegistry() const;
 
     const AtomicString& overrideEncoding() const { return m_overrideEncoding; }
     void setOverrideEncoding(const AtomicString& encoding) { m_overrideEncoding = encoding; }
 
-    ConsoleMessageStorage& consoleMessageStorage() const;
+    CustomElementReactionStack& customElementReactionStack();
+    const CustomElementReactionStack& customElementReactionStack() const;
 
     DECLARE_TRACE();
 
@@ -102,17 +128,18 @@ public:
     int subframeCount() const;
 
     void setDefaultPageScaleLimits(float minScale, float maxScale);
-    void setUserAgentPageScaleConstraints(PageScaleConstraints newConstraints);
+    void setUserAgentPageScaleConstraints(const PageScaleConstraints& newConstraints);
 
 private:
     explicit FrameHost(Page&);
 
-    RawPtrWillBeMember<Page> m_page;
-    const OwnPtrWillBeMember<TopControls> m_topControls;
-    const OwnPtr<PageScaleConstraintsSet> m_pageScaleConstraintsSet;
-    const OwnPtrWillBeMember<VisualViewport> m_visualViewport;
-    const OwnPtrWillBeMember<EventHandlerRegistry> m_eventHandlerRegistry;
-    const OwnPtrWillBeMember<ConsoleMessageStorage> m_consoleMessageStorage;
+    const Member<Page> m_page;
+    const Member<TopControls> m_topControls;
+    const std::unique_ptr<PageScaleConstraintsSet> m_pageScaleConstraintsSet;
+    const Member<VisualViewport> m_visualViewport;
+    const Member<OverscrollController> m_overscrollController;
+    const Member<EventHandlerRegistry> m_eventHandlerRegistry;
+    const Member<CustomElementReactionStack> m_customElementReactionStack;
 
     AtomicString m_overrideEncoding;
     int m_subframeCount;

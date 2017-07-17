@@ -4,6 +4,7 @@
 
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_cocoa_controller.h"
 
+#import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"  // IDC_BOOKMARK_MENU
 #import "chrome/browser/app_controller_mac.h"
@@ -14,7 +15,6 @@
 #include "chrome/browser/ui/browser_finder.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_bridge.h"
 #import "chrome/browser/ui/cocoa/l10n_util.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "content/public/browser/user_metrics.h"
 #import "ui/base/cocoa/cocoa_base_utils.h"
@@ -72,7 +72,8 @@ const NSUInteger kMaximumMenuPixelsWide = 300;
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
-  AppController* controller = [NSApp delegate];
+  AppController* controller =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
   return ![controller keyWindowIsModal];
 }
 

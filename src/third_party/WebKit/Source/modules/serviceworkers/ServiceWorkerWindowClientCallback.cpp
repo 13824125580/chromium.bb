@@ -8,24 +8,25 @@
 #include "core/dom/DOMException.h"
 #include "modules/serviceworkers/ServiceWorkerError.h"
 #include "modules/serviceworkers/ServiceWorkerWindowClient.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
-void NavigateClientCallback::onSuccess(WebPassOwnPtr<WebServiceWorkerClientInfo> clientInfo)
+void NavigateClientCallback::onSuccess(std::unique_ptr<WebServiceWorkerClientInfo> clientInfo)
 {
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+    if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
         return;
-    m_resolver->resolve(ServiceWorkerWindowClient::take(m_resolver.get(), clientInfo.release()));
+    m_resolver->resolve(ServiceWorkerWindowClient::take(m_resolver.get(), wrapUnique(clientInfo.release())));
 }
 
 void NavigateClientCallback::onError(const WebServiceWorkerError& error)
 {
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+    if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
         return;
 
     if (error.errorType == WebServiceWorkerError::ErrorTypeNavigation)  {
-        ScriptState::Scope scope(m_resolver->scriptState());
-        m_resolver->reject(V8ThrowException::createTypeError(m_resolver->scriptState()->isolate(), error.message));
+        ScriptState::Scope scope(m_resolver->getScriptState());
+        m_resolver->reject(V8ThrowException::createTypeError(m_resolver->getScriptState()->isolate(), error.message));
         return;
     }
 

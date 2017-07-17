@@ -7,10 +7,9 @@
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/quic/quic_clock.h"
-#include "net/quic/quic_time.h"
 
 namespace net {
 
@@ -77,7 +76,7 @@ void QuicChromiumPacketReader::OnReadComplete(int result) {
     return;
   }
 
-  QuicEncryptedPacket packet(read_buffer_->data(), result);
+  QuicReceivedPacket packet(read_buffer_->data(), result, clock_->Now());
   IPEndPoint local_address;
   IPEndPoint peer_address;
   socket_->GetLocalAddress(&local_address);

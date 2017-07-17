@@ -8,23 +8,28 @@
 #include <stddef.h>
 
 #include <bitset>
+#include <string>
 
 #include "base/macros.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/network_change_notifier.h"
-#include "net/base/socket_performance_watcher.h"
+#include "net/cert/cert_verify_result.h"
 #include "net/log/net_log.h"
+#include "net/quic/crypto/crypto_handshake_message.h"
 #include "net/quic/quic_connection.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/quic_spdy_session.h"
+#include "net/socket/socket_performance_watcher.h"
+
+namespace base {
+class HistogramBase;
+}
 
 namespace net {
 namespace test {
 class QuicConnectionLoggerPeer;
 }  // namespace test
 
-class CryptoHandshakeMessage;
-class CertVerifyResult;
 
 // This class is a debug visitor of a QuicConnection which logs
 // events to |net_log|.
@@ -35,7 +40,7 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   QuicConnectionLogger(
       QuicSpdySession* session,
       const char* const connection_description,
-      scoped_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+      std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
       const BoundNetLog& net_log);
 
   ~QuicConnectionLogger() override;
@@ -45,6 +50,7 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
 
   // QuicConnectionDebugVisitorInterface
   void OnPacketSent(const SerializedPacket& serialized_packet,
+                    QuicPathId original_path_id,
                     QuicPacketNumber original_packet_number,
                     TransmissionType transmission_type,
                     QuicTime sent_time) override;
@@ -69,9 +75,8 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   void OnPublicResetPacket(const QuicPublicResetPacket& packet) override;
   void OnVersionNegotiationPacket(
       const QuicVersionNegotiationPacket& packet) override;
-  void OnRevivedPacket(const QuicPacketHeader& revived_header,
-                       base::StringPiece payload) override;
   void OnConnectionClosed(QuicErrorCode error,
+                          const std::string& error_details,
                           ConnectionCloseSource source) override;
   void OnSuccessfulVersionNegotiation(const QuicVersion& version) override;
   void OnRttChanged(QuicTime::Delta rtt) const override;
@@ -186,7 +191,7 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   const char* const connection_description_;
   // Receives notifications regarding the performance of the underlying socket
   // for the QUIC connection. May be null.
-  const scoped_ptr<SocketPerformanceWatcher> socket_performance_watcher_;
+  const std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionLogger);
 };

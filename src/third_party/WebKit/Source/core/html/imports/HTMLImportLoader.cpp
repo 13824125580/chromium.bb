@@ -33,12 +33,13 @@
 #include "core/dom/Document.h"
 #include "core/dom/DocumentParser.h"
 #include "core/dom/StyleEngine.h"
-#include "core/dom/custom/CustomElementSyncMicrotaskQueue.h"
+#include "core/dom/custom/V0CustomElementSyncMicrotaskQueue.h"
 #include "core/html/HTMLDocument.h"
 #include "core/html/imports/HTMLImportChild.h"
 #include "core/html/imports/HTMLImportsController.h"
 #include "core/loader/DocumentWriter.h"
 #include "platform/network/ContentSecurityPolicyResponseHeaders.h"
+#include <memory>
 
 
 namespace blink {
@@ -46,15 +47,12 @@ namespace blink {
 HTMLImportLoader::HTMLImportLoader(HTMLImportsController* controller)
     : m_controller(controller)
     , m_state(StateLoading)
-    , m_microtaskQueue(CustomElementSyncMicrotaskQueue::create())
+    , m_microtaskQueue(V0CustomElementSyncMicrotaskQueue::create())
 {
 }
 
 HTMLImportLoader::~HTMLImportLoader()
 {
-#if !ENABLE(OILPAN)
-    dispose();
-#endif
 }
 
 void HTMLImportLoader::dispose()
@@ -69,12 +67,12 @@ void HTMLImportLoader::dispose()
     clearResource();
 }
 
-void HTMLImportLoader::startLoading(const PassRefPtrWillBeRawPtr<RawResource>& resource)
+void HTMLImportLoader::startLoading(RawResource* resource)
 {
     setResource(resource);
 }
 
-void HTMLImportLoader::responseReceived(Resource* resource, const ResourceResponse& response, PassOwnPtr<WebDataConsumerHandle> handle)
+void HTMLImportLoader::responseReceived(Resource* resource, const ResourceResponse& response, std::unique_ptr<WebDataConsumerHandle> handle)
 {
     ASSERT_UNUSED(handle, !handle);
     // Resource may already have been loaded with the import loader
@@ -88,7 +86,6 @@ void HTMLImportLoader::responseReceived(Resource* resource, const ResourceRespon
 
 void HTMLImportLoader::dataReceived(Resource*, const char* data, size_t length)
 {
-    RefPtrWillBeRawPtr<DocumentWriter> protectingWriter(m_writer.get());
     m_writer->addData(data, length);
 }
 
@@ -143,7 +140,7 @@ void HTMLImportLoader::setState(State state)
     m_state = state;
 
     if (m_state == StateParsed || m_state == StateError || m_state == StateWritten) {
-        if (RefPtrWillBeRawPtr<DocumentWriter> writer = m_writer.release())
+        if (DocumentWriter* writer = m_writer.release())
             writer->end();
     }
 
@@ -173,7 +170,7 @@ void HTMLImportLoader::didRemoveAllPendingStylesheet()
 
 bool HTMLImportLoader::hasPendingResources() const
 {
-    return m_document && m_document->styleEngine().hasPendingSheets();
+    return m_document && m_document->styleEngine().hasPendingScriptBlockingSheets();
 }
 
 void HTMLImportLoader::didFinishLoading()
@@ -215,7 +212,7 @@ bool HTMLImportLoader::shouldBlockScriptExecution() const
     return firstImport()->state().shouldBlockScriptExecution();
 }
 
-PassRefPtrWillBeRawPtr<CustomElementSyncMicrotaskQueue> HTMLImportLoader::microtaskQueue() const
+V0CustomElementSyncMicrotaskQueue* HTMLImportLoader::microtaskQueue() const
 {
     return m_microtaskQueue;
 }
@@ -223,9 +220,7 @@ PassRefPtrWillBeRawPtr<CustomElementSyncMicrotaskQueue> HTMLImportLoader::microt
 DEFINE_TRACE(HTMLImportLoader)
 {
     visitor->trace(m_controller);
-#if ENABLE(OILPAN)
     visitor->trace(m_imports);
-#endif
     visitor->trace(m_document);
     visitor->trace(m_writer);
     visitor->trace(m_microtaskQueue);

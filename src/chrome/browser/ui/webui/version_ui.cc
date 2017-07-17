@@ -5,7 +5,8 @@
 #include "chrome/browser/ui/webui/version_ui.h"
 
 #include "base/command_line.h"
-#include "base/strings/string_number_conversions.h"
+#include "base/i18n/message_formatter.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/version_handler.h"
@@ -58,6 +59,7 @@ WebUIDataSource* CreateVersionUIDataSource() {
   html_source->AddString(version_ui::kVersionModifier,
                          chrome::GetChannelString());
   html_source->AddLocalizedString(version_ui::kOSName, IDS_VERSION_UI_OS);
+  html_source->AddLocalizedString(version_ui::kARC, IDS_ARC_LABEL);
   html_source->AddLocalizedString(version_ui::kPlatform, IDS_PLATFORM_LABEL);
   html_source->AddString(version_ui::kOSType, version_info::GetOSType());
   html_source->AddString(version_ui::kBlinkVersion,
@@ -68,9 +70,6 @@ WebUIDataSource* CreateVersionUIDataSource() {
 #if defined(OS_ANDROID)
   html_source->AddString(version_ui::kOSVersion,
                          AndroidAboutAppInfo::GetOsInfo());
-  html_source->AddLocalizedString(version_ui::kBuildIDName,
-                                  IDS_VERSION_UI_BUILD_ID);
-  html_source->AddString(version_ui::kBuildID, CHROME_BUILD_ID);
 #else
   html_source->AddString(version_ui::kOSVersion, std::string());
   html_source->AddString(version_ui::kFlashPlugin, "Flash");
@@ -81,12 +80,11 @@ WebUIDataSource* CreateVersionUIDataSource() {
 
   html_source->AddLocalizedString(version_ui::kCompany,
                                   IDS_ABOUT_VERSION_COMPANY_NAME);
-  base::Time::Exploded exploded_time;
-  base::Time::Now().LocalExplode(&exploded_time);
   html_source->AddString(
       version_ui::kCopyright,
-      l10n_util::GetStringFUTF16(IDS_ABOUT_VERSION_COPYRIGHT,
-                                 base::IntToString16(exploded_time.year)));
+      base::i18n::MessageFormatter::FormatWithNumberedArgs(
+          l10n_util::GetStringUTF16(IDS_ABOUT_VERSION_COPYRIGHT),
+          base::Time::Now()));
   html_source->AddLocalizedString(version_ui::kRevision,
                                   IDS_VERSION_UI_REVISION);
   html_source->AddString(version_ui::kCL, version_info::GetLastChange());
@@ -139,10 +137,16 @@ WebUIDataSource* CreateVersionUIDataSource() {
 #if defined(OS_WIN)
 #if defined(__clang__)
   html_source->AddString("compiler", "clang");
+#elif defined(_MSC_VER) && _MSC_VER == 1900
+  html_source->AddString("compiler", "MSVC 2015");
+#elif defined(_MSC_VER) && _MSC_VER == 1800
+  html_source->AddString("compiler", "MSVC 2013");
+#elif defined(_MSC_VER)
+#error "Unsupported version of MSVC."
 #else
-  html_source->AddString("compiler", "MSVC");
+  html_source->AddString("compiler", "Unknown");
 #endif
-#endif
+#endif  // defined(OS_WIN)
 
   html_source->SetJsonPath("strings.js");
   html_source->AddResourcePath(version_ui::kVersionJS, IDR_VERSION_UI_JS);

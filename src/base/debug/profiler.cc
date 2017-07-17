@@ -13,6 +13,7 @@
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
+#include "base/win/current_module.h"
 #include "base/win/pe_image.h"
 #endif  // defined(OS_WIN)
 
@@ -108,9 +109,6 @@ MoveDynamicSymbol GetProfilerMoveDynamicSymbolFunc() {
 
 #else  // defined(OS_WIN)
 
-// http://blogs.msdn.com/oldnewthing/archive/2004/10/25/247180.aspx
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
 bool IsBinaryInstrumented() {
   enum InstrumentationCheckState {
     UNINITIALIZED,
@@ -121,8 +119,7 @@ bool IsBinaryInstrumented() {
   static InstrumentationCheckState state = UNINITIALIZED;
 
   if (state == UNINITIALIZED) {
-    HMODULE this_module = reinterpret_cast<HMODULE>(&__ImageBase);
-    base::win::PEImage image(this_module);
+    base::win::PEImage image(CURRENT_MODULE());
 
     // Check to be sure our image is structured as we'd expect.
     DCHECK(image.VerifyMagic());
@@ -157,8 +154,8 @@ bool FindResolutionFunctionInImports(
   FunctionSearchContext* context =
       reinterpret_cast<FunctionSearchContext*>(cookie);
 
-  DCHECK_NE(static_cast<FunctionSearchContext*>(NULL), context);
-  DCHECK_EQ(static_cast<FARPROC>(NULL), context->function);
+  DCHECK(context);
+  DCHECK(!context->function);
 
   // Our import address table contains pointers to the functions we import
   // at this point. Let's retrieve the first such function and use it to
@@ -192,8 +189,7 @@ FunctionType FindFunctionInImports(const char* function_name) {
   if (!IsBinaryInstrumented())
     return NULL;
 
-  HMODULE this_module = reinterpret_cast<HMODULE>(&__ImageBase);
-  base::win::PEImage image(this_module);
+  base::win::PEImage image(CURRENT_MODULE());
 
   FunctionSearchContext ctx = { function_name, NULL };
   image.EnumImportChunks(FindResolutionFunctionInImports, &ctx);

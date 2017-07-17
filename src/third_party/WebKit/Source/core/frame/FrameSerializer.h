@@ -35,10 +35,9 @@
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KURLHash.h"
-#include "wtf/ListHashSet.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/Forward.h"
+#include "wtf/HashSet.h"
 #include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -86,9 +85,15 @@ public:
             return false;
         }
 
-        // Tells whether to skip serialization of a subresource with a given URI.
-        // Used to deduplicate resources across multiple frames.
-        virtual bool shouldSkipResource(const KURL&)
+        // Tells whether to skip serialization of a subresource or CSSStyleSheet
+        // with a given URI. Used to deduplicate resources across multiple frames.
+        virtual bool shouldSkipResourceWithURL(const KURL&)
+        {
+            return false;
+        }
+
+        // Tells whether to skip serialization of a subresource.
+        virtual bool shouldSkipResource(const Resource&)
         {
             return false;
         }
@@ -118,15 +123,15 @@ private:
 
     bool shouldAddURL(const KURL&);
 
-    void addToResources(Resource *, PassRefPtr<SharedBuffer>, const KURL&);
+    void addToResources(const Resource&, PassRefPtr<SharedBuffer>, const KURL&);
     void addImageToResources(ImageResource*, const KURL&);
     void addFontToResources(FontResource*);
 
     void retrieveResourcesForProperties(const StylePropertySet*, Document&);
-    void retrieveResourcesForCSSValue(CSSValue*, Document&);
+    void retrieveResourcesForCSSValue(const CSSValue&, Document&);
 
     Vector<SerializedResource>* m_resources;
-    ListHashSet<KURL> m_resourceURLs;
+    HashSet<KURL> m_resourceURLs;
 
     Delegate& m_delegate;
 };

@@ -6,6 +6,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_icon_manager.h"
@@ -44,7 +45,7 @@ class ExtensionIconManagerTest : public testing::Test {
   void WaitForImageLoad() {
     if (unwaited_image_loads_ == 0) {
       waiting_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       waiting_ = false;
     }
     ASSERT_GT(unwaited_image_loads_, 0);
@@ -102,7 +103,7 @@ SkBitmap GetDefaultIcon() {
 
 // Tests loading an icon for an extension, removing it, then re-loading it.
 TEST_F(ExtensionIconManagerTest, LoadRemoveLoad) {
-  scoped_ptr<Profile> profile(new TestingProfile());
+  std::unique_ptr<Profile> profile(new TestingProfile());
   SkBitmap default_icon = GetDefaultIcon();
 
   base::FilePath test_dir;
@@ -111,7 +112,7 @@ TEST_F(ExtensionIconManagerTest, LoadRemoveLoad) {
       "extensions/image_loading_tracker/app.json");
 
   JSONFileValueDeserializer deserializer(manifest_path);
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       base::DictionaryValue::From(deserializer.Deserialize(NULL, NULL));
   ASSERT_TRUE(manifest.get() != NULL);
 
@@ -144,7 +145,7 @@ TEST_F(ExtensionIconManagerTest, LoadRemoveLoad) {
 #if defined(OS_CHROMEOS)
 // Tests loading an icon for a component extension.
 TEST_F(ExtensionIconManagerTest, LoadComponentExtensionResource) {
-  scoped_ptr<Profile> profile(new TestingProfile());
+  std::unique_ptr<Profile> profile(new TestingProfile());
   SkBitmap default_icon = GetDefaultIcon();
 
   base::FilePath test_dir;
@@ -153,7 +154,7 @@ TEST_F(ExtensionIconManagerTest, LoadComponentExtensionResource) {
       "extensions/file_manager/app.json");
 
   JSONFileValueDeserializer deserializer(manifest_path);
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       base::DictionaryValue::From(deserializer.Deserialize(NULL, NULL));
   ASSERT_TRUE(manifest.get() != NULL);
 

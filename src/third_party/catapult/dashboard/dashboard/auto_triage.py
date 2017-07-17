@@ -64,10 +64,13 @@ class AutoTriageHandler(request_handler.RequestHandler):
       TriageBugs.UpdateRecoveredBugs(bug_id)
       return
 
+    logging.info('Triaging anomalies')
     TriageAnomalies.Process()
     utils.TickMonitoringCustomMetric('TriageAnomalies')
+    logging.info('Triaging bugs')
     TriageBugs.Process()
     utils.TickMonitoringCustomMetric('TriageBugs')
+    logging.info('/auto_triage complete')
 
 
 class TriageAnomalies(object):
@@ -112,7 +115,9 @@ class TriageBugs(object):
 
     # For each bugs, add a task to check if all their anomalies have recovered.
     for bug in bugs:
+      logging.info('Processing bug %s', bug.key.id())
       if bug.status == bug_data.BUG_STATUS_OPENED:
+        logging.info('Adding update task to task queue')
         taskqueue.add(
             url='/auto_triage',
             params={'update_recovered_bug': True, 'bug_id': bug.key.id()},
@@ -120,7 +125,7 @@ class TriageBugs(object):
 
   @classmethod
   def UpdateRecoveredBugs(cls, bug_id):
-    """Checks whether anomalies with bug_id have recovered."""
+    """Checks whether Anomalies with a given bug ID have recovered."""
     anomalies = anomaly.Anomaly.query(
         anomaly.Anomaly.bug_id == bug_id).fetch()
     # If no anomalies found, mark this Bug entity as closed.
@@ -191,7 +196,13 @@ def _IsAnomalyRecovered(anomaly_entity):
   Returns:
     True if the Anomaly should be marked as recovered, False otherwise.
   """
-  test = anomaly_entity.test.get()
+  test = anomaly_entity.GetTestMetadataKey().get()
+  if not test:
+    logging.error('TestMetadata %s not found for Anomaly %s, deleting test.',
+                  utils.TestPath(anomaly_entity.GetTestMetadataKey()),
+                  anomaly_entity)
+    anomaly_entity.key.delete()
+    return False
   config = anomaly_config.GetAnomalyConfigDict(test)
   max_num_rows = config.get(
       'max_window_size', find_anomalies.DEFAULT_NUM_POINTS)
@@ -222,14 +233,15 @@ def _IsApproximatelyEqual(delta1, delta2):
 
 def _AddLogForRecoveredAnomaly(anomaly_entity):
   """Adds a quick log entry for an anomaly that has recovered."""
+  logging.info('_AddLogForRecoveredAnomaly %s', anomaly_entity.key.id())
   formatter = quick_logger.Formatter()
-  sheriff_key = anomaly_entity.test.get().sheriff
+  sheriff_key = anomaly_entity.GetTestMetadataKey().get().sheriff
   if not sheriff_key:
     return
   sheriff_name = sheriff_key.string_id()
   logger = quick_logger.QuickLogger('auto_triage', sheriff_name, formatter)
   message = ('Alert on %s has recovered. See <a href="%s">graph</a>.%s' %
-             (utils.TestPath(anomaly_entity.test),
+             (utils.TestPath(anomaly_entity.GetTestMetadataKey()),
               ('https://chromeperf.appspot.com/group_report?keys=' +
                anomaly_entity.key.urlsafe()),
               _BugLink(anomaly_entity)))

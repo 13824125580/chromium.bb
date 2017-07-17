@@ -39,7 +39,8 @@ class CRWSessionEntryTest : public PlatformTest {
     GURL url("http://init.test");
     ui::PageTransition transition =
         ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-    scoped_ptr<web::NavigationItemImpl> item(new web::NavigationItemImpl());
+    std::unique_ptr<web::NavigationItemImpl> item(
+        new web::NavigationItemImpl());
     item->SetURL(url);
     item->SetTransitionType(transition);
     item->SetTimestamp(base::Time::Now());
@@ -89,7 +90,8 @@ void CRWSessionEntryTest::expectEqualSessionEntries(
             navItem2->IsOverridingUserAgent());
   EXPECT_TRUE((!navItem1->HasPostData() && !navItem2->HasPostData()) ||
               [navItem1->GetPostData() isEqualToData:navItem2->GetPostData()]);
-  EXPECT_EQ(navItem2->GetTransitionType(), transition);
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      navItem2->GetTransitionType(), transition));
   EXPECT_NSEQ(navItem1->GetHttpRequestHeaders(),
               navItem2->GetHttpRequestHeaders());
 }

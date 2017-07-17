@@ -7,10 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
 #include "chrome/common/extensions/manifest_handlers/automation.h"
@@ -114,32 +115,48 @@ static gfx::Rect ComputeLocalNodeBounds(TreeCache* cache, ui::AXNode* node) {
 // parent hierarchy to offset by frame offsets and scroll offsets.
 static gfx::Rect ComputeGlobalNodeBounds(TreeCache* cache, ui::AXNode* node) {
   gfx::Rect bounds = ComputeLocalNodeBounds(cache, node);
-  ui::AXNode* parent = node->parent();
-  bool need_to_offset_web_area = node->data().role == ui::AX_ROLE_WEB_AREA ||
-                                 node->data().role == ui::AX_ROLE_ROOT_WEB_AREA;
-  while (parent) {
-    if (bounds.IsEmpty()) {
-      bounds = parent->data().location;
-    } else if (need_to_offset_web_area && parent->data().location.width() > 0 &&
-               parent->data().location.height() > 0) {
-      bounds.Offset(parent->data().location.x(), parent->data().location.y());
-      need_to_offset_web_area = false;
-    }
 
-    if (parent->data().role == ui::AX_ROLE_WEB_AREA ||
-        parent->data().role == ui::AX_ROLE_ROOT_WEB_AREA) {
+  ui::AXNode* root = cache->tree.root();
+  while (root) {
+    // Apply scroll offsets.
+    if (root != node) {
       int sx = 0;
       int sy = 0;
-      if (parent->data().GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
-          parent->data().GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
+      if (root->data().GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
+          root->data().GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
         bounds.Offset(-sx, -sy);
       }
-      need_to_offset_web_area = true;
     }
-    parent = parent->parent();
+
+    if (root->data().transform) {
+      gfx::RectF boundsf(bounds);
+      root->data().transform->TransformRect(&boundsf);
+      bounds = gfx::Rect(boundsf.x(), boundsf.y(), boundsf.width(),
+                         boundsf.height());
+    }
+
+    ui::AXNode* parent = cache->owner->GetParent(root, &cache);
+    if (!parent)
+      break;
+
+    root = cache->tree.root();
   }
 
   return bounds;
+}
+
+ui::AXNode* FindNodeWithChildTreeId(ui::AXNode* node, int child_tree_id) {
+  if (child_tree_id == node->data().GetIntAttribute(ui::AX_ATTR_CHILD_TREE_ID))
+    return node;
+
+  for (int i = 0; i < node->child_count(); ++i) {
+    ui::AXNode* result =
+        FindNodeWithChildTreeId(node->ChildAtIndex(i), child_tree_id);
+    if (result)
+      return result;
+  }
+
+  return nullptr;
 }
 
 //
@@ -404,10 +421,10 @@ AutomationInternalCustomBindings::AutomationInternalCustomBindings(
   // It's safe to use base::Unretained(this) here because these bindings
   // will only be called on a valid AutomationInternalCustomBindings instance
   // and none of the functions have any side effects.
-  #define ROUTE_FUNCTION(FN) \
-  RouteFunction(#FN, \
+#define ROUTE_FUNCTION(FN)                                        \
+  RouteFunction(#FN, "automation",                                \
                 base::Bind(&AutomationInternalCustomBindings::FN, \
-                base::Unretained(this)))
+                           base::Unretained(this)))
   ROUTE_FUNCTION(IsInteractPermitted);
   ROUTE_FUNCTION(GetSchemaAdditions);
   ROUTE_FUNCTION(GetRoutingID);
@@ -417,6 +434,7 @@ AutomationInternalCustomBindings::AutomationInternalCustomBindings(
   ROUTE_FUNCTION(RemoveTreeChangeObserver);
   ROUTE_FUNCTION(GetChildIDAtIndex);
   ROUTE_FUNCTION(GetFocus);
+  ROUTE_FUNCTION(GetHtmlAttributes);
   ROUTE_FUNCTION(GetState);
   #undef ROUTE_FUNCTION
 
@@ -706,6 +724,29 @@ void AutomationInternalCustomBindings::GetSchemaAdditions(
       v8::String::NewFromUtf8(GetIsolate(), "TreeChangeType"),
       ToEnumObject(GetIsolate(), ui::AX_MUTATION_NONE, ui::AX_MUTATION_LAST));
 
+  v8::Local<v8::Object> name_from_type(v8::Object::New(GetIsolate()));
+  for (int i = ui::AX_NAME_FROM_NONE; i <= ui::AX_NAME_FROM_LAST; ++i) {
+    name_from_type->Set(
+        v8::Integer::New(GetIsolate(), i),
+        CreateV8String(GetIsolate(),
+                       ui::ToString(static_cast<ui::AXNameFrom>(i))));
+  }
+
+  additions->Set(v8::String::NewFromUtf8(GetIsolate(), "NameFromType"),
+                 name_from_type);
+
+  v8::Local<v8::Object> description_from_type(v8::Object::New(GetIsolate()));
+  for (int i = ui::AX_DESCRIPTION_FROM_NONE; i <= ui::AX_DESCRIPTION_FROM_LAST;
+       ++i) {
+    description_from_type->Set(
+        v8::Integer::New(GetIsolate(), i),
+        CreateV8String(GetIsolate(),
+                       ui::ToString(static_cast<ui::AXDescriptionFrom>(i))));
+  }
+
+  additions->Set(v8::String::NewFromUtf8(GetIsolate(), "DescriptionFromType"),
+                 description_from_type);
+
   args.GetReturnValue().Set(additions);
 }
 
@@ -771,6 +812,8 @@ bool AutomationInternalCustomBindings::GetFocusInternal(TreeCache* cache,
   if (!focus)
     return false;
 
+  // If the focused node is the owner of a child tree, that indicates
+  // a node within the child tree is the one that actually has focus.
   while (focus->data().HasIntAttribute(ui::AX_ATTR_CHILD_TREE_ID)) {
     // Try to keep following focus recursively, by letting |tree_id| be the
     // new subtree to search in, while keeping |focus_tree_id| set to the tree
@@ -781,6 +824,15 @@ bool AutomationInternalCustomBindings::GetFocusInternal(TreeCache* cache,
     TreeCache* child_cache = GetTreeCacheFromTreeID(child_tree_id);
     if (!child_cache)
       break;
+
+    // If the child cache is a frame tree that indicates a focused frame,
+    // jump to that frame if possible.
+    if (child_cache->tree.data().focused_tree_id > 0) {
+      TreeCache* focused_cache =
+          GetTreeCacheFromTreeID(child_cache->tree.data().focused_tree_id);
+      if (focused_cache)
+        child_cache = focused_cache;
+    }
 
     int child_focus_id = child_cache->tree.data().focus_id;
     ui::AXNode* child_focus = child_cache->tree.GetFromId(child_focus_id);
@@ -820,6 +872,33 @@ void AutomationInternalCustomBindings::GetFocus(
   result->Set(CreateV8String(isolate, "nodeId"),
               v8::Integer::New(isolate, focused_node->id()));
   args.GetReturnValue().Set(result);
+}
+
+void AutomationInternalCustomBindings::GetHtmlAttributes(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate* isolate = GetIsolate();
+  if (args.Length() < 2 || !args[0]->IsNumber() || !args[1]->IsNumber())
+    ThrowInvalidArgumentsException(this);
+
+  int tree_id = args[0]->Int32Value();
+  int node_id = args[1]->Int32Value();
+
+  TreeCache* cache = GetTreeCacheFromTreeID(tree_id);
+  if (!cache)
+    return;
+
+  ui::AXNode* node = cache->tree.GetFromId(node_id);
+  if (!node)
+    return;
+
+  v8::Local<v8::Object> dst(v8::Object::New(isolate));
+  base::StringPairs src = node->data().html_attributes;
+  for (size_t i = 0; i < src.size(); i++) {
+    std::string& key = src[i].first;
+    std::string& value = src[i].second;
+    dst->Set(CreateV8String(isolate, key), CreateV8String(isolate, value));
+  }
+  args.GetReturnValue().Set(dst);
 }
 
 void AutomationInternalCustomBindings::GetState(
@@ -876,6 +955,47 @@ void AutomationInternalCustomBindings::UpdateOverallTreeChangeObserverFilter() {
     tree_change_observer_overall_filter_ =
         std::max(observer.filter, tree_change_observer_overall_filter_);
   }
+}
+
+ui::AXNode* AutomationInternalCustomBindings::GetParent(
+    ui::AXNode* node,
+    TreeCache** in_out_cache) {
+  if (node->parent())
+    return node->parent();
+
+  int parent_tree_id = (*in_out_cache)->tree.data().parent_tree_id;
+  if (parent_tree_id < 0)
+    return nullptr;
+
+  TreeCache* parent_cache = GetTreeCacheFromTreeID(parent_tree_id);
+  if (!parent_cache)
+    return nullptr;
+
+  // Try to use the cached parent node from the most recent time this
+  // was called.
+  if (parent_cache->parent_node_id_from_parent_tree > 0) {
+    ui::AXNode* parent = parent_cache->tree.GetFromId(
+        parent_cache->parent_node_id_from_parent_tree);
+    if (parent) {
+      int parent_child_tree_id =
+          parent->data().GetIntAttribute(ui::AX_ATTR_CHILD_TREE_ID);
+      if (parent_child_tree_id == (*in_out_cache)->tree_id) {
+        *in_out_cache = parent_cache;
+        return parent;
+      }
+    }
+  }
+
+  // If that fails, search for it and cache it for next time.
+  ui::AXNode* parent = FindNodeWithChildTreeId(parent_cache->tree.root(),
+                                               (*in_out_cache)->tree_id);
+  if (parent) {
+    (*in_out_cache)->parent_node_id_from_parent_tree = parent->id();
+    *in_out_cache = parent_cache;
+    return parent;
+  }
+
+  return nullptr;
 }
 
 void AutomationInternalCustomBindings::RouteTreeIDFunction(
@@ -953,7 +1073,9 @@ void AutomationInternalCustomBindings::OnAccessibilityEvent(
     cache = new TreeCache();
     cache->tab_id = -1;
     cache->tree_id = params.tree_id;
+    cache->parent_node_id_from_parent_tree = -1;
     cache->tree.SetDelegate(this);
+    cache->owner = this;
     tree_id_to_tree_cache_map_.insert(std::make_pair(tree_id, cache));
     axtree_to_tree_cache_map_.insert(std::make_pair(&cache->tree, cache));
   } else {
@@ -989,6 +1111,7 @@ void AutomationInternalCustomBindings::OnAccessibilityEvent(
   args->Set(0U, event_params);
   context()->DispatchEvent("automationInternal.onAccessibilityEvent", args);
 }
+
 void AutomationInternalCustomBindings::OnNodeDataWillChange(
     ui::AXTree* tree,
     const ui::AXNodeData& old_node_data,
@@ -1055,6 +1178,10 @@ void AutomationInternalCustomBindings::OnAtomicUpdateFinished(
         SendTreeChangeEvent(
             api::automation::TREE_CHANGE_TYPE_NODECHANGED,
             tree, node);
+        break;
+      // Unhandled.
+      case NODE_REPARENTED:
+      case SUBTREE_REPARENTED:
         break;
     }
   }

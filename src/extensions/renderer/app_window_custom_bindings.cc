@@ -51,25 +51,13 @@ void AppWindowCustomBindings::GetFrame(
   if (!app_frame)
     return;
 
-  // TODO(jeremya): it doesn't really make sense to set the opener here, but we
-  // need to make sure the security origin is set up before returning the DOM
-  // reference. A better way to do this would be to have the browser pass the
-  // opener through so opener_id is set in RenderViewImpl's constructor.
-  content::RenderFrame* context_render_frame = context()->GetRenderFrame();
-  if (!context_render_frame)
-    return;
-
-  blink::WebFrame* opener = context_render_frame->GetWebFrame();
-  blink::WebLocalFrame* app_web_frame = app_frame->GetWebFrame();
-  app_web_frame->setOpener(opener);
-
   if (notify_browser) {
     content::RenderThread::Get()->Send(new ExtensionHostMsg_AppWindowReady(
         app_frame->GetRenderView()->GetRoutingID()));
   }
 
   v8::Local<v8::Value> window =
-      app_web_frame->mainWorldScriptContext()->Global();
+      app_frame->GetWebFrame()->mainWorldScriptContext()->Global();
   args.GetReturnValue().Set(window);
 }
 
@@ -84,7 +72,7 @@ void AppWindowCustomBindings::GetWindowControlsHtmlTemplate(
         ResourceBundle::GetSharedInstance()
             .GetRawDataResource(IDR_WINDOW_CONTROLS_TEMPLATE_HTML)
             .as_string());
-    scoped_ptr<content::V8ValueConverter> converter(
+    std::unique_ptr<content::V8ValueConverter> converter(
         content::V8ValueConverter::create());
     result = converter->ToV8Value(&value, context()->v8_context());
   }

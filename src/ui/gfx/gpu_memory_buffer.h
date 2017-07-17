@@ -18,7 +18,7 @@
 
 #if defined(USE_OZONE)
 #include "ui/gfx/native_pixmap_handle_ozone.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include "ui/gfx/mac/io_surface.h"
 #endif
 
@@ -39,6 +39,7 @@ using GpuMemoryBufferId = GenericSharedMemoryId;
 
 struct GFX_EXPORT GpuMemoryBufferHandle {
   GpuMemoryBufferHandle();
+  GpuMemoryBufferHandle(const GpuMemoryBufferHandle& other);
   ~GpuMemoryBufferHandle();
   bool is_null() const { return type == EMPTY_BUFFER; }
   GpuMemoryBufferType type;
@@ -48,7 +49,7 @@ struct GFX_EXPORT GpuMemoryBufferHandle {
   int32_t stride;
 #if defined(USE_OZONE)
   NativePixmapHandle native_pixmap_handle;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
   ScopedRefCountedIOSurfaceMachPort mach_port;
 #endif
 };
@@ -77,13 +78,6 @@ class GFX_EXPORT GpuMemoryBuffer {
   // Unmaps the buffer. It's illegal to use any pointer returned by memory()
   // after this has been called.
   virtual void Unmap() = 0;
-
-  // Returns true if the buffer is currently being read from by the system's
-  // window server, and should not be written to.
-  // TODO(ccameron): This is specific to the Mac OS WindowServer process, and
-  // should be merged with synchronization mechanisms from other platforms, if
-  // possible.
-  virtual bool IsInUseByMacOSWindowServer() const;
 
   // Returns the size for the buffer.
   virtual Size GetSize() const = 0;

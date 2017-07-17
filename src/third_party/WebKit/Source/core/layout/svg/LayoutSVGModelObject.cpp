@@ -50,14 +50,19 @@ bool LayoutSVGModelObject::isChildAllowed(LayoutObject* child, const ComputedSty
     return child->isSVG() && !(child->isSVGInline() || child->isSVGInlineText() || child->isSVGGradientStop());
 }
 
-LayoutRect LayoutSVGModelObject::clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* paintInvalidationState) const
+void LayoutSVGModelObject::mapLocalToAncestor(const LayoutBoxModelObject* ancestor, TransformState& transformState, MapCoordinatesFlags) const
 {
-    return SVGLayoutSupport::clippedOverflowRectForPaintInvalidation(*this, paintInvalidationContainer, paintInvalidationState);
+    SVGLayoutSupport::mapLocalToAncestor(this, ancestor, transformState);
 }
 
-void LayoutSVGModelObject::mapLocalToAncestor(const LayoutBoxModelObject* ancestor, TransformState& transformState, MapCoordinatesFlags, bool* wasFixed, const PaintInvalidationState* paintInvalidationState) const
+LayoutRect LayoutSVGModelObject::absoluteClippedOverflowRect() const
 {
-    SVGLayoutSupport::mapLocalToAncestor(this, ancestor, transformState, wasFixed, paintInvalidationState);
+    return SVGLayoutSupport::clippedOverflowRectForPaintInvalidation(*this, *view());
+}
+
+void LayoutSVGModelObject::mapAncestorToLocal(const LayoutBoxModelObject* ancestor, TransformState& transformState, MapCoordinatesFlags) const
+{
+    SVGLayoutSupport::mapAncestorToLocal(*this, ancestor, transformState);
 }
 
 const LayoutObject* LayoutSVGModelObject::pushMappingToContainer(const LayoutBoxModelObject* ancestorToStopAt, LayoutGeometryMap& geometryMap) const
@@ -72,15 +77,29 @@ void LayoutSVGModelObject::absoluteRects(Vector<IntRect>& rects, const LayoutPoi
     rects.append(rect);
 }
 
-void LayoutSVGModelObject::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
+void LayoutSVGModelObject::absoluteQuads(Vector<FloatQuad>& quads) const
 {
-    quads.append(localToAbsoluteQuad(strokeBoundingBox(), 0 /* mode */, wasFixed));
+    quads.append(localToAbsoluteQuad(strokeBoundingBox()));
 }
 
 void LayoutSVGModelObject::willBeDestroyed()
 {
     SVGResourcesCache::clientDestroyed(this);
     LayoutObject::willBeDestroyed();
+}
+
+PaintInvalidationReason LayoutSVGModelObject::getPaintInvalidationReason(const PaintInvalidationState& paintInvalidationState,
+    const LayoutRect& oldBounds, const LayoutPoint& oldLocation, const LayoutRect& newBounds, const LayoutPoint& newLocation) const
+{
+    PaintInvalidationReason invalidationReason = LayoutObject::getPaintInvalidationReason(paintInvalidationState, oldBounds, oldLocation, newBounds, newLocation);
+
+    // Disable incremental invalidation for SVG objects to prevent under-
+    // invalidation. Unlike boxes, it is non-trivial (and rare) for SVG objects
+    // to be able to be incrementally invalidated (e.g., on height changes).
+    if (invalidationReason == PaintInvalidationIncremental)
+        return PaintInvalidationFull;
+
+    return invalidationReason;
 }
 
 void LayoutSVGModelObject::computeLayerHitTestRects(LayerHitTestRects& rects) const
@@ -98,7 +117,7 @@ void LayoutSVGModelObject::styleDidChange(StyleDifference diff, const ComputedSt
 {
     if (diff.needsFullLayout()) {
         setNeedsBoundariesUpdate();
-        if (style()->hasTransform())
+        if (diff.transformChanged())
             setNeedsTransformUpdate();
     }
 
@@ -122,23 +141,7 @@ bool LayoutSVGModelObject::nodeAtPoint(HitTestResult&, const HitTestLocation&, c
 // returns incorrect values for SVG objects. Overriding this method provides access to the absolute bounds.
 IntRect LayoutSVGModelObject::absoluteElementBoundingBoxRect() const
 {
-    return localToAbsoluteQuad(FloatQuad(paintInvalidationRectInLocalCoordinates())).enclosingBoundingBox();
-}
-
-void LayoutSVGModelObject::invalidateTreeIfNeeded(PaintInvalidationState& paintInvalidationState)
-{
-    ASSERT(!needsLayout());
-
-    // If we didn't need paint invalidation then our children don't need as well.
-    // Skip walking down the tree as everything should be fine below us.
-    if (!shouldCheckForPaintInvalidation(paintInvalidationState))
-        return;
-
-    invalidatePaintIfNeeded(paintInvalidationState, paintInvalidationState.paintInvalidationContainer());
-    clearPaintInvalidationState(paintInvalidationState);
-
-    PaintInvalidationState childPaintInvalidationState(paintInvalidationState, *this);
-    invalidatePaintOfSubtreesIfNeeded(childPaintInvalidationState);
+    return localToAbsoluteQuad(FloatQuad(paintInvalidationRectInLocalSVGCoordinates())).enclosingBoundingBox();
 }
 
 } // namespace blink

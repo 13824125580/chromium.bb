@@ -19,7 +19,7 @@ void appendErrorContextInfo(StringBuilder& builder, const String& tagName, const
 {
     builder.append('<');
     builder.append(tagName);
-    builder.appendLiteral("> attribute ");
+    builder.append("> attribute ");
     builder.append(name.toString());
 }
 
@@ -79,7 +79,7 @@ void appendValue(StringBuilder& builder, SVGParsingError error, const AtomicStri
 {
     builder.append('"');
     if (!error.hasLocus() || disableLocus(error.status())) {
-        escapeStringForJSON(value.string(), &builder);
+        escapeStringForJSON(value.getString(), &builder);
     } else {
         // Emit a string on the form: '"[...]<before><after>[...]"'
         unsigned locus = error.locus();
@@ -94,7 +94,7 @@ void appendValue(StringBuilder& builder, SVGParsingError error, const AtomicStri
         ASSERT(contextEnd <= value.length());
         if (contextStart != 0)
             builder.append(horizontalEllipsisCharacter);
-        escapeStringForJSON(value.string().substring(contextStart, contextEnd - contextStart), &builder);
+        escapeStringForJSON(value.getString().substring(contextStart, contextEnd - contextStart), &builder);
         if (contextEnd != value.length())
             builder.append(horizontalEllipsisCharacter);
     }
@@ -108,10 +108,10 @@ String SVGParsingError::format(const String& tagName, const QualifiedName& name,
     StringBuilder builder;
 
     appendErrorContextInfo(builder, tagName, name);
-    builder.appendLiteral(": ");
+    builder.append(": ");
 
     if (hasLocus() && locus() == value.length())
-        builder.appendLiteral("Unexpected end of attribute. ");
+        builder.append("Unexpected end of attribute. ");
 
     auto message = messageForStatus(status());
     builder.append(message.first);

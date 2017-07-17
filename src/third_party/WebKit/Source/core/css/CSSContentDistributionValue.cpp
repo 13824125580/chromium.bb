@@ -23,16 +23,16 @@ CSSContentDistributionValue::~CSSContentDistributionValue()
 
 String CSSContentDistributionValue::customCSSText() const
 {
-    RefPtrWillBeRawPtr<CSSValueList> list = CSSValueList::createSpaceSeparated();
+    CSSValueList* list = CSSValueList::createSpaceSeparated();
 
     if (m_distribution != CSSValueInvalid)
-        list->append(distribution());
+        list->append(*distribution());
     if (m_position != CSSValueInvalid)
-        list->append(position());
+        list->append(*position());
     if (m_overflow != CSSValueInvalid)
-        list->append(overflow());
+        list->append(*overflow());
 
-    return list.release()->customCSSText();
+    return list->customCSSText();
 }
 
 bool CSSContentDistributionValue::equals(const CSSContentDistributionValue& other) const

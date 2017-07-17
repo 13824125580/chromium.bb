@@ -4,8 +4,9 @@
 
 #include <string.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "chrome/renderer/autofill/password_generation_test_utils.h"
@@ -71,10 +72,34 @@ class PasswordGenerationAgentTest : public ChromeRenderViewTest {
     render_thread_->sink().ClearMessages();
   }
 
+  void AllowToRunFormClassifier() {
+    AutofillMsg_AllowToRunFormClassifier msg(0);
+    static_cast<IPC::Listener*>(password_generation_)->OnMessageReceived(msg);
+  }
+
+  void ExpectFormClassifierVoteReceived(
+      bool received,
+      const base::string16& expected_generation_element) {
+    const IPC::Message* message =
+        render_thread_->sink().GetFirstMessageMatching(
+            AutofillHostMsg_SaveGenerationFieldDetectedByClassifier::ID);
+    if (received) {
+      ASSERT_TRUE(message);
+      std::tuple<autofill::PasswordForm, base::string16> actual_parameters;
+      AutofillHostMsg_SaveGenerationFieldDetectedByClassifier::Read(
+          message, &actual_parameters);
+      EXPECT_EQ(expected_generation_element, std::get<1>(actual_parameters));
+    } else {
+      ASSERT_FALSE(message);
+    }
+
+    render_thread_->sink().ClearMessages();
+  }
+
   void ShowGenerationPopUpManually(const char* element_id) {
     FocusField(element_id);
     AutofillMsg_UserTriggeredGeneratePassword msg(0);
-    password_generation_->OnMessageReceived(msg);
+    static_cast<IPC::Listener*>(password_generation_)->OnMessageReceived(msg);
   }
 
  private:
@@ -92,13 +117,20 @@ const char kSigninFormHTML[] =
 const char kAccountCreationFormHTML[] =
     "<FORM name = 'blah' action = 'http://www.random.com/'> "
     "  <INPUT type = 'text' id = 'username'/> "
-    "  <INPUT type = 'password' id = 'first_password' "
-    "         autocomplete = 'off' size = 5/>"
+    "  <INPUT type = 'password' id = 'first_password' size = 5/>"
     "  <INPUT type = 'password' id = 'second_password' size = 5/> "
     "  <INPUT type = 'text' id = 'address'/> "
     "  <INPUT type = 'button' id = 'dummy'/> "
     "  <INPUT type = 'submit' value = 'LOGIN' />"
     "</FORM>";
+
+const char kAccountCreationNoForm[] =
+    "<INPUT type = 'text' id = 'username'/> "
+    "<INPUT type = 'password' id = 'first_password' size = 5/>"
+    "<INPUT type = 'password' id = 'second_password' size = 5/> "
+    "<INPUT type = 'text' id = 'address'/> "
+    "<INPUT type = 'button' id = 'dummy'/> "
+    "<INPUT type = 'submit' value = 'LOGIN' />";
 
 const char kDisabledElementAccountCreationFormHTML[] =
     "<FORM name = 'blah' action = 'http://www.random.com/'> "
@@ -257,7 +289,7 @@ TEST_F(PasswordGenerationAgentTest, FillTest) {
 
   base::string16 password = base::ASCIIToUTF16("random_password");
   AutofillMsg_GeneratedPasswordAccepted msg(0, password);
-  password_generation_->OnMessageReceived(msg);
+  static_cast<IPC::Listener*>(password_generation_)->OnMessageReceived(msg);
 
   // Password fields are filled out and set as being autofilled.
   EXPECT_EQ(password, first_password_element.value());
@@ -304,7 +336,7 @@ TEST_F(PasswordGenerationAgentTest, EditingTest) {
 
   base::string16 password = base::ASCIIToUTF16("random_password");
   AutofillMsg_GeneratedPasswordAccepted msg(0, password);
-  password_generation_->OnMessageReceived(msg);
+  static_cast<IPC::Listener*>(password_generation_)->OnMessageReceived(msg);
 
   // Passwords start out the same.
   EXPECT_EQ(password, first_password_element.value());
@@ -471,7 +503,7 @@ TEST_F(PasswordGenerationAgentTest, DynamicFormTest) {
       "form.appendChild(first_password);"
       "form.appendChild(second_password);"
       "document.body.appendChild(form);");
-  ProcessPendingMessages();
+  WaitForAutofillDidAssociateFormControl();
 
   // This needs to come after the DOM has been modified.
   SetAccountCreationFormsDetectedMessage(password_generation_,
@@ -568,18 +600,95 @@ TEST_F(PasswordGenerationAgentTest, ChangePasswordFormDetectionTest) {
   SetNotBlacklistedMessage(password_generation_, kPasswordChangeFormHTML);
   ExpectGenerationAvailable("password", false);
   ExpectGenerationAvailable("newpassword", false);
+  ExpectGenerationAvailable("confirmpassword", false);
 
   SetAccountCreationFormsDetectedMessage(password_generation_,
                                          GetMainFrame()->document(), 0, 2);
   ExpectGenerationAvailable("password", false);
   ExpectGenerationAvailable("newpassword", true);
+  ExpectGenerationAvailable("confirmpassword", false);
 }
 
-TEST_F(PasswordGenerationAgentTest, ManualGenerationTest) {
+TEST_F(PasswordGenerationAgentTest, ManualGenerationInFormTest) {
   LoadHTMLWithUserGesture(kAccountCreationFormHTML);
   ShowGenerationPopUpManually("first_password");
   ExpectGenerationAvailable("first_password", true);
   ExpectGenerationAvailable("second_password", false);
+}
+
+TEST_F(PasswordGenerationAgentTest, ManualGenerationNoFormTest) {
+  LoadHTMLWithUserGesture(kAccountCreationNoForm);
+  ShowGenerationPopUpManually("first_password");
+  ExpectGenerationAvailable("first_password", true);
+  ExpectGenerationAvailable("second_password", false);
+}
+
+TEST_F(PasswordGenerationAgentTest, ManualGenerationChangeFocusTest) {
+  // This test simulates focus change after user triggered password generation.
+  // PasswordGenerationAgent should save last focused password element and
+  // generate password, even if focused element has changed.
+  LoadHTMLWithUserGesture(kAccountCreationFormHTML);
+  FocusField("first_password");
+  ShowGenerationPopUpManually("username" /* current focus */);
+  ExpectGenerationAvailable("first_password", true);
+  ExpectGenerationAvailable("second_password", false);
+}
+
+TEST_F(PasswordGenerationAgentTest, PresavingGeneratedPassword) {
+  const struct {
+    const char* form;
+    const char* generation_element;
+  } kTestCases[] = {{kAccountCreationFormHTML, "first_password"},
+                    {kAccountCreationNoForm, "first_password"},
+                    {kPasswordChangeFormHTML, "newpassword"}};
+  for (auto& test_case : kTestCases) {
+    SCOPED_TRACE(testing::Message("form: ") << test_case.form);
+    LoadHTMLWithUserGesture(test_case.form);
+    // To be able to work with input elements outside <form>'s, use manual
+    // generation.
+    ShowGenerationPopUpManually(test_case.generation_element);
+    ExpectGenerationAvailable(test_case.generation_element, true);
+
+    base::string16 password = base::ASCIIToUTF16("random_password");
+    AutofillMsg_GeneratedPasswordAccepted msg(0, password);
+    static_cast<IPC::Listener*>(password_generation_)->OnMessageReceived(msg);
+    EXPECT_TRUE(render_thread_->sink().GetFirstMessageMatching(
+        AutofillHostMsg_PresaveGeneratedPassword::ID));
+    render_thread_->sink().ClearMessages();
+
+    FocusField(test_case.generation_element);
+    SimulateUserTypingASCIICharacter('a', true);
+    EXPECT_TRUE(render_thread_->sink().GetFirstMessageMatching(
+        AutofillHostMsg_PresaveGeneratedPassword::ID));
+    render_thread_->sink().ClearMessages();
+
+    for (size_t i = 0; i < password.length(); ++i)
+      SimulateUserTypingASCIICharacter(ui::VKEY_BACK, false);
+    SimulateUserTypingASCIICharacter(ui::VKEY_BACK, true);
+    EXPECT_TRUE(render_thread_->sink().GetFirstMessageMatching(
+        AutofillHostMsg_PasswordNoLongerGenerated::ID));
+    render_thread_->sink().ClearMessages();
+  }
+}
+
+TEST_F(PasswordGenerationAgentTest, FormClassifierVotesSignupForm) {
+  AllowToRunFormClassifier();
+  LoadHTMLWithUserGesture(kAccountCreationFormHTML);
+  ExpectFormClassifierVoteReceived(true /* vote is expected */,
+                                   base::ASCIIToUTF16("first_password"));
+}
+
+TEST_F(PasswordGenerationAgentTest, FormClassifierVotesSigninForm) {
+  AllowToRunFormClassifier();
+  LoadHTMLWithUserGesture(kSigninFormHTML);
+  ExpectFormClassifierVoteReceived(true /* vote is expected */,
+                                   base::string16());
+}
+
+TEST_F(PasswordGenerationAgentTest, FormClassifierDisabled) {
+  LoadHTMLWithUserGesture(kSigninFormHTML);
+  ExpectFormClassifierVoteReceived(false /* vote is not expected */,
+                                   base::string16());
 }
 
 }  // namespace autofill

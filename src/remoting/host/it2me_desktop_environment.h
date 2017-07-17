@@ -5,8 +5,9 @@
 #ifndef REMOTING_HOST_IT2ME_DESKTOP_ENVIRONMENT_H_
 #define REMOTING_HOST_IT2ME_DESKTOP_ENVIRONMENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "remoting/host/basic_desktop_environment.h"
 
@@ -29,17 +30,18 @@ class It2MeDesktopEnvironment : public BasicDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       base::WeakPtr<ClientSessionControl> client_session_control,
-      bool supports_touch_events);
+      bool supports_touch_events,
+      bool enable_user_interface);
 
  private:
   // Presents the continue window to the local user.
-  scoped_ptr<HostWindow> continue_window_;
+  std::unique_ptr<HostWindow> continue_window_;
 
   // Presents the disconnect window to the local user.
-  scoped_ptr<HostWindow> disconnect_window_;
+  std::unique_ptr<HostWindow> disconnect_window_;
 
   // Notifies the client session about the local mouse movements.
-  scoped_ptr<LocalInputMonitor> local_input_monitor_;
+  std::unique_ptr<LocalInputMonitor> local_input_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(It2MeDesktopEnvironment);
 };
@@ -55,10 +57,16 @@ class It2MeDesktopEnvironmentFactory : public BasicDesktopEnvironmentFactory {
   ~It2MeDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory interface.
-  scoped_ptr<DesktopEnvironment> Create(
+  std::unique_ptr<DesktopEnvironment> Create(
       base::WeakPtr<ClientSessionControl> client_session_control) override;
 
+  void set_enable_user_interface(bool enabled) {
+    enable_user_interface_ = enabled;
+  }
+
  private:
+  bool enable_user_interface_ = true;
+
   DISALLOW_COPY_AND_ASSIGN(It2MeDesktopEnvironmentFactory);
 };
 

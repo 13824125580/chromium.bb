@@ -4,16 +4,17 @@
 
 #include "content/browser/media/media_web_contents_observer.h"
 
+#include <memory>
+
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "content/browser/media/audible_metrics.h"
 #include "content/browser/media/audio_stream_monitor.h"
-#include "content/browser/power_save_blocker_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/media/media_player_delegate_messages.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "device/power_save_blocker/power_save_blocker.h"
 #include "ipc/ipc_message_macros.h"
 
 namespace content {
@@ -26,17 +27,22 @@ static base::LazyInstance<AudibleMetrics>::Leaky g_audible_metrics =
 }  // anonymous namespace
 
 MediaWebContentsObserver::MediaWebContentsObserver(WebContents* web_contents)
-    : WebContentsObserver(web_contents) {}
+    : WebContentsObserver(web_contents),
+      session_controllers_manager_(this) {}
 
 MediaWebContentsObserver::~MediaWebContentsObserver() {}
 
 void MediaWebContentsObserver::WebContentsDestroyed() {
   g_audible_metrics.Get().UpdateAudibleWebContentsState(web_contents(), false);
+#if defined(OS_ANDROID)
+  view_weak_factory_.reset();
+#endif
 }
 
 void MediaWebContentsObserver::RenderFrameDeleted(
     RenderFrameHost* render_frame_host) {
   ClearPowerSaveBlockers(render_frame_host);
+  session_controllers_manager_.RenderFrameDeleted(render_frame_host);
 }
 
 void MediaWebContentsObserver::MaybeUpdateAudibleState() {
@@ -93,19 +99,26 @@ void MediaWebContentsObserver::OnMediaDestroyed(
   OnMediaPaused(render_frame_host, delegate_id, true);
 }
 
-
 void MediaWebContentsObserver::OnMediaPaused(RenderFrameHost* render_frame_host,
                                              int delegate_id,
                                              bool reached_end_of_stream) {
-  const MediaPlayerId id(render_frame_host, delegate_id);
-  const bool removed_audio = RemoveMediaPlayerEntry(id, &active_audio_players_);
-  const bool removed_video = RemoveMediaPlayerEntry(id, &active_video_players_);
+  const MediaPlayerId player_id(render_frame_host, delegate_id);
+  const bool removed_audio =
+      RemoveMediaPlayerEntry(player_id, &active_audio_players_);
+  const bool removed_video =
+      RemoveMediaPlayerEntry(player_id, &active_video_players_);
   MaybeReleasePowerSaveBlockers();
 
   if (removed_audio || removed_video) {
     // Notify observers the player has been "paused".
-    static_cast<WebContentsImpl*>(web_contents())->MediaStoppedPlaying(id);
+    static_cast<WebContentsImpl*>(web_contents())
+        ->MediaStoppedPlaying(player_id);
   }
+
+  if (reached_end_of_stream)
+    session_controllers_manager_.OnEnd(player_id);
+  else
+    session_controllers_manager_.OnPause(player_id);
 }
 
 void MediaWebContentsObserver::OnMediaPlaying(
@@ -143,6 +156,11 @@ void MediaWebContentsObserver::OnMediaPlaying(
     }
   }
 
+  if (!session_controllers_manager_.RequestPlay(
+      id, has_audio, is_remote, duration)) {
+    return;
+  }
+
   // Notify observers of the new player.
   DCHECK(has_audio || has_video);
   static_cast<WebContentsImpl*>(web_contents())->MediaStartedPlaying(id);
@@ -165,20 +183,28 @@ void MediaWebContentsObserver::ClearPowerSaveBlockers(
 
 void MediaWebContentsObserver::CreateAudioPowerSaveBlocker() {
   DCHECK(!audio_power_save_blocker_);
-  audio_power_save_blocker_ = PowerSaveBlocker::Create(
-      PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
-      PowerSaveBlocker::kReasonAudioPlayback, "Playing audio");
+  audio_power_save_blocker_.reset(new device::PowerSaveBlocker(
+      device::PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
+      device::PowerSaveBlocker::kReasonAudioPlayback, "Playing audio",
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
 }
 
 void MediaWebContentsObserver::CreateVideoPowerSaveBlocker() {
   DCHECK(!video_power_save_blocker_);
   DCHECK(!active_video_players_.empty());
-  video_power_save_blocker_ = PowerSaveBlocker::Create(
-      PowerSaveBlocker::kPowerSaveBlockPreventDisplaySleep,
-      PowerSaveBlocker::kReasonVideoPlayback, "Playing video");
+  video_power_save_blocker_.reset(new device::PowerSaveBlocker(
+      device::PowerSaveBlocker::kPowerSaveBlockPreventDisplaySleep,
+      device::PowerSaveBlocker::kReasonVideoPlayback, "Playing video",
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
 #if defined(OS_ANDROID)
-  static_cast<PowerSaveBlockerImpl*>(video_power_save_blocker_.get())
-      ->InitDisplaySleepBlocker(web_contents());
+  if (web_contents()->GetNativeView()) {
+    view_weak_factory_.reset(new base::WeakPtrFactory<ui::ViewAndroid>(
+        web_contents()->GetNativeView()));
+    video_power_save_blocker_.get()->InitDisplaySleepBlocker(
+        view_weak_factory_->GetWeakPtr());
+  }
 #endif
 }
 

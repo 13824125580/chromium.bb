@@ -11,6 +11,7 @@
 #include "platform/weborigin/SecurityOrigin.h"
 #include "wtf/HashSet.h"
 #include "wtf/text/Base64.h"
+#include "wtf/text/StringToNumber.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -39,11 +40,12 @@ CSPSourceList::CSPSourceList(ContentSecurityPolicy* policy, const String& direct
     , m_allowInline(false)
     , m_allowEval(false)
     , m_allowDynamic(false)
+    , m_allowHashedAttributes(false)
     , m_hashAlgorithmsUsed(0)
 {
 }
 
-bool CSPSourceList::matches(const KURL& url, ContentSecurityPolicy::RedirectStatus redirectStatus) const
+bool CSPSourceList::matches(const KURL& url, ResourceRequest::RedirectStatus redirectStatus) const
 {
     // The CSP spec specifically states that data:, blob:, and filesystem URLs
     // should not be captured by a '*" source
@@ -89,6 +91,11 @@ bool CSPSourceList::allowHash(const CSPHashValue& hashValue) const
     return m_hashes.contains(hashValue);
 }
 
+bool CSPSourceList::allowHashedAttributes() const
+{
+    return m_allowHashedAttributes;
+}
+
 uint8_t CSPSourceList::hashAlgorithmsUsed() const
 {
     return m_hashAlgorithmsUsed;
@@ -130,7 +137,7 @@ void CSPSourceList::parse(const UChar* begin, const UChar* end)
                 continue;
             if (m_policy->isDirectiveName(host))
                 m_policy->reportDirectiveAsSourceExpression(m_directiveName, host);
-            m_list.append(CSPSource(m_policy, scheme, host, port, path, hostWildcard, portWildcard));
+            m_list.append(new CSPSource(m_policy, scheme, host, port, path, hostWildcard, portWildcard));
         } else {
             m_policy->reportInvalidSourceExpression(m_directiveName, String(beginSource, position - beginSource));
         }
@@ -170,8 +177,13 @@ bool CSPSourceList::parseSource(const UChar* begin, const UChar* end, String& sc
         return true;
     }
 
-    if (equalIgnoringCase("'unsafe-dynamic'", begin, end - begin)) {
-        addSourceUnsafeDynamic();
+    if (equalIgnoringCase("'strict-dynamic'", begin, end - begin)) {
+        addSourceStrictDynamic();
+        return true;
+    }
+
+    if (equalIgnoringCase("'unsafe-hashed-attributes'", begin, end - begin)) {
+        addSourceUnsafeHashedAttributes();
         return true;
     }
 
@@ -492,9 +504,14 @@ void CSPSourceList::addSourceUnsafeEval()
     m_allowEval = true;
 }
 
-void CSPSourceList::addSourceUnsafeDynamic()
+void CSPSourceList::addSourceStrictDynamic()
 {
     m_allowDynamic = true;
+}
+
+void CSPSourceList::addSourceUnsafeHashedAttributes()
+{
+    m_allowHashedAttributes = true;
 }
 
 void CSPSourceList::addSourceNonce(const String& nonce)
@@ -508,14 +525,20 @@ void CSPSourceList::addSourceHash(const ContentSecurityPolicyHashAlgorithm& algo
     m_hashAlgorithmsUsed |= algorithm;
 }
 
-bool CSPSourceList::hasSourceMatchInList(const KURL& url, ContentSecurityPolicy::RedirectStatus redirectStatus) const
+bool CSPSourceList::hasSourceMatchInList(const KURL& url, ResourceRequest::RedirectStatus redirectStatus) const
 {
     for (size_t i = 0; i < m_list.size(); ++i) {
-        if (m_list[i].matches(url, redirectStatus))
+        if (m_list[i]->matches(url, redirectStatus))
             return true;
     }
 
     return false;
+}
+
+DEFINE_TRACE(CSPSourceList)
+{
+    visitor->trace(m_policy);
+    visitor->trace(m_list);
 }
 
 } // namespace blink

@@ -30,7 +30,7 @@ SpdyResponseHeadersStatus ClosingDelegate::OnResponseHeadersUpdated(
   return RESPONSE_HEADERS_ARE_COMPLETE;
 }
 
-void ClosingDelegate::OnDataReceived(scoped_ptr<SpdyBuffer> buffer) {}
+void ClosingDelegate::OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) {}
 
 void ClosingDelegate::OnDataSent() {}
 
@@ -61,11 +61,11 @@ void StreamDelegateBase::OnRequestHeadersSent() {
 SpdyResponseHeadersStatus StreamDelegateBase::OnResponseHeadersUpdated(
     const SpdyHeaderBlock& response_headers) {
   EXPECT_EQ(stream_->type() != SPDY_PUSH_STREAM, send_headers_completed_);
-  response_headers_ = response_headers;
+  response_headers_ = response_headers.Clone();
   return RESPONSE_HEADERS_ARE_COMPLETE;
 }
 
-void StreamDelegateBase::OnDataReceived(scoped_ptr<SpdyBuffer> buffer) {
+void StreamDelegateBase::OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) {
   if (buffer)
     received_data_queue_.Enqueue(std::move(buffer));
 }

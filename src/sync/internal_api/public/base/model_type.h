@@ -10,11 +10,12 @@
 #define SYNC_INTERNAL_API_PUBLIC_BASE_MODEL_TYPE_H_
 
 #include <map>
+#include <memory>
+#include <ostream>
 #include <set>
 #include <string>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "sync/base/sync_export.h"
 #include "sync/internal_api/public/base/enum_set.h"
 
@@ -97,7 +98,7 @@ enum ModelType {
   // History delete directives.
   HISTORY_DELETE_DIRECTIVES,
   // Synced push notifications.
-  SYNCED_NOTIFICATIONS,   // Deprecated.
+  SYNCED_NOTIFICATIONS,  // Deprecated.
   // Synced Notification app info.
   SYNCED_NOTIFICATION_APP_INFO,  // Deprecated.
   // Custom spelling dictionary.
@@ -130,6 +131,8 @@ enum ModelType {
   // Supervised user whitelists. Each item contains a CRX ID (like an extension
   // ID) and a name.
   SUPERVISED_USER_WHITELISTS,
+  // Arc Package items.
+  ARC_PACKAGE,
 
   // ---- Proxy types ----
   // Proxy types are excluded from the sync protocol, but are still considered
@@ -296,11 +299,15 @@ SYNC_EXPORT ModelType ModelTypeFromString(
 // Returns the comma-separated string representation of |model_types|.
 SYNC_EXPORT std::string ModelTypeSetToString(ModelTypeSet model_types);
 
+// Necessary for compatibility with EXPECT_EQ and the like.
+SYNC_EXPORT std::ostream& operator<<(std::ostream& out,
+                                     ModelTypeSet model_type_set);
+
 // Returns the set of comma-separated model types from |model_type_string|.
 SYNC_EXPORT ModelTypeSet ModelTypeSetFromString(
     const std::string& model_type_string);
 
-SYNC_EXPORT scoped_ptr<base::ListValue> ModelTypeSetToValue(
+SYNC_EXPORT std::unique_ptr<base::ListValue> ModelTypeSetToValue(
     ModelTypeSet model_types);
 
 SYNC_EXPORT ModelTypeSet ModelTypeSetFromValue(const base::ListValue& value);
@@ -348,6 +355,11 @@ SYNC_EXPORT bool TypeSupportsHierarchy(ModelType model_type);
 
 // Returns true if |model_type| supports ordering of sibling entries.
 SYNC_EXPORT bool TypeSupportsOrdering(ModelType model_type);
+
+// Returns root_tag for |model_type| in ModelTypeInfo.
+// Difference with ModelTypeToRootTag(), this just simply return toor_tag in
+// ModelTypeInfo.
+SYNC_EXPORT const char* ModelTypeToTag(ModelType model_type);
 
 }  // namespace syncer
 

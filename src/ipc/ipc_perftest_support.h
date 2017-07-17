@@ -7,9 +7,12 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/test/test_io_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ipc/ipc_test_base.h"
 
@@ -34,12 +37,24 @@ class PingPongTestParams {
 
 class IPCChannelPerfTestBase : public IPCTestBase {
  public:
+  IPCChannelPerfTestBase();
+  ~IPCChannelPerfTestBase() override;
+
   static std::vector<PingPongTestParams> GetDefaultTestParams();
 
   void RunTestChannelPingPong(
       const std::vector<PingPongTestParams>& params_list);
   void RunTestChannelProxyPingPong(
       const std::vector<PingPongTestParams>& params_list);
+
+  scoped_refptr<base::TaskRunner> io_task_runner() {
+    if (io_thread_)
+      return io_thread_->task_runner();
+    return base::ThreadTaskRunnerHandle::Get();
+  }
+
+ private:
+  std::unique_ptr<base::TestIOThread> io_thread_;
 };
 
 class PingPongTestClient {
@@ -47,14 +62,14 @@ class PingPongTestClient {
   PingPongTestClient();
   virtual ~PingPongTestClient();
 
-  virtual scoped_ptr<Channel> CreateChannel(Listener* listener);
+  virtual std::unique_ptr<Channel> CreateChannel(Listener* listener);
   int RunMain();
   scoped_refptr<base::TaskRunner> task_runner();
 
  private:
   base::MessageLoopForIO main_message_loop_;
-  scoped_ptr<ChannelReflectorListener> listener_;
-  scoped_ptr<Channel> channel_;
+  std::unique_ptr<ChannelReflectorListener> listener_;
+  std::unique_ptr<Channel> channel_;
 };
 
 // This class locks the current thread to a particular CPU core. This is

@@ -1443,59 +1443,7 @@ goog.scope(function() {
     };
 
     /**
-     * @constructor
-     * @param {number} componentCount
-     * @param {deRandom.Random} rnd
-     * @param {glsDrawTests.GLValue} min
-     * @param {glsDrawTests.GLValue} max
-     * @param {boolean} packed
-     */
-    glsDrawTests.RandomArrayGenerator.VertexParameters = function(componentCount, rnd, min, max, packed) {
-        /** @type {number} */ this.componentCount = componentCount;
-        /** @type {deRandom.Random} */ this.rnd = rnd;
-        /** @type {glsDrawTests.GLValue} */ this.min = min;
-        /** @type {glsDrawTests.GLValue} */ this.max = max;
-        /** @type {boolean}*/ this.packed = packed;
-    };
-
-    /**
-     * @param {Array<glsDrawTests.GLValue>} previousComponents
-     * @param {glsDrawTests.RandomArrayGenerator.VertexParameters} vertexParameters
-     * @return {Array<glsDrawTests.GLValue>|Array<number>}
-     */
-    glsDrawTests.RandomArrayGenerator.generateVertex = function(previousComponents, vertexParameters) {
-        /** @type {Array<glsDrawTests.GLValue>|Array<number>} */ var components = [];
-        /** @type {number} */ var limit10 = (1 << 10);
-        /** @type {number} */ var limit2 = (1 << 2);
-
-        for (var componentNdx = 0; componentNdx < vertexParameters.componentCount; componentNdx++) {
-            //keep z and w values the same as the previous attribute
-            if (componentNdx > 1 && previousComponents.length > 2) {
-                components[componentNdx] = previousComponents[componentNdx];
-                continue;
-            }
-
-            components[componentNdx] = vertexParameters.packed ? (
-                componentNdx == 3 ?
-                    new Uint32Array([vertexParameters.rnd.getInt() % limit2])[0] :
-                    new Uint32Array([vertexParameters.rnd.getInt() % limit10])[0]
-            ) : glsDrawTests.GLValue.getRandom(vertexParameters.rnd, vertexParameters.min, vertexParameters.max);
-
-            if (!vertexParameters.packed) {
-                var minSeparation = glsDrawTests.GLValue.minValue(vertexParameters.min.getType());
-
-                // Try to not create vertex near previous
-                if (previousComponents.length > 0 && glsDrawTests.GLValue.abs(components[componentNdx].sub(previousComponents[componentNdx])).lessThan(minSeparation)) {
-                    // Too close, try again (but only once)
-                    components[componentNdx] = glsDrawTests.GLValue.getRandom(vertexParameters.rnd, vertexParameters.min, vertexParameters.max);
-                }
-            }
-        }
-        return components;
-    };
-
-    /**
-     * createBasicArray - Modified JS version to ensure quad generation for compatibility with refrast.
+     * createBasicArray
      * @param {number} seed
      * @param {number} elementCount
      * @param {number} componentCount
@@ -1516,6 +1464,9 @@ goog.scope(function() {
 
         var packed = type == glsDrawTests.DrawTestSpec.InputType.INT_2_10_10_10 ||
             type == glsDrawTests.DrawTestSpec.InputType.UNSIGNED_INT_2_10_10_10;
+        /** @type {number} */ var limit10 = (1 << 10);
+        /** @type {number} */ var limit2 = (1 << 2);
+
 
         /** @type {number} */ var componentSize = glsDrawTests.DrawTestSpec.inputTypeSize(type);
         /** @type {number} */ var elementSize = componentSize * componentCount;
@@ -1524,228 +1475,56 @@ goog.scope(function() {
         var data = new ArrayBuffer(bufferSize);
         var writePtr = new Uint8Array(data, offset);
 
-        /** @type {Array<glsDrawTests.GLValue>|Array<number>} */ var components = [];
-        /** @type {Array<Array<glsDrawTests.GLValue>>|Array<Array<number>>} */ var quadVertices = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex1 = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex2 = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex3 = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex4 = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex5 = [];
-        /** @type {Array<glsDrawTests.GLValue>} */ var vertex6 = [];
-        /** @type {number} */ var parallelaxis;
-        /** @type {number} */ var oppositeaxis;
-        /** @type {number} */ var direction;
-        /** @type {number} */ var packedValue;
-
-        //Alias
-        var generateVertex = glsDrawTests.RandomArrayGenerator.generateVertex;
+        var previousComponentsFloat = [0, 0, 0, 0];
         var rnd = new deRandom.Random(seed);
 
-        /** @type {glsDrawTests.RandomArrayGenerator.VertexParameters} */
-        var vertexParameters = new glsDrawTests.RandomArrayGenerator.VertexParameters(componentCount, rnd, min, max, packed);
-
         for (var vertexNdx = 0; vertexNdx < elementCount; vertexNdx++) {
-            //If first vertex hasn't been met, just generate individual vertices, and advance the buffer.
-            if (vertexNdx < first || primitive == glsDrawTests.DrawTestSpec.Primitive.POINTS) {
-                components = generateVertex(components, vertexParameters);
-                if (packed) {
-                    packedValue = deMath.binaryOp(
+            var components = [];
+
+            for (var componentNdx = 0; componentNdx < componentCount; componentNdx++) {
+                var getRandomComponent = function() {
+                    // For packed formats we can't use GLValue
+                    if (packed) {
+                        if (componentNdx == 3) {
+                            return rnd.getInt() % limit2;
+                        } else {
+                            return rnd.getInt() % limit10;
+                        }
+                    } else {
+                        return glsDrawTests.GLValue.getRandom(rnd, min, max);
+                    }
+                };
+
+                var component = getRandomComponent();
+                var componentFloat = (component instanceof glsDrawTests.GLValue) ? component.toFloat() : component;
+
+                // Try to not create vertex near previous
+                if (vertexNdx != 0 && Math.abs(componentFloat - previousComponentsFloat[componentNdx]) < min.toFloat()) {
+                    // Too close, try again (but only once)
+                    component = getRandomComponent();
+                    componentFloat = (component instanceof glsDrawTests.GLValue) ? component.toFloat() : component;
+                }
+
+                components.push(component);
+                previousComponentsFloat[componentNdx] = componentFloat;
+            }
+
+            if (packed) {
+                var packedValue = deMath.binaryOp(
                         deMath.shiftLeft(/** @type {Array<number>} */ (components)[3], 30), deMath.binaryOp(
                             deMath.shiftLeft(/** @type {Array<number>} */ (components)[2], 20), deMath.binaryOp(
                                 deMath.shiftLeft(/** @type {Array<number>} */ (components)[1], 10), /** @type {Array<number>} */ (components)[0], deMath.BinaryOp.OR
+                                ), deMath.BinaryOp.OR
                             ), deMath.BinaryOp.OR
-                        ), deMath.BinaryOp.OR
-                    );
-                    glsDrawTests.copyArray(
-                        writePtr.subarray(componentCount), new Uint32Array([packedValue])
-                    );
-                } else
-                    for (var componentNdx = 0; componentNdx < componentCount; componentNdx++)
-                        glsDrawTests.copyGLValueToArray(writePtr.subarray(componentNdx * componentSize), components[componentNdx]);
-
-                //Advance one vertex
-                writePtr = writePtr.subarray(componentCount * componentSize);
-                continue;
-            }
-
-            //Primitive cases
-            switch (primitive) {
-                case glsDrawTests.DrawTestSpec.Primitive.LINES:
-                case glsDrawTests.DrawTestSpec.Primitive.LINE_STRIP:
-                case glsDrawTests.DrawTestSpec.Primitive.LINE_LOOP: {
-                    quadVertices = [generateVertex(components, vertexParameters)];
-                    break;
-                }
-                case glsDrawTests.DrawTestSpec.Primitive.TRIANGLES: {
-                    vertex1 = generateVertex(components, vertexParameters);
-
-                    parallelaxis = rnd.getBool() ? 0 : 1;
-                    oppositeaxis = parallelaxis ? 0 : 1;
-
-                    vertex2 = generateVertex(vertex1, vertexParameters);
-                    vertex2[parallelaxis] = vertex1[parallelaxis];
-
-                    vertex3 = generateVertex(vertex2, vertexParameters);
-                    vertex3[oppositeaxis] = vertex1[oppositeaxis];
-
-                    vertex4 = generateVertex(vertex3, vertexParameters);
-                    vertex4[parallelaxis] = vertex3[parallelaxis];
-                    vertex4[oppositeaxis] = vertex2[oppositeaxis];
-
-                    quadVertices = [vertex1, vertex2, vertex3, vertex3, vertex2, vertex4];
-                    break;
-                }
-                case glsDrawTests.DrawTestSpec.Primitive.TRIANGLE_STRIP: {
-                    if (vertexNdx < first + 4) {
-                        vertex1 = generateVertex(components, vertexParameters);
-
-                        parallelaxis = rnd.getBool() ? 0 : 1;
-                        oppositeaxis = parallelaxis ? 0 : 1;
-
-                        vertex2 = generateVertex(vertex1, vertexParameters);
-                        vertex2[parallelaxis] = vertex1[parallelaxis];
-
-                        vertex3 = generateVertex(vertex2, vertexParameters);
-                        vertex3[oppositeaxis] = vertex1[oppositeaxis];
-
-                        direction = packed ?
-                            (vertex3[parallelaxis] > vertex1[parallelaxis] ? 1 : -1) :
-                            (vertex3[parallelaxis].greaterThan(vertex1[parallelaxis]) ? 1 : -1);
-
-                        vertex4 = generateVertex(vertex3, vertexParameters);
-                        vertex4[oppositeaxis] = vertex2[oppositeaxis];
-                        vertex4[parallelaxis] = vertex3[parallelaxis];
-
-                        quadVertices = [vertex1, vertex2, vertex3, vertex4];
-                    } else {
-                        vertex5 = generateVertex(components, vertexParameters);
-                        vertex5[oppositeaxis] = quadVertices[quadVertices.length - 2][oppositeaxis];
-                        if (!packed)
-                            vertex5[parallelaxis] = glsDrawTests.GLValue.getRandom(
-                                vertexParameters.rnd,
-                                direction > 0 ? components[parallelaxis] : vertexParameters.min,
-                                direction > 0 ? vertexParameters.max : components[parallelaxis]
-                            );
-
-                        vertex6 = generateVertex(vertex5, vertexParameters);
-                        vertex6[oppositeaxis] = quadVertices[quadVertices.length - 1][oppositeaxis];
-                        vertex6[parallelaxis] = vertex5[parallelaxis];
-
-                        quadVertices = [vertex5, vertex6];
-                    }
-                    break;
-                }
-                case glsDrawTests.DrawTestSpec.Primitive.TRIANGLE_FAN: {
-                    if (vertexNdx < first + 4) {
-                        vertex1 = generateVertex(components, vertexParameters);
-
-                        parallelaxis = rnd.getBool() ? 0 : 1;
-                        oppositeaxis = parallelaxis ? 0 : 1;
-
-                        vertex2 = generateVertex(vertex1, vertexParameters);
-                        vertex2[parallelaxis] = vertex1[parallelaxis];
-
-                        vertex3 = generateVertex(vertex2, vertexParameters);
-                        vertex3[oppositeaxis] = vertex2[oppositeaxis];
-
-                        vertex4 = generateVertex(vertex3, vertexParameters);
-                        vertex4[oppositeaxis] = vertex1[oppositeaxis];
-                        vertex4[parallelaxis] = vertex3[parallelaxis];
-
-                        direction = packed ?
-                            (vertex4[oppositeaxis] > vertex3[oppositeaxis] ? 1 : -1) :
-                            (vertex4[oppositeaxis].greaterThan(vertex3[oppositeaxis]) ? 1 : -1);
-
-                        quadVertices = [vertex1, vertex2, vertex3, vertex4];
-                    } else {
-                        vertex5 = generateVertex(components, vertexParameters);
-                        vertex5[parallelaxis] = components[parallelaxis];
-                        if (!packed)
-                            vertex5[oppositeaxis] = glsDrawTests.GLValue.getRandom(
-                                vertexParameters.rnd,
-                                direction > 0 ? components[oppositeaxis] : vertexParameters.min,
-                                direction > 0 ? vertexParameters.max : components[oppositeaxis]
-                            );
-
-                        vertex6 = generateVertex(vertex5, vertexParameters);
-                        vertex6[oppositeaxis] = vertex5[oppositeaxis];
-                        vertex6[parallelaxis] = vertex1[parallelaxis];
-
-                        //swap axes
-                        parallelaxis += oppositeaxis;
-                        oppositeaxis = parallelaxis - oppositeaxis;
-                        parallelaxis -= oppositeaxis;
-
-                        direction = packed ?
-                            (vertex6[oppositeaxis] > vertex5[oppositeaxis] ? 1 : -1) :
-                            (vertex6[oppositeaxis].greaterThan(vertex5[oppositeaxis]) ? 1 : -1);
-
-                        quadVertices = [vertex5, vertex6];
-                    }
-                    break;
-                }
-            }
-
-            //Copy values to buffer
-            for (var qVtx = 0; qVtx < quadVertices.length; qVtx++)
-                if (packed) {
-                    packedValue = deMath.binaryOp(
-                        deMath.shiftLeft(quadVertices[qVtx][3], 30), deMath.binaryOp(
-                            deMath.shiftLeft(quadVertices[qVtx][2], 20), deMath.binaryOp(
-                                deMath.shiftLeft(quadVertices[qVtx][1], 10), quadVertices[qVtx][0], deMath.BinaryOp.OR
-                            ), deMath.BinaryOp.OR
-                        ), deMath.BinaryOp.OR
-                    );
-
-                    glsDrawTests.copyArray(
-                        writePtr.subarray(qVtx * componentCount), new Uint32Array([packedValue])
-                    );
-                } else
-                    for (var componentNdx = 0; componentNdx < componentCount; componentNdx++)
-                        glsDrawTests.copyGLValueToArray(
-                            writePtr.subarray(
-                                Math.max(qVtx * componentCount * componentSize, qVtx * stride) + componentNdx * componentSize
-                            ),
-                            quadVertices[qVtx][componentNdx]
                         );
-
-            if (quadVertices.length > 0) {
-                writePtr = writePtr.subarray(stride * quadVertices.length);
-
-                //Remember last generated vertex
-                components = quadVertices[quadVertices.length - 1];
-
-                //Increment additional generated vertices number
-                vertexNdx += quadVertices.length - 1;
-            }
-        }
-
-        //If index array was specified, reorder vertices in the order specified (so refrast can still draw quads).
-        if (indices) {
-            var view = new Uint8Array(data, offset);
-            var reorderedbuffer = new ArrayBuffer(data.byteLength);
-            var reorderedview = new Uint8Array(reorderedbuffer, offset);
-            var indicesCount = (indices.length - offset) / indexSize;
-            for (var index = 0; index < indicesCount; index++) {
-                var start = indexSize * index;
-                var end = (indexSize * index) + indexSize;
-                var indexValue = indices.subarray(start, end);
-                switch (indexSize) {
-                    case 1: indexValue = indexValue[0]; break;
-                    case 2: indexValue = new Uint16Array(indexValue)[0]; break;
-                    case 4: indexValue = new Uint32Array(indexValue)[0]; break;
-                    default: throw new Error('Invalid index type size: ' + indexSize);
+                glsDrawTests.copyArray(writePtr, new Uint32Array([packedValue]));
+            } else {
+                for (var componentNdx = 0; componentNdx < componentCount; componentNdx++) {
+                    glsDrawTests.copyGLValueToArray(writePtr.subarray(componentNdx * componentSize), components[componentNdx]);
                 }
-                if (indexValue < elementCount)
-                    reorderedview.set(
-                        view.subarray(
-                            Math.max(index * componentCount * componentSize, index * stride),
-                            Math.max((index + 1) * componentCount * componentSize, (index + 1) * stride)
-                        ),
-                        Math.max(indexValue * componentCount * componentSize, indexValue * stride)
-                    );
             }
-            data = reorderedbuffer;
+
+            writePtr = writePtr.subarray(stride);
         }
 
         return new Uint8Array(data);
@@ -3170,12 +2949,15 @@ goog.scope(function() {
     };
 
     /**
-     * @param {tcuRGBA.RGBA} c
+     * @param {number} c1
+     * @param {number} c2
+     * @param {Array<number>} threshold
      * @return {boolean}
      */
-    glsDrawTests.isBlack = function(c) {
-        // ignore alpha channel
-        return c.getRed() == 0 && c.getGreen() == 0 && c.getBlue() == 0;
+    glsDrawTests.compareUintRGB8 = function(c1, c2, threshold) {
+        return (Math.abs(((c1 >> 16) & 0xff) - ((c2 >> 16) & 0xff)) <= threshold[0] &&  // Red
+                Math.abs(((c1 >> 8) & 0xff) - ((c2 >> 8) & 0xff)) <= threshold[1] &&    // Green
+                Math.abs((c1 & 0xff) - (c2 & 0xff)) <= threshold[2]);                   // Blue
     };
 
     /**
@@ -3203,9 +2985,9 @@ goog.scope(function() {
      */
     glsDrawTests.isEdgeTriplet = function(c1, c2, c3, renderTargetThreshold) {
         // black (background color) and non-black is always an edge
-        /** @type {boolean} */ var b1 = glsDrawTests.isBlack(c1);
-        /** @type {boolean} */ var b2 = glsDrawTests.isBlack(c2);
-        /** @type {boolean} */ var b3 = glsDrawTests.isBlack(c3);
+        /** @type {boolean} */ var b1 = c1 == 0x000000;
+        /** @type {boolean} */ var b2 = c2 == 0x000000;
+        /** @type {boolean} */ var b3 = c3 == 0x000000;
 
         // both pixels with coverage and pixels without coverage
         if ((b1 && b2 && b3) == false && (b1 || b2 || b3) == true)
@@ -3222,9 +3004,9 @@ goog.scope(function() {
         // Edge detection (this function) is run against the reference image
         // => no dithering to worry about
 
-        return glsDrawTests.isEdgeTripletComponent(c1.getRed(), c2.getRed(), c3.getRed(), renderTargetThreshold[0]) ||
-            glsDrawTests.isEdgeTripletComponent(c1.getGreen(), c2.getGreen(), c3.getGreen(), renderTargetThreshold[1]) ||
-            glsDrawTests.isEdgeTripletComponent(c1.getBlue(), c2.getBlue(), c3.getBlue(), renderTargetThreshold[2]);
+        return glsDrawTests.isEdgeTripletComponent((c1 >> 16) && 0xff, (c2 >> 16) && 0xff, (c3 >> 16) && 0xff, renderTargetThreshold[0]) ||
+            glsDrawTests.isEdgeTripletComponent((c1 >> 8) && 0xff, (c2 >> 8) && 0xff, (c3 >> 8) && 0xff, renderTargetThreshold[1]) ||
+            glsDrawTests.isEdgeTripletComponent(c1 && 0xff, c2 && 0xff, c3 && 0xff, renderTargetThreshold[2]);
     };
 
     /**
@@ -3241,14 +3023,14 @@ goog.scope(function() {
 
         // horizontal
 
-        /** @type {tcuRGBA.RGBA} */ var c1;
-        /** @type {tcuRGBA.RGBA} */ var c2;
-        /** @type {tcuRGBA.RGBA} */ var c3;
+        /** @type {number} */ var c1;
+        /** @type {number} */ var c2;
+        /** @type {number} */ var c3;
 
         for (var dy = -1; dy < 2; ++dy) {
-            c1 = tcuRGBA.newRGBAFromArray(ref.getPixel(x - 1, y + dy));
-            c2 = tcuRGBA.newRGBAFromArray(ref.getPixel(x, y + dy));
-            c3 = tcuRGBA.newRGBAFromArray(ref.getPixel(x + 1, y + dy));
+            c1 = ref.getPixelUintRGB8(x - 1, y + dy);
+            c2 = ref.getPixelUintRGB8(x, y + dy);
+            c3 = ref.getPixelUintRGB8(x + 1, y + dy);
             if (glsDrawTests.isEdgeTriplet(c1, c2, c3, renderTargetThreshold))
                 return true;
         }
@@ -3256,9 +3038,9 @@ goog.scope(function() {
         // vertical
 
         for (var dx = -1; dx < 2; ++dx) {
-            c1 = tcuRGBA.newRGBAFromArray(ref.getPixel(x + dx, y - 1));
-            c2 = tcuRGBA.newRGBAFromArray(ref.getPixel(x + dx, y));
-            c3 = tcuRGBA.newRGBAFromArray(ref.getPixel(x + dx, y + 1));
+            c1 = ref.getPixelUintRGB8(x + dx, y - 1);
+            c2 = ref.getPixelUintRGB8(x + dx, y);
+            c3 = ref.getPixelUintRGB8(x + dx, y + 1);
             if (glsDrawTests.isEdgeTriplet(c1, c2, c3, renderTargetThreshold))
                 return true;
         }
@@ -3267,15 +3049,15 @@ goog.scope(function() {
     };
 
     /**
-     * @param {tcuRGBA.RGBA} c
+     * @param {number} c
      * @return {number}
      */
-    glsDrawTests.getVisualizationGrayscaleColor = function(c) {
+    glsDrawTests.getVisualizationGrayscaleColorUintRGB8 = function(c) {
         // make triangle coverage and error pixels obvious by converting coverage to grayscale
-        if (glsDrawTests.isBlack(c))
+        if (c == 0x000000)
             return 0;
         else
-            return new Uint32Array([50 + Math.floor(new Uint32Array([c.getRed() + c.getBlue() + c.getGreen()])[0] / 8)])[0];
+            return 50 + Math.floor((((c >> 16) & 0xff) + ((c >> 8) & 0xff) + (c & 0xff)) / 8);
     };
 
     /**
@@ -3293,7 +3075,7 @@ goog.scope(function() {
 
         for (var dy = -1; dy < 2; dy++)
         for (var dx = -1; dx < 2; dx++) {
-            var targetCoverage = !glsDrawTests.isBlack(tcuRGBA.newRGBAFromArray(target.getPixel(x + dx, y + dy)));
+            var targetCoverage = target.getPixelUintRGB8(x + dx, y + dy);
             if (targetCoverage) {
                 ++coveredPixels;
 
@@ -3322,12 +3104,7 @@ goog.scope(function() {
 
         for (var dy = -1; dy < 2; dy++)
         for (var dx = -1; dx < 2; dx++) {
-            /** @type {tcuRGBA.RGBA} */ var targetCmpPixel = tcuRGBA.newRGBAFromArray(target.getPixel(x + dx, y + dy));
-            /** @type {number} */ var r = Math.abs(color.getRed() - targetCmpPixel.getRed());
-            /** @type {number} */ var g = Math.abs(color.getGreen() - targetCmpPixel.getGreen());
-            /** @type {number} */ var b = Math.abs(color.getBlue() - targetCmpPixel.getBlue());
-
-            if (r <= compareThreshold[0] && g <= compareThreshold[1] && b <= compareThreshold[2])
+            if (glsDrawTests.compareUintRGB8(color, target.getPixelUintRGB8(x + dx, y + dy), compareThreshold))
                 return true;
         }
 
@@ -3349,7 +3126,7 @@ goog.scope(function() {
 
         for (var dy = -1; dy < 2; dy++)
         for (var dx = -1; dx < 2; dx++) {
-            var targetCmpCoverage = !glsDrawTests.isBlack(tcuRGBA.newRGBAFromArray(target.getPixel(x + dx, y + dy)));
+            var targetCmpCoverage = target.getPixelUintRGB8(x + dx, y + dy) != 0x000000; // Pixel is not black
             if (targetCmpCoverage == coverage)
                 return true;
         }
@@ -3388,14 +3165,14 @@ goog.scope(function() {
 
         for (var y = 1; y < height - 1; ++y)
         for (var x = 1; x < width - 1; ++x) {
-            /** @type {tcuRGBA.RGBA} */ var refPixel = tcuRGBA.newRGBAFromArray(reference.getPixel(x, y));
-            /** @type {tcuRGBA.RGBA} */ var screenPixel = tcuRGBA.newRGBAFromArray(result.getPixel(x, y));
+            /** @type {number} */ var refPixel = reference.getPixelUintRGB8(x, y);
+            /** @type {number} */ var screenPixel = result.getPixelUintRGB8(x, y);
             /** @type {boolean} */ var isOkReferencePixel = glsDrawTests.pixelNeighborhoodContainsColor(result, x, y, refPixel, compareThreshold); // screen image has a matching pixel nearby (~= If something is drawn on reference, it must be drawn to screen too.)
             /** @type {boolean} */ var isOkScreenPixel = glsDrawTests.pixelNeighborhoodContainsColor(reference, x, y, screenPixel, compareThreshold); // reference image has a matching pixel nearby (~= If something is drawn on screen, it must be drawn to reference too.)
 
             if (isOkScreenPixel && isOkReferencePixel) {
                 // pixel valid, write greenish pixels to make the result image easier to read
-                /** @type {number} */ var grayscaleValue = glsDrawTests.getVisualizationGrayscaleColor(screenPixel);
+                /** @type {number} */ var grayscaleValue = glsDrawTests.getVisualizationGrayscaleColorUintRGB8(screenPixel);
                 errorMask.getAccess().setPixel([grayscaleValue / 255, 1, grayscaleValue / 255, 1], x, y);
             } else if (!glsDrawTests.pixelNearEdge(x, y, reference, renderTargetThreshold)) {
                 // non-edge pixel values must be within threshold of the reference values
@@ -3403,14 +3180,14 @@ goog.scope(function() {
                 ++numFailingPixels;
             } else {
                 // we are on/near an edge, verify only coverage (coverage == not background colored)
-                /** @type {boolean} */ var referenceCoverage = !glsDrawTests.isBlack(refPixel);
-                /** @type {boolean} */ var screenCoverage = !glsDrawTests.isBlack(screenPixel);
+                /** @type {boolean} */ var referenceCoverage = refPixel != 0x000000; // Not black
+                /** @type {boolean} */ var screenCoverage = screenPixel != 0x000000; // Not black
                 /** @type {boolean} */ var isOkReferenceCoverage = glsDrawTests.pixelNeighborhoodContainsCoverage(result, x, y, referenceCoverage); // Check reference pixel against screen pixel
                 /** @type {boolean} */ var isOkScreenCoverage = glsDrawTests.pixelNeighborhoodContainsCoverage(reference, x, y, screenCoverage); // Check screen pixels against reference pixel
 
                 if (isOkScreenCoverage && isOkReferenceCoverage) {
                     // pixel valid, write greenish pixels to make the result image easier to read
-                    var grayscaleValue = glsDrawTests.getVisualizationGrayscaleColor(screenPixel);
+                    var grayscaleValue = glsDrawTests.getVisualizationGrayscaleColorUintRGB8(screenPixel);
                     errorMask.getAccess().setPixel([grayscaleValue / 255, 1, grayscaleValue / 255, 1], x, y);
                 } else {
                     // coverage does not match
@@ -3467,8 +3244,8 @@ goog.scope(function() {
 
         for (var y = 1; y < height - 1; ++y)
         for (var x = 1; x < width - 1; ++x) {
-            /** @type {tcuRGBA.RGBA} */ var refPixel = tcuRGBA.newRGBAFromArray(reference.getPixel(x, y));
-            /** @type {tcuRGBA.RGBA} */ var screenPixel = tcuRGBA.newRGBAFromArray(result.getPixel(x, y));
+            /** @type {number} */ var refPixel = reference.getPixelUintRGB8(x, y);
+            /** @type {number} */ var screenPixel = result.getPixelUintRGB8(x, y);
             /** @type {boolean} */ var isOkScreenPixel = glsDrawTests.pixelNeighborhoodContainsColor(reference, x, y, screenPixel, compareThreshold); // reference image has a matching pixel nearby (~= If something is drawn on screen, it must be drawn to reference too.)
             /** @type {boolean} */ var isOkReferencePixel = glsDrawTests.pixelNeighborhoodContainsColor(result, x, y, refPixel, compareThreshold); // screen image has a matching pixel nearby (~= If something is drawn on reference, it must be drawn to screen too.)
 
@@ -3476,7 +3253,7 @@ goog.scope(function() {
 
             if (isOkScreenPixel && isOkReferencePixel) {
                 // pixel valid, write greenish pixels to make the result image easier to read
-                grayscaleValue = glsDrawTests.getVisualizationGrayscaleColor(screenPixel);
+                grayscaleValue = glsDrawTests.getVisualizationGrayscaleColorUintRGB8(screenPixel);
                 errorMask.getAccess().setPixel([grayscaleValue / 255, 1, grayscaleValue / 255, 1], x, y);
             } else if (!glsDrawTests.pixelNearLineIntersection(x, y, reference) &&
                      !glsDrawTests.pixelNearLineIntersection(x, y, result)) {
@@ -3486,14 +3263,14 @@ goog.scope(function() {
             } else {
                 // pixel is near a line intersection
                 // we are on/near an edge, verify only coverage (coverage == not background colored)
-                /** @type {boolean} */ var referenceCoverage = !glsDrawTests.isBlack(refPixel);
-                /** @type {boolean} */ var screenCoverage = !glsDrawTests.isBlack(screenPixel);
+                /** @type {boolean} */ var referenceCoverage = refPixel != 0x000000; // Not Black
+                /** @type {boolean} */ var screenCoverage = screenPixel != 0x000000; // Not Black
                 /** @type {boolean} */ var isOkScreenCoverage = glsDrawTests.pixelNeighborhoodContainsCoverage(reference, x, y, screenCoverage); // Check screen pixels against reference pixel
                 /** @type {boolean} */ var isOkReferenceCoverage = glsDrawTests.pixelNeighborhoodContainsCoverage(result, x, y, referenceCoverage); // Check reference pixel against screen pixel
 
                 if (isOkScreenCoverage && isOkReferenceCoverage) {
                     // pixel valid, write greenish pixels to make the result image easier to read
-                    grayscaleValue = glsDrawTests.getVisualizationGrayscaleColor(screenPixel);
+                    grayscaleValue = glsDrawTests.getVisualizationGrayscaleColorUintRGB8(screenPixel);
                     errorMask.getAccess().setPixel([grayscaleValue / 255, 1, grayscaleValue / 255, 1], x, y);
                 } else {
                     // coverage does not match

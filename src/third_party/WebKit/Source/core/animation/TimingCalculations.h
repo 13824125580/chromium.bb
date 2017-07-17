@@ -50,9 +50,10 @@ static inline AnimationEffect::Phase calculatePhase(double activeDuration, doubl
     ASSERT(activeDuration >= 0);
     if (isNull(localTime))
         return AnimationEffect::PhaseNone;
-    if (localTime < specified.startDelay)
+    double endTime = specified.startDelay + activeDuration + specified.endDelay;
+    if (localTime < std::min(specified.startDelay, endTime))
         return AnimationEffect::PhaseBefore;
-    if (localTime >= specified.startDelay + activeDuration)
+    if (localTime >= std::min(specified.startDelay + activeDuration, endTime))
         return AnimationEffect::PhaseAfter;
     return AnimationEffect::PhaseActive;
 }
@@ -67,7 +68,7 @@ static inline bool isActiveInParentPhase(AnimationEffect::Phase parentPhase, Tim
     case AnimationEffect::PhaseAfter:
         return fillMode == Timing::FillModeForwards || fillMode == Timing::FillModeBoth;
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return false;
     }
 }
@@ -94,7 +95,7 @@ static inline double calculateActiveTime(double activeDuration, Timing::FillMode
         ASSERT(isNull(localTime));
         return nullValue();
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return nullValue();
     }
 }

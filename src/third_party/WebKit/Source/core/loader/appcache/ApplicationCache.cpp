@@ -30,8 +30,8 @@
 #include "core/dom/ExceptionCode.h"
 #include "core/events/EventListener.h"
 #include "core/frame/Deprecation.h"
+#include "core/frame/HostsUsingFeatures.h"
 #include "core/frame/LocalFrame.h"
-#include "core/frame/OriginsUsingFeatures.h"
 #include "core/frame/UseCounter.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
@@ -48,7 +48,7 @@ ApplicationCache::ApplicationCache(LocalFrame* frame)
 
 DEFINE_TRACE(ApplicationCache)
 {
-    RefCountedGarbageCollectedEventTargetWithInlineData<ApplicationCache>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     DOMWindowProperty::trace(visitor);
 }
 
@@ -72,7 +72,7 @@ unsigned short ApplicationCache::status() const
     ApplicationCacheHost* cacheHost = applicationCacheHost();
     if (!cacheHost)
         return ApplicationCacheHost::UNCACHED;
-    return cacheHost->status();
+    return cacheHost->getStatus();
 }
 
 void ApplicationCache::update(ExceptionState& exceptionState)
@@ -103,7 +103,7 @@ const AtomicString& ApplicationCache::interfaceName() const
     return EventTargetNames::ApplicationCache;
 }
 
-ExecutionContext* ApplicationCache::executionContext() const
+ExecutionContext* ApplicationCache::getExecutionContext() const
 {
     if (m_frame)
         return m_frame->document();
@@ -146,11 +146,9 @@ void ApplicationCache::recordAPIUseType() const
 
     if (document->isSecureContext()) {
         UseCounter::count(document, UseCounter::ApplicationCacheAPISecureOrigin);
-        UseCounter::countCrossOriginIframe(*document, UseCounter::ApplicationCacheAPISecureOrigin);
     } else {
         Deprecation::countDeprecation(document, UseCounter::ApplicationCacheAPIInsecureOrigin);
-        UseCounter::countCrossOriginIframe(*document, UseCounter::ApplicationCacheAPIInsecureOrigin);
-        OriginsUsingFeatures::countAnyWorld(*document, OriginsUsingFeatures::Feature::ApplicationCacheAPIInsecureOrigin);
+        HostsUsingFeatures::countAnyWorld(*document, HostsUsingFeatures::Feature::ApplicationCacheAPIInsecureHost);
     }
 }
 

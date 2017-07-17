@@ -15,7 +15,7 @@ ChannelIDStore::ChannelID::ChannelID() {
 
 ChannelIDStore::ChannelID::ChannelID(const std::string& server_identifier,
                                      base::Time creation_time,
-                                     scoped_ptr<crypto::ECPrivateKey> key)
+                                     std::unique_ptr<crypto::ECPrivateKey> key)
     : server_identifier_(server_identifier),
       creation_time_(creation_time),
       key_(std::move(key)) {}
@@ -33,7 +33,7 @@ ChannelIDStore::ChannelID& ChannelIDStore::ChannelID::operator=(
   server_identifier_ = other.server_identifier_;
   creation_time_ = other.creation_time_;
   if (other.key_)
-    key_.reset(other.key_->Copy());
+    key_ = other.key_->Copy();
   return *this;
 }
 
@@ -42,7 +42,7 @@ ChannelIDStore::ChannelID::~ChannelID() {}
 void ChannelIDStore::InitializeFrom(const ChannelIDList& list) {
   for (ChannelIDList::const_iterator i = list.begin(); i != list.end();
       ++i) {
-    SetChannelID(scoped_ptr<ChannelID>(new ChannelID(*i)));
+    SetChannelID(std::unique_ptr<ChannelID>(new ChannelID(*i)));
   }
 }
 

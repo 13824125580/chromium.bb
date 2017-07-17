@@ -32,14 +32,13 @@
 
 #include "core/dom/DOMURL.h"
 #include "modules/mediasource/MediaSource.h"
-#include "wtf/MainThread.h"
 
 namespace blink {
 
 String URLMediaSource::createObjectURL(ExecutionContext* executionContext, MediaSource* source)
 {
     // Since WebWorkers cannot obtain MediaSource objects, we should be on the main thread.
-    ASSERT(isMainThread());
+    DCHECK(isMainThread());
 
     if (!executionContext)
         return String();

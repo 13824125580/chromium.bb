@@ -93,15 +93,11 @@ TabSpecificContentSettings::TabSpecificContentSettings(WebContents* tab)
       geolocation_usages_state_(
           HostContentSettingsMapFactory::GetForProfile(
               Profile::FromBrowserContext(tab->GetBrowserContext())),
-          CONTENT_SETTINGS_TYPE_GEOLOCATION,
-          prefs::kAcceptLanguages,
-          Profile::FromBrowserContext(tab->GetBrowserContext())->GetPrefs()),
+          CONTENT_SETTINGS_TYPE_GEOLOCATION),
       midi_usages_state_(
           HostContentSettingsMapFactory::GetForProfile(
               Profile::FromBrowserContext(tab->GetBrowserContext())),
-          CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
-          prefs::kAcceptLanguages,
-          Profile::FromBrowserContext(tab->GetBrowserContext())->GetPrefs()),
+          CONTENT_SETTINGS_TYPE_MIDI_SYSEX),
       pending_protocol_handler_(ProtocolHandler::EmptyProtocolHandler()),
       previous_protocol_handler_(ProtocolHandler::EmptyProtocolHandler()),
       pending_protocol_handler_setting_(CONTENT_SETTING_DEFAULT),
@@ -347,9 +343,9 @@ void TabSpecificContentSettings::OnContentBlockedWithDetail(
     if (type == CONTENT_SETTINGS_TYPE_MIXEDSCRIPT) {
       content_settings::RecordMixedScriptAction(
           content_settings::MIXED_SCRIPT_ACTION_DISPLAYED_SHIELD);
-      content_settings::RecordMixedScriptActionWithRAPPOR(
-          content_settings::MIXED_SCRIPT_ACTION_DISPLAYED_SHIELD,
-          GURL(base::UTF16ToUTF8(details)));
+    } else if (type == CONTENT_SETTINGS_TYPE_PLUGINS) {
+      content_settings::RecordPluginsAction(
+          content_settings::PLUGINS_ACTION_DISPLAYED_BLOCKED_ICON_IN_OMNIBOX);
     }
   }
 }
@@ -773,6 +769,11 @@ void TabSpecificContentSettings::DidNavigateMainFrame(
     blocked_plugin_names_.clear();
     GeolocationDidNavigate(details);
     MidiDidNavigate(details);
+
+    if (web_contents()->GetVisibleURL().SchemeIsHTTPOrHTTPS()) {
+      content_settings::RecordPluginsAction(
+          content_settings::PLUGINS_ACTION_TOTAL_NAVIGATIONS);
+    }
   }
 }
 

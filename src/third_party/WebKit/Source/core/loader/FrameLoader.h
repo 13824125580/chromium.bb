@@ -43,10 +43,13 @@
 #include "core/loader/HistoryItem.h"
 #include "core/loader/NavigationPolicy.h"
 #include "platform/Timer.h"
+#include "platform/TracedValue.h"
 #include "platform/heap/Handle.h"
 #include "platform/network/ResourceRequest.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
 #include "wtf/Forward.h"
 #include "wtf/HashSet.h"
+#include <memory>
 
 namespace blink {
 
@@ -57,7 +60,7 @@ class ProgressTracker;
 class ResourceError;
 class SerializedScriptValue;
 class SubstituteData;
-
+enum class WebCachePolicy;
 struct FrameLoadRequest;
 
 CORE_EXPORT bool isBackForwardLoadType(FrameLoadType);
@@ -66,7 +69,7 @@ class CORE_EXPORT FrameLoader final {
     WTF_MAKE_NONCOPYABLE(FrameLoader);
     DISALLOW_NEW();
 public:
-    static ResourceRequest resourceRequestFromHistoryItem(HistoryItem*, ResourceRequestCachePolicy);
+    static ResourceRequest resourceRequestFromHistoryItem(HistoryItem*, WebCachePolicy);
 
     FrameLoader(LocalFrame*);
     ~FrameLoader();
@@ -74,7 +77,7 @@ public:
     void init();
 
     ResourceRequest resourceRequestForReload(FrameLoadType, const KURL& overrideURL = KURL(),
-        ClientRedirectPolicy = NotClientRedirect);
+        ClientRedirectPolicy = ClientRedirectPolicy::NotClientRedirect);
 
     ProgressTracker& progress() const { return *m_progressTracker; }
 
@@ -97,20 +100,16 @@ public:
 
     void replaceDocumentWhileExecutingJavaScriptURL(const String& source, Document* ownerDocument);
 
-    // Sets a timer to notify the client that the initial empty document has
-    // been accessed, and thus it is no longer safe to show a provisional URL
-    // above the document without risking a URL spoof.
+    // Notifies the client that the initial empty document has been accessed,
+    // and thus it is no longer safe to show a provisional URL above the
+    // document without risking a URL spoof. The client must not call back into
+    // JavaScript.
     void didAccessInitialDocument();
-
-    // If the initial empty document is showing and has been accessed, this
-    // cancels the timer and immediately notifies the client in cases that
-    // waiting to notify would allow a URL spoof.
-    void notifyIfInitialDocumentAccessed();
 
     DocumentLoader* documentLoader() const { return m_documentLoader.get(); }
     DocumentLoader* provisionalDocumentLoader() const { return m_provisionalDocumentLoader.get(); }
 
-    void receivedMainResourceError(DocumentLoader*, const ResourceError&);
+    void loadFailed(DocumentLoader*, const ResourceError&);
 
     bool isLoadingMainFrame() const;
 
@@ -127,7 +126,9 @@ public:
     void didExplicitOpen();
 
     // Callbacks from DocumentWriter
-    void didBeginDocument(bool dispatchWindowObjectAvailable);
+    void didInstallNewDocument(bool dispatchWindowObjectAvailable);
+
+    void didBeginDocument();
 
     void receivedFirstData();
 
@@ -143,9 +144,7 @@ public:
     void forceSandboxFlags(SandboxFlags flags) { m_forcedSandboxFlags |= flags; }
     SandboxFlags effectiveSandboxFlags() const;
 
-    bool shouldEnforceStrictMixedContentChecking() const;
-
-    SecurityContext::InsecureRequestsPolicy getInsecureRequestsPolicy() const;
+    WebInsecureRequestPolicy getInsecureRequestPolicy() const;
     SecurityContext::InsecureNavigationsSet* insecureNavigationsToUpgrade() const;
 
     Frame* opener();
@@ -178,7 +177,7 @@ public:
 
     bool allowPlugins(ReasonForCallingAllowPlugins);
 
-    void updateForSameDocumentNavigation(const KURL&, SameDocumentNavigationSource, PassRefPtr<SerializedScriptValue>, HistoryScrollRestorationType, FrameLoadType);
+    void updateForSameDocumentNavigation(const KURL&, SameDocumentNavigationSource, PassRefPtr<SerializedScriptValue>, HistoryScrollRestorationType, FrameLoadType, Document*);
 
     HistoryItem* currentItem() const { return m_currentItem.get(); }
     void saveScrollState();
@@ -190,12 +189,13 @@ public:
 
     DECLARE_TRACE();
 
+    static void setReferrerForFrameRequest(FrameLoadRequest&);
+
 private:
     void checkTimerFired(Timer<FrameLoader>*);
     void didAccessInitialDocumentTimerFired(Timer<FrameLoader>*);
 
     bool prepareRequestForThisFrame(FrameLoadRequest&);
-    static void setReferrerForFrameRequest(ResourceRequest&, ShouldSendReferrer, Document*);
     FrameLoadType determineFrameLoadType(const FrameLoadRequest&);
 
     SubstituteData defaultSubstituteDataForURL(const KURL&);
@@ -212,20 +212,23 @@ private:
     };
     void setHistoryItemStateForCommit(HistoryCommitType, HistoryNavigationType);
 
-    void loadInSameDocument(const KURL&, PassRefPtr<SerializedScriptValue> stateObject, FrameLoadType, HistoryLoadType, ClientRedirectPolicy);
+    void loadInSameDocument(const KURL&, PassRefPtr<SerializedScriptValue> stateObject, FrameLoadType, HistoryLoadType, ClientRedirectPolicy, Document*);
 
     void scheduleCheckCompleted();
 
-    void detachDocumentLoader(RefPtrWillBeMember<DocumentLoader>&);
+    void detachDocumentLoader(Member<DocumentLoader>&);
 
-    RawPtrWillBeMember<LocalFrame> m_frame;
+    std::unique_ptr<TracedValue> toTracedValue() const;
+    void takeObjectSnapshot() const;
 
-    // FIXME: These should be OwnPtr<T> to reduce build times and simplify
+    Member<LocalFrame> m_frame;
+
+    // FIXME: These should be std::unique_ptr<T> to reduce build times and simplify
     // header dependencies unless performance testing proves otherwise.
     // Some of these could be lazily created for memory savings on devices.
     mutable FrameLoaderStateMachine m_stateMachine;
 
-    OwnPtrWillBeMember<ProgressTracker> m_progressTracker;
+    Member<ProgressTracker> m_progressTracker;
 
     FrameLoadType m_loadType;
 
@@ -233,18 +236,18 @@ private:
     // a new request is being loaded, the old document loader may still be referenced.
     // E.g. while a new request is in the "policy" state, the old document loader may
     // be consulted in particular as it makes sense to imply certain settings on the new loader.
-    RefPtrWillBeMember<DocumentLoader> m_documentLoader;
-    RefPtrWillBeMember<DocumentLoader> m_provisionalDocumentLoader;
+    Member<DocumentLoader> m_documentLoader;
+    Member<DocumentLoader> m_provisionalDocumentLoader;
 
-    RefPtrWillBeMember<HistoryItem> m_currentItem;
-    RefPtrWillBeMember<HistoryItem> m_provisionalItem;
+    Member<HistoryItem> m_currentItem;
+    Member<HistoryItem> m_provisionalItem;
 
-    class DeferredHistoryLoad : public NoBaseWillBeGarbageCollectedFinalized<DeferredHistoryLoad> {
+    class DeferredHistoryLoad : public GarbageCollectedFinalized<DeferredHistoryLoad> {
         WTF_MAKE_NONCOPYABLE(DeferredHistoryLoad);
     public:
-        static PassOwnPtrWillBeRawPtr<DeferredHistoryLoad> create(ResourceRequest request, HistoryItem* item, FrameLoadType loadType, HistoryLoadType historyLoadType)
+        static DeferredHistoryLoad* create(ResourceRequest request, HistoryItem* item, FrameLoadType loadType, HistoryLoadType historyLoadType)
         {
-            return adoptPtrWillBeNoop(new DeferredHistoryLoad(request, item, loadType, historyLoadType));
+            return new DeferredHistoryLoad(request, item, loadType, historyLoadType);
         }
 
         DeferredHistoryLoad(ResourceRequest request, HistoryItem* item, FrameLoadType loadType,
@@ -262,19 +265,18 @@ private:
         }
 
         ResourceRequest m_request;
-        RefPtrWillBeMember<HistoryItem> m_item;
+        Member<HistoryItem> m_item;
         FrameLoadType m_loadType;
         HistoryLoadType m_historyLoadType;
     };
 
-    OwnPtrWillBeMember<DeferredHistoryLoad> m_deferredHistoryLoad;
+    Member<DeferredHistoryLoad> m_deferredHistoryLoad;
 
     bool m_inStopAllLoaders;
 
     Timer<FrameLoader> m_checkTimer;
 
     bool m_didAccessInitialDocument;
-    Timer<FrameLoader> m_didAccessInitialDocumentTimer;
 
     SandboxFlags m_forcedSandboxFlags;
 

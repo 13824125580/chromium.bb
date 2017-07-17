@@ -44,8 +44,6 @@
 #include "wtf/text/TextPosition.h"
 #include <v8.h>
 
-struct NPObject;
-
 namespace blink {
 
 class DOMWrapperWorld;
@@ -66,26 +64,19 @@ enum ReasonForCallingCanExecuteScripts {
     NotAboutToExecuteScript
 };
 
-class CORE_EXPORT ScriptController final : public NoBaseWillBeGarbageCollectedFinalized<ScriptController> {
+class CORE_EXPORT ScriptController final : public GarbageCollected<ScriptController> {
     WTF_MAKE_NONCOPYABLE(ScriptController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ScriptController);
 public:
     enum ExecuteScriptPolicy {
         ExecuteScriptWhenScriptsDisabled,
         DoNotExecuteScriptWhenScriptsDisabled
     };
 
-    // Set this to false if callstack capturing should always happen.  By default, this
-    // is true, which means callstack capturing only happens when the inspector is open
-    // (which is the default upstream behavior).
-    static bool s_stackCaptureControlledByInspector;
-
-    static PassOwnPtrWillBeRawPtr<ScriptController> create(LocalFrame* frame)
+    static ScriptController* create(LocalFrame* frame)
     {
-        return adoptPtrWillBeNoop(new ScriptController(frame));
+        return new ScriptController(frame);
     }
 
-    ~ScriptController();
     DECLARE_TRACE();
 
     bool initializeMainWorld();
@@ -107,7 +98,7 @@ public:
     //
     // FIXME: Get rid of extensionGroup here.
     // FIXME: We don't want to support multiple scripts.
-    void executeScriptInIsolatedWorld(int worldID, const WillBeHeapVector<ScriptSourceCode>& sources, int extensionGroup, Vector<v8::Local<v8::Value>>* results);
+    void executeScriptInIsolatedWorld(int worldID, const HeapVector<ScriptSourceCode>& sources, int extensionGroup, Vector<v8::Local<v8::Value>>* results);
 
     // Returns true if argument is a JavaScript URL.
     bool executeScriptIfJavaScriptURL(const KURL&);
@@ -120,9 +111,6 @@ public:
     // ignored when evaluating resources injected into the DOM.
     bool shouldBypassMainWorldCSP();
 
-    // Creates a property of the global object of a frame.
-    bool bindToWindowObject(LocalFrame*, const String& key, NPObject*);
-
     PassRefPtr<SharedPersistent<v8::Object>> createPluginWrapper(Widget*);
 
     void enableEval();
@@ -130,8 +118,6 @@ public:
 
     static bool canAccessFromCurrentOrigin(v8::Isolate*, Frame*);
 
-    // SHEZ: Renamed this function to prevent new upstream code from calling this.
-    static void setCaptureCallStackForUncaughtExceptions_bb(v8::Isolate*, bool);
     void collectIsolatedContexts(Vector<std::pair<ScriptState*, SecurityOrigin*>>&);
 
     bool canExecuteScripts(ReasonForCallingCanExecuteScripts);
@@ -145,13 +131,8 @@ public:
     void namedItemRemoved(HTMLDocument*, const AtomicString&);
 
     void updateSecurityOrigin(SecurityOrigin*);
-    void clearScriptObjects();
-    void cleanupScriptObjectsForPlugin(Widget*);
 
     void clearForClose();
-
-    NPObject* createScriptObjectForPluginElement(HTMLPlugInElement*);
-    NPObject* windowScriptNPObject();
 
     // Registers a v8 extension to be available on webpages. Will only
     // affect v8 contexts initialized after this call. Takes ownership of
@@ -161,27 +142,16 @@ public:
 
     v8::Isolate* isolate() const { return m_windowProxyManager->isolate(); }
 
-    WindowProxyManager* windowProxyManager() const { return m_windowProxyManager.get(); }
+    WindowProxyManager* getWindowProxyManager() const { return m_windowProxyManager.get(); }
 
 private:
     explicit ScriptController(LocalFrame*);
 
     LocalFrame* frame() const { return toLocalFrame(m_windowProxyManager->frame()); }
 
-    typedef WillBeHeapHashMap<RawPtrWillBeMember<Widget>, NPObject*> PluginObjectMap;
-
     v8::Local<v8::Value> evaluateScriptInMainWorld(const ScriptSourceCode&, AccessControlStatus, ExecuteScriptPolicy, double* compilationFinishTime = 0);
 
-    OwnPtrWillBeMember<WindowProxyManager> m_windowProxyManager;
-    const String* m_sourceURL;
-
-    // A mapping between Widgets and their corresponding script object.
-    // This list is used so that when the plugin dies, we can immediately
-    // invalidate all sub-objects which are associated with that plugin.
-    // The frame keeps a NPObject reference for each item on the list.
-    PluginObjectMap m_pluginObjects;
-
-    NPObject* m_windowScriptNPObject;
+    Member<WindowProxyManager> m_windowProxyManager;
 };
 
 } // namespace blink

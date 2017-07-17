@@ -30,19 +30,23 @@
 
 #include "core/frame/FrameHost.h"
 
+#include "core/dom/custom/CustomElementReactionStack.h"
 #include "core/frame/EventHandlerRegistry.h"
 #include "core/frame/FrameView.h"
+#include "core/frame/PageScaleConstraints.h"
+#include "core/frame/PageScaleConstraintsSet.h"
 #include "core/frame/TopControls.h"
-#include "core/inspector/ConsoleMessageStorage.h"
+#include "core/frame/VisualViewport.h"
 #include "core/page/Page.h"
+#include "core/page/scrolling/OverscrollController.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebScheduler.h"
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<FrameHost> FrameHost::create(Page& page)
+FrameHost* FrameHost::create(Page& page)
 {
-    return adoptPtrWillBeNoop(new FrameHost(page));
+    return new FrameHost(page);
 }
 
 FrameHost::FrameHost(Page& page)
@@ -50,8 +54,11 @@ FrameHost::FrameHost(Page& page)
     , m_topControls(TopControls::create(*this))
     , m_pageScaleConstraintsSet(PageScaleConstraintsSet::create())
     , m_visualViewport(VisualViewport::create(*this))
-    , m_eventHandlerRegistry(adoptPtrWillBeNoop(new EventHandlerRegistry(*this)))
-    , m_consoleMessageStorage(ConsoleMessageStorage::create())
+    , m_overscrollController(OverscrollController::create(
+        *m_visualViewport,
+        m_page->chromeClient()))
+    , m_eventHandlerRegistry(new EventHandlerRegistry(*this))
+    , m_customElementReactionStack(new CustomElementReactionStack())
     , m_subframeCount(0)
 {
 }
@@ -61,54 +68,119 @@ FrameHost::~FrameHost()
 {
 }
 
-Settings& FrameHost::settings() const
+Page& FrameHost::page()
+{
+    return *m_page;
+}
+
+const Page& FrameHost::page() const
+{
+    return *m_page;
+}
+
+Settings& FrameHost::settings()
 {
     return m_page->settings();
 }
 
-ChromeClient& FrameHost::chromeClient() const
+const Settings& FrameHost::settings() const
+{
+    return m_page->settings();
+}
+
+ChromeClient& FrameHost::chromeClient()
 {
     return m_page->chromeClient();
 }
 
-UseCounter& FrameHost::useCounter() const
+const ChromeClient& FrameHost::chromeClient() const
+{
+    return m_page->chromeClient();
+}
+
+UseCounter& FrameHost::useCounter()
 {
     return m_page->useCounter();
 }
 
-Deprecation& FrameHost::deprecation() const
+const UseCounter& FrameHost::useCounter() const
+{
+    return m_page->useCounter();
+}
+
+Deprecation& FrameHost::deprecation()
 {
     return m_page->deprecation();
 }
 
-float FrameHost::deviceScaleFactor() const
+const Deprecation& FrameHost::deprecation() const
+{
+    return m_page->deprecation();
+}
+
+float FrameHost::deviceScaleFactorDeprecated() const
 {
     return m_page->deviceScaleFactor();
 }
 
-TopControls& FrameHost::topControls() const
+TopControls& FrameHost::topControls()
 {
     return *m_topControls;
 }
 
-VisualViewport& FrameHost::visualViewport() const
+const TopControls& FrameHost::topControls() const
+{
+    return *m_topControls;
+}
+
+OverscrollController& FrameHost::overscrollController()
+{
+    return *m_overscrollController;
+}
+
+const OverscrollController& FrameHost::overscrollController() const
+{
+    return *m_overscrollController;
+}
+
+VisualViewport& FrameHost::visualViewport()
 {
     return *m_visualViewport;
 }
 
-PageScaleConstraintsSet& FrameHost::pageScaleConstraintsSet() const
+const VisualViewport& FrameHost::visualViewport() const
+{
+    return *m_visualViewport;
+}
+
+PageScaleConstraintsSet& FrameHost::pageScaleConstraintsSet()
 {
     return *m_pageScaleConstraintsSet;
 }
 
-EventHandlerRegistry& FrameHost::eventHandlerRegistry() const
+const PageScaleConstraintsSet& FrameHost::pageScaleConstraintsSet() const
+{
+    return *m_pageScaleConstraintsSet;
+}
+
+EventHandlerRegistry& FrameHost::eventHandlerRegistry()
 {
     return *m_eventHandlerRegistry;
 }
 
-ConsoleMessageStorage& FrameHost::consoleMessageStorage() const
+const EventHandlerRegistry& FrameHost::eventHandlerRegistry() const
 {
-    return *m_consoleMessageStorage;
+    return *m_eventHandlerRegistry;
+}
+
+CustomElementReactionStack& FrameHost::customElementReactionStack()
+{
+    return *m_customElementReactionStack;
+}
+
+const CustomElementReactionStack& FrameHost::customElementReactionStack() const
+{
+    return *m_customElementReactionStack;
 }
 
 DEFINE_TRACE(FrameHost)
@@ -116,8 +188,9 @@ DEFINE_TRACE(FrameHost)
     visitor->trace(m_page);
     visitor->trace(m_topControls);
     visitor->trace(m_visualViewport);
+    visitor->trace(m_overscrollController);
     visitor->trace(m_eventHandlerRegistry);
-    visitor->trace(m_consoleMessageStorage);
+    visitor->trace(m_customElementReactionStack);
 }
 
 #if ENABLE(ASSERT)
@@ -165,7 +238,7 @@ void FrameHost::setDefaultPageScaleLimits(float minScale, float maxScale)
     rootView->setNeedsLayout();
 }
 
-void FrameHost::setUserAgentPageScaleConstraints(PageScaleConstraints newConstraints)
+void FrameHost::setUserAgentPageScaleConstraints(const PageScaleConstraints& newConstraints)
 {
     if (newConstraints == pageScaleConstraintsSet().userAgentConstraints())
         return;

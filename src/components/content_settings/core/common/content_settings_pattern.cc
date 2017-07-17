@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "components/content_settings/core/common/content_settings_pattern_parser.h"
@@ -20,6 +20,19 @@ namespace {
 
 // The component supports only one scheme for simplicity.
 const char* non_port_non_domain_wildcard_scheme = NULL;
+
+// Keep it consistent with enum SchemeType in content_settings_pattern.h.
+const char* const kSchemeNames[] = {
+  "wildcard",
+  "other",
+  url::kHttpScheme,
+  url::kHttpsScheme,
+  url::kFileScheme,
+  "chrome-extension",
+};
+
+static_assert(arraysize(kSchemeNames) == ContentSettingsPattern::SCHEME_MAX,
+              "kSchemeNames should have SCHEME_MAX elements");
 
 std::string GetDefaultPort(const std::string& scheme) {
   if (scheme == url::kHttpScheme)
@@ -361,7 +374,7 @@ BuilderInterface* ContentSettingsPattern::CreateBuilder(
 
 // static
 ContentSettingsPattern ContentSettingsPattern::Wildcard() {
-  scoped_ptr<ContentSettingsPattern::BuilderInterface> builder(
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
       ContentSettingsPattern::CreateBuilder(true));
   builder->WithSchemeWildcard()->WithDomainWildcard()->WithPortWildcard()->
            WithPathWildcard();
@@ -371,7 +384,7 @@ ContentSettingsPattern ContentSettingsPattern::Wildcard() {
 // static
 ContentSettingsPattern ContentSettingsPattern::FromURL(
     const GURL& url) {
-  scoped_ptr<ContentSettingsPattern::BuilderInterface> builder(
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
       ContentSettingsPattern::CreateBuilder(false));
   const GURL* local_url = &url;
   if (url.SchemeIsFileSystem() && url.inner_url()) {
@@ -408,7 +421,7 @@ ContentSettingsPattern ContentSettingsPattern::FromURL(
 // static
 ContentSettingsPattern ContentSettingsPattern::FromURLNoWildcard(
     const GURL& url) {
-  scoped_ptr<ContentSettingsPattern::BuilderInterface> builder(
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
       ContentSettingsPattern::CreateBuilder(false));
 
   const GURL* local_url = &url;
@@ -431,7 +444,7 @@ ContentSettingsPattern ContentSettingsPattern::FromURLNoWildcard(
 // static
 ContentSettingsPattern ContentSettingsPattern::FromString(
     const std::string& pattern_spec) {
-  scoped_ptr<ContentSettingsPattern::BuilderInterface> builder(
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
       ContentSettingsPattern::CreateBuilder(false));
   content_settings::PatternParser::Parse(pattern_spec,
                                          builder.get());
@@ -534,6 +547,17 @@ std::string ContentSettingsPattern::ToString() const {
     return content_settings::PatternParser::ToString(parts_);
   else
     return std::string();
+}
+
+ContentSettingsPattern::SchemeType ContentSettingsPattern::GetScheme() const {
+  if (parts_.is_scheme_wildcard)
+    return SCHEME_WILDCARD;
+
+  for (size_t i = 2; i < arraysize(kSchemeNames); ++i) {
+    if (parts_.scheme == kSchemeNames[i])
+      return static_cast<SchemeType>(i);
+  }
+  return SCHEME_OTHER;
 }
 
 ContentSettingsPattern::Relation ContentSettingsPattern::Compare(

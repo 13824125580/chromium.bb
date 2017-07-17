@@ -28,14 +28,19 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 {
+  'targets': [],
+  'conditions': [
+    # Normally target should exists unconditionally and only their content
+    # should be conditional. Those targets are intentionally only conditionally
+    # visible to make sure target using blink are not part of the iOS build (as
+    # iOS must not depends on blink). If you get an error about this target not
+    # existing, then you must make the target depending on blink condition on
+    # OS not being iOS.
+    ['OS!="ios"', {
   'variables': {
     # If set to 1, doesn't compile debug symbols into webcore reducing the
     # size of the binary and increasing the speed of gdb.  gcc only.
     'remove_webcore_debug_symbols%': 0,
-    # Enables the Oilpan garbage-collection infrastructure.
-    # If you update the default value below, be sure to update the one in
-    # build/features.gypi, too!
-    'enable_oilpan%': 1,
     # If set to 1 (default) and using clang, the Blink GC plugin will check the
     # usage of the garbage-collection infrastructure during compilation.
     'blink_gc_plugin%': 1,
@@ -56,6 +61,7 @@
       'include_dirs': [
         '.',
         '..',
+            '<(SHARED_INTERMEDIATE_DIR)/third_party/WebKit',
       ],
       'msvs_disabled_warnings': [
         4305, 4324, 4714, 4800, 4996,
@@ -95,13 +101,13 @@
         }],
         # Only enable the blink_gc_plugin when using clang and chrome plugins.
         ['blink_gc_plugin==1 and clang==1 and clang_use_chrome_plugins==1', {
-          'cflags': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py enable-oilpan=<(enable_oilpan) <(blink_gc_plugin_flags))'],
+              'cflags': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py target_os=<(OS) <(blink_gc_plugin_flags))'],
           'xcode_settings': {
-            'OTHER_CFLAGS': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py enable-oilpan=<(enable_oilpan) <(blink_gc_plugin_flags))'],
+                'OTHER_CFLAGS': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py target_os=<(OS) <(blink_gc_plugin_flags))'],
           },
           'msvs_settings': {
             'VCCLCompilerTool': {
-              'AdditionalOptions': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py enable-oilpan=<(enable_oilpan) <(blink_gc_plugin_flags))'],
+                  'AdditionalOptions': ['<!@(python <(DEPTH)/tools/clang/scripts/blink_gc_plugin_flags.py target_os=<(OS) <(blink_gc_plugin_flags))'],
             },
           },
         }],
@@ -134,5 +140,7 @@
       },
     },
   }
+  ],
+    }],
   ],
 }

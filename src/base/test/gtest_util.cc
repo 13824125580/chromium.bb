@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/values.h"
@@ -47,12 +49,12 @@ bool WriteCompiledInTestsToFile(const FilePath& path) {
 
   ListValue root;
   for (size_t i = 0; i < tests.size(); ++i) {
-    DictionaryValue* test_info = new DictionaryValue;
+    std::unique_ptr<class base::DictionaryValue> test_info(new DictionaryValue);
     test_info->SetString("test_case_name", tests[i].test_case_name);
     test_info->SetString("test_name", tests[i].test_name);
     test_info->SetString("file", tests[i].file);
     test_info->SetInteger("line", tests[i].line);
-    root.Append(test_info);
+    root.Append(std::move(test_info));
   }
 
   JSONFileValueSerializer serializer(path);
@@ -64,7 +66,7 @@ bool ReadTestNamesFromFile(const FilePath& path,
   JSONFileValueDeserializer deserializer(path);
   int error_code = 0;
   std::string error_message;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_message);
   if (!value.get())
     return false;

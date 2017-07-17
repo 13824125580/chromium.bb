@@ -6,6 +6,8 @@
 #define MEDIA_BASE_ANDROID_MEDIA_PLAYER_ANDROID_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -22,6 +24,19 @@ namespace media {
 
 class MediaKeys;
 class MediaPlayerManager;
+
+enum {
+  // Id used for players not participating in any media sessions
+  // because of undefined behavior in the specification. When all
+  // media session interactions have been worked out, this id should
+  // no longer be used.
+  kInvalidMediaSessionId = -1,
+
+  // The media session for media elements that don't have an explicit
+  // user created media session set. Must be in-sync with
+  // WebMediaSession::DefaultID in blink.
+  kDefaultMediaSessionId = 0
+};
 
 // This class serves as the base class for different media player
 // implementations on Android. Subclasses need to provide their own
@@ -49,7 +64,7 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   virtual void DeleteOnCorrectThread();
 
   // Passing an external java surface object to the player.
-  virtual void SetVideoSurface(gfx::ScopedJavaSurface surface) = 0;
+  virtual void SetVideoSurface(gl::ScopedJavaSurface surface) = 0;
 
   // Start playing the media.
   virtual void Start() = 0;
@@ -108,6 +123,8 @@ class MEDIA_EXPORT MediaPlayerAndroid {
 
   GURL frame_url() { return frame_url_; }
 
+  int media_session_id() { return media_session_id_; }
+
   // Attach/Detaches |listener_| for listening to all the media events. If
   // |j_media_player| is NULL, |listener_| only listens to the system media
   // events. Otherwise, it also listens to the events from |j_media_player|.
@@ -119,7 +136,8 @@ class MEDIA_EXPORT MediaPlayerAndroid {
       int player_id,
       MediaPlayerManager* manager,
       const OnDecoderResourcesReleasedCB& on_decoder_resources_released_cb,
-      const GURL& frame_url);
+      const GURL& frame_url,
+      int media_session_id);
 
   // TODO(qinmin): Simplify the MediaPlayerListener class to only listen to
   // media interrupt events. And have a separate child class to listen to all
@@ -171,7 +189,10 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   GURL frame_url_;
 
   // Listener object that listens to all the media player events.
-  scoped_ptr<MediaPlayerListener> listener_;
+  std::unique_ptr<MediaPlayerListener> listener_;
+
+  // Media session ID assigned to this player.
+  int media_session_id_;
 
   // Weak pointer passed to |listener_| for callbacks.
   // NOTE: Weak pointers must be invalidated before all other member variables.

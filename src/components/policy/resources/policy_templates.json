@@ -137,7 +137,7 @@
 #   persistent IDs for all fields (but not for groups!) are needed. These are
 #   specified by the 'id' keys of each policy. NEVER CHANGE EXISTING IDs,
 #   because doing so would break the deployed wire format!
-#   For your editing convenience: highest ID currently used: 320
+#   For your editing convenience: highest ID currently used: 337
 #
 # Placeholders:
 #   The following placeholder strings are automatically substituted:
@@ -148,9 +148,10 @@
 #
 # Device Policy:
 #   An additional flag 'device_only' (optional, defaults to False) indicates
-#   that this policy is only supported as a device-level Cloud Policy.
-#   In that case no entry in the UserPolicy Protobuf is generated and
-#   it is assumed that it will be added to the DevicePolicy Protobuf manually.
+#   that this policy is only supported as a device-level Cloud Policy. In that
+#   case no entry in the UserPolicy Protobuf is generated and it is assumed that
+#   it will be added to the DevicePolicy Protobuf manually.  Device policy only
+#   exists on Chrome OS.
 #
 # Enterprise defaults:
 #   For managed users on Chrome OS (i.e. users receiving user policy from the
@@ -246,7 +247,7 @@
 
           If you enable this setting, users cannot change their home page URL in <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>, but they can still choose the New Tab Page as their home page.
 
-          Leaving this policy not set will allow the user to choose his home page on his own if HomepageIsNewTabPage is not set too.
+          Leaving this policy not set will allow the user to choose their home page on their own if HomepageIsNewTabPage is not set too.
 
           This policy is not available on Windows instances that are not joined
           to an Active Directory domain.''',
@@ -274,7 +275,7 @@
 
           If you enable or disable this setting, users cannot change their homepage type in <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>.
 
-          Leaving this policy not set will allow the user to choose whether the new tab page is his home page on his own.
+          Leaving this policy not set will allow the user to choose whether the new tab page is their home page on their own.
 
           This policy is not available on Windows instances that are not joined
           to an Active Directory domain.''',
@@ -419,8 +420,8 @@
         {
           'name': 'NetworkPredictionWifiOnly',
           'value': 1,
-          'caption': '''Predict network actions on any network that is not
-          cellular''',
+          'caption': '''Predict network actions on any network that is not cellular.
+          (Deprecated in 50, removed in 52. After 52, if value 1 is set, it will be treated as 0 - predict network actions on any network connection.)''',
         },
         {
           'name': 'NetworkPredictionNever',
@@ -1148,7 +1149,7 @@
       'name': 'PasswordManager',
       'type': 'group',
       'caption': '''Password manager''',
-      'desc': '''Configures the password manager. If the password manager is enabled, then you can choose to enable or disable whether the user may show stored passwords in clear text.''',
+      'desc': '''Configures the password manager.''',
       'policies': [
         {
           'name': 'PasswordManagerEnabled',
@@ -1186,16 +1187,19 @@
           'name': 'PasswordManagerAllowShowPasswords',
           'type': 'main',
           'schema': { 'type': 'boolean' },
-          'supported_on': ['chrome.*:8-', 'chrome_os:11-'],
+          'supported_on': ['chrome.*:8-50', 'chrome_os:11-50'],
           'features': {
             'dynamic_refresh': True,
             'per_profile': True,
           },
+          'deprecated': True,
           'example_value': False,
           'id': 17,
-          'caption': '''Allow users to show passwords in Password Manager''',
+          'caption': '''Allow users to show passwords in Password Manager (deprecated)''',
           'tags': [],
-          'desc': '''Controls whether the user may show passwords in clear text in the password manager.
+          'desc': '''The associated setting was used before reauthentication on viewing passwords was introduced. Since then, the setting and hence this policy had no effect on the behavior of Chrome. The current behavior of Chrome is now the same as if the the policy was set to disable showing passwords in clear text in the password manager settings page. That means that the settings page contains just a placeholder, and only upon the user clicking "Show" (and reauthenticating, if applicable) Chrome shows the password. Original description of the policy follows below.
+
+          Controls whether the user may show passwords in clear text in the password manager.
 
           If you disable this setting, the password manager does not allow showing stored passwords in clear text in the password manager window.
 
@@ -1407,7 +1411,7 @@
       'tags': ['local-data-access'],
       'desc': '''Configures the directory that <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use for storing user data.
 
-      If you set this policy, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use the provided directory regardless whether the user has specified the '--user-data-dir' flag or not.
+      If you set this policy, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use the provided directory regardless whether the user has specified the '--user-data-dir' flag or not. To avoid data loss or other unexpected errors this policy should not be set to a volume's root directory or to a directory used for other purposes, because <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> manages its contents.
 
       See https://www.chromium.org/administrators/policy-list-3/user-data-directory-variables for a list of variables that can be used.
 
@@ -1429,7 +1433,7 @@
       'tags': [],
       'desc': '''Configures the directory that <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use for storing cached files on the disk.
 
-      If you set this policy, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use the provided directory regardless whether the user has specified the '--disk-cache-dir' flag or not.
+      If you set this policy, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will use the provided directory regardless whether the user has specified the '--disk-cache-dir' flag or not. To avoid data loss or other unexpected errors this policy should not be set to a volume's root directory or to a directory used for other purposes, because <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> manages its contents.
 
       See https://www.chromium.org/administrators/policy-list-3/user-data-directory-variables for a list of variables that can be used.
 
@@ -1548,16 +1552,16 @@
       'name': 'Proxy',
       'type': 'group',
       'caption': '''Proxy server''',
-      'desc': '''Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings.
+      'desc': '''Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings. ARC-apps will be able to use this proxy server too.
 
       If you choose to never use a proxy server and always connect directly, all other options are ignored.
 
       If you choose to auto detect the proxy server, all other options are ignored.
 
       For detailed examples, visit:
-      <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>
+      <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.
 
-      If you enable this setting, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> ignores all proxy-related options specified from the command line.
+      If you enable this setting, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and ARC-apps ignore all proxy-related options specified from the command line.
 
       Leaving these policies not set will allow the users to choose the proxy settings on their own.''',
       'policies': [
@@ -1615,20 +1619,22 @@
           'id': 21,
           'caption': '''Choose how to specify proxy server settings''',
           'tags': [],
-          'desc': '''Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings.
+          'desc': '''Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings. ARC-apps will be able to use this proxy server too.
 
           If you choose to never use a proxy server and always connect directly, all other options are ignored.
 
-          If you choose to use system proxy settings or auto detect the proxy server, all other options are ignored.
+          If you choose to use system proxy settings, all other options are ignored.
 
-          If you choose fixed server proxy mode, you can specify further options in 'Address or URL of proxy server' and 'Comma-separated list of proxy bypass rules'.
+          If you choose to auto detect the proxy server, all other options are ignored.
+
+          If you choose fixed server proxy mode, you can specify further options in 'Address or URL of proxy server' and 'Comma-separated list of proxy bypass rules'. Only the HTTP proxy server with the highest priority is available for ARC-apps.
 
           If you choose to use a .pac proxy script, you must specify the URL to the script in 'URL to a proxy .pac file'.
 
           For detailed examples, visit:
-          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>
+          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.
 
-          If you enable this setting, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> ignores all proxy-related options specified from the command line.
+          If you enable this setting, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and ARC-apps ignore all proxy-related options specified from the command line.
 
           Leaving this policy not set will allow the users to choose the proxy settings on their own.''',
         },
@@ -1678,16 +1684,16 @@
           'tags': [],
           'desc': '''This policy is deprecated, use ProxyMode instead.
 
-          Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings.
+          Allows you to specify the proxy server used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> and prevents users from changing proxy settings. ARC-apps will be able to use this proxy server too.
 
           If you choose to never use a proxy server and always connect directly, all other options are ignored.
 
           If you choose to use system proxy settings or auto detect the proxy server, all other options are ignored.
 
-          If you choose manual proxy settings, you can specify further options in 'Address or URL of proxy server', 'URL to a proxy .pac file' and 'Comma-separated list of proxy bypass rules'.
+          If you choose manual proxy settings, you can specify further options in 'Address or URL of proxy server', 'URL to a proxy .pac file' and 'Comma-separated list of proxy bypass rules'. Only the HTTP proxy server with the highest priority is available for ARC-apps.
 
           For detailed examples, visit:
-          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>
+          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.
 
           If you enable this setting, <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> ignores all proxy-related options specified from the command line.
 
@@ -1718,7 +1724,7 @@
           You should leave this policy not set if you have selected any other mode for setting proxy policies.
 
           For more options and detailed examples, visit:
-          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>''',
+          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.''',
         },
         {
           'name': 'ProxyPacUrl',
@@ -1745,7 +1751,7 @@
           You should leave this policy not set if you have selected any other mode for setting proxy policies.
 
           For detailed examples, visit:
-          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>''',
+          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.''',
         },
         {
           'name': 'ProxyBypassList',
@@ -1765,14 +1771,14 @@
           'id': 25,
           'caption': '''Proxy bypass rules''',
           'tags': [],
-          'desc': '''<ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will bypass any proxy for the list of hosts given here.
+          'desc': '''<ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will bypass any proxy for the list of hosts given here. ARC-apps will be able to use this list as a bypass rules list.
 
           This policy only takes effect if you have selected manual proxy settings at 'Choose how to specify proxy server settings'.
 
           You should leave this policy not set if you have selected any other mode for setting proxy policies.
 
           For more detailed examples, visit:
-          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>''',
+          <ph name="PROXY_HELP_URL">https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett<ex>https://www.chromium.org/developers/design-documents/network-settings#TOC-Command-line-options-for-proxy-sett</ex></ph>.''',
           'label': '''Comma-separated list of proxy bypass rules''',
         },
       ],
@@ -1809,7 +1815,7 @@
       'id': 116,
       'caption': '''Proxy settings''',
       'tags': ['system-security'],
-      'desc': '''Configures the proxy settings for <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>.
+      'desc': '''Configures the proxy settings for <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>. These proxy settings will be available for ARC-apps too.
 
       This policy isn't ready for usage yet, please don't use it.''',
     },
@@ -2323,7 +2329,9 @@
 
       If you enable this setting, the Developer Tools can not be accessed and web-site elements can not be inspected anymore. Any keyboard shortcuts and any menu or context menu entries to open the Developer Tools or the JavaScript Console will be disabled.
 
-      Setting this option to disabled or leaving it not set will allow the use to use the Developer Tools and the JavaScript console.''',
+      Setting this option to disabled or leaving it not set will allow the use to use the Developer Tools and the JavaScript console.
+
+      For <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> devices capable of running Android apps, this policy also controls access to Android Developer Options. If you set this policy to true, users cannot access Developer Options. If you set this policy to false or leave it unset, users can access Developer Options by tapping seven times on the build number in the Android settings app.''',
     },
     {
       'name': 'RestoreOnStartupGroup',
@@ -2538,6 +2546,8 @@
           'tags': ['website-sharing'],
           'desc': '''Specifies the URL of the search engine used when doing a default search. The URL should contain the string '<ph name="SEARCH_TERM_MARKER">{searchTerms}</ph>', which will be replaced at query time by the terms the user is searching for.
 
+          Google's search URL can be specified as: <ph name="GOOGLE_SEARCH_URL">'{google:baseURL}search?q={searchTerms}&amp;{google:RLZ}{google:originalQueryForSuggestion}{google:assistedQueryStats}{google:searchFieldtrialParameter}{google:searchClient}{google:sourceId}{google:instantExtendedEnabledParameter}ie={inputEncoding}'</ph>.
+
           This option must be set when the 'DefaultSearchProviderEnabled' policy is enabled and will only be respected if this is the case.''',
         },
         {
@@ -2557,6 +2567,8 @@
 
           This policy is optional. If not set, no suggest URL will be used.
 
+          Google's suggest URL can be specified as: <ph name="GOOGLE_SUGGEST_SEARCH_URL">'{google:baseURL}complete/search?output=chrome&amp;q={searchTerms}'</ph>.
+
           This policy is only respected if the 'DefaultSearchProviderEnabled' policy is enabled.''',
         },
         {
@@ -2575,6 +2587,8 @@
           'desc': '''Specifies the URL of the search engine used to provide instant results. The URL should contain the string <ph name="SEARCH_TERM_MARKER">'{searchTerms}'</ph>, which will be replaced at query time by the text the user has entered so far.
 
           This policy is optional. If not set, no instant search results will be provided.
+
+          Google's instant results URL can be specified as: <ph name="GOOGLE_INSTANT_SEARCH_URL">'{google:baseURL}suggest?q={searchTerms}'</ph>.
 
           This policy is only respected if the 'DefaultSearchProviderEnabled' policy is enabled.''',
         },
@@ -3039,6 +3053,8 @@
           'caption': '''Default geolocation setting''',
           'tags': ['website-sharing'],
           'desc': '''Allows you to set whether websites are allowed to track the users' physical location. Tracking the users' physical location can be allowed by default, denied by default or the user can be asked every time a website requests the physical location.
+
+          If this policy is set to 'BlockGeolocation', location sharing is disallowed for ARC apps.
 
           If this policy is left not set, 'AskGeolocation' will be used and the user will be able to change it.''',
         },
@@ -3842,7 +3858,7 @@
 
       If you enable or disable this setting, users cannot change or override it.
 
-      If the policy is left not set the user can choose whether he wants to be asked for password to unlock the device or not.''',
+      If the policy is left not set the user can choose whether they want to be asked for password to unlock the device or not.''',
     },
     {
       'name': 'ChromeOsMultiProfileUserBehavior',
@@ -4298,7 +4314,7 @@
         'dynamic_refresh': True,
         'per_profile': True,
       },
-      'example_value': ['example.com', 'https://ssl.server.com', 'hosting.com/bad_path', 'https://server:8080/path', '.exact.hostname.com', 'file://*', '*'],
+      'example_value': ['example.com', 'https://ssl.server.com', 'hosting.com/bad_path', 'https://server:8080/path', '.exact.hostname.com', 'file://*', 'custom_scheme:*', '*'],
       'id': 103,
       'caption': '''Block access to a list of URLs''',
       'tags': ['filtering'],
@@ -4306,13 +4322,7 @@
 
       This policy prevents the user from loading web pages from blacklisted URLs. The blacklist provides a list of URL patterns that specify which URLs will be blacklisted.
 
-      Each URL pattern can either be a pattern for local files or a generic URL pattern. Local file patterns are of the format 'file://path', where path should be an absolute path to block. All file system locations for which that path is a prefix will be blocked.
-
-      A generic URL pattern has the format 'scheme://host:port/path'.
-      If present, only the specified scheme will be blocked. If the scheme:// prefix is not specified, all schemes are blocked.
-      The host is required and can be a hostname or an IP address. Subdomains of a hostname will also be blocked. To prevent blocking subdomains, include a '.' before the hostname. The special hostname '*' will block all domains.
-      The optional port is a valid port number from 1 to 65535. If none is specified, all ports are blocked.
-      If the optional path is specified, only paths with that prefix will be blocked.
+      A URL pattern has to be formatted according to https://www.chromium.org/administrators/url-blacklist-filter-format.
 
       Exceptions can be defined in the URL whitelist policy. These policies are limited to 1000 entries; subsequent entries will be ignored.
 
@@ -4613,7 +4623,7 @@
 
       In this mode the profile data is persisted on disk only for the length of the user session. Features like browser history, extensions and their data, web data like cookies and web databases are not preserved after the browser is closed. However this does not prevent the user from downloading any data to disk manually, save pages or print them.
 
-      If the user has enabled sync all this data is preserved in his sync profile just like with regular profiles. Incognito mode is also available if not explicitly disabled by policy.
+      If the user has enabled sync all this data is preserved in their sync profile just like with regular profiles. Incognito mode is also available if not explicitly disabled by policy.
 
       If the policy is set to disabled or left not set signing in leads to regular profiles.'''
     },
@@ -5627,6 +5637,7 @@
 
       When this policy is disabled, the user will never be prompted and audio
       capture only be available to URLs configured in AudioCaptureAllowedUrls.
+      For ARC apps, the microphone is permanently muted.
 
       This policy affects all types of audio inputs and not only the built-in microphone.''',
     },
@@ -5670,11 +5681,15 @@
       If enabled or not configured (default), the user will be prompted for
       video capture access except for URLs configured in the
       VideoCaptureAllowedUrls list which will be granted access without prompting.
+      ARC apps will be able to access the camera if they have been given
+      permission.
 
       When this policy is disabled, the user will never be prompted and video
       capture only be available to URLs configured in VideoCaptureAllowedUrls.
+      ARC apps will not be able to access the camera.
 
-      This policy affects all types of video inputs and not only the built-in camera.''',
+      Outside of ARC-apps, this policy affects all types of video inputs and
+      not only the built-in camera.''',
     },
     {
       'name': 'VideoCaptureAllowedUrls',
@@ -5714,6 +5729,7 @@
       'desc': '''Disables taking screenshots.
 
       If enabled screenshots cannot be taken using keyboard shortcuts or extension APIs.
+      Additionally, screen capture is disabled for ARC apps.
 
       If disabled or not specified, taking screenshots is allowed.'''
     },
@@ -5736,7 +5752,9 @@
 
       New devices start out with the timezone set to "US/Pacific".
 
-      The format of the value follows the names of timezones in the "IANA Time Zone Database" (see "https://en.wikipedia.org/wiki/Tz_database"). In particular, most timezones can be referred to by "continent/large_city" or "ocean/large_city".''',
+      The format of the value follows the names of timezones in the "IANA Time Zone Database" (see "https://en.wikipedia.org/wiki/Tz_database"). In particular, most timezones can be referred to by "continent/large_city" or "ocean/large_city".
+
+      Setting this policy completely disables automatic timezone resolve by device location. It also overrides SystemTimezoneAutomaticDetection policy.''',
     },
     {
       'name': 'SystemUse24HourClock',
@@ -7486,6 +7504,7 @@
           'properties': {
             'name': { 'type': 'string' },
             'url': { 'type': 'string' },
+            'toplevel_name': { 'type': 'string' },
             'children': {
               'type': 'array',
               'items': { '$ref': 'BookmarkType' },
@@ -7505,6 +7524,8 @@
       },
       'example_value': [
         {
+          "toplevel_name": "My managed bookmarks"
+        }, {
           "name": "Google",
           "url": "google.com"
         }, {
@@ -7541,7 +7562,9 @@
       name="GOOGLE_COM">"google.com"</ph> becomes <ph
       name="HTTPS_GOOGLE_COM">"https://google.com/"</ph>.
 
-      These bookmarks are placed in a "Managed bookmarks" folder that can't be modified by the user, but the user can choose to hide it from the bookmark bar. Managed bookmarks are not synced to the user account and can't be modified by extensions.''',
+      These bookmarks are placed in a "Managed bookmarks" folder that can't be modified by the user, but the user can choose to hide it from the bookmark bar. Managed bookmarks are not synced to the user account and can't be modified by extensions.
+
+      Starting with release 51, the folder name for the bookmarks is customizable by adding a {"toplevel_name": "some name"} list item.''',
     },
     {
       'name': 'DataCompressionProxyEnabled',
@@ -7607,7 +7630,7 @@
 
       If you set this policy, users cannot change or override it.
 
-      If the policy is left not set, the user can choose the avatar image representing him/her on the login screen.''',
+      If the policy is left not set, the user can choose the avatar image representing them on the login screen.''',
     },
     {
       'name': 'WallpaperImage',
@@ -7664,15 +7687,15 @@
         'items': {
           'type': 'string',
           'enum': [
-            'ShowModalDialog_EffectiveUntil20150430'
+            'ExampleDeprecatedFeature_EffectiveUntil20080902'
           ],
         },
       },
       'items': [
         {
-          'name': 'ShowModalDialog',
-          'value': 'ShowModalDialog_EffectiveUntil20150430',
-          'caption': '''Enable ShowModalDialog API through 2015.04.30''',
+          'name': 'ExampleDeprecatedFeature',
+          'value': 'ExampleDeprecatedFeature_EffectiveUntil20080902',
+          'caption': '''Enable ExampleDeprecatedFeature API through 2008/09/02''',
         }
       ],
       'supported_on': ['chrome.*:37-', 'chrome_os:37-', 'android:37-'],
@@ -7680,7 +7703,7 @@
         'dynamic_refresh': True,
         'per_profile': True,
       },
-      'example_value': ['ShowModalDialog_EffectiveUntil20150430'],
+      'example_value': ['ExampleDeprecatedFeature_EffectiveUntil20080902'],
       'id': 270,
       'caption': '''Enable deprecated web platform features for a limited time''',
       'tags': ['system-security'],
@@ -7710,11 +7733,11 @@
 
       When a user authenticates via a SAML IdP during login, cookies set by the IdP are written to a temporary profile at first. These cookies can be transferred to the user's profile to carry forward the authentication state.
 
-      When this policy is set to true, cookies set by the IdP are transferred to the user's profile every time he/she authenticates against the SAML IdP during login.
+      When this policy is set to true, cookies set by the IdP are transferred to the user's profile every time they authenticate against the SAML IdP during login.
 
-      When this policy is set to false or unset, cookies set by the IdP are transferred to the user's profile during his/her first login on a device only.
+      When this policy is set to false or unset, cookies set by the IdP are transferred to the user's profile during their first login on a device only.
 
-      This policy affects users whose domain matches the device's enrollment domain only. For all other users, cookies set by the IdP are transferred to the user's profile during his/her first login on the device only.''',
+      This policy affects users whose domain matches the device's enrollment domain only. For all other users, cookies set by the IdP are transferred to the user's profile during their first login on the device only.''',
     },
     {
       'name': 'EasyUnlockAllowed',
@@ -7894,6 +7917,7 @@
         'dynamic_refresh': True,
         'per_profile': False,
       },
+      'deprecated': True,
       'example_value': 'tls1.1',
       'id': 280,
       'caption': '''Minimum TLS version to fallback to''',
@@ -7905,6 +7929,34 @@
       If this policy is not configured or if it is set to "tls1.2" then <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> no longer performs this fallback. Note this does not disable support for older TLS versions, only whether <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> will work around buggy servers which cannot negotiate versions correctly.
 
       Otherwise, if compatibility with a buggy server must be maintained, this policy may be set to "tls1.1". This is a stopgap measure and the server should be rapidly fixed.''',
+    },
+    {
+      'name': 'CertificateTransparencyEnforcementDisabledForUrls',
+      'type': 'list',
+      'schema': {
+        'type': 'array',
+        'items': { 'type': 'string' },
+      },
+      'supported_on': [
+        'chrome.*:53-',
+        'chrome_os:53-',
+        'android:53-',
+      ],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': False,
+      },
+      'example_value': ['example.com', '.example.com'],
+      'id': 335,
+      'caption': '''Disable Certificate Transparency enforcement for a list of URLs''',
+      'tags': ['system-security'],
+      'desc': '''Disables enforcing Certificate Transparency requirements to the listed URLs.
+
+      This policy allows certificates for the hostnames in the specified URLs to not be disclosed via Certificate Transparency. This allows certificates that would otherwise be untrusted, because they were not properly publicly disclosed, to continue to be used, but makes it harder to detect misissued certificates for those hosts.
+
+      A URL pattern is formatted according to https://www.chromium.org/administrators/url-blacklist-filter-format. However, because certificates are valid for a given hostname independent of the scheme, port, or path, only the hostname portion of the URL is considered. Wildcard hosts are not supported.
+
+      If this policy is not set, any certificate that is required to be disclosed via Certificate Transparency will be treated as untrusted if it is not disclosed according to the Certificate Transparency policy.''',
     },
     {
       'name': 'RC4Enabled',
@@ -7929,6 +7981,32 @@
       'desc': '''Warning: RC4 will be completely removed from <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> after version 52 (around September 2016) and this policy will stop working then.
 
       If the policy is not set, or is set to false, then RC4 cipher suites in TLS will not be enabled. Otherwise it may be set to true to retain compatibility with an outdated server. This is a stopgap measure and the server should be reconfigured.''',
+    },
+    {
+      'name': 'DHEEnabled',
+      'type': 'main',
+      'schema': {
+        'type': 'boolean',
+      },
+      'supported_on': [
+        'chrome.*:53-57',
+        'chrome_os:53-57',
+        'android:53-57',
+        'ios:53-57',
+      ],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': False,
+      },
+      'example_value': False,
+      'id': 334,
+      'caption': '''Whether DHE cipher suites in TLS are enabled''',
+      'tags': ['system-security'],
+      'desc': '''Warning: DHE will be completely removed from <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> after version 57 (around March 2017) and this policy will stop working then.
+
+      If the policy is not set, or is set to false, then DHE cipher suites in TLS will not be enabled. Otherwise it may be set to true to enable DHE cipher suites and retain compatibility with an outdated server. This is a stopgap measure and the server should be reconfigured.
+
+      Servers are encouraged to migrated to ECDHE cipher suites. If these are unavailable, ensure a cipher suite using RSA key exchange is enabled.''',
     },
     {
       'name': 'ContextualSearchEnabled',
@@ -7999,7 +8077,7 @@
       'caption': '''Enable domain name autocomplete during user sign in''',
       'tags': [],
       'desc': '''If this policy is set to a blank string or not configured, <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> will not show an autocomplete option during user sign-in flow.
-      If this policy is set to a string representing a domain name, <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> will show an autocomplete option during user sign-in allowing the user to type in only his user name without the domain name extension.  The user will be able to overwrite this domain name extension.''',
+      If this policy is set to a string representing a domain name, <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> will show an autocomplete option during user sign-in allowing the user to type in only their user name without the domain name extension.  The user will be able to overwrite this domain name extension.''',
     },
     {
       'name': 'ForceMaximizeOnFirstRun',
@@ -8226,7 +8304,7 @@
       unable to use ARC.''',
     },
     {
-      'name': 'ArcApplicationPolicy',
+      'name': 'ArcPolicy',
       'type': 'string',
       'schema': { 'type': 'string' },
       'supported_on': ['chrome_os:50-'],
@@ -8236,14 +8314,10 @@
       },
       'example_value': '',
       'id': 318,
-      'caption': '''Configure ARC apps''',
+      'caption': '''Configure ARC''',
       'tags': [],
       'desc':
-      '''Specifies the ARC application policy as JSON string which can be
-      handed-off as-is to the ARC runtime. At the moment, this setting is used
-      solely to specify force-installation of the apps.
-
-      If this policy is left not set, no apps are installed automatically.'''
+      '''Specifies a set of policies that will be handed over to the ARC runtime. The value must be valid JSON.'''
     },
     {
       'name': 'AllowKioskAppControlChromeVersion',
@@ -8265,6 +8339,387 @@
       If the policy is set to true, the value of required_platform_version manifest key of the auto launched with zero delay kiosk app is used as auto update target version prefix.
 
       If the policy is not configured or set to false, the required_platform_version manifest key is ignored and auto update proceeds as normal.''',
+    },
+    {
+      'name': 'LoginAuthenticationBehavior',
+      'type': 'int-enum',
+      'schema': {
+        'type': 'integer',
+        'enum': [ 0, 1, 2 ],
+      },
+      'items': [
+        {
+          'name': 'GAIA',
+          'value': 0,
+          'caption': '''Authentication via the default GAIA flow''',
+        },
+        {
+          'name': 'SAML_INTERSTITIAL',
+          'value': 1,
+          'caption': '''Redirect to SAML IdP after user confirmation''',
+        },
+      ],
+      'supported_on': ['chrome_os:51-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': True,
+      },
+      'example_value': 0,
+      'id': 321,
+      'caption': '''Configure the login authentication behavior''',
+      'tags': [],
+      'desc': '''When this policy is set, the login authentication flow will be in one of the following ways depending on the value of the setting:
+
+      If set to GAIA, login will be done via the normal GAIA authentication flow.
+
+      If set to SAML_INTERSTITIAL, login will show an interstitial screen offering the user to go forward with authentication via the SAML IdP of the device's enrollment domain, or go back to the normal GAIA login flow.'''
+    },
+    {
+      'name': 'UsbDetachableWhitelist',
+      'type': 'list',
+      'schema': {
+        'type': 'array',
+        'items': {
+          'type': 'object',
+          'id': 'UsbDeviceId',
+          'properties': {
+            'vendor_id': { 'type': 'integer' },
+            'product_id': { 'type': 'integer' },
+          },
+        },
+      },
+      'supported_on': ['chrome_os:51-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': False,
+      },
+      'example_value': [
+        {
+          'vendor_id' : 1027,
+          'product_id' : 24577,
+        },
+        {
+          'vendor_id' : 16700,
+          'product_id' : 8453,
+        }
+      ],
+      'id': 322,
+      'caption': '''Whitelist of USB detachable devices''',
+      'tags': ['system-security'],
+      'desc': '''Defines the list of USB devices that are allowed to be detached from their kernel driver in order to be used through the chrome.usb API directly inside a web application. Entries are pairs of USB Vendor Identifier and Product Identifier to identify a specific hardware.
+
+      If this policy is not configured, the list of a detachable USB devices is empty.''',
+    },
+    {
+      'name': 'DeviceAllowBluetooth',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome_os:52-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': False,
+      },
+      'example_value': True,
+      'id': 323,
+      'caption': '''Allow bluetooth on device''',
+      'tags': [],
+      'desc': '''If this policy is set to false, <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> will disable Bluetooth and the user cannot enable it back.
+
+      If this policy is set to true or left unset, the user will be able to enable or disable Bluetooth as they wish.
+
+      If this policy is set, the user cannot change or override it.
+
+      After enabling Bluetooth, the device must be rebooted for the changes to take effect (no need to reboot the device when disabling Bluetooth).''',
+    },
+    {
+      'name': 'SuppressUnsupportedOSWarning',
+      'caption': '''Suppress the unsupported OS warning''',
+      'desc': '''Suppresses the warning that appears when <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> is running on a computer or operating system that is no longer supported.''',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome.*:49-','chrome_os:49-'],
+      'features': {
+        'dynamic_refresh': False,
+        'per_profile': False,
+      },
+      'example_value': True,
+      'tags': ['system-security'],
+      'id': 324,
+    },
+    {
+      'name': 'DeviceQuirksDownloadEnabled',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome_os:51-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': True,
+      },
+      'example_value': True,
+      'id': 325,
+      'caption': '''Enable queries to Quirks Server for hardware profiles''',
+      'tags': [],
+      'desc':
+      '''The Quirks Server provides hardware-specific configuration files, like
+      ICC display profiles to adjust monitor calibration.
+
+      When this policy is set to false, the device will not attempt to
+      contact the Quirks Server to download configuration files.
+
+      If this policy is true or not configured then
+      <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> will
+      automatically contact the Quirks Server and download configuration files,
+      if available, and store them on the device.  Such files might, for
+      example, be used to improve display quality of attached monitors.''',
+    },
+    {
+      'name': 'SystemTimezoneAutomaticDetection',
+      'type': 'int-enum',
+      'schema': {
+        'type': 'integer',
+        'enum': [ 0, 1, 2, 3 ],
+      },
+      'items': [
+        {
+          'name': 'TimezoneAutomaticDetectionUsersDecide',
+          'value': 0,
+          'caption': '''Let users decide.''',
+        },
+        {
+          'name': 'TimezoneAutomaticDetectionDisabled',
+          'value': 1,
+          'caption': '''Never auto-detect timezone.''',
+        },
+        {
+          'name': 'TimezoneAutomaticDetectionIPOnly',
+          'value': 2,
+          'caption': '''Always use coarse timezone detection.''',
+        },
+        {
+          'name': 'TimezoneAutomaticDetectionSendWiFiAccessPoints',
+          'value': 3,
+          'caption': '''Always send WiFi acess-points to server while resolving timezone.''',
+        },
+      ],
+      'supported_on': ['chrome_os:53-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': True,
+      },
+      'example_value': 0,
+      'id': 326,
+      'caption': '''Configure the automatic timezone detection method''',
+      'tags': ['google-sharing'],
+      'desc': '''When this policy is set, automatic timezone detection flow will be in one of the following ways depending on the value of the setting:
+
+      If set to TimezoneAutomaticDetectionUsersDecide, users would be able to control automatic timezone detection using normal controls in chrome://settings.
+
+      If set to TimezoneAutomaticDetectionDisabled, automatic timezone controls in chrome://settings will be disabled. Automatic timezone detection will be always off.
+
+      If set to TimezoneAutomaticDetectionIPOnly, timezone controls in chrome://settings will be disabled. Automatic timezone detection will be always on. Timezone detection will use IP-only method to resolve location.
+
+      If set to TimezoneAutomaticDetectionSendWiFiAccessPoints, timezone controls in chrome://settings will be disabled. Automatic timezone detection will be always on. The list of visible WiFi access-points will be always sent to Geolocation API server for fine-grained timezone detection.
+
+      If this policy is not set, it will behave as if TimezoneAutomaticDetectionUsersDecide is set.
+
+      If SystemTimezone policy is set, it overrides this policy. In this case automatic timezone detection is completely disabled.''',
+    },
+    {
+      'name': 'TaskManagerEndProcessEnabled',
+      'caption': '''Enables ending processes in Task Manager''',
+      'desc': '''Enables ending processes in <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>'s Task Manager.
+
+      If set to false, the 'End process' button is disabled in the Task Manager.
+
+      If set to true or not configured, the user can end processes in the Task Manager.''',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome.*:52-','chrome_os:52-'],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': False,
+      },
+      'example_value': True,
+      'tags': [],
+      'id': 327,
+    },
+    {
+      'name': 'LoginVideoCaptureAllowedUrls',
+      'type': 'list',
+      'schema': {
+        'type': 'array',
+        'items': { 'type': 'string' },
+      },
+      'supported_on': ['chrome_os:52-'],
+      'device_only': True,
+      'features': {
+        'dynamic_refresh': True,
+      },
+      'example_value': [ "https://example.com" ],
+      'id': 328,
+      'caption': '''URLs that will be granted access to video capture devices on SAML login pages''',
+      'tags': ['website-sharing'],
+      'desc': '''Patterns in this list will be matched against the security
+      origin of the requesting URL.  If a match is found, access to video
+      capture devices will be granted on SAML login pages.  If no match is
+      found, access will be automatically denied.  Wildcard patterns are not
+      allowed.'''
+    },
+    {
+      'name': 'AllowScreenLock',
+      'caption': '''Permit locking the screen''',
+      'desc': '''Permit locking the screen.
+
+      If this policy is set to false, users will not be able to lock the screen (only signing out from the user session will be possible). If this setting is set to true or not set, users who authenticated with a password can lock the screen.''',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome_os:52-'],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': True,
+      },
+      'example_value': False,
+      'tags': [],
+      'id': 329,
+    },
+    {
+      'name': 'ArcCertificatesSyncMode',
+      'type': 'int-enum',
+      'schema': {
+        'type': 'integer',
+        'enum': [ 0, 1 ],
+      },
+      'items': [
+        {
+          'name': 'SyncDisabled',
+          'value': 0,
+          'caption': '''Disable usage of <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> certificates to ARC-apps''',
+        },
+        {
+          'name': 'CopyCaCerts',
+          'value': 1,
+          'caption': '''Enable <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> CA certificates to ARC-apps'''
+        },
+      ],
+      'supported_on': ['chrome_os:52-'],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': False,
+      },
+      'example_value': 0,
+      'id': 330,
+      'caption': '''Set certificate availability for ARC-apps''',
+      'tags': ['system-security'],
+      'desc': '''If set to SyncDisabled or not configured, <ph name="PRODUCT_OS_NAME">$2<ex>Google Chrome OS</ex></ph> certificates are not available for ARC-apps.
+
+      If set to CopyCaCerts, all ONC-installed CA certificates with <ph name="WEB_TRUSTED_BIT">Web TrustBit</ph> are available for ARC-apps.''',
+    },
+    {
+      'name': 'AllowedDomainsForApps',
+      'type': 'string',
+      'schema': { 'type': 'string' },
+      'supported_on': ['chrome.*:51-', 'chrome_os:51-', 'android:51-'],
+      'features': {
+        'can_be_recommended': False,
+        'dynamic_refresh': True,
+        'per_profile': True,
+      },
+      'example_value': 'managedchrome.com,gmail.com',
+      'id': 331,
+      'caption': '''Define domains allowed to access Google Apps''',
+      'tags': ['filtering'],
+      'desc': '''Enables <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>'s
+      restricted log in feature in Google Apps and prevents users from
+      changing this setting.
+
+      If you define this setting, the user will only be able to access
+      Google Apps (such as Gmail) using accounts from the specified domains.
+
+      This setting will NOT prevent the user from loging in on a managed device
+      that requires Google authentication. The user will still be allowed to
+      sign in to accounts from other domains, but they will receive an error
+      when trying to use Google Apps with those accounts.
+
+      If you leave this setting empty/not-configured, the user will be able to
+      access Google Apps with any account.
+
+      This policy causes the X-GoogApps-Allowed-Domains header to be appended to
+      all HTTP and HTTPS requests to all google.com domains, as described in
+      https://support.google.com/a/answer/1668854.
+
+      Users cannot change or override this setting.''',
+    },
+    {
+      'name': 'PacHttpsUrlStrippingEnabled',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': [ 'chrome.*:52-', 'chrome_os:52-' ],
+      'features': {
+        'dynamic_refresh': False,
+        'per_profile': False,
+      },
+      'example_value': False,
+      'id': 332,
+      'default_for_enterprise_users': False,
+      'caption': '''Enable PAC URL stripping (for https://)''',
+      'tags': ['system-security'],
+      'desc': '''Strips privacy and security sensitive parts of https:// URLs before passing them on to PAC scripts (Proxy Auto Config) used by <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph> during proxy resolution.
+
+      When True, the security feature is enabled, and https:// URLs are
+      stripped before submitting them to a PAC script. In this manner the PAC
+      script is not able to view data that is ordinarily protected by an
+      encrypted channel (such as the URL's path and query).
+
+      When False, the security feature is disabled, and PAC scripts are
+      implicitly granted the ability to view all components of an https://
+      URL. This applies to all PAC scripts regardless of origin (including
+      those fetched over an insecure transport, or discovered insecurely
+      through WPAD).
+
+      This defaults to True (security feature enabled), except for Chrome OS
+      enterprise users for which this currently defaults to False.
+
+      It is recommended that this be set to True. The only reason to set it to
+      False is if it causes a compatibility problem with existing PAC scripts.
+
+      The desire is to remove this override in the future.''',
+    },
+    {
+      'name': 'EnableMediaRouter',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome.*:52-', 'chrome_os:52-', 'android:52-'],
+      'features': {
+        'dynamic_refresh': False,
+        'per_profile': True,
+      },
+      'example_value': True,
+      'id': 333,
+      'caption': '''Enables cast''',
+      'tags': [],
+      'desc': '''If this is set to true or is not set, users will be able to cast tabs, sites or the desktop from the browser. If set to false, this option will be disabled.'''
+    },
+    {
+      'name': 'ArcBackupRestoreEnabled',
+      'type': 'main',
+      'schema': { 'type': 'boolean' },
+      'supported_on': ['chrome_os:53-'],
+      'features': {
+        'dynamic_refresh': True,
+        'per_profile': False,
+      },
+      'example_value': False,
+      'id': 337,
+      'caption': '''Enable Android Backup Service''',
+      'tags': [],
+      'desc':
+      '''When this policy is set to true, Android app data is uploaded to Android Backup servers and restored from them upon app re-installations for compatible apps.
+
+      When this policy is set to false, Android Backup Service will be switched off.
+
+      If this setting is configured then users are not able change it themselves.
+
+      If this setting is not configured then users are able to turn Android Backup Service on and off in the Android Settings app.''',
     },
   ],
   'messages': {

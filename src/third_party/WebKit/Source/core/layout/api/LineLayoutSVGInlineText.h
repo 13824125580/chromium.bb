@@ -20,16 +20,21 @@ public:
     explicit LineLayoutSVGInlineText(const LineLayoutItem& item)
         : LineLayoutText(item)
     {
-        ASSERT(!item || item.isSVGInlineText());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isSVGInlineText());
     }
 
     explicit LineLayoutSVGInlineText(std::nullptr_t) : LineLayoutText(nullptr) { }
 
     LineLayoutSVGInlineText() { }
 
-    SVGTextLayoutAttributes* layoutAttributes() const
+    const Vector<SVGTextMetrics>& metricsList() const
     {
-        return const_cast<SVGTextLayoutAttributes*>(toSVGInlineText()->layoutAttributes());
+        return toSVGInlineText()->metricsList();
+    }
+
+    SVGCharacterDataMap& characterDataMap()
+    {
+        return toSVGInlineText()->characterDataMap();
     }
 
     bool characterStartsNewTextChunk(int position) const
@@ -47,7 +52,6 @@ public:
         return toSVGInlineText()->scaledFont();
     }
 
-
 private:
     LayoutSVGInlineText* toSVGInlineText()
     {
@@ -64,11 +68,12 @@ class SVGInlineTextMetricsIterator {
     DISALLOW_NEW();
 public:
     SVGInlineTextMetricsIterator() { reset(LineLayoutSVGInlineText()); }
+    explicit SVGInlineTextMetricsIterator(LineLayoutSVGInlineText textLineLayout) { reset(textLineLayout); }
 
     void advanceToTextStart(LineLayoutSVGInlineText textLineLayout, unsigned startCharacterOffset)
     {
         ASSERT(textLineLayout);
-        if (!m_textLineLayout || !m_textLineLayout.isEqual(textLineLayout)) {
+        if (!m_textLineLayout || m_textLineLayout != textLineLayout) {
             reset(textLineLayout);
             ASSERT(!metricsList().isEmpty());
         }
@@ -98,7 +103,7 @@ public:
         ASSERT(m_textLineLayout && m_metricsListOffset < metricsList().size());
         return metricsList()[m_metricsListOffset];
     }
-    const Vector<SVGTextMetrics>& metricsList() const { return m_textLineLayout.layoutAttributes()->textMetricsValues(); }
+    const Vector<SVGTextMetrics>& metricsList() const { return m_textLineLayout.metricsList(); }
     unsigned metricsListOffset() const { return m_metricsListOffset; }
     unsigned characterOffset() const { return m_characterOffset; }
     bool isAtEnd() const { return m_metricsListOffset == metricsList().size(); }

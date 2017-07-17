@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/renderer_host/media/video_capture_device_client.h"
+
 #include <stddef.h>
+
+#include <memory>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/video_capture_buffer_pool.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
-#include "content/browser/renderer_host/media/video_capture_device_client.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "media/base/limits.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -42,9 +44,8 @@ class MockVideoCaptureController : public VideoCaptureController {
   MOCK_METHOD1(DoBufferDestroyedOnIOThread, void(int buffer_id_to_drop));
 
   void DoIncomingCapturedVideoFrameOnIOThread(
-      scoped_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
-      const scoped_refptr<media::VideoFrame>& frame,
-      const base::TimeTicks& timestamp) override {
+      std::unique_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
+      const scoped_refptr<media::VideoFrame>& frame) override {
     MockDoIncomingCapturedVideoFrameOnIOThread(frame->coded_size());
   }
 };
@@ -61,8 +62,8 @@ class VideoCaptureDeviceClientTest : public ::testing::Test {
 
  protected:
   const content::TestBrowserThreadBundle thread_bundle_;
-  const scoped_ptr<MockVideoCaptureController> controller_;
-  const scoped_ptr<media::VideoCaptureDevice::Client> device_client_;
+  const std::unique_ptr<MockVideoCaptureController> controller_;
+  const std::unique_ptr<media::VideoCaptureDevice::Client> device_client_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceClientTest);
@@ -85,7 +86,7 @@ TEST_F(VideoCaptureDeviceClientTest, Minimal) {
       .Times(1);
   device_client_->OnIncomingCapturedData(data, kScratchpadSizeInBytes,
                                          kFrameFormat, 0 /*clockwise rotation*/,
-                                         base::TimeTicks());
+                                         base::TimeTicks(), base::TimeDelta());
   base::RunLoop().RunUntilIdle();
   Mock::VerifyAndClearExpectations(controller_.get());
 }
@@ -107,7 +108,7 @@ TEST_F(VideoCaptureDeviceClientTest, FailsSilentlyGivenInvalidFrameFormat) {
       .Times(0);
   device_client_->OnIncomingCapturedData(data, kScratchpadSizeInBytes,
                                          kFrameFormat, 0 /*clockwise rotation*/,
-                                         base::TimeTicks());
+                                         base::TimeTicks(), base::TimeDelta());
   base::RunLoop().RunUntilIdle();
   Mock::VerifyAndClearExpectations(controller_.get());
 }
@@ -128,10 +129,10 @@ TEST_F(VideoCaptureDeviceClientTest, DropsFrameIfNoBuffer) {
   // Pass two frames. The second will be dropped.
   device_client_->OnIncomingCapturedData(data, kScratchpadSizeInBytes,
                                          kFrameFormat, 0 /*clockwise rotation*/,
-                                         base::TimeTicks());
+                                         base::TimeTicks(), base::TimeDelta());
   device_client_->OnIncomingCapturedData(data, kScratchpadSizeInBytes,
                                          kFrameFormat, 0 /*clockwise rotation*/,
-                                         base::TimeTicks());
+                                         base::TimeTicks(), base::TimeDelta());
   base::RunLoop().RunUntilIdle();
   Mock::VerifyAndClearExpectations(controller_.get());
 }
@@ -176,7 +177,8 @@ TEST_F(VideoCaptureDeviceClientTest, DataCaptureGoodPixelFormats) {
         .Times(1);
     device_client_->OnIncomingCapturedData(
         data, params.requested_format.ImageAllocationSize(),
-        params.requested_format, 0 /* clockwise_rotation */, base::TimeTicks());
+        params.requested_format, 0 /* clockwise_rotation */, base::TimeTicks(),
+        base::TimeDelta());
     base::RunLoop().RunUntilIdle();
     Mock::VerifyAndClearExpectations(controller_.get());
   }
@@ -221,7 +223,8 @@ TEST_F(VideoCaptureDeviceClientTest, CheckRotationsAndCrops) {
         .WillOnce(SaveArg<0>(&coded_size));
     device_client_->OnIncomingCapturedData(
         data, params.requested_format.ImageAllocationSize(),
-        params.requested_format, size_and_rotation.rotation, base::TimeTicks());
+        params.requested_format, size_and_rotation.rotation, base::TimeTicks(),
+        base::TimeDelta());
     base::RunLoop().RunUntilIdle();
 
     EXPECT_EQ(coded_size.width(), size_and_rotation.output_resolution.width());

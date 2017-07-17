@@ -13,6 +13,7 @@ WebViewFrameWidget::WebViewFrameWidget(WebWidgetClient* client, WebViewImpl& web
     : m_client(client), m_webView(&webView), m_mainFrame(&mainFrame)
 {
     m_mainFrame->setFrameWidget(this);
+    m_webView->setCompositorVisibility(true);
 }
 
 WebViewFrameWidget::~WebViewFrameWidget()
@@ -25,6 +26,7 @@ void WebViewFrameWidget::close()
     // a frame swap, the swapped frame is detached *after* the frame tree is
     // updated. If the main frame is being swapped, then
     // m_webView()->mainFrameImpl() will no longer point to the original frame.
+    m_webView->setCompositorVisibility(false);
     m_mainFrame->setFrameWidget(nullptr);
     m_mainFrame = nullptr;
     m_webView = nullptr;
@@ -41,11 +43,6 @@ WebSize WebViewFrameWidget::size()
     return m_webView->size();
 }
 
-void WebViewFrameWidget::willStartLiveResize()
-{
-    return m_webView->willStartLiveResize();
-}
-
 void WebViewFrameWidget::resize(const WebSize& size)
 {
     return m_webView->resize(size);
@@ -54,11 +51,6 @@ void WebViewFrameWidget::resize(const WebSize& size)
 void WebViewFrameWidget::resizeVisualViewport(const WebSize& size)
 {
     return m_webView->resizeVisualViewport(size);
-}
-
-void WebViewFrameWidget::willEndLiveResize()
-{
-    return m_webView->willEndLiveResize();
 }
 
 void WebViewFrameWidget::didEnterFullScreen()
@@ -84,11 +76,6 @@ void WebViewFrameWidget::updateAllLifecyclePhases()
 void WebViewFrameWidget::paint(WebCanvas* canvas, const WebRect& viewPort)
 {
     return m_webView->paint(canvas, viewPort);
-}
-
-void WebViewFrameWidget::paintCompositedDeprecated(WebCanvas* canvas, const WebRect& viewPort)
-{
-    return m_webView->paintCompositedDeprecated(canvas, viewPort);
 }
 
 void WebViewFrameWidget::layoutAndPaintAsync(WebLayoutAndPaintAsyncCallback* callback)
@@ -129,11 +116,6 @@ void WebViewFrameWidget::applyViewportDeltas(
     float topControlsShownRatioDelta)
 {
     return m_webView->applyViewportDeltas(visualViewportDelta, layoutViewportDelta, elasticOverscrollDelta, scaleFactor, topControlsShownRatioDelta);
-}
-
-void WebViewFrameWidget::recordFrameTimingEvent(FrameTimingEventType eventType, int64_t rectId, const WebVector<WebFrameTimingEvent>& events)
-{
-    return m_webView->recordFrameTimingEvent(eventType, rectId, events);
 }
 
 void WebViewFrameWidget::mouseCaptureLost()
@@ -250,19 +232,14 @@ WebPagePopup* WebViewFrameWidget::pagePopup() const
     return m_webView->pagePopup();
 }
 
-void WebViewFrameWidget::setTopControlsHeight(float height, bool topControlsShrinkLayoutSize)
-{
-    return m_webView->setTopControlsHeight(height, topControlsShrinkLayoutSize);
-}
-
 void WebViewFrameWidget::updateTopControlsState(WebTopControlsState constraints, WebTopControlsState current, bool animate)
 {
     return m_webView->updateTopControlsState(constraints, current, animate);
 }
 
-void WebViewFrameWidget::setVisibilityState(WebPageVisibilityState visibilityState, bool isInitialState)
+void WebViewFrameWidget::setVisibilityState(WebPageVisibilityState visibilityState)
 {
-    return m_webView->setVisibilityState(visibilityState, isInitialState);
+    return m_webView->setVisibilityState(visibilityState, false);
 }
 
 void WebViewFrameWidget::setIsTransparent(bool isTransparent)
@@ -283,6 +260,11 @@ void WebViewFrameWidget::setBaseBackgroundColor(WebColor color)
 void WebViewFrameWidget::scheduleAnimation()
 {
     m_webView->scheduleAnimation();
+}
+
+CompositorProxyClient* WebViewFrameWidget::createCompositorProxyClient()
+{
+    return m_webView->createCompositorProxyClient();
 }
 
 } // namespace blink

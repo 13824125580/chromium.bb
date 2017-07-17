@@ -2,21 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/media/media_stream_dispatcher.h"
+
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/common/media/media_stream_messages.h"
 #include "content/public/common/media_stream_request.h"
-#include "content/renderer/media/media_stream_dispatcher.h"
 #include "content/renderer/media/media_stream_dispatcher_eventhandler.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 namespace {
@@ -37,7 +39,7 @@ class MockMediaStreamDispatcherEventHandler
       public base::SupportsWeakPtr<MockMediaStreamDispatcherEventHandler> {
  public:
   MockMediaStreamDispatcherEventHandler()
-      : request_id_(-1) {}
+      : request_id_(-1), did_receive_devices_changed_(false) {}
 
   void OnStreamGenerated(
       int request_id,
@@ -87,6 +89,8 @@ class MockMediaStreamDispatcherEventHandler
 
   void OnDeviceOpenFailed(int request_id) override { request_id_ = request_id; }
 
+  void OnDevicesChanged() override { did_receive_devices_changed_ = true; }
+
   void ResetStoredParameters() {
     request_id_ = -1;
     label_ = "";
@@ -100,6 +104,7 @@ class MockMediaStreamDispatcherEventHandler
   std::string device_stopped_label_;
   StreamDeviceInfo audio_device_;
   StreamDeviceInfo video_device_;
+  bool did_receive_devices_changed_;
 };
 
 class MediaStreamDispatcherUnderTest : public MediaStreamDispatcher {
@@ -115,9 +120,7 @@ class MediaStreamDispatcherTest : public ::testing::Test {
   MediaStreamDispatcherTest()
       : dispatcher_(new MediaStreamDispatcherUnderTest()),
         handler_(new MockMediaStreamDispatcherEventHandler),
-        security_origin_("http://test.com"),
-        request_id_(10) {
-  }
+        security_origin_(GURL("http://test.com")) {}
 
   // Generates a request for a MediaStream and returns the request id that is
   // used in IPC. Use this returned id in CompleteGenerateStream to identify
@@ -174,10 +177,9 @@ class MediaStreamDispatcherTest : public ::testing::Test {
 
  protected:
   base::MessageLoop message_loop_;
-  scoped_ptr<MediaStreamDispatcherUnderTest> dispatcher_;
-  scoped_ptr<MockMediaStreamDispatcherEventHandler> handler_;
-  GURL security_origin_;
-  int request_id_;
+  std::unique_ptr<MediaStreamDispatcherUnderTest> dispatcher_;
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler_;
+  url::Origin security_origin_;
 };
 
 }  // namespace
@@ -215,12 +217,13 @@ TEST_F(MediaStreamDispatcherTest, GenerateStreamAndStopDevices) {
 }
 
 TEST_F(MediaStreamDispatcherTest, BasicVideoDevice) {
-  scoped_ptr<MediaStreamDispatcher> dispatcher(new MediaStreamDispatcher(NULL));
-  scoped_ptr<MockMediaStreamDispatcherEventHandler>
-      handler1(new MockMediaStreamDispatcherEventHandler);
-  scoped_ptr<MockMediaStreamDispatcherEventHandler>
-      handler2(new MockMediaStreamDispatcherEventHandler);
-  GURL security_origin;
+  std::unique_ptr<MediaStreamDispatcher> dispatcher(
+      new MediaStreamDispatcher(NULL));
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler1(
+      new MockMediaStreamDispatcherEventHandler);
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler2(
+      new MockMediaStreamDispatcherEventHandler);
+  url::Origin security_origin;
 
   int ipc_request_id1 = dispatcher->next_ipc_id_;
   dispatcher->EnumerateDevices(
@@ -304,11 +307,12 @@ TEST_F(MediaStreamDispatcherTest, BasicVideoDevice) {
 }
 
 TEST_F(MediaStreamDispatcherTest, TestFailure) {
-  scoped_ptr<MediaStreamDispatcher> dispatcher(new MediaStreamDispatcher(NULL));
-  scoped_ptr<MockMediaStreamDispatcherEventHandler>
-      handler(new MockMediaStreamDispatcherEventHandler);
+  std::unique_ptr<MediaStreamDispatcher> dispatcher(
+      new MediaStreamDispatcher(NULL));
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler(
+      new MockMediaStreamDispatcherEventHandler);
   StreamControls components(true, true);
-  GURL security_origin;
+  url::Origin security_origin;
 
   // Test failure when creating a stream.
   int ipc_request_id1 = dispatcher->next_ipc_id_;
@@ -351,16 +355,17 @@ TEST_F(MediaStreamDispatcherTest, TestFailure) {
 }
 
 TEST_F(MediaStreamDispatcherTest, CancelGenerateStream) {
-  scoped_ptr<MediaStreamDispatcher> dispatcher(new MediaStreamDispatcher(NULL));
-  scoped_ptr<MockMediaStreamDispatcherEventHandler>
-      handler(new MockMediaStreamDispatcherEventHandler);
+  std::unique_ptr<MediaStreamDispatcher> dispatcher(
+      new MediaStreamDispatcher(NULL));
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler(
+      new MockMediaStreamDispatcherEventHandler);
   StreamControls components(true, true);
   int ipc_request_id1 = dispatcher->next_ipc_id_;
 
   dispatcher->GenerateStream(kRequestId1, handler.get()->AsWeakPtr(),
-                             components, GURL());
+                             components, url::Origin());
   dispatcher->GenerateStream(kRequestId2, handler.get()->AsWeakPtr(),
-                             components, GURL());
+                             components, url::Origin());
 
   EXPECT_EQ(2u, dispatcher->requests_.size());
   dispatcher->CancelGenerateStream(kRequestId2, handler.get()->AsWeakPtr());
@@ -406,6 +411,25 @@ TEST_F(MediaStreamDispatcherTest, DeviceClosed) {
   EXPECT_EQ(label, handler_->device_stopped_label_);
   EXPECT_EQ(dispatcher_->video_session_id(label, 0),
             StreamDeviceInfo::kNoId);
+}
+
+// Test that the MediaStreamDispatcherEventHandler is notified when the message
+// MediaStreamMsg_DevicesChanged is received.
+TEST_F(MediaStreamDispatcherTest, DevicesChanged) {
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler1(
+      new MockMediaStreamDispatcherEventHandler);
+  std::unique_ptr<MockMediaStreamDispatcherEventHandler> handler2(
+      new MockMediaStreamDispatcherEventHandler);
+  dispatcher_->SubscribeToDeviceChangeNotifications(handler1->AsWeakPtr(),
+                                                    security_origin_);
+  dispatcher_->SubscribeToDeviceChangeNotifications(handler2->AsWeakPtr(),
+                                                    security_origin_);
+  dispatcher_->OnMessageReceived(MediaStreamMsg_DevicesChanged(kRouteId));
+  dispatcher_->CancelDeviceChangeNotifications(handler1->AsWeakPtr());
+  dispatcher_->CancelDeviceChangeNotifications(handler2->AsWeakPtr());
+
+  EXPECT_TRUE(handler1->did_receive_devices_changed_);
+  EXPECT_TRUE(handler2->did_receive_devices_changed_);
 }
 
 }  // namespace content

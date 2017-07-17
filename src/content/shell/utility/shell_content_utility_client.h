@@ -22,6 +22,8 @@ class ShellContentUtilityClient : public ContentUtilityClient {
 
   void onStartupPing();
 
+  void ExposeInterfacesToBrowser(shell::InterfaceRegistry* registry) override;
+
  private:
   typedef ScopedVector<UtilityMessageHandler> Handlers;
   Handlers d_handlers;

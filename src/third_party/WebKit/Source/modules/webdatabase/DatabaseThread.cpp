@@ -32,20 +32,21 @@
 #include "modules/webdatabase/DatabaseTask.h"
 #include "modules/webdatabase/SQLTransactionClient.h"
 #include "modules/webdatabase/SQLTransactionCoordinator.h"
+#include "platform/CrossThreadFunctional.h"
 #include "platform/Logging.h"
-#include "platform/ThreadSafeFunctional.h"
 #include "platform/WebThreadSupportingGC.h"
 #include "public/platform/Platform.h"
-#include "wtf/MainThread.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 DatabaseThread::DatabaseThread()
-    : m_transactionClient(adoptPtr(new SQLTransactionClient()))
-    , m_transactionCoordinator(new SQLTransactionCoordinator())
+    : m_transactionClient(wrapUnique(new SQLTransactionClient()))
     , m_cleanupSync(nullptr)
     , m_terminationRequested(false)
 {
+    DCHECK(isMainThread());
 }
 
 DatabaseThread::~DatabaseThread()
@@ -56,8 +57,6 @@ DatabaseThread::~DatabaseThread()
 
 DEFINE_TRACE(DatabaseThread)
 {
-    visitor->trace(m_openDatabaseSet);
-    visitor->trace(m_transactionCoordinator);
 }
 
 void DatabaseThread::start()
@@ -65,13 +64,14 @@ void DatabaseThread::start()
     ASSERT(isMainThread());
     if (m_thread)
         return;
-    m_thread = WebThreadSupportingGC::create("WebCore: Database");
-    m_thread->postTask(BLINK_FROM_HERE, threadSafeBind(&DatabaseThread::setupDatabaseThread, this));
+    m_thread = WebThreadSupportingGC::create("WebCore: Database", true);
+    m_thread->postTask(BLINK_FROM_HERE, crossThreadBind(&DatabaseThread::setupDatabaseThread, wrapCrossThreadPersistent(this)));
 }
 
 void DatabaseThread::setupDatabaseThread()
 {
     m_thread->initialize();
+    m_transactionCoordinator = new SQLTransactionCoordinator();
 }
 
 void DatabaseThread::terminate()
@@ -84,17 +84,19 @@ void DatabaseThread::terminate()
         m_terminationRequested = true;
         m_cleanupSync = &sync;
         WTF_LOG(StorageAPI, "DatabaseThread %p was asked to terminate\n", this);
-        m_thread->postTask(BLINK_FROM_HERE, threadSafeBind(&DatabaseThread::cleanupDatabaseThread, this));
+        m_thread->postTask(BLINK_FROM_HERE, crossThreadBind(&DatabaseThread::cleanupDatabaseThread, wrapCrossThreadPersistent(this)));
     }
     sync.waitForTaskCompletion();
     // The WebThread destructor blocks until all the tasks of the database
     // thread are processed. However, it shouldn't block at all because
     // the database thread has already finished processing the cleanup task.
-    m_thread.clear();
+    m_thread.reset();
 }
 
 void DatabaseThread::cleanupDatabaseThread()
 {
+    DCHECK(isDatabaseThread());
+
     WTF_LOG(StorageAPI, "Cleaning up DatabaseThread %p", this);
 
     // Clean up the list of all pending transactions on this database thread
@@ -104,15 +106,15 @@ void DatabaseThread::cleanupDatabaseThread()
     // inconsistent or locked state.
     if (m_openDatabaseSet.size() > 0) {
         // As the call to close will modify the original set, we must take a copy to iterate over.
-        HeapHashSet<Member<Database>> openSetCopy;
+        HashSet<CrossThreadPersistent<Database>> openSetCopy;
         openSetCopy.swap(m_openDatabaseSet);
-        HeapHashSet<Member<Database>>::iterator end = openSetCopy.end();
-        for (HeapHashSet<Member<Database>>::iterator it = openSetCopy.begin(); it != end; ++it)
+        HashSet<CrossThreadPersistent<Database>>::iterator end = openSetCopy.end();
+        for (HashSet<CrossThreadPersistent<Database>>::iterator it = openSetCopy.begin(); it != end; ++it)
             (*it)->close();
     }
     m_openDatabaseSet.clear();
 
-    m_thread->postTask(BLINK_FROM_HERE, WTF::bind(&DatabaseThread::cleanupDatabaseThreadCompleted, this));
+    m_thread->postTask(BLINK_FROM_HERE, WTF::bind(&DatabaseThread::cleanupDatabaseThreadCompleted, wrapCrossThreadPersistent(this)));
 }
 
 void DatabaseThread::cleanupDatabaseThreadCompleted()
@@ -160,7 +162,7 @@ bool DatabaseThread::isDatabaseThread() const
     return !isMainThread();
 }
 
-void DatabaseThread::scheduleTask(PassOwnPtr<DatabaseTask> task)
+void DatabaseThread::scheduleTask(std::unique_ptr<DatabaseTask> task)
 {
     ASSERT(m_thread);
 #if ENABLE(ASSERT)
@@ -170,7 +172,7 @@ void DatabaseThread::scheduleTask(PassOwnPtr<DatabaseTask> task)
     }
 #endif
     // WebThread takes ownership of the task.
-    m_thread->postTask(BLINK_FROM_HERE, threadSafeBind(&DatabaseTask::run, task));
+    m_thread->postTask(BLINK_FROM_HERE, crossThreadBind(&DatabaseTask::run, std::move(task)));
 }
 
 } // namespace blink

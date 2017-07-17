@@ -116,22 +116,18 @@
             'app/chrome_main_delegate.h',
             'app/chrome_main_mac.h',
             'app/chrome_main_mac.mm',
-            'app/delay_load_hook_win.cc',
-            'app/delay_load_hook_win.h',
           ],
           'dependencies': [
             '<@(chromium_browser_dependencies)',
             'chrome_features.gyp:chrome_common_features',
+            'policy_path_parser',
             '../content/content.gyp:content_app_browser',
           ],
           'conditions': [
             ['OS=="win"', {
               'dependencies': [
                 '<(DEPTH)/chrome_elf/chrome_elf.gyp:chrome_elf',
-              ],
-            }],
-            ['OS=="win" and configuration_policy==1', {
-              'dependencies': [
+                '<(DEPTH)/chrome/chrome.gyp:install_static_util',
                 '<(DEPTH)/components/components.gyp:policy',
               ],
             }],
@@ -140,13 +136,6 @@
                 '../ui/compositor/compositor.gyp:compositor',
               ],
             }],
-            ['OS=="win" and target_arch=="ia32"', {
-              # Add a dependency to custom import library for user32 delay
-              # imports only in x86 builds.
-              'dependencies': [
-                'chrome_user32_delay_imports',
-              ],
-            },],
             ['OS=="win"', {
               'product_name': 'chrome',
               'dependencies': [
@@ -195,34 +184,6 @@
                     ['target_arch=="ia32"', {
                       # Don't set an x64 base address (to avoid breaking HE-ASLR).
                       'BaseAddress': '0x01c30000',
-                      # Link against the XP-constrained user32 import library
-                      # instead of the platform-SDK provided one to avoid
-                      # inadvertently taking dependencies on post-XP user32
-                      # exports.
-                      'AdditionalDependencies!': [
-                        'user32.lib',
-                      ],
-                      'IgnoreDefaultLibraryNames': [
-                        'user32.lib',
-                      ],
-                      # Remove user32 delay load for chrome.dll.
-                      'DelayLoadDLLs!': [
-                        'user32.dll',
-                      ],
-                      'AdditionalDependencies': [
-                        'user32.winxp.lib',
-                      ],
-                      'DelayLoadDLLs': [
-                        'user32-delay.dll',
-                      ],
-                      'AdditionalLibraryDirectories': [
-                        '<(DEPTH)/build/win/importlibs/x86',
-                      ],
-                      'ForceSymbolReferences': [
-                        # Force the inclusion of the delay load hook in this
-                        # binary.
-                        '_ChromeDelayLoadHook@8',
-                      ],
                     }],
                   ],
                   'DelayLoadDLLs': [
@@ -272,16 +233,6 @@
             ['chrome_multiple_dll==0 and enable_plugins==1', {
               'dependencies': [
                 '../pdf/pdf.gyp:pdf',
-              ],
-            }],
-            ['cld_version==1', {
-              'dependencies': [
-                '<(DEPTH)/third_party/cld/cld.gyp:cld',
-              ],
-            }],
-            ['cld_version==2', {
-              'dependencies': [
-                '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld_2',
               ],
             }],
             ['OS=="mac" and component!="shared_library"', {
@@ -363,6 +314,10 @@
           ],
           'conditions': [
             ['OS=="win"', {
+              'dependencies': [
+                '<(DEPTH)/chrome/chrome.gyp:install_static_util',
+                '<(DEPTH)/components/components.gyp:policy',
+              ],
               'conditions': [
                 ['chrome_pgo_phase!=0', {
                   # Disable Warning 4702 ("Unreachable code") for the WPO/PGO
@@ -398,16 +353,6 @@
                   },
                 }],
               ]
-            }],
-            ['OS=="win" and configuration_policy==1', {
-              'dependencies': [
-                '<(DEPTH)/components/components.gyp:policy',
-              ],
-            }],
-            ['configuration_policy==1', {
-              'dependencies': [
-                'policy_path_parser',
-              ],
             }],
             ['enable_plugins==1', {
               'dependencies': [

@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "base/guid.h"
+#include "base/run_loop.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
@@ -71,7 +72,8 @@ void RunOnDBThreadAndSignal(base::Closure task,
 }
 
 void RunOnDBThreadAndBlock(base::Closure task) {
-  WaitableEvent done_event(false, false);
+  WaitableEvent done_event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   BrowserThread::PostTask(BrowserThread::DB,
                           FROM_HERE,
                           Bind(&RunOnDBThreadAndSignal, task, &done_event));
@@ -79,7 +81,8 @@ void RunOnDBThreadAndBlock(base::Closure task) {
 }
 
 void RemoveKeyDontBlockForSync(int profile, const AutofillKey& key) {
-  WaitableEvent done_event(false, false);
+  WaitableEvent done_event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   MockWebDataServiceObserver mock_observer;
   EXPECT_CALL(mock_observer, AutofillEntriesChanged(_))
@@ -200,7 +203,8 @@ void AddKeys(int profile, const std::set<AutofillKey>& keys) {
     form_fields.push_back(field);
   }
 
-  WaitableEvent done_event(false, false);
+  WaitableEvent done_event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   MockWebDataServiceObserver mock_observer;
   EXPECT_CALL(mock_observer, AutofillEntriesChanged(_))
       .WillOnce(SignalEvent(&done_event));
@@ -299,7 +303,7 @@ void SetProfiles(int profile, std::vector<AutofillProfile>* autofill_profiles) {
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
   pdm->AddObserver(&observer);
   pdm->SetProfiles(autofill_profiles);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   pdm->RemoveObserver(&observer);
 }
 
@@ -310,12 +314,13 @@ void SetCreditCards(int profile, std::vector<CreditCard>* credit_cards) {
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
   pdm->AddObserver(&observer);
   pdm->SetCreditCards(credit_cards);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   pdm->RemoveObserver(&observer);
 }
 
 void AddProfile(int profile, const AutofillProfile& autofill_profile) {
-  const std::vector<AutofillProfile*>& all_profiles = GetAllProfiles(profile);
+  const std::vector<AutofillProfile*>& all_profiles =
+      GetAllAutoFillProfiles(profile);
   std::vector<AutofillProfile> autofill_profiles;
   for (size_t i = 0; i < all_profiles.size(); ++i)
     autofill_profiles.push_back(*all_profiles[i]);
@@ -324,7 +329,8 @@ void AddProfile(int profile, const AutofillProfile& autofill_profile) {
 }
 
 void RemoveProfile(int profile, const std::string& guid) {
-  const std::vector<AutofillProfile*>& all_profiles = GetAllProfiles(profile);
+  const std::vector<AutofillProfile*>& all_profiles =
+      GetAllAutoFillProfiles(profile);
   std::vector<AutofillProfile> autofill_profiles;
   for (size_t i = 0; i < all_profiles.size(); ++i) {
     if (all_profiles[i]->guid() != guid)
@@ -337,7 +343,8 @@ void UpdateProfile(int profile,
                    const std::string& guid,
                    const AutofillType& type,
                    const base::string16& value) {
-  const std::vector<AutofillProfile*>& all_profiles = GetAllProfiles(profile);
+  const std::vector<AutofillProfile*>& all_profiles =
+      GetAllAutoFillProfiles(profile);
   std::vector<AutofillProfile> profiles;
   for (size_t i = 0; i < all_profiles.size(); ++i) {
     profiles.push_back(*all_profiles[i]);
@@ -347,7 +354,7 @@ void UpdateProfile(int profile,
   autofill_helper::SetProfiles(profile, &profiles);
 }
 
-const std::vector<AutofillProfile*>& GetAllProfiles(
+const std::vector<AutofillProfile*>& GetAllAutoFillProfiles(
     int profile) {
   MockPersonalDataManagerObserver observer;
   EXPECT_CALL(observer, OnPersonalDataChanged()).
@@ -355,13 +362,13 @@ const std::vector<AutofillProfile*>& GetAllProfiles(
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
   pdm->AddObserver(&observer);
   pdm->Refresh();
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   pdm->RemoveObserver(&observer);
   return pdm->web_profiles();
 }
 
 int GetProfileCount(int profile) {
-  return GetAllProfiles(profile).size();
+  return GetAllAutoFillProfiles(profile).size();
 }
 
 int GetKeyCount(int profile) {
@@ -409,9 +416,9 @@ bool ProfilesMatchImpl(
 
 bool ProfilesMatch(int profile_a, int profile_b) {
   const std::vector<AutofillProfile*>& autofill_profiles_a =
-      GetAllProfiles(profile_a);
+      GetAllAutoFillProfiles(profile_a);
   const std::vector<AutofillProfile*>& autofill_profiles_b =
-      GetAllProfiles(profile_b);
+      GetAllAutoFillProfiles(profile_b);
   return ProfilesMatchImpl(
       profile_a, autofill_profiles_a, profile_b, autofill_profiles_b);
 }

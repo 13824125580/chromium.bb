@@ -4,6 +4,8 @@
 
 #include "chrome/browser/thumbnails/simple_thumbnail_crop.h"
 
+#include <algorithm>
+
 #include "base/metrics/histogram.h"
 #include "content/public/browser/browser_thread.h"
 #include "skia/ext/platform_canvas.h"
@@ -11,7 +13,6 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/scrollbar_size.h"
 #include "ui/gfx/skbitmap_operations.h"
 

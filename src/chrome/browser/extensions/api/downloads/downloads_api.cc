@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
@@ -29,7 +31,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/cancelable_task_tracker.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -63,8 +65,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
-#include "content/public/browser/resource_context.h"
-#include "content/public/browser/resource_dispatcher_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_dispatcher.h"
@@ -245,7 +246,7 @@ std::string TimeToISO8601(const base::Time& t) {
       exploded.millisecond);
 }
 
-scoped_ptr<base::DictionaryValue> DownloadItemToJSON(
+std::unique_ptr<base::DictionaryValue> DownloadItemToJSON(
     DownloadItem* download_item,
     Profile* profile) {
   base::DictionaryValue* json = new base::DictionaryValue();
@@ -298,7 +299,7 @@ scoped_ptr<base::DictionaryValue> DownloadItemToJSON(
   }
   // TODO(benjhayden): Implement fileSize.
   json->SetDouble(kFileSizeKey, download_item->GetTotalBytes());
-  return scoped_ptr<base::DictionaryValue>(json);
+  return std::unique_ptr<base::DictionaryValue>(json);
 }
 
 class DownloadFileIconExtractorImpl : public DownloadFileIconExtractor {
@@ -540,7 +541,7 @@ void RunDownloadQuery(
       return;
   }
 
-  scoped_ptr<base::DictionaryValue> query_in_value(query_in.ToValue());
+  std::unique_ptr<base::DictionaryValue> query_in_value(query_in.ToValue());
   for (base::DictionaryValue::Iterator query_json_field(*query_in_value.get());
        !query_json_field.IsAtEnd(); query_json_field.Advance()) {
     FilterTypeMap::const_iterator filter_type =
@@ -598,7 +599,7 @@ class ExtensionDownloadsEventRouterData : public base::SupportsUserData::Data {
 
   explicit ExtensionDownloadsEventRouterData(
       DownloadItem* download_item,
-      scoped_ptr<base::DictionaryValue> json_item)
+      std::unique_ptr<base::DictionaryValue> json_item)
       : updated_(0),
         changed_fired_(0),
         json_(std::move(json_item)),
@@ -617,7 +618,7 @@ class ExtensionDownloadsEventRouterData : public base::SupportsUserData::Data {
   }
 
   const base::DictionaryValue& json() const { return *json_.get(); }
-  void set_json(scoped_ptr<base::DictionaryValue> json_item) {
+  void set_json(std::unique_ptr<base::DictionaryValue> json_item) {
     json_ = std::move(json_item);
   }
 
@@ -836,7 +837,7 @@ class ExtensionDownloadsEventRouterData : public base::SupportsUserData::Data {
 
   int updated_;
   int changed_fired_;
-  scoped_ptr<base::DictionaryValue> json_;
+  std::unique_ptr<base::DictionaryValue> json_;
 
   base::Closure filename_no_change_;
   ExtensionDownloadsEventRouter::FilenameChangedCallback filename_change_;
@@ -851,8 +852,8 @@ class ExtensionDownloadsEventRouterData : public base::SupportsUserData::Data {
     determined_conflict_action_;
   DeterminerInfo determiner_;
 
-  scoped_ptr<base::WeakPtrFactory<ExtensionDownloadsEventRouterData> >
-    weak_ptr_factory_;
+  std::unique_ptr<base::WeakPtrFactory<ExtensionDownloadsEventRouterData>>
+      weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDownloadsEventRouterData);
 };
@@ -945,7 +946,7 @@ DownloadsDownloadFunction::DownloadsDownloadFunction() {}
 DownloadsDownloadFunction::~DownloadsDownloadFunction() {}
 
 bool DownloadsDownloadFunction::RunAsync() {
-  scoped_ptr<downloads::Download::Params> params(
+  std::unique_ptr<downloads::Download::Params> params(
       downloads::Download::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   const downloads::DownloadOptions& options = params->options;
@@ -957,12 +958,16 @@ bool DownloadsDownloadFunction::RunAsync() {
   if (include_incognito() && GetProfile()->HasOffTheRecordProfile())
     current_profile = GetProfile()->GetOffTheRecordProfile();
 
-  scoped_ptr<content::DownloadUrlParameters> download_params(
+  content::StoragePartition* storage_partition =
+      BrowserContext::GetStoragePartition(
+          render_frame_host()->GetProcess()->GetBrowserContext(),
+          render_frame_host()->GetSiteInstance());
+  std::unique_ptr<content::DownloadUrlParameters> download_params(
       new content::DownloadUrlParameters(
           download_url, render_frame_host()->GetProcess()->GetID(),
-          render_view_host_do_not_use()->GetRoutingID(),
+          render_frame_host()->GetRenderViewHost()->GetRoutingID(),
           render_frame_host()->GetRoutingID(),
-          current_profile->GetResourceContext()));
+          storage_partition->GetURLRequestContext()));
 
   base::FilePath creator_suggested_filename;
   if (options.filename.get()) {
@@ -988,12 +993,7 @@ bool DownloadsDownloadFunction::RunAsync() {
     download_params->set_prompt(*options.save_as.get());
 
   if (options.headers.get()) {
-    typedef downloads::HeaderNameValuePair HeaderNameValuePair;
-    for (std::vector<linked_ptr<HeaderNameValuePair> >::const_iterator iter =
-         options.headers->begin();
-         iter != options.headers->end();
-         ++iter) {
-      const HeaderNameValuePair& name_value = **iter;
+    for (const downloads::HeaderNameValuePair& name_value : *options.headers) {
       if (!net::HttpUtil::IsValidHeaderName(name_value.name)) {
         error_ = errors::kInvalidHeaderName;
         return false;
@@ -1039,7 +1039,8 @@ void DownloadsDownloadFunction::OnStarted(
   VLOG(1) << __FUNCTION__ << " " << item << " " << interrupt_reason;
   if (item) {
     DCHECK_EQ(content::DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
-    SetResult(new base::FundamentalValue(static_cast<int>(item->GetId())));
+    SetResult(base::MakeUnique<base::FundamentalValue>(
+        static_cast<int>(item->GetId())));
     if (!creator_suggested_filename.empty() ||
         (creator_conflict_action !=
          downloads::FILENAME_CONFLICT_ACTION_UNIQUIFY)) {
@@ -1047,8 +1048,8 @@ void DownloadsDownloadFunction::OnStarted(
           ExtensionDownloadsEventRouterData::Get(item);
       if (!data) {
         data = new ExtensionDownloadsEventRouterData(
-            item,
-            scoped_ptr<base::DictionaryValue>(new base::DictionaryValue()));
+            item, std::unique_ptr<base::DictionaryValue>(
+                      new base::DictionaryValue()));
       }
       data->CreatorSuggestedFilename(
           creator_suggested_filename, creator_conflict_action);
@@ -1067,7 +1068,7 @@ DownloadsSearchFunction::DownloadsSearchFunction() {}
 DownloadsSearchFunction::~DownloadsSearchFunction() {}
 
 bool DownloadsSearchFunction::RunSync() {
-  scoped_ptr<downloads::Search::Params> params(
+  std::unique_ptr<downloads::Search::Params> params(
       downloads::Search::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadManager* manager = NULL;
@@ -1092,20 +1093,19 @@ bool DownloadsSearchFunction::RunSync() {
   if (!error_.empty())
     return false;
 
-  base::ListValue* json_results = new base::ListValue();
+  std::unique_ptr<base::ListValue> json_results(new base::ListValue());
   for (DownloadManager::DownloadVector::const_iterator it = results.begin();
        it != results.end(); ++it) {
     DownloadItem* download_item = *it;
     uint32_t download_id = download_item->GetId();
     bool off_record = ((incognito_manager != NULL) &&
                        (incognito_manager->GetDownload(download_id) != NULL));
-    scoped_ptr<base::DictionaryValue> json_item(
-        DownloadItemToJSON(*it,
-                           off_record ? GetProfile()->GetOffTheRecordProfile()
-                                      : GetProfile()->GetOriginalProfile()));
-    json_results->Append(json_item.release());
+    std::unique_ptr<base::DictionaryValue> json_item(DownloadItemToJSON(
+        *it, off_record ? GetProfile()->GetOffTheRecordProfile()
+                        : GetProfile()->GetOriginalProfile()));
+    json_results->Append(std::move(json_item));
   }
-  SetResult(json_results);
+  SetResult(std::move(json_results));
   RecordApiFunctions(DOWNLOADS_FUNCTION_SEARCH);
   return true;
 }
@@ -1115,7 +1115,7 @@ DownloadsPauseFunction::DownloadsPauseFunction() {}
 DownloadsPauseFunction::~DownloadsPauseFunction() {}
 
 bool DownloadsPauseFunction::RunSync() {
-  scoped_ptr<downloads::Pause::Params> params(
+  std::unique_ptr<downloads::Pause::Params> params(
       downloads::Pause::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1136,7 +1136,7 @@ DownloadsResumeFunction::DownloadsResumeFunction() {}
 DownloadsResumeFunction::~DownloadsResumeFunction() {}
 
 bool DownloadsResumeFunction::RunSync() {
-  scoped_ptr<downloads::Resume::Params> params(
+  std::unique_ptr<downloads::Resume::Params> params(
       downloads::Resume::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1157,7 +1157,7 @@ DownloadsCancelFunction::DownloadsCancelFunction() {}
 DownloadsCancelFunction::~DownloadsCancelFunction() {}
 
 bool DownloadsCancelFunction::RunSync() {
-  scoped_ptr<downloads::Resume::Params> params(
+  std::unique_ptr<downloads::Resume::Params> params(
       downloads::Resume::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1176,7 +1176,7 @@ DownloadsEraseFunction::DownloadsEraseFunction() {}
 DownloadsEraseFunction::~DownloadsEraseFunction() {}
 
 bool DownloadsEraseFunction::RunSync() {
-  scoped_ptr<downloads::Erase::Params> params(
+  std::unique_ptr<downloads::Erase::Params> params(
       downloads::Erase::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadManager* manager = NULL;
@@ -1190,14 +1190,13 @@ bool DownloadsEraseFunction::RunSync() {
                    &results);
   if (!error_.empty())
     return false;
-  base::ListValue* json_results = new base::ListValue();
+  std::unique_ptr<base::ListValue> json_results(new base::ListValue());
   for (DownloadManager::DownloadVector::const_iterator it = results.begin();
        it != results.end(); ++it) {
-    json_results->Append(
-        new base::FundamentalValue(static_cast<int>((*it)->GetId())));
+    json_results->AppendInteger(static_cast<int>((*it)->GetId()));
     (*it)->Remove();
   }
-  SetResult(json_results);
+  SetResult(std::move(json_results));
   RecordApiFunctions(DOWNLOADS_FUNCTION_ERASE);
   return true;
 }
@@ -1209,7 +1208,7 @@ DownloadsRemoveFileFunction::~DownloadsRemoveFileFunction() {
 }
 
 bool DownloadsRemoveFileFunction::RunAsync() {
-  scoped_ptr<downloads::RemoveFile::Params> params(
+  std::unique_ptr<downloads::RemoveFile::Params> params(
       downloads::RemoveFile::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1242,7 +1241,7 @@ DownloadsAcceptDangerFunction::OnPromptCreatedCallback*
     DownloadsAcceptDangerFunction::on_prompt_created_ = NULL;
 
 bool DownloadsAcceptDangerFunction::RunAsync() {
-  scoped_ptr<downloads::AcceptDanger::Params> params(
+  std::unique_ptr<downloads::AcceptDanger::Params> params(
       downloads::AcceptDanger::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   PromptOrWait(params->download_id, 10);
@@ -1271,7 +1270,7 @@ void DownloadsAcceptDangerFunction::PromptOrWait(int download_id, int retries) {
       return;
     }
     error_ = errors::kInvisibleContext;
-    SendResponse(error_.empty());
+    SendResponse(false);
     return;
   }
   RecordApiFunctions(DOWNLOADS_FUNCTION_ACCEPT_DANGER);
@@ -1286,7 +1285,7 @@ void DownloadsAcceptDangerFunction::PromptOrWait(int download_id, int retries) {
   // DownloadDangerPrompt deletes itself
   if (on_prompt_created_ && !on_prompt_created_->is_null())
     on_prompt_created_->Run(prompt);
-  SendResponse(error_.empty());
+  // Function finishes in DangerPromptCallback().
 }
 
 void DownloadsAcceptDangerFunction::DangerPromptCallback(
@@ -1316,7 +1315,7 @@ DownloadsShowFunction::DownloadsShowFunction() {}
 DownloadsShowFunction::~DownloadsShowFunction() {}
 
 bool DownloadsShowFunction::RunAsync() {
-  scoped_ptr<downloads::Show::Params> params(
+  std::unique_ptr<downloads::Show::Params> params(
       downloads::Show::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1348,7 +1347,7 @@ DownloadsOpenFunction::DownloadsOpenFunction() {}
 DownloadsOpenFunction::~DownloadsOpenFunction() {}
 
 bool DownloadsOpenFunction::RunSync() {
-  scoped_ptr<downloads::Open::Params> params(
+  std::unique_ptr<downloads::Open::Params> params(
       downloads::Open::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1373,7 +1372,7 @@ DownloadsDragFunction::DownloadsDragFunction() {}
 DownloadsDragFunction::~DownloadsDragFunction() {}
 
 bool DownloadsDragFunction::RunAsync() {
-  scoped_ptr<downloads::Drag::Params> params(
+  std::unique_ptr<downloads::Drag::Params> params(
       downloads::Drag::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   DownloadItem* download_item =
@@ -1401,7 +1400,7 @@ DownloadsSetShelfEnabledFunction::DownloadsSetShelfEnabledFunction() {}
 DownloadsSetShelfEnabledFunction::~DownloadsSetShelfEnabledFunction() {}
 
 bool DownloadsSetShelfEnabledFunction::RunSync() {
-  scoped_ptr<downloads::SetShelfEnabled::Params> params(
+  std::unique_ptr<downloads::SetShelfEnabled::Params> params(
       downloads::SetShelfEnabled::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   if (!extension()->permissions_data()->HasAPIPermission(
@@ -1467,7 +1466,7 @@ void DownloadsGetFileIconFunction::SetIconExtractorForTesting(
 }
 
 bool DownloadsGetFileIconFunction::RunAsync() {
-  scoped_ptr<downloads::GetFileIcon::Params> params(
+  std::unique_ptr<downloads::GetFileIcon::Params> params(
       downloads::GetFileIcon::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   const downloads::GetFileIconOptions* options =
@@ -1508,7 +1507,7 @@ void DownloadsGetFileIconFunction::OnIconURLExtracted(const std::string& url) {
     return;
   }
   RecordApiFunctions(DOWNLOADS_FUNCTION_GET_FILE_ICON);
-  SetResult(new base::StringValue(url));
+  SetResult(base::MakeUnique<base::StringValue>(url));
   SendResponse(true);
 }
 
@@ -1759,7 +1758,7 @@ void ExtensionDownloadsEventRouter::OnDownloadCreated(
             downloads::OnDeterminingFilename::kEventName))) {
     return;
   }
-  scoped_ptr<base::DictionaryValue> json_item(
+  std::unique_ptr<base::DictionaryValue> json_item(
       DownloadItemToJSON(download_item, profile_));
   DispatchEvent(events::DOWNLOADS_ON_CREATED, downloads::OnCreated::kEventName,
                 true, Event::WillDispatchCallback(), json_item->DeepCopy());
@@ -1786,11 +1785,11 @@ void ExtensionDownloadsEventRouter::OnDownloadUpdated(
     // or else an event listener was added.
     data = new ExtensionDownloadsEventRouterData(
         download_item,
-        scoped_ptr<base::DictionaryValue>(new base::DictionaryValue()));
+        std::unique_ptr<base::DictionaryValue>(new base::DictionaryValue()));
   }
-  scoped_ptr<base::DictionaryValue> new_json(DownloadItemToJSON(
-      download_item, profile_));
-  scoped_ptr<base::DictionaryValue> delta(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> new_json(
+      DownloadItemToJSON(download_item, profile_));
+  std::unique_ptr<base::DictionaryValue> delta(new base::DictionaryValue());
   delta->SetInteger(kIdKey, download_item->GetId());
   std::set<std::string> new_fields;
   bool changed = false;
@@ -1859,11 +1858,11 @@ void ExtensionDownloadsEventRouter::DispatchEvent(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!EventRouter::Get(profile_))
     return;
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Append(arg);
   std::string json_args;
   base::JSONWriter::Write(*args, &json_args);
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(histogram_value, event_name, std::move(args)));
   // The downloads system wants to share on-record events with off-record
   // extension renderers even in incognito_split_mode because that's how

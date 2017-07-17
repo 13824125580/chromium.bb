@@ -10,13 +10,16 @@
 #include <string>
 #include <vector>
 
+#include "build/build_config.h"
 #include "base/memory/shared_memory.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/clipboard_format.h"
-#include "content/public/common/common_param_traits.h"
+#include "content/common/content_export.h"
 #include "ipc/ipc_message_macros.h"
+#include "ipc/param_traits_macros.h"
 #include "ui/base/clipboard/clipboard.h"
+#include "url/ipc/url_param_traits.h"
 
 // Singly-included section for types and/or struct declarations.
 #ifndef CONTENT_COMMON_CLIPBOARD_MESSAGES_H_
@@ -65,10 +68,11 @@ IPC_SYNC_MESSAGE_CONTROL1_4(ClipboardHostMsg_ReadHTML,
 IPC_SYNC_MESSAGE_CONTROL1_1(ClipboardHostMsg_ReadRTF,
                             ui::ClipboardType /* type */,
                             std::string /* result */)
-IPC_SYNC_MESSAGE_CONTROL1_2(ClipboardHostMsg_ReadImage,
+IPC_SYNC_MESSAGE_CONTROL1_3(ClipboardHostMsg_ReadImage,
                             ui::ClipboardType /* type */,
-                            base::SharedMemoryHandle /* PNG-encoded image */,
-                            uint32_t /* image size */)
+                            std::string /* blob_uuid */,
+                            std::string /* mime_type */,
+                            int64_t /* size */)
 IPC_SYNC_MESSAGE_CONTROL2_1(ClipboardHostMsg_ReadCustomData,
                             ui::ClipboardType /* type */,
                             base::string16 /* type */,

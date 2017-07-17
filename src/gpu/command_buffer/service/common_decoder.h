@@ -9,11 +9,12 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <stack>
 #include <string>
+
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/common/buffer.h"
 #include "gpu/command_buffer/service/cmd_parser.h"
 #include "gpu/gpu_export.h"
@@ -104,7 +105,7 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
     }
 
     size_t size_;
-    ::scoped_ptr<int8_t[]> data_;
+    ::std::unique_ptr<int8_t[]> data_;
 
     DISALLOW_COPY_AND_ASSIGN(Bucket);
   };
@@ -145,6 +146,19 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
                       unsigned int size) {
     return static_cast<T>(GetAddressAndCheckSize(shm_id, offset, size));
   }
+
+  void* GetAddressAndSize(unsigned int shm_id,
+                          unsigned int offset,
+                          unsigned int* size);
+
+  template <typename T>
+  T GetSharedMemoryAndSizeAs(unsigned int shm_id,
+                             unsigned int offset,
+                             unsigned int* size) {
+    return static_cast<T>(GetAddressAndSize(shm_id, offset, size));
+  }
+
+  unsigned int GetSharedMemorySize(unsigned int shm_id, unsigned int offset);
 
   // Get the actual shared memory buffer.
   scoped_refptr<gpu::Buffer> GetSharedMemoryBuffer(unsigned int shm_id);

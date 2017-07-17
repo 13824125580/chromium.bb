@@ -100,13 +100,13 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
     command_line->AppendSwitch(switches::kDisableLRUSnapshotCache);
   }
 
-  // Populate command line flag for the NTP favicons experiment from the
+  // Populate command line flag for the AllBookmarks from the
   // configuration plist.
-  NSString* enableNTPFavicons = [defaults stringForKey:@"EnableNTPFavicons"];
-  if ([enableNTPFavicons isEqualToString:@"Enabled"]) {
-    command_line->AppendSwitch(switches::kEnableNTPFavicons);
-  } else if ([enableNTPFavicons isEqualToString:@"Disabled"]) {
-    command_line->AppendSwitch(switches::kDisableNTPFavicons);
+  NSString* enableAllBookmarks = [defaults stringForKey:@"AllBookmarks"];
+  if ([enableAllBookmarks isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnableAllBookmarksView);
+  } else if ([enableAllBookmarks isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisableAllBookmarksView);
   }
 
   // Populate command line flags from PasswordGenerationEnabled.
@@ -116,6 +116,15 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
     command_line->AppendSwitch(switches::kEnableIOSPasswordGeneration);
   } else if ([enablePasswordGenerationValue isEqualToString:@"Disabled"]) {
     command_line->AppendSwitch(switches::kDisableIOSPasswordGeneration);
+  }
+
+  // Populate command line flags from PhysicalWebEnabled.
+  NSString* enablePhysicalWebValue =
+      [defaults stringForKey:@"PhysicalWebEnabled"];
+  if ([enablePhysicalWebValue isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnableIOSPhysicalWeb);
+  } else if ([enablePhysicalWebValue isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisableIOSPhysicalWeb);
   }
 
   // Web page replay flags.

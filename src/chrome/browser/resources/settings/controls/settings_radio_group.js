@@ -11,20 +11,17 @@
  *      <settings-radio-group pref="{{prefs.settings.foo}}"
  *          label="Foo Options." buttons="{{fooOptionsList}}">
  *      </settings-radio-group>
- *
- * @element settings-radio-group
  */
 Polymer({
   is: 'settings-radio-group',
 
+  behaviors: [CrPolicyPrefBehavior, PrefControlBehavior],
+
   properties: {
-    /**
-     * The preference object to control.
-     * @type {!chrome.settingsPrivate.PrefObject|undefined}
-     */
-    pref: {
-      type: Object,
-      notify: true,
+    disabled_: {
+      observer: 'disabledChanged_',
+      type: Boolean,
+      value: false,
     },
 
     /**
@@ -43,8 +40,17 @@ Polymer({
 
   /** @private */
   prefChanged_: function() {
-    this.selected = Settings.PrefUtil.prefToString(
-        /** @type {!chrome.settingsPrivate.PrefObject} */(this.pref));
+    var pref = /** @type {!chrome.settingsPrivate.PrefObject} */(this.pref);
+    this.disabled_ = this.isPrefPolicyControlled(pref);
+    this.selected = Settings.PrefUtil.prefToString(pref);
+  },
+
+  /** @private */
+  disabledChanged_: function() {
+    var radioButtons = this.queryAllEffectiveChildren('paper-radio-button');
+    for (var i = 0; i < radioButtons.length; ++i) {
+      radioButtons[i].disabled = this.disabled_;
+    }
   },
 
   /** @private */

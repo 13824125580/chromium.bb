@@ -12,14 +12,16 @@
 #include "base/base64.h"
 #include "base/base64url.h"
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
 #include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
@@ -106,7 +108,7 @@ class AttachmentUploaderImpl::UploadState : public net::URLFetcherDelegate,
       url_request_context_getter_;
   Attachment attachment_;
   UploadCallbackList user_callbacks_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
   std::string account_id_;
   OAuth2TokenService::ScopeSet scopes_;
   std::string access_token_;
@@ -114,7 +116,7 @@ class AttachmentUploaderImpl::UploadState : public net::URLFetcherDelegate,
   OAuth2TokenServiceRequest::TokenServiceProvider* token_service_provider_;
   // Pointer to the AttachmentUploaderImpl that owns this object.
   base::WeakPtr<AttachmentUploaderImpl> owner_;
-  scoped_ptr<OAuth2TokenServiceRequest> access_token_request_;
+  std::unique_ptr<OAuth2TokenServiceRequest> access_token_request_;
   ModelType model_type_;
 
   DISALLOW_COPY_AND_ASSIGN(UploadState);
@@ -264,14 +266,12 @@ void AttachmentUploaderImpl::UploadState::StopAndReportResult(
   UploadCallbackList::const_iterator iter = user_callbacks_.begin();
   UploadCallbackList::const_iterator end = user_callbacks_.end();
   for (; iter != end; ++iter) {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(*iter, result, attachment_id));
   }
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&AttachmentUploaderImpl::OnUploadStateStopped,
-                 owner_,
-                 attachment_id.GetProto().unique_id()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&AttachmentUploaderImpl::OnUploadStateStopped,
+                            owner_, attachment_id.GetProto().unique_id()));
 }
 
 AttachmentUploaderImpl::AttachmentUploaderImpl(
@@ -325,11 +325,11 @@ void AttachmentUploaderImpl::UploadAttachment(const Attachment& attachment,
   }
 
   const GURL url = GetURLForAttachmentId(sync_service_url_, attachment_id);
-  scoped_ptr<UploadState> upload_state(new UploadState(
+  std::unique_ptr<UploadState> upload_state(new UploadState(
       url, url_request_context_getter_, attachment, callback, account_id_,
       scopes_, token_service_provider_.get(), raw_store_birthday_,
       weak_ptr_factory_.GetWeakPtr(), model_type_));
-  state_map_.add(unique_id, std::move(upload_state));
+  state_map_[unique_id] = std::move(upload_state);
 }
 
 // Static.

@@ -10,9 +10,6 @@
  * Example:
  *
  *    <cr-expand-button expanded="{{sectionIsExpanded}}"></cr-expand-button>
- *
- * @group Chrome Elements
- * @element cr-expand-button
  */
 Polymer({
   is: 'cr-expand-button',
@@ -39,6 +36,6 @@ Polymer({
   },
 
   iconName_: function(expanded) {
-    return expanded ? 'expand-less' : 'expand-more';
+    return expanded ? 'cr:expand-less' : 'cr:expand-more';
   }
 });

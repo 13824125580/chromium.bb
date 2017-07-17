@@ -33,7 +33,6 @@
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/RemoteFrameView.h"
 #include "core/html/parser/HTMLParserIdioms.h"
-#include "core/layout/LayoutPart.h"
 #include "core/loader/FrameLoader.h"
 #include "core/loader/FrameLoaderClient.h"
 #include "core/page/FocusController.h"
@@ -76,7 +75,7 @@ void HTMLFrameElementBase::openURL(bool replaceCurrentItem)
         return;
 
     if (m_URL.isEmpty())
-        m_URL = AtomicString(blankURL().string());
+        m_URL = AtomicString(blankURL().getString());
 
     LocalFrame* parentFrame = document().frame();
     if (!parentFrame)
@@ -109,7 +108,7 @@ void HTMLFrameElementBase::parseAttribute(const QualifiedName& name, const Atomi
 {
     if (name == srcdocAttr) {
         if (!value.isNull()) {
-            setLocation(srcdocURL().string());
+            setLocation(srcdocURL().getString());
         } else {
             const AtomicString& srcValue = fastGetAttribute(srcAttr);
             if (!srcValue.isNull())
@@ -188,7 +187,7 @@ void HTMLFrameElementBase::setLocation(const String& str)
 {
     m_URL = AtomicString(str);
 
-    if (inDocument())
+    if (inShadowIncludingDocument())
         openURL(false);
 }
 

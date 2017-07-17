@@ -21,14 +21,6 @@ group("android_tools") {
   ]
 }
 
-# GYP: //tools/android/android_tools.gyp:heap_profiler
-group("heap_profiler") {
-  deps = [
-    "//tools/android/heap_profiler:heap_dump",
-    "//tools/android/heap_profiler:heap_profiler",
-  ]
-}
-
 # GYP: //tools/android/android_tools.gyp:memdump
 group("memdump") {
   deps = [
@@ -77,5 +69,13 @@ group("audio_focus_grabber") {
   testonly = true
   deps = [
     "//tools/android/audio_focus_grabber:audio_focus_grabber_apk",
+  ]
+}
+
+# GYP: //tools/android/android_tools.gyp:push_apps_to_background
+group("push_apps_to_background") {
+  testonly = true
+  deps = [
+    "//tools/android/push_apps_to_background:push_apps_to_background_apk",
   ]
 }

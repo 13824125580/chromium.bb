@@ -42,7 +42,7 @@ Node* enclosingShadowHost(Node* node)
 
 bool isEnclosedBy(const PositionInFlatTree& position, const Node& node)
 {
-    ASSERT(position.isNotNull());
+    DCHECK(position.isNotNull());
     Node* anchorNode = position.anchorNode();
     if (anchorNode == node)
         return !position.isAfterAnchor() && !position.isBeforeAnchor();
@@ -101,16 +101,16 @@ Position adjustPositionForEnd(const Position& currentPosition, Node* startContai
 {
     TreeScope& treeScope = startContainerNode->treeScope();
 
-    ASSERT(currentPosition.computeContainerNode()->treeScope() != treeScope);
+    DCHECK(currentPosition.computeContainerNode()->treeScope() != treeScope);
 
     if (Node* ancestor = treeScope.ancestorInThisScope(currentPosition.computeContainerNode())) {
         if (ancestor->contains(startContainerNode))
-            return positionAfterNode(ancestor);
-        return positionBeforeNode(ancestor);
+            return Position::afterNode(ancestor);
+        return Position::beforeNode(ancestor);
     }
 
     if (Node* lastChild = treeScope.rootNode().lastChild())
-        return positionAfterNode(lastChild);
+        return Position::afterNode(lastChild);
 
     return Position();
 }
@@ -135,16 +135,16 @@ Position adjustPositionForStart(const Position& currentPosition, Node* endContai
 {
     TreeScope& treeScope = endContainerNode->treeScope();
 
-    ASSERT(currentPosition.computeContainerNode()->treeScope() != treeScope);
+    DCHECK(currentPosition.computeContainerNode()->treeScope() != treeScope);
 
     if (Node* ancestor = treeScope.ancestorInThisScope(currentPosition.computeContainerNode())) {
         if (ancestor->contains(endContainerNode))
-            return positionBeforeNode(ancestor);
-        return positionAfterNode(ancestor);
+            return Position::beforeNode(ancestor);
+        return Position::afterNode(ancestor);
     }
 
     if (Node* firstChild = treeScope.rootNode().firstChild())
-        return positionBeforeNode(firstChild);
+        return Position::beforeNode(firstChild);
 
     return Position();
 }
@@ -180,7 +180,6 @@ void SelectionAdjuster::adjustSelectionInFlatTree(VisibleSelectionInFlatTree* se
         selectionInFlatTree->m_end = position1;
     }
     selectionInFlatTree->updateSelectionType();
-    selectionInFlatTree->didChange();
 }
 
 static bool isCrossingShadowBoundaries(const VisibleSelectionInFlatTree& selection)
@@ -225,16 +224,15 @@ void SelectionAdjuster::adjustSelectionInDOMTree(VisibleSelection* selection, co
         selection->m_end = position1;
     }
     selection->updateSelectionType();
-    selection->didChange();
 }
 
 void SelectionAdjuster::adjustSelectionToAvoidCrossingShadowBoundaries(VisibleSelection* selection)
 {
     // Note: |m_selectionType| isn't computed yet.
-    ASSERT(selection->base().isNotNull());
-    ASSERT(selection->extent().isNotNull());
-    ASSERT(selection->start().isNotNull());
-    ASSERT(selection->end().isNotNull());
+    DCHECK(selection->base().isNotNull());
+    DCHECK(selection->extent().isNotNull());
+    DCHECK(selection->start().isNotNull());
+    DCHECK(selection->end().isNotNull());
 
     // TODO(hajimehoshi): Checking treeScope is wrong when a node is
     // distributed, but we leave it as it is for backward compatibility.

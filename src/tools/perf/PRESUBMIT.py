@@ -30,9 +30,12 @@ def _GetPathsToPrepend(input_api):
   chromium_src_dir = input_api.os_path.join(perf_dir, '..', '..')
   telemetry_dir = input_api.os_path.join(
       chromium_src_dir, 'third_party', 'catapult', 'telemetry')
+  experimental_dir = input_api.os_path.join(
+      chromium_src_dir, 'third_party', 'catapult', 'experimental')
   return [
       telemetry_dir,
       input_api.os_path.join(telemetry_dir, 'third_party', 'mock'),
+      experimental_dir,
   ]
 
 
@@ -124,9 +127,9 @@ def PostUploadHook(cl, change, output_api):
   results = []
   bots = [
     'android_s5_perf_cq',
-    'winx64_10_perf_cq',
     'mac_retina_perf_cq',
-    'linux_perf_cq'
+    # TODO(prasadv): Uncomment this once crbug.com/601699 is fixed.
+    # 'linux_perf_cq'
   ]
   bots = ['tryserver.chromium.perf:%s' % s for s in bots]
   bots_string = ';'.join(bots)

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -10,7 +11,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
@@ -110,11 +111,11 @@ bool WARN_UNUSED_RESULT IsDisplayingNetError(Browser* browser,
   return IsDisplayingText(browser, net::ErrorToShortString(error_code));
 }
 
-// Returns true if the diagnostics button is displayed.
-bool WARN_UNUSED_RESULT IsDisplayingDiagnosticsButton(Browser* browser) {
+// Returns true if the diagnostics link suggestion is displayed.
+bool WARN_UNUSED_RESULT IsDisplayingDiagnosticsLink(Browser* browser) {
   std::string command = base::StringPrintf(
-      "var diagnose_button = document.getElementById('diagnose-button');"
-      "domAutomationController.send(diagnose_button.style.display != 'none');");
+      "var diagnose_link = document.getElementById('diagnose-link');"
+      "domAutomationController.send(diagnose_link != null);");
   bool result = false;
   EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
       browser->tab_strip_model()->GetActiveWebContents(), command, &result));
@@ -148,16 +149,15 @@ void ExpectDisplayingNavigationCorrections(Browser* browser,
 
   // The diagnostics button isn't displayed when corrections were
   // retrieved from a remote server.
-  EXPECT_FALSE(IsDisplayingDiagnosticsButton(browser));
+  EXPECT_FALSE(IsDisplayingDiagnosticsLink(browser));
 }
 
 std::string GetShowSavedButtonLabel() {
   return l10n_util::GetStringUTF8(IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY);
 }
 
-void AddInterceptorForURL(
-    const GURL& url,
-    scoped_ptr<net::URLRequestInterceptor> handler) {
+void AddInterceptorForURL(const GURL& url,
+                          std::unique_ptr<net::URLRequestInterceptor> handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   net::URLRequestFilter::GetInstance()->AddUrlInterceptor(url,
                                                           std::move(handler));
@@ -274,7 +274,7 @@ class LinkDoctorInterceptor : public net::URLRequestInterceptor {
   // These are only used on the UI thread.
   int num_requests_;
   int requests_to_wait_for_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   // This prevents any risk of flake if any test doesn't wait for a request
   // it sent.  Mutable so it can be accessed from a const function.
@@ -285,7 +285,7 @@ class LinkDoctorInterceptor : public net::URLRequestInterceptor {
 
 void InstallMockInterceptors(
     const GURL& search_url,
-    scoped_ptr<net::URLRequestInterceptor> link_doctor_interceptor) {
+    std::unique_ptr<net::URLRequestInterceptor> link_doctor_interceptor) {
   chrome_browser_net::SetUrlRequestMocksEnabled(true);
 
   AddInterceptorForURL(google_util::LinkDoctorBaseURL(),
@@ -425,7 +425,7 @@ class ErrorPageTest : public InProcessBrowserTest {
  protected:
   void SetUpOnMainThread() override {
     link_doctor_interceptor_ = new LinkDoctorInterceptor();
-    scoped_ptr<net::URLRequestInterceptor> owned_interceptor(
+    std::unique_ptr<net::URLRequestInterceptor> owned_interceptor(
         link_doctor_interceptor_);
     // Ownership of the |interceptor_| is passed to an object the IO thread, but
     // a pointer is kept in the test fixture.  As soon as anything calls
@@ -518,7 +518,7 @@ void InterceptNetworkTransactions(net::URLRequestContextGetter* getter,
   net::HttpCache* cache(
       getter->GetURLRequestContext()->http_transaction_factory()->GetCache());
   DCHECK(cache);
-  scoped_ptr<net::HttpTransactionFactory> factory(
+  std::unique_ptr<net::HttpTransactionFactory> factory(
       new net::FailingHttpTransactionFactory(cache->GetSession(), error));
   // Throw away old version; since this is a a browser test, we don't
   // need to restore the old state.
@@ -541,12 +541,11 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, FileNotFound) {
   // Should not request Link Doctor corrections for local errors.
   EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
   // Only errors on HTTP/HTTPS pages should display a diagnostics button.
-  EXPECT_FALSE(IsDisplayingDiagnosticsButton(browser()));
+  EXPECT_FALSE(IsDisplayingDiagnosticsLink(browser()));
 }
 
 // Check an network error page for ERR_FAILED. In particular, this should
-// not trigger a link doctor error page, and should have a diagnostics
-// button, if available on the current platform.
+// not trigger a link doctor error page.
 IN_PROC_BROWSER_TEST_F(ErrorPageTest, Failed) {
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), URLRequestFailedJob::GetMockHttpUrl(net::ERR_FAILED), 1);
@@ -554,9 +553,6 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, Failed) {
   ExpectDisplayingLocalErrorPage(browser(), net::ERR_FAILED);
   // Should not request Link Doctor corrections for this error.
   EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
-
-  EXPECT_EQ(PlatformSupportsDiagnosticsTool(),
-            IsDisplayingDiagnosticsButton(browser()));
 }
 
 // Test that a DNS error occuring in the main frame redirects to an error page.
@@ -947,7 +943,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, StaleCacheStatus) {
       browser()->profile()->GetRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InterceptNetworkTransactions, url_request_context_getter,
+      base::Bind(&InterceptNetworkTransactions,
+                 base::RetainedRef(url_request_context_getter),
                  net::ERR_FAILED));
 
   // With no navigation corrections to load, there's only one navigation.
@@ -1019,7 +1016,7 @@ class ErrorPageAutoReloadTest : public InProcessBrowserTest {
 
   void InstallInterceptor(const GURL& url, int requests_to_fail) {
     interceptor_ = new FailFirstNRequestsInterceptor(requests_to_fail);
-    scoped_ptr<net::URLRequestInterceptor> owned_interceptor(interceptor_);
+    std::unique_ptr<net::URLRequestInterceptor> owned_interceptor(interceptor_);
 
     // Tests don't need to wait for this task to complete before using the
     // filter; any requests that might be affected by it will end up in the IO
@@ -1183,7 +1180,7 @@ class ErrorPageNavigationCorrectionsFailTest : public ErrorPageTest {
 
     net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
         google_util::LinkDoctorBaseURL(),
-        scoped_ptr<net::URLRequestInterceptor>(
+        std::unique_ptr<net::URLRequestInterceptor>(
             new AddressUnreachableInterceptor()));
   }
 
@@ -1205,9 +1202,9 @@ IN_PROC_BROWSER_TEST_F(ErrorPageNavigationCorrectionsFailTest,
   // Verify that the expected error page is being displayed.
   ExpectDisplayingLocalErrorPage(browser(), net::ERR_NAME_NOT_RESOLVED);
 
-  // Diagnostics button should be displayed, if avilable on this platform.
+  // Diagnostics button should be displayed, if available on this platform.
   EXPECT_EQ(PlatformSupportsDiagnosticsTool(),
-            IsDisplayingDiagnosticsButton(browser()));
+            IsDisplayingDiagnosticsLink(browser()));
 }
 
 // Checks that when an error occurs and a corrections fail to load, the stale
@@ -1228,7 +1225,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageNavigationCorrectionsFailTest,
       browser()->profile()->GetRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InterceptNetworkTransactions, url_request_context_getter,
+      base::Bind(&InterceptNetworkTransactions,
+                 base::RetainedRef(url_request_context_getter),
                  net::ERR_CONNECTION_FAILED));
 
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
@@ -1264,7 +1262,7 @@ class ErrorPageOfflineTest : public ErrorPageTest {
 #if defined(OS_CHROMEOS)
     if (enroll_) {
       // Set up fake install attributes.
-      scoped_ptr<policy::StubEnterpriseInstallAttributes> attributes(
+      std::unique_ptr<policy::StubEnterpriseInstallAttributes> attributes(
           new policy::StubEnterpriseInstallAttributes());
       attributes->SetDomain("example.com");
       attributes->SetRegistrationUser("user@example.com");
@@ -1286,7 +1284,8 @@ class ErrorPageOfflineTest : public ErrorPageTest {
       policy_map.Set(
           policy::key::kAllowDinosaurEasterEgg, policy::POLICY_LEVEL_MANDATORY,
           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-          new base::FundamentalValue(value_of_allow_dinosaur_easter_egg_),
+          base::WrapUnique(
+              new base::FundamentalValue(value_of_allow_dinosaur_easter_egg_)),
           nullptr);
     }
     policy_provider_.UpdateChromePolicy(policy_map);

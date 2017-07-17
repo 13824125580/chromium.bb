@@ -12,14 +12,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/ui/host_desktop.h"
 
 class BackgroundModeManager;
 class CRLSetFetcher;
@@ -31,6 +30,7 @@ class IconManager;
 class IntranetRedirectDetector;
 class IOThread;
 class MediaFileSystemRegistry;
+class NotificationPlatformBridge;
 class NotificationUIManager;
 class PrefRegistrySimple;
 class PrefService;
@@ -44,6 +44,10 @@ class WebRtcLogUploader;
 
 namespace safe_browsing {
 class SafeBrowsingService;
+}
+
+namespace subresource_filter {
+class RulesetService;
 }
 
 namespace variations {
@@ -111,10 +115,6 @@ namespace safe_browsing {
 class ClientSideDetectionService;
 }
 
-namespace web_resource {
-class PromoResourceService;
-}
-
 // NOT THREAD SAFE, call only from the main thread.
 // These functions shouldn't return NULL unless otherwise noted.
 class BrowserProcess {
@@ -143,7 +143,6 @@ class BrowserProcess {
   virtual PrefService* local_state() = 0;
   virtual net::URLRequestContextGetter* system_request_context() = 0;
   virtual variations::VariationsService* variations_service() = 0;
-  virtual web_resource::PromoResourceService* promo_resource_service() = 0;
 
   virtual BrowserProcessPlatformPart* platform_part() = 0;
 
@@ -151,7 +150,10 @@ class BrowserProcess {
       extension_event_router_forwarder() = 0;
 
   // Returns the manager for desktop notifications.
+  // TODO(miguelg) This is in the process of being deprecated in favour of
+  // NotificationPlatformBridge + NotificationDisplayService
   virtual NotificationUIManager* notification_ui_manager() = 0;
+  virtual NotificationPlatformBridge* notification_platform_bridge() = 0;
 
   // MessageCenter is a global list of currently displayed notifications.
   virtual message_center::MessageCenter* message_center() = 0;
@@ -182,12 +184,12 @@ class BrowserProcess {
 
   virtual GpuModeManager* gpu_mode_manager() = 0;
 
+  // Create and bind remote debugging server to a given |ip| and |port|.
+  // Passing empty |ip| results in binding to localhost:
+  // 127.0.0.1 or ::1 depending on the environment.
   virtual void CreateDevToolsHttpProtocolHandler(const std::string& ip,
                                                  uint16_t port) = 0;
   virtual void CreateDevToolsAutoOpener() = 0;
-
-  virtual unsigned int AddRefModule() = 0;
-  virtual unsigned int ReleaseModule() = 0;
 
   virtual bool IsShuttingDown() = 0;
 
@@ -209,7 +211,7 @@ class BrowserProcess {
   // Returns the object that manages background applications.
   virtual BackgroundModeManager* background_mode_manager() = 0;
   virtual void set_background_mode_manager_for_test(
-      scoped_ptr<BackgroundModeManager> manager) = 0;
+      std::unique_ptr<BackgroundModeManager> manager) = 0;
 
   // Returns the StatusTray, which provides an API for displaying status icons
   // in the system status tray. Returns NULL if status icons are not supported
@@ -223,6 +225,11 @@ class BrowserProcess {
   // client-side detection servers.
   virtual safe_browsing::ClientSideDetectionService*
       safe_browsing_detection_service() = 0;
+
+  // Returns the service providing versioned storage for rules used by the Safe
+  // Browsing subresource filter.
+  virtual subresource_filter::RulesetService*
+  subresource_filter_ruleset_service() = 0;
 
 #if (defined(OS_WIN) || defined(OS_LINUX)) && !defined(OS_CHROMEOS)
   // This will start a timer that, if Chrome is in persistent mode, will check

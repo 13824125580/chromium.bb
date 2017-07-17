@@ -18,9 +18,9 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
-class PluginsHandler;
+class PluginsPageHandler;
 
-class PluginsUI : public MojoWebUIController<PluginsHandlerMojo> {
+class PluginsUI : public MojoWebUIController<mojom::PluginsPageHandler> {
  public:
   explicit PluginsUI(content::WebUI* web_ui);
   ~PluginsUI() override;
@@ -32,9 +32,9 @@ class PluginsUI : public MojoWebUIController<PluginsHandlerMojo> {
  private:
   // MojoWebUIController overrides:
   void BindUIHandler(
-      mojo::InterfaceRequest<PluginsHandlerMojo> request) override;
+      mojo::InterfaceRequest<mojom::PluginsPageHandler> request) override;
 
-  scoped_ptr<PluginsHandler> plugins_handler_;
+  std::unique_ptr<PluginsPageHandler> plugins_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(PluginsUI);
 };

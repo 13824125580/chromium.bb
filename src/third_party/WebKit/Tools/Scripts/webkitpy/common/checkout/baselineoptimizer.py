@@ -30,6 +30,7 @@ import copy
 import logging
 
 from webkitpy.common.memoized import memoized
+from functools import reduce
 
 _log = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class BaselineOptimizer(object):
         # test suite in the name and the virtual baseline name is not a strict superset of the non-virtual name.
         # For example, virtual/gpu/fast/canvas/foo-expected.png corresponds to fast/canvas/foo-expected.png and
         # the baseline directories are like platform/mac/virtual/gpu/fast/canvas. So, to get the path
-        # to the baseline in the platform directory, we need to append jsut foo-expected.png to the directory.
+        # to the baseline in the platform directory, we need to append just foo-expected.png to the directory.
         virtual_suite = self._virtual_suite(baseline_name)
         if virtual_suite:
             baseline_name_without_virtual = baseline_name[len(virtual_suite.name) + 1:]
@@ -104,7 +105,8 @@ class BaselineOptimizer(object):
 
     def read_results_by_directory(self, baseline_name):
         results_by_directory = {}
-        directories = reduce(set.union, map(set, [self._relative_baseline_search_paths(port, baseline_name) for port in self._ports.values()]))
+        directories = reduce(set.union, map(set, [self._relative_baseline_search_paths(
+            port, baseline_name) for port in self._ports.values()]))
 
         for directory in directories:
             path = self._join_directory(directory, baseline_name)
@@ -170,7 +172,8 @@ class BaselineOptimizer(object):
         results_by_port_name = self._results_by_port_name(results_by_directory, baseline_name)
         port_names_by_result = _invert_dictionary(results_by_port_name)
 
-        new_results_by_directory = self._remove_redundant_results(results_by_directory, results_by_port_name, port_names_by_result, baseline_name)
+        new_results_by_directory = self._remove_redundant_results(
+            results_by_directory, results_by_port_name, port_names_by_result, baseline_name)
         self._optimize_result_for_root(new_results_by_directory, baseline_name)
 
         return results_by_directory, new_results_by_directory
@@ -182,7 +185,7 @@ class BaselineOptimizer(object):
 
             # This happens if we're missing baselines for a port.
             if not current_result:
-                continue;
+                continue
 
             fallback_path = self._relative_baseline_search_paths(port, baseline_name)
             current_index, current_directory = self._find_in_fallbackpath(fallback_path, current_result, new_results_by_directory)
@@ -230,7 +233,7 @@ class BaselineOptimizer(object):
                 file_name = self._join_directory(directory, baseline_name)
                 if self._scm.exists(file_name):
                     scm_files.append(file_name)
-                else:
+                elif self._filesystem.exists(file_name):
                     fs_files.append(file_name)
 
         if scm_files or fs_files:
@@ -290,7 +293,8 @@ class BaselineOptimizer(object):
             self.new_results_by_directory.append(results_by_directory)
             return True
 
-        if self._results_by_port_name(results_by_directory, baseline_name) != self._results_by_port_name(new_results_by_directory, baseline_name):
+        if self._results_by_port_name(results_by_directory, baseline_name) != self._results_by_port_name(
+                new_results_by_directory, baseline_name):
             # This really should never happen. Just a sanity check to make sure the script fails in the case of bugs
             # instead of committing incorrect baselines.
             _log.error("  %s: optimization failed" % basename)

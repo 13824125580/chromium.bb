@@ -4,10 +4,15 @@
 
 #include "blimp/net/engine_authentication_handler.h"
 
+#include <string>
+
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/timer/timer.h"
+#include "blimp/common/create_blimp_message.h"
+#include "blimp/common/logging.h"
 #include "blimp/common/proto/blimp_message.pb.h"
+#include "blimp/common/protocol_version.h"
 #include "blimp/net/blimp_connection.h"
 #include "blimp/net/blimp_message_processor.h"
 #include "blimp/net/blimp_transport.h"
@@ -30,7 +35,7 @@ const int kAuthTimeoutDurationInSeconds = 10;
 class Authenticator : public ConnectionErrorObserver,
                       public BlimpMessageProcessor {
  public:
-  explicit Authenticator(scoped_ptr<BlimpConnection> connection,
+  explicit Authenticator(std::unique_ptr<BlimpConnection> connection,
                          base::WeakPtr<ConnectionHandler> connection_handler,
                          const std::string& client_token);
   ~Authenticator() override;
@@ -46,11 +51,11 @@ class Authenticator : public ConnectionErrorObserver,
   void OnConnectionError(int error) override;
 
   // BlimpMessageProcessor implementation.
-  void ProcessMessage(scoped_ptr<BlimpMessage> message,
+  void ProcessMessage(std::unique_ptr<BlimpMessage> message,
                       const net::CompletionCallback& callback) override;
 
   // The connection to be authenticated.
-  scoped_ptr<BlimpConnection> connection_;
+  std::unique_ptr<BlimpConnection> connection_;
 
   // Handler to pass successfully authenticated connections to.
   base::WeakPtr<ConnectionHandler> connection_handler_;
@@ -65,7 +70,7 @@ class Authenticator : public ConnectionErrorObserver,
 };
 
 Authenticator::Authenticator(
-    scoped_ptr<BlimpConnection> connection,
+    std::unique_ptr<BlimpConnection> connection,
     base::WeakPtr<ConnectionHandler> connection_handler,
     const std::string& client_token)
     : connection_(std::move(connection)),
@@ -106,26 +111,42 @@ void Authenticator::OnConnectionError(int error) {
   OnConnectionAuthenticated(false);
 }
 
-void Authenticator::ProcessMessage(scoped_ptr<BlimpMessage> message,
+void Authenticator::ProcessMessage(std::unique_ptr<BlimpMessage> message,
                                    const net::CompletionCallback& callback) {
-  if (message->type() == BlimpMessage::PROTOCOL_CONTROL &&
-      message->protocol_control().type() ==
-          ProtocolControlMessage::START_CONNECTION) {
-    bool token_match =
-        client_token_ ==
-        message->protocol_control().start_connection().client_token();
-    DVLOG(1) << "Authentication challenge received: "
-             << message->protocol_control().start_connection().client_token()
-             << ", and token "
-             << (token_match ? " matches" : " does not match");
-    OnConnectionAuthenticated(token_match);
-  } else {
-    DVLOG(1) << "Expected START_CONNECTION message, got " << *message
-             << " instead.";
+  base::ScopedClosureRunner run_callback(base::Bind(callback, net::OK));
+
+  if (!message->has_protocol_control() ||
+      !message->protocol_control().has_start_connection()) {
+    DVLOG(1) << "Expected PROTOCOL_CONTROL->START_CONNECTION, got " << *message;
     OnConnectionAuthenticated(false);
+    return;
   }
 
-  callback.Run(net::OK);
+  const StartConnectionMessage& start_connection =
+      message->protocol_control().start_connection();
+
+  // Verify that the protocol version is supported.
+  if (start_connection.protocol_version() != kProtocolVersion) {
+    DVLOG(1) << "Protocol version mismatch: "
+             << start_connection.protocol_version() << " vs "
+             << kProtocolVersion;
+
+    // Inform the client of the mismatch before disconnecting it, so it can
+    // show the user an appropriate error.
+    connection_->GetOutgoingMessageProcessor()->ProcessMessage(
+        CreateEndConnectionMessage(EndConnectionMessage::PROTOCOL_MISMATCH),
+        net::CompletionCallback());
+
+    OnConnectionAuthenticated(false);
+    return;
+  }
+
+  // Verify that the authentication token matches.
+  bool token_match = client_token_ == start_connection.client_token();
+  DVLOG(1) << "Authentication challenge received: "
+           << start_connection.client_token() << ", and token "
+           << (token_match ? " matches" : " does not match");
+  OnConnectionAuthenticated(token_match);
 }
 
 }  // namespace
@@ -141,7 +162,7 @@ EngineAuthenticationHandler::EngineAuthenticationHandler(
 EngineAuthenticationHandler::~EngineAuthenticationHandler() {}
 
 void EngineAuthenticationHandler::HandleConnection(
-    scoped_ptr<BlimpConnection> connection) {
+    std::unique_ptr<BlimpConnection> connection) {
   // Authenticator manages its own lifetime.
   new Authenticator(std::move(connection),
                     connection_handler_weak_factory_.GetWeakPtr(),

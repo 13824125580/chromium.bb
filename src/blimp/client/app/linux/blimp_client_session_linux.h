@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "blimp/client/app/linux/blimp_display_manager.h"
+#include "blimp/client/feature/ime_feature.h"
 #include "blimp/client/feature/navigation_feature.h"
 #include "blimp/client/session/blimp_client_session.h"
 
@@ -27,10 +28,11 @@ class BlimpClientSessionLinux : public BlimpClientSession,
   void OnClosed() override;
 
  private:
-  scoped_ptr<ui::PlatformEventSource> event_source_;
-  scoped_ptr<BlimpDisplayManager> blimp_display_manager_;
-  scoped_ptr<NavigationFeature::NavigationFeatureDelegate>
+  std::unique_ptr<ui::PlatformEventSource> event_source_;
+  std::unique_ptr<BlimpDisplayManager> blimp_display_manager_;
+  std::unique_ptr<NavigationFeature::NavigationFeatureDelegate>
       navigation_feature_delegate_;
+  std::unique_ptr<ImeFeature::Delegate> ime_feature_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpClientSessionLinux);
 };

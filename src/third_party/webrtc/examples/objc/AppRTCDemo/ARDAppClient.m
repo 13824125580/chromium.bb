@@ -11,17 +11,18 @@
 #import "ARDAppClient+Internal.h"
 
 #if defined(WEBRTC_IOS)
-#import "webrtc/base/objc/RTCTracing.h"
-#import "RTCAVFoundationVideoSource.h"
+#import "WebRTC/RTCAVFoundationVideoSource.h"
 #endif
-#import "RTCFileLogger.h"
-#import "RTCICEServer.h"
-#import "RTCLogging.h"
-#import "RTCMediaConstraints.h"
-#import "RTCMediaStream.h"
-#import "RTCPair.h"
-#import "RTCPeerConnectionInterface.h"
-#import "RTCVideoCapturer.h"
+#import "WebRTC/RTCAudioTrack.h"
+#import "WebRTC/RTCConfiguration.h"
+#import "WebRTC/RTCFileLogger.h"
+#import "WebRTC/RTCIceServer.h"
+#import "WebRTC/RTCLogging.h"
+#import "WebRTC/RTCMediaConstraints.h"
+#import "WebRTC/RTCMediaStream.h"
+#import "WebRTC/RTCPeerConnectionFactory.h"
+#import "WebRTC/RTCRtpSender.h"
+#import "WebRTC/RTCTracing.h"
 
 #import "ARDAppEngineClient.h"
 #import "ARDCEODTURNClient.h"
@@ -31,7 +32,7 @@
 #import "ARDSignalingMessage.h"
 #import "ARDUtilities.h"
 #import "ARDWebSocketChannel.h"
-#import "RTCICECandidate+JSON.h"
+#import "RTCIceCandidate+JSON.h"
 #import "RTCSessionDescription+JSON.h"
 
 static NSString * const kARDDefaultSTUNServerUrl =
@@ -48,11 +49,16 @@ static NSInteger const kARDAppClientErrorCreateSDP = -3;
 static NSInteger const kARDAppClientErrorSetSDP = -4;
 static NSInteger const kARDAppClientErrorInvalidClient = -5;
 static NSInteger const kARDAppClientErrorInvalidRoom = -6;
+static NSString * const kARDMediaStreamId = @"ARDAMS";
+static NSString * const kARDAudioTrackId = @"ARDAMSa0";
+static NSString * const kARDVideoTrackId = @"ARDAMSv0";
 
-// TODO(tkchin): Remove guard once rtc_base_objc compiles on Mac.
+// TODO(tkchin): Remove guard once rtc_sdk_common_objc compiles on Mac.
 #if defined(WEBRTC_IOS)
-// TODO(tkchin): Add this as a UI option.
+// TODO(tkchin): Add these as UI options.
 static BOOL const kARDAppClientEnableTracing = NO;
+static BOOL const kARDAppClientEnableRtcEventLog = YES;
+static int64_t const kARDAppClientRtcEventLogMaxSizeInBytes = 5e6;  // 5 MB.
 #endif
 
 // We need a proxy to NSTimer because it causes a strong retain cycle. When
@@ -188,9 +194,14 @@ static BOOL const kARDAppClientEnableTracing = NO;
                                                   repeats:YES
                                              timerHandler:^{
       ARDAppClient *strongSelf = weakSelf;
-      [strongSelf.peerConnection getStatsWithDelegate:strongSelf
-                                     mediaStreamTrack:nil
-                                     statsOutputLevel:RTCStatsOutputLevelDebug];
+      [strongSelf.peerConnection statsForTrack:nil
+                              statsOutputLevel:RTCStatsOutputLevelDebug
+                             completionHandler:^(NSArray *stats) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          ARDAppClient *strongSelf = weakSelf;
+          [strongSelf.delegate appClient:strongSelf didGetStats:stats];
+        });
+      }];
     }];
   } else {
     [_statsTimer invalidate];
@@ -218,11 +229,7 @@ static BOOL const kARDAppClientEnableTracing = NO;
 
 #if defined(WEBRTC_IOS)
   if (kARDAppClientEnableTracing) {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(
-        NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirPath = paths.firstObject;
-    NSString *filePath =
-        [documentsDirPath stringByAppendingPathComponent:@"webrtc-trace.txt"];
+    NSString *filePath = [self documentsFilePathForFileName:@"webrtc-trace.txt"];
     RTCStartInternalCapture(filePath);
   }
 #endif
@@ -305,6 +312,7 @@ static BOOL const kARDAppClientEnableTracing = NO;
   self.state = kARDAppClientStateDisconnected;
 #if defined(WEBRTC_IOS)
   RTCStopInternalCapture();
+  [_factory stopRtcEventLog];
 #endif
 }
 
@@ -321,6 +329,7 @@ static BOOL const kARDAppClientEnableTracing = NO;
       [_messageQueue insertObject:message atIndex:0];
       break;
     case kARDSignalingMessageTypeCandidate:
+    case kARDSignalingMessageTypeCandidateRemoval:
       [_messageQueue addObject:message];
       break;
     case kARDSignalingMessageTypeBye:
@@ -352,12 +361,12 @@ static BOOL const kARDAppClientEnableTracing = NO;
 // dispatched back to main queue as needed.
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-    signalingStateChanged:(RTCSignalingState)stateChanged {
-  RTCLog(@"Signaling state changed: %d", stateChanged);
+    didChangeSignalingState:(RTCSignalingState)stateChanged {
+  RTCLog(@"Signaling state changed: %ld", (long)stateChanged);
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-           addedStream:(RTCMediaStream *)stream {
+          didAddStream:(RTCMediaStream *)stream {
   dispatch_async(dispatch_get_main_queue(), ^{
     RTCLog(@"Received %lu video tracks and %lu audio tracks",
         (unsigned long)stream.videoTracks.count,
@@ -370,30 +379,29 @@ static BOOL const kARDAppClientEnableTracing = NO;
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-        removedStream:(RTCMediaStream *)stream {
+       didRemoveStream:(RTCMediaStream *)stream {
   RTCLog(@"Stream was removed.");
 }
 
-- (void)peerConnectionOnRenegotiationNeeded:
-    (RTCPeerConnection *)peerConnection {
+- (void)peerConnectionShouldNegotiate:(RTCPeerConnection *)peerConnection {
   RTCLog(@"WARNING: Renegotiation needed but unimplemented.");
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-    iceConnectionChanged:(RTCICEConnectionState)newState {
-  RTCLog(@"ICE state changed: %d", newState);
+    didChangeIceConnectionState:(RTCIceConnectionState)newState {
+  RTCLog(@"ICE state changed: %ld", (long)newState);
   dispatch_async(dispatch_get_main_queue(), ^{
     [_delegate appClient:self didChangeConnectionState:newState];
   });
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-    iceGatheringChanged:(RTCICEGatheringState)newState {
-  RTCLog(@"ICE gathering state changed: %d", newState);
+    didChangeIceGatheringState:(RTCIceGatheringState)newState {
+  RTCLog(@"ICE gathering state changed: %ld", (long)newState);
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-       gotICECandidate:(RTCICECandidate *)candidate {
+    didGenerateIceCandidate:(RTCIceCandidate *)candidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     ARDICECandidateMessage *message =
         [[ARDICECandidateMessage alloc] initWithCandidate:candidate];
@@ -402,16 +410,17 @@ static BOOL const kARDAppClientEnableTracing = NO;
 }
 
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-    didOpenDataChannel:(RTCDataChannel *)dataChannel {
+    didRemoveIceCandidates:(NSArray<RTCIceCandidate *> *)candidates {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    ARDICECandidateRemovalMessage *message =
+        [[ARDICECandidateRemovalMessage alloc]
+            initWithRemovedCandidates:candidates];
+    [self sendSignalingMessage:message];
+  });
 }
 
-#pragma mark - RTCStatsDelegate
-
 - (void)peerConnection:(RTCPeerConnection *)peerConnection
-           didGetStats:(NSArray *)stats {
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [_delegate appClient:self didGetStats:stats];
-  });
+    didOpenDataChannel:(RTCDataChannel *)dataChannel {
 }
 
 #pragma mark - RTCSessionDescriptionDelegate
@@ -439,8 +448,13 @@ static BOOL const kARDAppClientEnableTracing = NO;
     RTCSessionDescription *sdpPreferringH264 =
         [ARDSDPUtils descriptionForDescription:sdp
                            preferredVideoCodec:@"H264"];
-    [_peerConnection setLocalDescriptionWithDelegate:self
-                                  sessionDescription:sdpPreferringH264];
+    __weak ARDAppClient *weakSelf = self;
+    [_peerConnection setLocalDescription:sdpPreferringH264
+                       completionHandler:^(NSError *error) {
+      ARDAppClient *strongSelf = weakSelf;
+      [strongSelf peerConnection:strongSelf.peerConnection
+          didSetSessionDescriptionWithError:error];
+    }];
     ARDSessionDescriptionMessage *message =
         [[ARDSessionDescriptionMessage alloc]
             initWithDescription:sdpPreferringH264];
@@ -468,14 +482,34 @@ static BOOL const kARDAppClientEnableTracing = NO;
     // an answer and set the local description.
     if (!_isInitiator && !_peerConnection.localDescription) {
       RTCMediaConstraints *constraints = [self defaultAnswerConstraints];
-      [_peerConnection createAnswerWithDelegate:self
-                                    constraints:constraints];
-
+      __weak ARDAppClient *weakSelf = self;
+      [_peerConnection answerForConstraints:constraints
+                          completionHandler:^(RTCSessionDescription *sdp,
+                                              NSError *error) {
+        ARDAppClient *strongSelf = weakSelf;
+        [strongSelf peerConnection:strongSelf.peerConnection
+            didCreateSessionDescription:sdp
+                                  error:error];
+      }];
     }
   });
 }
 
 #pragma mark - Private
+
+#if defined(WEBRTC_IOS)
+
+- (NSString *)documentsFilePathForFileName:(NSString *)fileName {
+  NSParameterAssert(fileName.length);
+  NSArray *paths = NSSearchPathForDirectoriesInDomains(
+      NSDocumentDirectory, NSUserDomainMask, YES);
+  NSString *documentsDirPath = paths.firstObject;
+  NSString *filePath =
+      [documentsDirPath stringByAppendingPathComponent:fileName];
+  return filePath;
+}
+
+#endif
 
 - (BOOL)hasJoinedRoomServerRoom {
   return _clientId.length;
@@ -492,6 +526,17 @@ static BOOL const kARDAppClientEnableTracing = NO;
   }
   self.state = kARDAppClientStateConnected;
 
+#if defined(WEBRTC_IOS)
+  // Start event log.
+  if (kARDAppClientEnableRtcEventLog) {
+    NSString *filePath = [self documentsFilePathForFileName:@"webrtc-rtceventlog"];
+    if (![_factory startRtcEventLogWithFilePath:filePath
+                                 maxSizeInBytes:kARDAppClientRtcEventLogMaxSizeInBytes]) {
+      RTCLogError(@"Failed to start event logging.");
+    }
+  }
+#endif
+
   // Create peer connection.
   RTCMediaConstraints *constraints = [self defaultPeerConnectionConstraints];
   RTCConfiguration *config = [[RTCConfiguration alloc] init];
@@ -499,13 +544,20 @@ static BOOL const kARDAppClientEnableTracing = NO;
   _peerConnection = [_factory peerConnectionWithConfiguration:config
                                                   constraints:constraints
                                                      delegate:self];
-  // Create AV media stream and add it to the peer connection.
-  RTCMediaStream *localStream = [self createLocalMediaStream];
-  [_peerConnection addStream:localStream];
+  // Create AV senders.
+  [self createAudioSender];
+  [self createVideoSender];
   if (_isInitiator) {
     // Send offer.
-    [_peerConnection createOfferWithDelegate:self
-                                 constraints:[self defaultOfferConstraints]];
+    __weak ARDAppClient *weakSelf = self;
+    [_peerConnection offerForConstraints:[self defaultOfferConstraints]
+                       completionHandler:^(RTCSessionDescription *sdp,
+                                           NSError *error) {
+      ARDAppClient *strongSelf = weakSelf;
+      [strongSelf peerConnection:strongSelf.peerConnection
+          didCreateSessionDescription:sdp
+                                error:error];
+    }];
   } else {
     // Check if we've received an offer.
     [self drainMessageQueueIfReady];
@@ -541,14 +593,25 @@ static BOOL const kARDAppClientEnableTracing = NO;
       RTCSessionDescription *sdpPreferringH264 =
           [ARDSDPUtils descriptionForDescription:description
                              preferredVideoCodec:@"H264"];
-      [_peerConnection setRemoteDescriptionWithDelegate:self
-                                     sessionDescription:sdpPreferringH264];
+      __weak ARDAppClient *weakSelf = self;
+      [_peerConnection setRemoteDescription:sdpPreferringH264
+                          completionHandler:^(NSError *error) {
+        ARDAppClient *strongSelf = weakSelf;
+        [strongSelf peerConnection:strongSelf.peerConnection
+            didSetSessionDescriptionWithError:error];
+      }];
       break;
     }
     case kARDSignalingMessageTypeCandidate: {
       ARDICECandidateMessage *candidateMessage =
           (ARDICECandidateMessage *)message;
-      [_peerConnection addICECandidate:candidateMessage.candidate];
+      [_peerConnection addIceCandidate:candidateMessage.candidate];
+      break;
+    }
+    case kARDSignalingMessageTypeCandidateRemoval: {
+      ARDICECandidateRemovalMessage *candidateMessage =
+          (ARDICECandidateRemovalMessage *)message;
+      [_peerConnection removeIceCandidates:candidateMessage.candidates];
       break;
     }
     case kARDSignalingMessageTypeBye:
@@ -588,15 +651,25 @@ static BOOL const kARDAppClientEnableTracing = NO;
   }
 }
 
-- (RTCMediaStream *)createLocalMediaStream {
-  RTCMediaStream* localStream = [_factory mediaStreamWithLabel:@"ARDAMS"];
-  RTCVideoTrack* localVideoTrack = [self createLocalVideoTrack];
-  if (localVideoTrack) {
-    [localStream addVideoTrack:localVideoTrack];
-    [_delegate appClient:self didReceiveLocalVideoTrack:localVideoTrack];
+- (RTCRtpSender *)createVideoSender {
+  RTCRtpSender *sender =
+      [_peerConnection senderWithKind:kRTCMediaStreamTrackKindVideo
+                             streamId:kARDMediaStreamId];
+  RTCVideoTrack *track = [self createLocalVideoTrack];
+  if (track) {
+    sender.track = track;
+    [_delegate appClient:self didReceiveLocalVideoTrack:track];
   }
-  [localStream addAudioTrack:[_factory audioTrackWithID:@"ARDAMSa0"]];
-  return localStream;
+  return sender;
+}
+
+- (RTCRtpSender *)createAudioSender {
+  RTCRtpSender *sender =
+      [_peerConnection senderWithKind:kRTCMediaStreamTrackKindAudio
+                             streamId:kARDMediaStreamId];
+  RTCAudioTrack *track = [_factory audioTrackWithTrackId:kARDAudioTrackId];
+  sender.track = track;
+  return sender;
 }
 
 - (RTCVideoTrack *)createLocalVideoTrack {
@@ -611,12 +684,10 @@ static BOOL const kARDAppClientEnableTracing = NO;
     RTCMediaConstraints *mediaConstraints =
         [self defaultMediaStreamConstraints];
     RTCAVFoundationVideoSource *source =
-        [[RTCAVFoundationVideoSource alloc] initWithFactory:_factory
-                                                constraints:mediaConstraints];
+        [_factory avFoundationVideoSourceWithConstraints:mediaConstraints];
     localVideoTrack =
-        [[RTCVideoTrack alloc] initWithFactory:_factory
-                                        source:source
-                                       trackId:@"ARDAMSv0"];
+        [_factory videoTrackWithSource:source
+                               trackId:kARDVideoTrackId];
   }
 #endif
   return localVideoTrack;
@@ -661,10 +732,10 @@ static BOOL const kARDAppClientEnableTracing = NO;
 }
 
 - (RTCMediaConstraints *)defaultOfferConstraints {
-  NSArray *mandatoryConstraints = @[
-      [[RTCPair alloc] initWithKey:@"OfferToReceiveAudio" value:@"true"],
-      [[RTCPair alloc] initWithKey:@"OfferToReceiveVideo" value:@"true"]
-  ];
+  NSDictionary *mandatoryConstraints = @{
+    @"OfferToReceiveAudio" : @"true",
+    @"OfferToReceiveVideo" : @"true"
+  };
   RTCMediaConstraints* constraints =
       [[RTCMediaConstraints alloc]
           initWithMandatoryConstraints:mandatoryConstraints
@@ -677,9 +748,7 @@ static BOOL const kARDAppClientEnableTracing = NO;
     return _defaultPeerConnectionConstraints;
   }
   NSString *value = _isLoopback ? @"false" : @"true";
-  NSArray *optionalConstraints = @[
-      [[RTCPair alloc] initWithKey:@"DtlsSrtpKeyAgreement" value:value]
-  ];
+  NSDictionary *optionalConstraints = @{ @"DtlsSrtpKeyAgreement" : value };
   RTCMediaConstraints* constraints =
       [[RTCMediaConstraints alloc]
           initWithMandatoryConstraints:nil
@@ -687,11 +756,10 @@ static BOOL const kARDAppClientEnableTracing = NO;
   return constraints;
 }
 
-- (RTCICEServer *)defaultSTUNServer {
-  NSURL *defaultSTUNServerURL = [NSURL URLWithString:kARDDefaultSTUNServerUrl];
-  return [[RTCICEServer alloc] initWithURI:defaultSTUNServerURL
-                                  username:@""
-                                  password:@""];
+- (RTCIceServer *)defaultSTUNServer {
+  return [[RTCIceServer alloc] initWithURLStrings:@[kARDDefaultSTUNServerUrl]
+                                         username:@""
+                                       credential:@""];
 }
 
 #pragma mark - Errors

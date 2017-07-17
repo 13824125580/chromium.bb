@@ -16,6 +16,7 @@
         'gl_api_unittest.cc',
         'gl_image_ref_counted_memory_unittest.cc',
         'gl_image_shared_memory_unittest.cc',
+        'gl_version_info_unittest.cc',
       ],
       'include_dirs': [
         '<(DEPTH)/third_party/khronos',
@@ -29,6 +30,7 @@
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/ui/gl/gl.gyp:gl',
+        '<(DEPTH)/ui/gl/init/gl_init.gyp:gl_init',
         '<(DEPTH)/ui/gl/gl.gyp:gl_test_support',
         '<(DEPTH)/ui/gl/gl.gyp:gl_unittest_utils',
       ],

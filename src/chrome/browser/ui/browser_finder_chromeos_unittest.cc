@@ -4,8 +4,13 @@
 
 #include "chrome/browser/ui/browser_finder.h"
 
+#include "ash/shell.h"
+#include "ash/test/ash_test_helper.h"
+#include "ash/test/test_session_state_delegate.h"
 #include "base/macros.h"
+#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_chromeos.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
@@ -13,6 +18,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/fake_user_manager.h"
+#include "components/user_manager/user.h"
 
 namespace test {
 
@@ -25,11 +32,21 @@ const char kTestAccount2[] = "user2@test.com";
 
 class BrowserFinderChromeOSTest : public BrowserWithTestWindowTest {
  protected:
-  BrowserFinderChromeOSTest() : multi_user_window_manager_(nullptr) {}
+  BrowserFinderChromeOSTest()
+      : multi_user_window_manager_(nullptr),
+        fake_user_manager_(new user_manager::FakeUserManager),
+        user_manager_enabler_(fake_user_manager_) {}
 
-  TestingProfile* CreateMultiUserProfile(const std::string& user_email) {
+  TestingProfile* CreateMultiUserProfile(const AccountId& account_id) {
     TestingProfile* profile =
-        profile_manager_->CreateTestingProfile(user_email);
+        profile_manager_->CreateTestingProfile(account_id.GetUserEmail());
+    const user_manager::User* user = fake_user_manager_->AddUser(account_id);
+    chromeos::ProfileHelper::Get()->SetUserToProfileMappingForTesting(
+        const_cast<user_manager::User*>(user), profile);
+    chromeos::ProfileHelper::Get()->SetProfileToUserMappingForTesting(
+        const_cast<user_manager::User*>(user));
+    ash::test::AshTestHelper::GetTestSessionStateDelegate()->AddUser(
+        account_id);
     GetUserWindowManager()->AddUser(profile);
     return profile;
   }
@@ -59,7 +76,7 @@ class BrowserFinderChromeOSTest : public BrowserWithTestWindowTest {
     profile_manager_->SetLoggedIn(true);
     chromeos::WallpaperManager::Initialize();
     BrowserWithTestWindowTest::SetUp();
-    second_profile_ = CreateMultiUserProfile(test_account_id2_.GetUserEmail());
+    second_profile_ = CreateMultiUserProfile(test_account_id2_);
   }
 
   void TearDown() override {
@@ -73,7 +90,7 @@ class BrowserFinderChromeOSTest : public BrowserWithTestWindowTest {
   }
 
   TestingProfile* CreateProfile() override {
-    return CreateMultiUserProfile(test_account_id1_.GetUserEmail());
+    return CreateMultiUserProfile(test_account_id1_);
   }
 
   void DestroyProfile(TestingProfile* test_profile) override {
@@ -81,8 +98,10 @@ class BrowserFinderChromeOSTest : public BrowserWithTestWindowTest {
   }
 
   TestingProfile* second_profile_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   chrome::MultiUserWindowManagerChromeOS* multi_user_window_manager_;
+  user_manager::FakeUserManager* fake_user_manager_;  // Not owned.
+  chromeos::ScopedUserManagerEnabler user_manager_enabler_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserFinderChromeOSTest);
 };
@@ -96,7 +115,7 @@ TEST_F(BrowserFinderChromeOSTest, IncognitoBrowserMatchTest) {
 
   // Create an incognito browser.
   Browser::CreateParams params(profile()->GetOffTheRecordProfile());
-  scoped_ptr<Browser> incognito_browser(
+  std::unique_ptr<Browser> incognito_browser(
       chrome::CreateBrowserWithAuraTestWindowForParams(nullptr, &params));
   // Incognito windows are excluded in GetBrowserCount() because kMatchAll
   // doesn't match original profile of the browser with the given profile.
@@ -109,7 +128,7 @@ TEST_F(BrowserFinderChromeOSTest, FindBrowserOwnedByAnotherProfile) {
   set_browser(nullptr);
 
   Browser::CreateParams params(profile()->GetOriginalProfile());
-  scoped_ptr<Browser> browser(
+  std::unique_ptr<Browser> browser(
       chrome::CreateBrowserWithAuraTestWindowForParams(nullptr, &params));
   GetUserWindowManager()->SetWindowOwner(browser->window()->GetNativeWindow(),
                                          test_account_id1_);

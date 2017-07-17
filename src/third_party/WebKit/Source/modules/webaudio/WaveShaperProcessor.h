@@ -31,6 +31,7 @@
 #include "platform/audio/AudioDSPKernelProcessor.h"
 #include "wtf/RefPtr.h"
 #include "wtf/ThreadingPrimitives.h"
+#include <memory>
 
 namespace blink {
 
@@ -48,7 +49,7 @@ public:
 
     ~WaveShaperProcessor() override;
 
-    PassOwnPtr<AudioDSPKernel> createKernel() override;
+    std::unique_ptr<AudioDSPKernel> createKernel() override;
 
     void process(const AudioBus* source, AudioBus* destination, size_t framesToProcess) override;
 
@@ -60,7 +61,7 @@ public:
 
 private:
     // m_curve represents the non-linear shaping curve.
-    RefPtr<DOMFloat32Array> m_curve;
+    CrossThreadPersistent<DOMFloat32Array> m_curve;
 
     OverSampleType m_oversample;
 };

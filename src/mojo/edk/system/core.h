@@ -5,12 +5,12 @@
 #ifndef MOJO_EDK_SYSTEM_CORE_H_
 #define MOJO_EDK_SYSTEM_CORE_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory_handle.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner.h"
@@ -24,8 +24,13 @@
 #include "mojo/public/c/system/buffer.h"
 #include "mojo/public/c/system/data_pipe.h"
 #include "mojo/public/c/system/message_pipe.h"
+#include "mojo/public/c/system/platform_handle.h"
 #include "mojo/public/c/system/types.h"
 #include "mojo/public/cpp/system/message_pipe.h"
+
+namespace base {
+class PortProvider;
+}
 
 namespace mojo {
 namespace edk {
@@ -48,7 +53,12 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
 
   // Called in the parent process any time a new child is launched.
   void AddChild(base::ProcessHandle process_handle,
-                ScopedPlatformHandle platform_handle);
+                ScopedPlatformHandle platform_handle,
+                const std::string& child_token,
+                const ProcessErrorCallback& process_error_callback);
+
+  // Called in the parent process when a child process fails to launch.
+  void ChildLaunchFailed(const std::string& child_token);
 
   // Called in a child process exactly once during early initialization.
   void InitChild(ScopedPlatformHandle platform_handle);
@@ -61,11 +71,15 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
 
   // Creates a message pipe endpoint associated with |token|, which a child
   // holding the token can later locate and connect to.
-  ScopedMessagePipeHandle CreateParentMessagePipe(const std::string& token);
+  ScopedMessagePipeHandle CreateParentMessagePipe(
+      const std::string& token, const std::string& child_token);
 
   // Creates a message pipe endpoint and connects it to a pipe the parent has
   // associated with |token|.
   ScopedMessagePipeHandle CreateChildMessagePipe(const std::string& token);
+
+  // Sets the mach port provider for this process.
+  void SetMachPortProvider(base::PortProvider* port_provider);
 
   MojoHandle AddDispatcher(scoped_refptr<Dispatcher> dispatcher);
 
@@ -110,6 +124,8 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
                        MojoHandleSignals signals,
                        const base::Callback<void(MojoResult)>& callback);
 
+  MojoResult SetProperty(MojoPropertyType type, const void* value);
+
   // ---------------------------------------------------------------------------
 
   // The following methods are essentially implementations of the Mojo Core
@@ -132,6 +148,19 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
                       MojoDeadline deadline,
                       uint32_t* result_index,
                       MojoHandleSignalsState* signals_states);
+  MojoResult Watch(MojoHandle handle,
+                   MojoHandleSignals signals,
+                   MojoWatchCallback callback,
+                   uintptr_t context);
+  MojoResult CancelWatch(MojoHandle handle, uintptr_t context);
+  MojoResult AllocMessage(uint32_t num_bytes,
+                          const MojoHandle* handles,
+                          uint32_t num_handles,
+                          MojoAllocMessageFlags flags,
+                          MojoMessageHandle* message);
+  MojoResult FreeMessage(MojoMessageHandle message);
+  MojoResult GetMessageBuffer(MojoMessageHandle message, void** buffer);
+  MojoResult GetProperty(MojoPropertyType type, void* value);
 
   // These methods correspond to the API functions defined in
   // "mojo/public/c/system/wait_set.h":
@@ -159,12 +188,25 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
                           const MojoHandle* handles,
                           uint32_t num_handles,
                           MojoWriteMessageFlags flags);
+  MojoResult WriteMessageNew(MojoHandle message_pipe_handle,
+                             MojoMessageHandle message,
+                             MojoWriteMessageFlags flags);
   MojoResult ReadMessage(MojoHandle message_pipe_handle,
                          void* bytes,
                          uint32_t* num_bytes,
                          MojoHandle* handles,
                          uint32_t* num_handles,
                          MojoReadMessageFlags flags);
+  MojoResult ReadMessageNew(MojoHandle message_pipe_handle,
+                            MojoMessageHandle* message,
+                            uint32_t* num_bytes,
+                            MojoHandle* handles,
+                            uint32_t* num_handles,
+                            MojoReadMessageFlags flags);
+  MojoResult FuseMessagePipes(MojoHandle handle0, MojoHandle handle1);
+  MojoResult NotifyBadMessage(MojoMessageHandle message,
+                              const char* error,
+                              size_t error_num_bytes);
 
   // These methods correspond to the API functions defined in
   // "mojo/public/c/system/data_pipe.h":
@@ -210,6 +252,23 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
                        MojoMapBufferFlags flags);
   MojoResult UnmapBuffer(void* buffer);
 
+  // These methods correspond to the API functions defined in
+  // "mojo/public/c/system/platform_handle.h".
+  MojoResult WrapPlatformHandle(const MojoPlatformHandle* platform_handle,
+                                MojoHandle* mojo_handle);
+  MojoResult UnwrapPlatformHandle(MojoHandle mojo_handle,
+                                  MojoPlatformHandle* platform_handle);
+  MojoResult WrapPlatformSharedBufferHandle(
+      const MojoPlatformHandle* platform_handle,
+      size_t size,
+      MojoPlatformSharedBufferHandleFlags flags,
+      MojoHandle* mojo_handle);
+  MojoResult UnwrapPlatformSharedBufferHandle(
+      MojoHandle mojo_handle,
+      MojoPlatformHandle* platform_handle,
+      size_t* size,
+      MojoPlatformSharedBufferHandleFlags* flags);
+
   void GetActiveHandlesForTest(std::vector<MojoHandle>* handles);
 
  private:
@@ -223,7 +282,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
   // Used to pass ownership of our NodeController over to the IO thread in the
   // event that we're torn down before said thread.
   static void PassNodeControllerToIOThread(
-      scoped_ptr<NodeController> node_controller);
+      std::unique_ptr<NodeController> node_controller);
 
   // Guards node_controller_.
   //
@@ -237,13 +296,17 @@ class MOJO_SYSTEM_IMPL_EXPORT Core {
 
   // This is lazily initialized on first access. Always use GetNodeController()
   // to access it.
-  scoped_ptr<NodeController> node_controller_;
+  std::unique_ptr<NodeController> node_controller_;
 
   base::Lock handles_lock_;
   HandleTable handles_;
 
   base::Lock mapping_table_lock_;  // Protects |mapping_table_|.
   MappingTable mapping_table_;
+
+  base::Lock property_lock_;
+  // Properties that can be read using the MojoGetProperty() API.
+  bool property_sync_call_allowed_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };

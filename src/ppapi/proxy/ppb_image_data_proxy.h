@@ -7,8 +7,9 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory.h"
 #include "build/build_config.h"
 #include "ipc/ipc_platform_file.h"
@@ -28,7 +29,7 @@
 #include "ppapi/thunk/ppb_image_data_api.h"
 
 #if !defined(OS_NACL)
-#include "skia/ext/refptr.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #endif  // !defined(OS_NACL)
 
 class TransportDIB;
@@ -100,10 +101,10 @@ class PPAPI_PROXY_EXPORT PlatformImageData : public ImageData {
   static ImageHandle NullHandle();
 
  private:
-  scoped_ptr<TransportDIB> transport_dib_;
+  std::unique_ptr<TransportDIB> transport_dib_;
 
   // Null when the image isn't mapped.
-  skia::RefPtr<SkCanvas> mapped_canvas_;
+  sk_sp<SkCanvas> mapped_canvas_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformImageData);
 };

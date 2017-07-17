@@ -12,6 +12,7 @@ namespace content {
 class DevToolsProtocolHandler;
 
 namespace devtools {
+namespace browser { class BrowserHandler; }
 namespace io { class IOHandler; }
 namespace memory { class MemoryHandler; }
 namespace system_info { class SystemInfoHandler; }
@@ -39,12 +40,14 @@ class BrowserDevToolsAgentHost : public DevToolsAgentHostImpl {
   bool Close() override;
   bool DispatchProtocolMessage(const std::string& message) override;
 
-  scoped_ptr<devtools::io::IOHandler> io_handler_;
-  scoped_ptr<devtools::memory::MemoryHandler> memory_handler_;
-  scoped_ptr<devtools::system_info::SystemInfoHandler> system_info_handler_;
-  scoped_ptr<devtools::tethering::TetheringHandler> tethering_handler_;
-  scoped_ptr<devtools::tracing::TracingHandler> tracing_handler_;
-  scoped_ptr<DevToolsProtocolHandler> protocol_handler_;
+  std::unique_ptr<devtools::browser::BrowserHandler> browser_handler_;
+  std::unique_ptr<devtools::io::IOHandler> io_handler_;
+  std::unique_ptr<devtools::memory::MemoryHandler> memory_handler_;
+  std::unique_ptr<devtools::system_info::SystemInfoHandler>
+      system_info_handler_;
+  std::unique_ptr<devtools::tethering::TetheringHandler> tethering_handler_;
+  std::unique_ptr<devtools::tracing::TracingHandler> tracing_handler_;
+  std::unique_ptr<DevToolsProtocolHandler> protocol_handler_;
 };
 
 }  // namespace content

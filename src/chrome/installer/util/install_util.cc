@@ -12,13 +12,13 @@
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
@@ -44,6 +44,7 @@ using installer::ProductState;
 
 namespace {
 
+const wchar_t kRegDowngradeVersion[] = L"DowngradeVersion";
 const wchar_t kStageBinaryPatching[] = L"binary_patching";
 const wchar_t kStageBuilding[] = L"building";
 const wchar_t kStageConfiguringAutoLaunch[] = L"configuring_auto_launch";
@@ -285,6 +286,9 @@ void InstallUtil::AddInstallerResultItems(
     const base::string16* const launch_cmd,
     WorkItemList* install_list) {
   DCHECK(install_list);
+  DCHECK(install_list->best_effort());
+  DCHECK(!install_list->rollback_enabled());
+
   const HKEY root = system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
   DWORD installer_result = (GetInstallReturnCode(status) == 0) ? 0 : 1;
   install_list->AddCreateRegKeyWorkItem(root, state_key, KEY_WOW64_32KEY);
@@ -361,7 +365,7 @@ void InstallUtil::UpdateInstallerStage(bool system_install,
 }
 
 bool InstallUtil::IsPerUserInstall(const base::FilePath& exe_path) {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   static const char kEnvProgramFilesPath[] = "CHROME_PROBED_PROGRAM_FILES_PATH";
   std::string env_program_files_path;
@@ -575,6 +579,8 @@ int InstallUtil::GetInstallReturnCode(installer::InstallStatus status) {
     case installer::NEW_VERSION_UPDATED:
     case installer::IN_USE_UPDATED:
     case installer::UNUSED_BINARIES_UNINSTALLED:
+    case installer::OLD_VERSION_DOWNGRADE:
+    case installer::IN_USE_DOWNGRADE:
       return 0;
     default:
       return status;
@@ -606,11 +612,14 @@ base::string16 InstallUtil::GetCurrentDate() {
 
 // Open |path| with minimal access to obtain information about it, returning
 // true and populating |file| on success.
-// static
 bool InstallUtil::ProgramCompare::OpenForInfo(const base::FilePath& path,
-                                              base::File* file) {
+                                              base::File* file,
+                                              ComparisonType comparison_type) {
   DCHECK(file);
-  file->Initialize(path, base::File::FLAG_OPEN);
+  uint32_t flags = base::File::FLAG_OPEN;
+  if (comparison_type == ComparisonType::FILE_OR_DIRECTORY)
+    flags |= base::File::FLAG_BACKUP_SEMANTICS;
+  file->Initialize(path, flags);
   return file->IsValid();
 }
 
@@ -622,11 +631,57 @@ bool InstallUtil::ProgramCompare::GetInfo(const base::File& file,
   return GetFileInformationByHandle(file.GetPlatformFile(), info) != 0;
 }
 
+// static
+base::Version InstallUtil::GetDowngradeVersion(
+    bool system_install,
+    const BrowserDistribution* dist) {
+  DCHECK(dist);
+  base::win::RegKey key;
+  base::string16 downgrade_version;
+  if (key.Open(system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
+               dist->GetStateKey().c_str(),
+               KEY_QUERY_VALUE | KEY_WOW64_32KEY) != ERROR_SUCCESS ||
+      key.ReadValue(kRegDowngradeVersion, &downgrade_version) !=
+          ERROR_SUCCESS) {
+    return base::Version();
+  }
+  return base::Version(base::UTF16ToASCII(downgrade_version));
+}
+
+// static
+void InstallUtil::AddUpdateDowngradeVersionItem(
+    bool system_install,
+    const base::Version* current_version,
+    const base::Version& new_version,
+    const BrowserDistribution* dist,
+    WorkItemList* list) {
+  DCHECK(list);
+  DCHECK(dist);
+  DCHECK_EQ(BrowserDistribution::CHROME_BROWSER, dist->GetType());
+  base::Version downgrade_version = GetDowngradeVersion(system_install, dist);
+  HKEY root = system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+  if (!current_version ||
+      (*current_version <= new_version &&
+       ((!downgrade_version.IsValid() || downgrade_version <= new_version)))) {
+    list->AddDeleteRegValueWorkItem(root, dist->GetStateKey(), KEY_WOW64_32KEY,
+                                    kRegDowngradeVersion);
+  } else if (*current_version > new_version && !downgrade_version.IsValid()) {
+    list->AddSetRegValueWorkItem(
+        root, dist->GetStateKey(), KEY_WOW64_32KEY, kRegDowngradeVersion,
+        base::ASCIIToUTF16(current_version->GetString()), true);
+  }
+}
+
 InstallUtil::ProgramCompare::ProgramCompare(const base::FilePath& path_to_match)
+    : ProgramCompare(path_to_match, ComparisonType::FILE) {}
+
+InstallUtil::ProgramCompare::ProgramCompare(const base::FilePath& path_to_match,
+                                            ComparisonType comparison_type)
     : path_to_match_(path_to_match),
-      file_info_() {
+      file_info_(),
+      comparison_type_(comparison_type) {
   DCHECK(!path_to_match_.empty());
-  if (!OpenForInfo(path_to_match_, &file_)) {
+  if (!OpenForInfo(path_to_match_, &file_, comparison_type_)) {
     PLOG(WARNING) << "Failed opening " << path_to_match_.value()
                   << "; falling back to path string comparisons.";
   } else if (!GetInfo(file_, &file_info_)) {
@@ -670,8 +725,7 @@ bool InstallUtil::ProgramCompare::EvaluatePath(
   base::File file;
   BY_HANDLE_FILE_INFORMATION info = {};
 
-  return (OpenForInfo(path, &file) &&
-          GetInfo(file, &info) &&
+  return (OpenForInfo(path, &file, comparison_type_) && GetInfo(file, &info) &&
           info.dwVolumeSerialNumber == file_info_.dwVolumeSerialNumber &&
           info.nFileIndexHigh == file_info_.nFileIndexHigh &&
           info.nFileIndexLow == file_info_.nFileIndexLow);

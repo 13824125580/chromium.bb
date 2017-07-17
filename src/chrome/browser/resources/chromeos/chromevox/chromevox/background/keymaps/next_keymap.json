@@ -270,7 +270,7 @@
       }
     },
     {
-      "command": "performDefaultAction",
+      "command": "forceClickOnCurrentItem",
       "sequence": {
         "cvoxModifier": true,
         "keys": {
@@ -330,6 +330,7 @@
     {
       "command": "toggleStickyMode",
       "sequence": {
+        "skipStripping": false,
         "doubleTap": true,
         "keys": {
           "keyCode": [
@@ -350,7 +351,7 @@
       }
     },
     {
-      "command": "openChromeVoxMenus",
+      "command": "toggleKeyboardHelp",
       "sequence": {
         "cvoxModifier": true,
         "keys": {
@@ -450,6 +451,15 @@
       }
     },
     {
+      "command": "showNextUpdatePage",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [79, 78]
+        }
+      }
+    },
+    {
       "command": "toggleEarcons",
       "sequence": {
         "cvoxModifier": true,
@@ -490,6 +500,74 @@
         "cvoxModifier": true,
         "keys": {
           "keyCode": [65, 73]
+        }
+      }
+    },
+    {
+      "command": "toggleSearchWidget",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [191]
+        }
+      }
+    },
+    {
+      "command": "showHeadingsList",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [72],
+          "ctrlKey": [true]
+        }
+      }
+    },
+    {
+      "command": "showFormsList",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [70],
+          "ctrlKey": [true]
+        }
+      }
+    },
+    {
+      "command": "showLandmarksList",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [186],
+          "ctrlKey": [true]
+        }
+      }
+    },
+    {
+      "command": "showLinksList",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [76],
+          "ctrlKey": [true]
+        }
+      }
+    },
+    {
+      "command": "showTablesList",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [84],
+          "ctrlKey": [true]
+        }
+      }
+    },
+    {
+      "command": "toggleBrailleCaptions",
+      "sequence": {
+        "cvoxModifier": true,
+        "keys": {
+          "keyCode": [65, 66]
         }
       }
     }

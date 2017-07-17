@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/app_list/linux/app_list_service_linux.h"
 
 #include "base/memory/singleton.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/shell_integration_linux.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
@@ -68,7 +68,7 @@ void AppListServiceLinux::OnActivationChanged(views::Widget* /*widget*/,
 }
 
 AppListServiceLinux::AppListServiceLinux()
-    : AppListServiceViews(scoped_ptr<AppListControllerDelegate>(
+    : AppListServiceViews(std::unique_ptr<AppListControllerDelegate>(
           new AppListControllerDelegateViews(this))) {}
 
 void AppListServiceLinux::OnViewCreated() {
@@ -90,11 +90,10 @@ void AppListServiceLinux::MoveNearCursor(app_list::AppListView* view) {
 // static
 AppListService* AppListService::Get() {
 #if defined(USE_ASH)
-  if (desktop_type == chrome::HOST_DESKTOP_TYPE_ASH)
-    return AppListServiceAsh::GetInstance();
-#endif
-
+  return AppListServiceAsh::GetInstance();
+#else
   return AppListServiceLinux::GetInstance();
+#endif
 }
 
 // static
@@ -102,6 +101,7 @@ void AppListService::InitAll(Profile* initial_profile,
                              const base::FilePath& profile_path) {
 #if defined(USE_ASH)
   AppListServiceAsh::GetInstance()->Init(initial_profile);
-#endif
+#else
   AppListServiceLinux::GetInstance()->Init(initial_profile);
+#endif
 }

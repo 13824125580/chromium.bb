@@ -27,7 +27,7 @@ public:
     explicit LineLayoutBlockFlow(const LineLayoutItem& item)
         : LineLayoutBox(item)
     {
-        ASSERT(!item || item.isLayoutBlockFlow());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isLayoutBlockFlow());
     }
 
     explicit LineLayoutBlockFlow(std::nullptr_t) : LineLayoutBox(nullptr) { }
@@ -53,6 +53,8 @@ public:
         return toBlockFlow()->textIndentOffset();
     }
 
+    // TODO(dgrogan/eae): *ForChild methods: callers should call
+    // child.logicalWidth etc, and the API should access the parent BlockFlow.
     LayoutUnit logicalWidthForChild(const LayoutBox& child) const
     {
         return toBlockFlow()->logicalWidthForChild(child);
@@ -128,11 +130,6 @@ public:
         return toBlockFlow()->positionNewFloats(width);
     }
 
-    bool positionNewFloatOnLine(FloatingObject& newFloat, FloatingObject* lastFloatFromPreviousLine, LineInfo& lineInfo, LineWidth& lineWidth)
-    {
-        return toBlockFlow()->positionNewFloatOnLine(newFloat, lastFloatFromPreviousLine, lineInfo, lineWidth);
-    }
-
     LayoutUnit nextFloatLogicalBottomBelow(LayoutUnit logicalHeight) const
     {
         return toBlockFlow()->nextFloatLogicalBottomBelow(logicalHeight);
@@ -143,6 +140,9 @@ public:
         return toBlockFlow()->lastFloatFromPreviousLine();
     }
 
+    // TODO(dgrogan/eae): *ForFloat: add these methods to the FloatingObject
+    // class. Be consistent with use of start/end/before/after instead of
+    // logicalTop/Left etc.
     LayoutUnit logicalTopForFloat(const FloatingObject& floatingObject) const
     {
         return toBlockFlow()->logicalTopForFloat(floatingObject);
@@ -201,6 +201,31 @@ public:
     LayoutBlock* blockBeforeWithinSelectionRoot(LayoutSize& offset) const
     {
         return toBlockFlow()->blockBeforeWithinSelectionRoot(offset);
+    }
+
+    InlineBox* createAndAppendRootInlineBox()
+    {
+        return toBlockFlow()->createAndAppendRootInlineBox();
+    }
+
+    InlineFlowBox* lastLineBox()
+    {
+        return toBlockFlow()->lastLineBox();
+    }
+
+    InlineFlowBox* firstLineBox()
+    {
+        return toBlockFlow()->firstLineBox();
+    }
+
+    RootInlineBox* firstRootBox() const
+    {
+        return toBlockFlow()->firstRootBox();
+    }
+
+    RootInlineBox* lastRootBox() const
+    {
+        return toBlockFlow()->lastRootBox();
     }
 
 private:

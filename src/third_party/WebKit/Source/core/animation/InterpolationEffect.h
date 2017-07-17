@@ -10,7 +10,6 @@
 #include "core/animation/Keyframe.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/animation/TimingFunction.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -39,14 +38,7 @@ public:
         m_interpolations.append(InterpolationRecord(interpolation, easing, start, end, applyFrom, applyTo));
     }
 
-    void addInterpolationsFromKeyframes(PropertyHandle, Element*, const ComputedStyle* baseStyle, Keyframe::PropertySpecificKeyframe& keyframeA, Keyframe::PropertySpecificKeyframe& keyframeB, double applyFrom, double applyTo);
-
-    template<typename T>
-    inline void forEachInterpolation(const T& callback)
-    {
-        for (auto& record : m_interpolations)
-            callback(*record.m_interpolation);
-    }
+    void addInterpolationsFromKeyframes(PropertyHandle, const Keyframe::PropertySpecificKeyframe& keyframeA, const Keyframe::PropertySpecificKeyframe& keyframeB, double applyFrom, double applyTo);
 
 private:
     struct InterpolationRecord {

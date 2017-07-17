@@ -87,8 +87,17 @@ void CellSpan::ensureConsistency(const unsigned maximumSpanSize)
     RELEASE_ASSERT(m_start <= m_end);
 }
 
+LayoutTableSection::CellStruct::CellStruct()
+    : inColSpan(false)
+{
+}
+
+LayoutTableSection::CellStruct::~CellStruct()
+{
+}
+
 LayoutTableSection::LayoutTableSection(Element* element)
-    : LayoutBox(element)
+    : LayoutTableBoxComponent(element)
     , m_cCol(0)
     , m_cRow(0)
     , m_outerBorderStart(0)
@@ -98,6 +107,7 @@ LayoutTableSection::LayoutTableSection(Element* element)
     , m_needsCellRecalc(false)
     , m_forceSlowPaintPathWithOverflowingCell(false)
     , m_hasMultipleCellLevels(false)
+    , m_offsetForRepeatingHeader(LayoutUnit())
 {
     // init LayoutObject attributes
     setInline(false); // our object is not Inline
@@ -109,7 +119,7 @@ LayoutTableSection::~LayoutTableSection()
 
 void LayoutTableSection::styleDidChange(StyleDifference diff, const ComputedStyle* oldStyle)
 {
-    LayoutBox::styleDidChange(diff, oldStyle);
+    LayoutTableBoxComponent::styleDidChange(diff, oldStyle);
     propagateStyleToAnonymousChildren();
 
     // If border was changed, notify table.
@@ -120,7 +130,7 @@ void LayoutTableSection::styleDidChange(StyleDifference diff, const ComputedStyl
 
 void LayoutTableSection::willBeRemovedFromTree()
 {
-    LayoutBox::willBeRemovedFromTree();
+    LayoutTableBoxComponent::willBeRemovedFromTree();
 
     // Preventively invalidate our cells as we may be re-inserted into
     // a new table which would require us to rebuild our structure.
@@ -184,7 +194,7 @@ void LayoutTableSection::addChild(LayoutObject* child, LayoutObject* beforeChild
         beforeChild = splitAnonymousBoxesAroundChild(beforeChild);
 
     ASSERT(!beforeChild || beforeChild->isTableRow());
-    LayoutBox::addChild(child, beforeChild);
+    LayoutTableBoxComponent::addChild(child, beforeChild);
 }
 
 void LayoutTableSection::ensureRows(unsigned numRows)
@@ -395,7 +405,7 @@ void LayoutTableSection::distributeWholeExtraRowSpanHeightToPercentRows(LayoutTa
         m_rowPos[row + 1] += accumulatedPositionIncrease;
     }
 
-    ASSERT_WITH_MESSAGE(!round(remainder), "remainder was %f", remainder);
+    DCHECK(!round(remainder)) << "remainder was " << remainder;
 
     extraRowSpanningHeight -= accumulatedPositionIncrease;
 }
@@ -419,7 +429,7 @@ void LayoutTableSection::distributeExtraRowSpanHeightToAutoRows(LayoutTableCell*
         m_rowPos[row + 1] += accumulatedPositionIncrease;
     }
 
-    ASSERT_WITH_MESSAGE(!round(remainder) , "remainder was %f", remainder);
+    DCHECK(!round(remainder)) << "remainder was " << remainder;
 
     extraRowSpanningHeight -= accumulatedPositionIncrease;
 }
@@ -443,7 +453,7 @@ void LayoutTableSection::distributeExtraRowSpanHeightToRemainingRows(LayoutTable
         m_rowPos[row + 1] += accumulatedPositionIncrease;
     }
 
-    ASSERT_WITH_MESSAGE(!round(remainder), "remainder was %f", remainder);
+    DCHECK(!round(remainder)) << "remainder was " << remainder;
 
     extraRowSpanningHeight -= accumulatedPositionIncrease;
 }
@@ -793,7 +803,7 @@ void LayoutTableSection::layout()
 {
     ASSERT(needsLayout());
     LayoutAnalyzer::Scope analyzer(*this);
-    ASSERT(!needsCellRecalc());
+    RELEASE_ASSERT(!needsCellRecalc());
     ASSERT(!table()->needsSectionRecalc());
 
     // addChild may over-grow m_grid but we don't want to throw away the memory too early as addChild
@@ -953,28 +963,48 @@ void LayoutTableSection::layoutRows()
 
     // Set the width of our section now.  The rows will also be this width.
     setLogicalWidth(table()->contentLogicalWidth());
-    m_overflow.clear();
-    m_overflowingCells.clear();
-    m_forceSlowPaintPathWithOverflowingCell = false;
 
     int vspacing = table()->vBorderSpacing();
     unsigned nEffCols = table()->numEffectiveColumns();
+    bool isPaginated = view()->layoutState()->isPaginated();
+
+    if (isPaginated) {
+        LayoutTableSection* header = table()->header();
+        // If we're a table header nested inside a table cell then we want to repeat on each
+        // page, but below the header we're nested inside. Note we don't try to match the padding
+        // on the cell on each repeated header.
+        if (header && header == this)
+            setOffsetForRepeatingHeader(view()->layoutState()->heightOffsetForTableHeaders());
+    }
 
     LayoutState state(*this, locationOffset());
 
     for (unsigned r = 0; r < totalRows; r++) {
         // Set the row's x/y position and width/height.
         LayoutTableRow* rowLayoutObject = m_grid[r].rowLayoutObject;
+        int paginationStrutOnRow = 0;
         if (rowLayoutObject) {
             rowLayoutObject->setLocation(LayoutPoint(0, m_rowPos[r]));
             rowLayoutObject->setLogicalWidth(logicalWidth());
             rowLayoutObject->setLogicalHeight(LayoutUnit(m_rowPos[r + 1] - m_rowPos[r] - vspacing));
             rowLayoutObject->updateLayerTransformAfterLayout();
-            rowLayoutObject->clearAllOverflows();
-            rowLayoutObject->addVisualEffectOverflow();
+            if (isPaginated) {
+                paginationStrutOnRow = paginationStrutForRow(rowLayoutObject, LayoutUnit(m_rowPos[r]));
+                if (paginationStrutOnRow) {
+                    // If there isn't room for at least one content row on a page with a header group, then
+                    // we won't repeat the header on each page.
+                    if (!r && table()->header() && table()->sectionAbove(this) == table()->header())
+                        state.setHeightOffsetForTableHeaders(state.heightOffsetForTableHeaders() - table()->header()->logicalHeight());
+                    // If we have a header group we will paint it at the top of each page, move the rows
+                    // down to accomodate it.
+                    paginationStrutOnRow += state.heightOffsetForTableHeaders().toInt();
+                    for (unsigned rowIndex = r; rowIndex <= totalRows; rowIndex++)
+                        m_rowPos[rowIndex] += paginationStrutOnRow;
+                }
+            }
         }
 
-        int rowHeightIncreaseForPagination = 0;
+        int rowHeightIncreaseForPagination = INT_MIN;
 
         for (unsigned c = 0; c < nEffCols; c++) {
             CellStruct& cs = cellAt(r, c);
@@ -1056,14 +1086,10 @@ void LayoutTableSection::layoutRows()
                 // We'll also do a basic increase of the row height to accommodate the cell if it's bigger, but this isn't quite right
                 // either. It's at least stable though and won't result in an infinite # of relayouts that may never stabilize.
                 LayoutUnit oldLogicalHeight = cell->logicalHeight();
-                if (oldLogicalHeight > rHeight)
-                    rowHeightIncreaseForPagination = std::max<int>(rowHeightIncreaseForPagination, oldLogicalHeight - rHeight);
+                rowHeightIncreaseForPagination = std::max<int>(rowHeightIncreaseForPagination, oldLogicalHeight - rHeight);
                 cell->setLogicalHeight(LayoutUnit(rHeight));
                 cell->computeOverflow(oldLogicalHeight, false);
             }
-
-            if (rowLayoutObject)
-                rowLayoutObject->addOverflowFromCell(cell);
 
             LayoutSize childOffset(cell->location() - oldCellRect.location());
             if (childOffset.width() || childOffset.height()) {
@@ -1074,7 +1100,7 @@ void LayoutTableSection::layoutRows()
                     cell->setMayNeedPaintInvalidation();
             }
         }
-        if (rowHeightIncreaseForPagination) {
+        if (rowHeightIncreaseForPagination > INT_MIN) {
             for (unsigned rowIndex = r + 1; rowIndex <= totalRows; rowIndex++)
                 m_rowPos[rowIndex] += rowHeightIncreaseForPagination;
             for (unsigned c = 0; c < nEffCols; ++c) {
@@ -1086,6 +1112,8 @@ void LayoutTableSection::layoutRows()
                 }
             }
         }
+        if (rowLayoutObject)
+            rowLayoutObject->computeOverflow();
     }
 
     ASSERT(!needsLayout());
@@ -1093,6 +1121,33 @@ void LayoutTableSection::layoutRows()
     setLogicalHeight(LayoutUnit(m_rowPos[totalRows]));
 
     computeOverflowFromCells(totalRows, nEffCols);
+}
+
+int LayoutTableSection::paginationStrutForRow(LayoutTableRow* row, LayoutUnit logicalOffset) const
+{
+    DCHECK(row);
+    // Even if the row allows us to break-inside, we will want to put a strut on the row if we have a header
+    // group that wants to appear at the top of each page.
+    bool tableHeaderForcesStrut = table()->header() ? table()->header()->getPaginationBreakability() != AllowAnyBreaks : false;
+    if (row->getPaginationBreakability() == AllowAnyBreaks && !tableHeaderForcesStrut)
+        return 0;
+    LayoutUnit pageLogicalHeight = pageLogicalHeightForOffset(logicalOffset);
+    if (!pageLogicalHeight)
+        return 0;
+    // If the row is too tall for the page don't insert a strut.
+    LayoutUnit rowLogicalHeight = row->logicalHeight();
+    if (rowLogicalHeight > pageLogicalHeight)
+        return 0;
+    LayoutUnit remainingLogicalHeight = pageRemainingLogicalHeightForOffset(logicalOffset, LayoutBlock::AssociateWithLatterPage);
+    if (remainingLogicalHeight >= rowLogicalHeight)
+        return 0; // It fits fine where it is. No need to break.
+    LayoutUnit paginationStrut = calculatePaginationStrutToFitContent(logicalOffset, remainingLogicalHeight, rowLogicalHeight);
+    if (paginationStrut == remainingLogicalHeight && remainingLogicalHeight == pageLogicalHeight) {
+        // Don't break if we were at the top of a page, and we failed to fit the content
+        // completely. No point in leaving a page completely blank.
+        return 0;
+    }
+    return paginationStrut;
 }
 
 void LayoutTableSection::computeOverflowFromCells()
@@ -1107,6 +1162,9 @@ void LayoutTableSection::computeOverflowFromCells(unsigned totalRows, unsigned n
     unsigned totalCellsCount = nEffCols * totalRows;
     unsigned maxAllowedOverflowingCellsCount = totalCellsCount < gMinTableSizeToUseFastPaintPathWithOverflowingCell ? 0 : gMaxAllowedOverflowingCellRatioForFastPaintPath * totalCellsCount;
 
+    m_overflow.reset();
+    m_overflowingCells.clear();
+    m_forceSlowPaintPathWithOverflowingCell = false;
 #if ENABLE(ASSERT)
     bool hasOverflowingCell = false;
 #endif
@@ -1138,6 +1196,36 @@ void LayoutTableSection::computeOverflowFromCells(unsigned totalRows, unsigned n
     ASSERT(hasOverflowingCell == this->hasOverflowingCell());
 }
 
+bool LayoutTableSection::recalcChildOverflowAfterStyleChange()
+{
+    ASSERT(childNeedsOverflowRecalcAfterStyleChange());
+    clearChildNeedsOverflowRecalcAfterStyleChange();
+    unsigned totalRows = m_grid.size();
+    unsigned numEffCols = table()->numEffectiveColumns();
+    bool childrenOverflowChanged = false;
+    for (unsigned r = 0; r < totalRows; r++) {
+        LayoutTableRow* rowLayouter = rowLayoutObjectAt(r);
+        if (!rowLayouter || !rowLayouter->childNeedsOverflowRecalcAfterStyleChange())
+            continue;
+        rowLayouter->clearChildNeedsOverflowRecalcAfterStyleChange();
+        bool rowChildrenOverflowChanged = false;
+        for (unsigned c = 0; c < numEffCols; c++) {
+            CellStruct& cs = cellAt(r, c);
+            LayoutTableCell* cell = cs.primaryCell();
+            if (!cell || cs.inColSpan || !cell->needsOverflowRecalcAfterStyleChange())
+                continue;
+            rowChildrenOverflowChanged |= cell->recalcOverflowAfterStyleChange();
+        }
+        if (rowChildrenOverflowChanged)
+            rowLayouter->computeOverflow();
+        childrenOverflowChanged |= rowChildrenOverflowChanged;
+    }
+    // TODO(crbug.com/604136): Add visual overflow from rows too.
+    if (childrenOverflowChanged)
+        computeOverflowFromCells(totalRows, numEffCols);
+    return childrenOverflowChanged;
+}
+
 int LayoutTableSection::calcBlockDirectionOuterBorder(BlockBorderSide side) const
 {
     unsigned totalCols = table()->numEffectiveColumns();
@@ -1147,15 +1235,15 @@ int LayoutTableSection::calcBlockDirectionOuterBorder(BlockBorderSide side) cons
     int borderWidth = 0;
 
     const BorderValue& sb = side == BorderBefore ? style()->borderBefore() : style()->borderAfter();
-    if (sb.style() == BHIDDEN)
+    if (sb.style() == BorderStyleHidden)
         return -1;
-    if (sb.style() > BHIDDEN)
+    if (sb.style() > BorderStyleHidden)
         borderWidth = sb.width();
 
     const BorderValue& rb = side == BorderBefore ? firstRow()->style()->borderBefore() : lastRow()->style()->borderAfter();
-    if (rb.style() == BHIDDEN)
+    if (rb.style() == BorderStyleHidden)
         return -1;
-    if (rb.style() > BHIDDEN && rb.width() > borderWidth)
+    if (rb.style() > BorderStyleHidden && rb.width() > borderWidth)
         borderWidth = rb.width();
 
     bool allHidden = true;
@@ -1169,18 +1257,18 @@ int LayoutTableSection::calcBlockDirectionOuterBorder(BlockBorderSide side) cons
         LayoutTableCol* col = table()->colElementAtAbsoluteColumn(c).innermostColOrColGroup();
         if (col) {
             const BorderValue& gb = side == BorderBefore ? col->style()->borderBefore() : col->style()->borderAfter();
-            if (gb.style() == BHIDDEN || cb.style() == BHIDDEN)
+            if (gb.style() == BorderStyleHidden || cb.style() == BorderStyleHidden)
                 continue;
             allHidden = false;
-            if (gb.style() > BHIDDEN && gb.width() > borderWidth)
+            if (gb.style() > BorderStyleHidden && gb.width() > borderWidth)
                 borderWidth = gb.width();
-            if (cb.style() > BHIDDEN && cb.width() > borderWidth)
+            if (cb.style() > BorderStyleHidden && cb.width() > borderWidth)
                 borderWidth = cb.width();
         } else {
-            if (cb.style() == BHIDDEN)
+            if (cb.style() == BorderStyleHidden)
                 continue;
             allHidden = false;
-            if (cb.style() > BHIDDEN && cb.width() > borderWidth)
+            if (cb.style() > BorderStyleHidden && cb.width() > borderWidth)
                 borderWidth = cb.width();
         }
     }
@@ -1202,16 +1290,16 @@ int LayoutTableSection::calcInlineDirectionOuterBorder(InlineBorderSide side) co
     int borderWidth = 0;
 
     const BorderValue& sb = side == BorderStart ? style()->borderStart() : style()->borderEnd();
-    if (sb.style() == BHIDDEN)
+    if (sb.style() == BorderStyleHidden)
         return -1;
-    if (sb.style() > BHIDDEN)
+    if (sb.style() > BorderStyleHidden)
         borderWidth = sb.width();
 
     if (LayoutTableCol* col = table()->colElementAtAbsoluteColumn(colIndex).innermostColOrColGroup()) {
         const BorderValue& gb = side == BorderStart ? col->style()->borderStart() : col->style()->borderEnd();
-        if (gb.style() == BHIDDEN)
+        if (gb.style() == BorderStyleHidden)
             return -1;
-        if (gb.style() > BHIDDEN && gb.width() > borderWidth)
+        if (gb.style() > BorderStyleHidden && gb.width() > borderWidth)
             borderWidth = gb.width();
     }
 
@@ -1225,12 +1313,12 @@ int LayoutTableSection::calcInlineDirectionOuterBorder(InlineBorderSide side) co
         const ComputedStyle& primaryCellParentStyle = current.primaryCell()->parent()->styleRef();
         const BorderValue& cb = side == BorderStart ? primaryCellStyle.borderStart() : primaryCellStyle.borderEnd(); // FIXME: Make this work with perpendicular and flipped cells.
         const BorderValue& rb = side == BorderStart ? primaryCellParentStyle.borderStart() : primaryCellParentStyle.borderEnd();
-        if (cb.style() == BHIDDEN || rb.style() == BHIDDEN)
+        if (cb.style() == BorderStyleHidden || rb.style() == BorderStyleHidden)
             continue;
         allHidden = false;
-        if (cb.style() > BHIDDEN && cb.width() > borderWidth)
+        if (cb.style() > BorderStyleHidden && cb.width() > borderWidth)
             borderWidth = cb.width();
-        if (rb.style() > BHIDDEN && rb.width() > borderWidth)
+        if (rb.style() > BorderStyleHidden && rb.width() > borderWidth)
             borderWidth = rb.width();
     }
     if (allHidden)
@@ -1296,6 +1384,9 @@ CellSpan LayoutTableSection::dirtiedRows(const LayoutRect& damageRect) const
     if (m_forceSlowPaintPathWithOverflowingCell)
         return fullTableRowSpan();
 
+    if (!m_grid.size())
+        return CellSpan(0, 0);
+
     CellSpan coveredRows = spannedRows(damageRect);
 
     // To issue paint invalidations for the border we might need to paint invalidate the first
@@ -1319,6 +1410,7 @@ CellSpan LayoutTableSection::dirtiedEffectiveColumns(const LayoutRect& damageRec
     if (m_forceSlowPaintPathWithOverflowingCell)
         return fullTableEffectiveColumnSpan();
 
+    RELEASE_ASSERT(table()->numEffectiveColumns());
     CellSpan coveredColumns = spannedEffectiveColumns(damageRect);
 
     const Vector<int>& columnPos = table()->effectiveColumnPositions();
@@ -1388,13 +1480,6 @@ CellSpan LayoutTableSection::spannedEffectiveColumns(const LayoutRect& flippedRe
     }
 
     return CellSpan(startColumn, endColumn);
-}
-
-
-void LayoutTableSection::imageChanged(WrappedImagePtr, const IntRect*)
-{
-    // FIXME: Examine cells and issue paint invalidations of only the rect the image paints in.
-    setShouldDoFullPaintInvalidation();
 }
 
 void LayoutTableSection::recalcCells()
@@ -1587,43 +1672,6 @@ bool LayoutTableSection::nodeAtPoint(HitTestResult& result, const HitTestLocatio
     return false;
 }
 
-void LayoutTableSection::removeCachedCollapsedBorders(const LayoutTableCell* cell)
-{
-    if (!table()->collapseBorders())
-        return;
-
-    for (int side = CBSBefore; side <= CBSEnd; ++side)
-        m_cellsCollapsedBorders.remove(std::make_pair(cell, side));
-}
-
-bool LayoutTableSection::setCachedCollapsedBorder(const LayoutTableCell* cell, CollapsedBorderSide side, const CollapsedBorderValue& border)
-{
-    ASSERT(table()->collapseBorders());
-    CellsCollapsedBordersMap::iterator it = m_cellsCollapsedBorders.find(std::make_pair(cell, side));
-    if (it == m_cellsCollapsedBorders.end()) {
-        if (!border.isVisible())
-            return false;
-        m_cellsCollapsedBorders.add(std::make_pair(cell, side), border);
-        return true;
-    }
-    if (!border.isVisible()) {
-        m_cellsCollapsedBorders.remove(it);
-        return true;
-    }
-    if (!it->value.equals(border)) {
-        it->value = border;
-        return true;
-    }
-    return false;
-}
-
-const CollapsedBorderValue* LayoutTableSection::cachedCollapsedBorder(const LayoutTableCell* cell, CollapsedBorderSide side) const
-{
-    ASSERT(table()->collapseBorders());
-    CellsCollapsedBordersMap::const_iterator it = m_cellsCollapsedBorders.find(std::make_pair(cell, side));
-    return it == m_cellsCollapsedBorders.end() ? nullptr : &it->value;
-}
-
 LayoutTableSection* LayoutTableSection::createAnonymousWithParent(const LayoutObject* parent)
 {
     RefPtr<ComputedStyle> newStyle = ComputedStyle::createAnonymousStyleWithDisplay(parent->styleRef(), TABLE_ROW_GROUP);
@@ -1646,5 +1694,41 @@ void LayoutTableSection::setLogicalPositionForCell(LayoutTableCell* cell, unsign
 
     cell->setLogicalLocation(cellLocation);
 }
+
+bool LayoutTableSection::hasRepeatingHeaderGroup() const
+{
+    if (getPaginationBreakability() == LayoutBox::AllowAnyBreaks)
+        return false;
+    // TODO(rhogan): Should we paint a header repeatedly if it's self-painting?
+    if (hasSelfPaintingLayer())
+        return false;
+    LayoutUnit pageHeight = table()->pageLogicalHeightForOffset(LayoutUnit());
+    if (!pageHeight)
+        return false;
+
+    if (logicalHeight() > pageHeight)
+        return false;
+
+    // If the first row of the section after the header group doesn't fit on the page, then
+    // don't repeat the header on each page. See https://drafts.csswg.org/css-tables-3/#repeated-headers
+    LayoutTableSection* sectionBelow = table()->sectionBelow(this);
+    if (sectionBelow && sectionBelow->paginationStrutForRow(sectionBelow->firstRow(), sectionBelow->logicalTop()))
+        return false;
+
+    return true;
+}
+
+bool LayoutTableSection::mapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect& rect, VisualRectFlags flags) const
+{
+    if (ancestor == this)
+        return true;
+    // Repeating table headers are painted once per fragmentation page/column. This does not go through the regular fragmentation machinery,
+    // so we need special code to expand the invalidation rect to contain all positions of the header in all columns.
+    // Note that this is in flow thread coordinates, not visual coordinates. The enclosing LayoutFlowThread will convert to visual coordinates.
+    if (table()->header() == this && hasRepeatingHeaderGroup())
+        rect.setHeight(table()->logicalHeight());
+    return LayoutTableBoxComponent::mapToVisualRectInAncestorSpace(ancestor, rect, flags);
+}
+
 
 } // namespace blink

@@ -38,6 +38,7 @@ FilterEffect::FilterEffect(Filter* filter)
     , m_hasWidth(false)
     , m_hasHeight(false)
     , m_clipsToBounds(true)
+    , m_originTainted(false)
     , m_operatingColorSpace(ColorSpaceLinearRGB)
 {
     ASSERT(m_filter);
@@ -84,7 +85,7 @@ FloatRect FilterEffect::determineAbsolutePaintRect(const FloatRect& originalRequ
     return inputUnion;
 }
 
-FloatRect FilterEffect::mapRectRecursive(const FloatRect& rect)
+FloatRect FilterEffect::mapRectRecursive(const FloatRect& rect) const
 {
     FloatRect result;
     if (m_inputEffects.size() > 0) {
@@ -108,8 +109,6 @@ void FilterEffect::addAbsolutePaintRect(const FloatRect& paintRect)
     if (m_absolutePaintRect.contains(intPaintRect))
         return;
     intPaintRect.unite(m_absolutePaintRect);
-    // Make sure we are not holding on to a smaller rendering.
-    clearResult();
     m_absolutePaintRect = intPaintRect;
 }
 
@@ -150,7 +149,7 @@ FloatRect FilterEffect::applyEffectBoundaries(const FloatRect& rect) const
 
 FloatRect FilterEffect::determineFilterPrimitiveSubregion(DetermineSubregionFlags flags)
 {
-    Filter* filter = this->filter();
+    Filter* filter = this->getFilter();
     ASSERT(filter);
 
     // FETile, FETurbulence, FEFlood don't have input effects, take the filter region as unite rect.
@@ -164,7 +163,7 @@ FloatRect FilterEffect::determineFilterPrimitiveSubregion(DetermineSubregionFlag
     }
 
     // After calling determineFilterPrimitiveSubregion on the target effect, reset the subregion again for <feTile>.
-    if (filterEffectType() == FilterEffectTypeTile)
+    if (getFilterEffectType() == FilterEffectTypeTile)
         subregion = filter->filterRegion();
 
     if (flags & MapRectForward) {
@@ -188,52 +187,41 @@ FloatRect FilterEffect::determineFilterPrimitiveSubregion(DetermineSubregionFlag
     return subregion;
 }
 
-PassRefPtr<SkImageFilter> FilterEffect::createImageFilter(SkiaImageFilterBuilder& builder)
+sk_sp<SkImageFilter> FilterEffect::createImageFilter()
 {
     return nullptr;
 }
 
-PassRefPtr<SkImageFilter> FilterEffect::createImageFilterWithoutValidation(SkiaImageFilterBuilder& builder)
+sk_sp<SkImageFilter> FilterEffect::createImageFilterWithoutValidation()
 {
-    return createImageFilter(builder);
+    return createImageFilter();
 }
 
-PassRefPtr<SkImageFilter> FilterEffect::createTransparentBlack(SkiaImageFilterBuilder& builder) const
+bool FilterEffect::inputsTaintOrigin() const
 {
-    SkAutoTUnref<SkColorFilter> filter(SkColorFilter::CreateModeFilter(0, SkXfermode::kClear_Mode));
-    SkImageFilter::CropRect rect = getCropRect();
-    return adoptRef(SkColorFilterImageFilter::Create(filter, nullptr, &rect));
-}
-
-bool FilterEffect::hasConnectedInput() const
-{
-    for (unsigned i = 0; i < m_inputEffects.size(); i++) {
-        if (m_inputEffects[i] && m_inputEffects[i]->filterEffectType() != FilterEffectTypeSourceInput) {
+    for (const Member<FilterEffect>& effect : m_inputEffects) {
+        if (effect->originTainted())
             return true;
-        }
     }
     return false;
 }
 
+sk_sp<SkImageFilter> FilterEffect::createTransparentBlack() const
+{
+    SkImageFilter::CropRect rect = getCropRect();
+    sk_sp<SkColorFilter> colorFilter = SkColorFilter::MakeModeFilter(0, SkXfermode::kClear_Mode);
+    return SkColorFilterImageFilter::Make(std::move(colorFilter), nullptr, &rect);
+}
+
 SkImageFilter::CropRect FilterEffect::getCropRect() const
 {
-    FloatRect rect;
-    uint32_t flags = 0;
-    if (!hasConnectedInput() && !filter()->filterRegion().isEmpty()) {
-        rect = filter()->filterRegion();
-        flags = SkImageFilter::CropRect::kHasAll_CropEdge;
+    if (!filterPrimitiveSubregion().isEmpty()) {
+        FloatRect rect = filterPrimitiveSubregion();
+        rect.scale(getFilter()->scale());
+        return SkImageFilter::CropRect(rect);
+    } else {
+        return SkImageFilter::CropRect(SkRect::MakeEmpty(), 0);
     }
-
-    rect = applyEffectBoundaries(rect);
-
-    rect.scale(filter()->scale());
-
-    flags |= hasX() ? SkImageFilter::CropRect::kHasLeft_CropEdge : 0;
-    flags |= hasY() ? SkImageFilter::CropRect::kHasTop_CropEdge : 0;
-    flags |= hasWidth() ? SkImageFilter::CropRect::kHasWidth_CropEdge : 0;
-    flags |= hasHeight() ? SkImageFilter::CropRect::kHasHeight_CropEdge : 0;
-
-    return SkImageFilter::CropRect(rect, flags);
 }
 
 static int getImageFilterIndex(ColorSpace colorSpace, bool requiresPMColorValidation)
@@ -252,10 +240,10 @@ SkImageFilter* FilterEffect::getImageFilter(ColorSpace colorSpace, bool requires
     return m_imageFilters[index].get();
 }
 
-void FilterEffect::setImageFilter(ColorSpace colorSpace, bool requiresPMColorValidation, PassRefPtr<SkImageFilter> imageFilter)
+void FilterEffect::setImageFilter(ColorSpace colorSpace, bool requiresPMColorValidation, sk_sp<SkImageFilter> imageFilter)
 {
     int index = getImageFilterIndex(colorSpace, requiresPMColorValidation);
-    m_imageFilters[index] = imageFilter;
+    m_imageFilters[index] = std::move(imageFilter);
 }
 
 } // namespace blink

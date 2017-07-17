@@ -6,8 +6,11 @@
 
 #include "platform/graphics/Color.h"
 #include "platform/graphics/GraphicsLayer.h"
+#include "platform/scroll/ScrollbarTestSuite.h"
 #include "platform/scroll/ScrollbarTheme.h"
 #include "platform/scroll/ScrollbarThemeMock.h"
+#include "platform/testing/FakeGraphicsLayer.h"
+#include "platform/testing/FakeGraphicsLayerClient.h"
 #include "platform/testing/TestingPlatformSupport.h"
 #include "public/platform/Platform.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -20,92 +23,6 @@ namespace {
 using testing::_;
 using testing::Return;
 
-class MockScrollableArea : public NoBaseWillBeGarbageCollectedFinalized<MockScrollableArea>, public ScrollableArea {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MockScrollableArea);
-public:
-    static PassOwnPtrWillBeRawPtr<MockScrollableArea> create(const IntPoint& maximumScrollPosition)
-    {
-        return adoptPtrWillBeNoop(new MockScrollableArea(maximumScrollPosition));
-    }
-
-    MOCK_CONST_METHOD0(isActive, bool());
-    MOCK_CONST_METHOD1(scrollSize, int(ScrollbarOrientation));
-    MOCK_CONST_METHOD0(isScrollCornerVisible, bool());
-    MOCK_CONST_METHOD0(scrollCornerRect, IntRect());
-    MOCK_CONST_METHOD0(horizontalScrollbar, Scrollbar*());
-    MOCK_CONST_METHOD0(verticalScrollbar, Scrollbar*());
-    MOCK_METHOD0(scrollControlWasSetNeedsPaintInvalidation, void());
-    MOCK_CONST_METHOD0(enclosingScrollableArea, ScrollableArea*());
-    MOCK_CONST_METHOD1(visibleContentRect, IntRect(IncludeScrollbarsInRect));
-    MOCK_CONST_METHOD0(contentsSize, IntSize());
-    MOCK_CONST_METHOD0(scrollableAreaBoundingBox, IntRect());
-    MOCK_CONST_METHOD0(layerForHorizontalScrollbar, GraphicsLayer*());
-    MOCK_CONST_METHOD0(layerForVerticalScrollbar, GraphicsLayer*());
-
-    bool userInputScrollable(ScrollbarOrientation) const override { return true; }
-    bool scrollbarsCanBeActive () const override { return true; }
-    bool shouldPlaceVerticalScrollbarOnLeft() const override { return false; }
-    void setScrollOffset(const IntPoint& offset, ScrollType) override { m_scrollPosition = offset.shrunkTo(m_maximumScrollPosition); }
-    IntPoint scrollPosition() const override { return m_scrollPosition; }
-    IntPoint minimumScrollPosition() const override { return IntPoint(); }
-    IntPoint maximumScrollPosition() const override { return m_maximumScrollPosition; }
-    int visibleHeight() const override { return 768; }
-    int visibleWidth() const override { return 1024; }
-    bool scrollAnimatorEnabled() const override { return false; }
-    int pageStep(ScrollbarOrientation) const override { return 0; }
-
-    using ScrollableArea::horizontalScrollbarNeedsPaintInvalidation;
-    using ScrollableArea::verticalScrollbarNeedsPaintInvalidation;
-    using ScrollableArea::clearNeedsPaintInvalidationForScrollControls;
-
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        ScrollableArea::trace(visitor);
-    }
-
-private:
-    explicit MockScrollableArea(const IntPoint& maximumScrollPosition)
-        : m_maximumScrollPosition(maximumScrollPosition) { }
-
-    IntPoint m_scrollPosition;
-    IntPoint m_maximumScrollPosition;
-};
-
-} // namespace
-
-class ScrollableAreaTest : public testing::Test {
-public:
-    ScrollableAreaTest() : m_oldPlatform(nullptr) { }
-
-    void SetUp() override
-    {
-        m_oldPlatform = Platform::current();
-        TestingPlatformSupport::Config config;
-        config.compositorSupport = m_oldPlatform->compositorSupport();
-        m_fakePlatform = adoptPtr(new TestingPlatformSupportWithMockScheduler(config));
-        Platform::initialize(m_fakePlatform.get());
-    }
-
-    void TearDown() override
-    {
-        Platform::initialize(m_oldPlatform);
-        m_fakePlatform = nullptr;
-    }
-
-private:
-    OwnPtr<TestingPlatformSupportWithMockScheduler> m_fakePlatform;
-    Platform* m_oldPlatform; // Not owned.
-};
-
-TEST_F(ScrollableAreaTest, ScrollAnimatorCurrentPositionShouldBeSync)
-{
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
-    scrollableArea->setScrollPosition(IntPoint(0, 10000), CompositorScroll);
-    EXPECT_EQ(100.0, scrollableArea->scrollAnimator().currentPosition().y());
-}
-
-namespace {
-
 class ScrollbarThemeWithMockInvalidation : public ScrollbarThemeMock {
 public:
     MOCK_CONST_METHOD0(shouldRepaintAllPartsOnInvalidation, bool());
@@ -114,11 +31,21 @@ public:
 
 } // namespace
 
+class ScrollableAreaTest : public ScrollbarTestSuite {
+};
+
+TEST_F(ScrollableAreaTest, ScrollAnimatorCurrentPositionShouldBeSync)
+{
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
+    scrollableArea->setScrollPosition(IntPoint(0, 10000), CompositorScroll);
+    EXPECT_EQ(100.0, scrollableArea->scrollAnimator().currentPosition().y());
+}
+
 TEST_F(ScrollableAreaTest, ScrollbarTrackAndThumbRepaint)
 {
     ScrollbarThemeWithMockInvalidation theme;
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
-    RefPtrWillBeRawPtr<Scrollbar> scrollbar = Scrollbar::createForTesting(scrollableArea.get(), HorizontalScrollbar, RegularScrollbar, &theme);
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
+    Scrollbar* scrollbar = Scrollbar::createForTesting(scrollableArea, HorizontalScrollbar, RegularScrollbar, &theme);
 
     EXPECT_CALL(theme, shouldRepaintAllPartsOnInvalidation()).WillRepeatedly(Return(true));
     EXPECT_TRUE(scrollbar->trackNeedsRepaint());
@@ -147,50 +74,38 @@ TEST_F(ScrollableAreaTest, ScrollbarTrackAndThumbRepaint)
     EXPECT_TRUE(scrollbar->thumbNeedsRepaint());
 
     // Forced GC in order to finalize objects depending on the mock object.
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
 }
-
-class MockGraphicsLayerClient : public GraphicsLayerClient {
-public:
-    IntRect computeInterestRect(const GraphicsLayer*, const IntRect&) const { return IntRect(); }
-    void paintContents(const GraphicsLayer*, GraphicsContext&, GraphicsLayerPaintingPhase, const IntRect&) const override { }
-    String debugName(const GraphicsLayer*) const override { return String(); }
-    bool isTrackingPaintInvalidations() const override { return true; }
-};
-
-class MockGraphicsLayer : public GraphicsLayer {
-public:
-    explicit MockGraphicsLayer(GraphicsLayerClient* client) : GraphicsLayer(client) { }
-};
 
 TEST_F(ScrollableAreaTest, ScrollbarGraphicsLayerInvalidation)
 {
     ScrollbarTheme::setMockScrollbarsEnabled(true);
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
-    MockGraphicsLayerClient graphicsLayerClient;
-    MockGraphicsLayer graphicsLayer(&graphicsLayerClient);
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
+    FakeGraphicsLayerClient graphicsLayerClient;
+    graphicsLayerClient.setIsTrackingPaintInvalidations(true);
+    FakeGraphicsLayer graphicsLayer(&graphicsLayerClient);
     graphicsLayer.setDrawsContent(true);
     graphicsLayer.setSize(FloatSize(111, 222));
 
     EXPECT_CALL(*scrollableArea, layerForHorizontalScrollbar()).WillRepeatedly(Return(&graphicsLayer));
 
-    RefPtrWillBeRawPtr<Scrollbar> scrollbar = Scrollbar::create(scrollableArea.get(), HorizontalScrollbar, RegularScrollbar, nullptr);
+    Scrollbar* scrollbar = Scrollbar::create(scrollableArea, HorizontalScrollbar, RegularScrollbar, nullptr);
     graphicsLayer.resetTrackedPaintInvalidations();
     scrollbar->setNeedsPaintInvalidation(NoPart);
     EXPECT_TRUE(graphicsLayer.hasTrackedPaintInvalidations());
 
     // Forced GC in order to finalize objects depending on the mock object.
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
 }
 
 TEST_F(ScrollableAreaTest, InvalidatesNonCompositedScrollbarsWhenThumbMoves)
 {
     ScrollbarThemeWithMockInvalidation theme;
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(100, 100));
-    RefPtrWillBeRawPtr<Scrollbar> horizontalScrollbar = Scrollbar::createForTesting(scrollableArea.get(), HorizontalScrollbar, RegularScrollbar, &theme);
-    RefPtrWillBeRawPtr<Scrollbar> verticalScrollbar = Scrollbar::createForTesting(scrollableArea.get(), VerticalScrollbar, RegularScrollbar, &theme);
-    EXPECT_CALL(*scrollableArea, horizontalScrollbar()).WillRepeatedly(Return(horizontalScrollbar.get()));
-    EXPECT_CALL(*scrollableArea, verticalScrollbar()).WillRepeatedly(Return(verticalScrollbar.get()));
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(100, 100));
+    Scrollbar* horizontalScrollbar = Scrollbar::createForTesting(scrollableArea, HorizontalScrollbar, RegularScrollbar, &theme);
+    Scrollbar* verticalScrollbar = Scrollbar::createForTesting(scrollableArea, VerticalScrollbar, RegularScrollbar, &theme);
+    EXPECT_CALL(*scrollableArea, horizontalScrollbar()).WillRepeatedly(Return(horizontalScrollbar));
+    EXPECT_CALL(*scrollableArea, verticalScrollbar()).WillRepeatedly(Return(verticalScrollbar));
 
     // Regardless of whether the theme invalidates any parts, non-composited
     // scrollbars have to be repainted if the thumb moves.
@@ -212,29 +127,30 @@ TEST_F(ScrollableAreaTest, InvalidatesNonCompositedScrollbarsWhenThumbMoves)
     scrollableArea->clearNeedsPaintInvalidationForScrollControls();
 
     // Forced GC in order to finalize objects depending on the mock object.
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
 }
 
 TEST_F(ScrollableAreaTest, InvalidatesCompositedScrollbarsIfPartsNeedRepaint)
 {
     ScrollbarThemeWithMockInvalidation theme;
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(100, 100));
-    RefPtrWillBeRawPtr<Scrollbar> horizontalScrollbar = Scrollbar::createForTesting(scrollableArea.get(), HorizontalScrollbar, RegularScrollbar, &theme);
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(100, 100));
+    Scrollbar* horizontalScrollbar = Scrollbar::createForTesting(scrollableArea, HorizontalScrollbar, RegularScrollbar, &theme);
     horizontalScrollbar->clearTrackNeedsRepaint();
     horizontalScrollbar->clearThumbNeedsRepaint();
-    RefPtrWillBeRawPtr<Scrollbar> verticalScrollbar = Scrollbar::createForTesting(scrollableArea.get(), VerticalScrollbar, RegularScrollbar, &theme);
+    Scrollbar* verticalScrollbar = Scrollbar::createForTesting(scrollableArea, VerticalScrollbar, RegularScrollbar, &theme);
     verticalScrollbar->clearTrackNeedsRepaint();
     verticalScrollbar->clearThumbNeedsRepaint();
-    EXPECT_CALL(*scrollableArea, horizontalScrollbar()).WillRepeatedly(Return(horizontalScrollbar.get()));
-    EXPECT_CALL(*scrollableArea, verticalScrollbar()).WillRepeatedly(Return(verticalScrollbar.get()));
+    EXPECT_CALL(*scrollableArea, horizontalScrollbar()).WillRepeatedly(Return(horizontalScrollbar));
+    EXPECT_CALL(*scrollableArea, verticalScrollbar()).WillRepeatedly(Return(verticalScrollbar));
 
     // Composited scrollbars only need repainting when parts become invalid
     // (e.g. if the track changes appearance when the thumb reaches the end).
-    MockGraphicsLayerClient graphicsLayerClient;
-    MockGraphicsLayer layerForHorizontalScrollbar(&graphicsLayerClient);
+    FakeGraphicsLayerClient graphicsLayerClient;
+    graphicsLayerClient.setIsTrackingPaintInvalidations(true);
+    FakeGraphicsLayer layerForHorizontalScrollbar(&graphicsLayerClient);
     layerForHorizontalScrollbar.setDrawsContent(true);
     layerForHorizontalScrollbar.setSize(FloatSize(10, 10));
-    MockGraphicsLayer layerForVerticalScrollbar(&graphicsLayerClient);
+    FakeGraphicsLayer layerForVerticalScrollbar(&graphicsLayerClient);
     layerForVerticalScrollbar.setDrawsContent(true);
     layerForVerticalScrollbar.setSize(FloatSize(10, 10));
     EXPECT_CALL(*scrollableArea, layerForHorizontalScrollbar()).WillRepeatedly(Return(&layerForHorizontalScrollbar));
@@ -278,18 +194,18 @@ TEST_F(ScrollableAreaTest, InvalidatesCompositedScrollbarsIfPartsNeedRepaint)
     EXPECT_FALSE(verticalScrollbar->thumbNeedsRepaint());
 
     // Forced GC in order to finalize objects depending on the mock object.
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
 }
 
 TEST_F(ScrollableAreaTest, RecalculatesScrollbarOverlayIfBackgroundChanges)
 {
-    OwnPtrWillBeRawPtr<MockScrollableArea> scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
+    MockScrollableArea* scrollableArea = MockScrollableArea::create(IntPoint(0, 100));
 
-    EXPECT_EQ(ScrollbarOverlayStyleDefault, scrollableArea->scrollbarOverlayStyle());
+    EXPECT_EQ(ScrollbarOverlayStyleDefault, scrollableArea->getScrollbarOverlayStyle());
     scrollableArea->recalculateScrollbarOverlayStyle(Color(34, 85, 51));
-    EXPECT_EQ(ScrollbarOverlayStyleLight, scrollableArea->scrollbarOverlayStyle());
+    EXPECT_EQ(ScrollbarOverlayStyleLight, scrollableArea->getScrollbarOverlayStyle());
     scrollableArea->recalculateScrollbarOverlayStyle(Color(236, 143, 185));
-    EXPECT_EQ(ScrollbarOverlayStyleDefault, scrollableArea->scrollbarOverlayStyle());
+    EXPECT_EQ(ScrollbarOverlayStyleDefault, scrollableArea->getScrollbarOverlayStyle());
 }
 
 } // namespace blink

@@ -4,10 +4,11 @@
 
 #include "device/bluetooth/test/mock_bluetooth_device.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/strings/utf_string_conversions.h"
-#include "device/bluetooth/bluetooth_gatt_service.h"
+#include "device/bluetooth/bluetooth_remote_gatt_service.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 
 namespace device {
@@ -21,17 +22,14 @@ MockBluetoothDevice::MockBluetoothDevice(MockBluetoothAdapter* adapter,
     : BluetoothDevice(adapter),
       bluetooth_class_(bluetooth_class),
       name_(name),
-      address_(address) {
+      address_(address),
+      connected_(connected) {
   ON_CALL(*this, GetBluetoothClass())
       .WillByDefault(testing::Return(bluetooth_class_));
-  ON_CALL(*this, GetDeviceName())
-      .WillByDefault(testing::Return(name_));
   ON_CALL(*this, GetIdentifier())
       .WillByDefault(testing::Return(address_ + "-Identifier"));
   ON_CALL(*this, GetAddress())
       .WillByDefault(testing::Return(address_));
-  ON_CALL(*this, GetDeviceType())
-      .WillByDefault(testing::Return(DEVICE_UNKNOWN));
   ON_CALL(*this, GetVendorIDSource())
       .WillByDefault(testing::Return(VENDOR_ID_UNKNOWN));
   ON_CALL(*this, GetVendorID())
@@ -40,45 +38,47 @@ MockBluetoothDevice::MockBluetoothDevice(MockBluetoothAdapter* adapter,
       .WillByDefault(testing::Return(0));
   ON_CALL(*this, GetDeviceID())
       .WillByDefault(testing::Return(0));
+  ON_CALL(*this, GetNameForDisplay())
+      .WillByDefault(testing::Return(base::UTF8ToUTF16(name_)));
+  ON_CALL(*this, GetDeviceType())
+      .WillByDefault(testing::Return(DEVICE_UNKNOWN));
   ON_CALL(*this, IsPaired())
       .WillByDefault(testing::Return(paired));
   ON_CALL(*this, IsConnected())
-      .WillByDefault(testing::Return(connected));
+      .WillByDefault(testing::ReturnPointee(&connected_));
   ON_CALL(*this, IsConnectable())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, IsConnecting())
       .WillByDefault(testing::Return(false));
-  ON_CALL(*this, GetName())
-      .WillByDefault(testing::Return(base::UTF8ToUTF16(name_)));
+  ON_CALL(*this, GetUUIDs()).WillByDefault(testing::Return(uuids_));
   ON_CALL(*this, ExpectingPinCode())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, ExpectingPasskey())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, ExpectingConfirmation())
       .WillByDefault(testing::Return(false));
-  ON_CALL(*this, GetUUIDs())
-      .WillByDefault(testing::Return(uuids_));
+  ON_CALL(*this, GetDeviceName()).WillByDefault(testing::Return(name_));
 }
 
 MockBluetoothDevice::~MockBluetoothDevice() {}
 
 void MockBluetoothDevice::AddMockService(
-    scoped_ptr<MockBluetoothGattService> mock_service) {
+    std::unique_ptr<MockBluetoothGattService> mock_service) {
   mock_services_.push_back(std::move(mock_service));
 }
 
-std::vector<BluetoothGattService*> MockBluetoothDevice::GetMockServices()
+std::vector<BluetoothRemoteGattService*> MockBluetoothDevice::GetMockServices()
     const {
-  std::vector<BluetoothGattService*> services;
-  for (BluetoothGattService* service : mock_services_) {
+  std::vector<BluetoothRemoteGattService*> services;
+  for (BluetoothRemoteGattService* service : mock_services_) {
     services.push_back(service);
   }
   return services;
 }
 
-BluetoothGattService* MockBluetoothDevice::GetMockService(
+BluetoothRemoteGattService* MockBluetoothDevice::GetMockService(
     const std::string& identifier) const {
-  for (BluetoothGattService* service : mock_services_) {
+  for (BluetoothRemoteGattService* service : mock_services_) {
     if (service->GetIdentifier() == identifier)
       return service;
   }

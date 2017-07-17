@@ -27,9 +27,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import copy
+from functools import reduce
 
 
 class TestConfiguration(object):
+
     def __init__(self, version, architecture, build_type):
         self.version = version
         self.architecture = architecture
@@ -65,6 +67,7 @@ class TestConfiguration(object):
 
 
 class SpecifierSorter(object):
+
     def __init__(self, all_test_configurations=None, macros=None):
         self._specifier_to_category = {}
 
@@ -109,6 +112,7 @@ class SpecifierSorter(object):
 
 
 class TestConfigurationConverter(object):
+
     def __init__(self, all_test_configurations, configuration_macros=None):
         self._all_test_configurations = all_test_configurations
         self._configuration_macros = configuration_macros or {}
@@ -133,7 +137,8 @@ class TestConfigurationConverter(object):
 
         for specifier, sets_by_category in matching_sets_by_category.items():
             for category, set_by_category in sets_by_category.items():
-                if len(set_by_category) == 1 and self._specifier_sorter.category_priority(category) > self._specifier_sorter.specifier_priority(specifier):
+                if len(set_by_category) == 1 and self._specifier_sorter.category_priority(
+                        category) > self._specifier_sorter.specifier_priority(specifier):
                     self._junk_specifier_combinations[specifier] = set_by_category
 
         self._specifier_sorter.add_macros(configuration_macros)
@@ -282,8 +287,7 @@ class TestConfigurationConverter(object):
         while try_abbreviating(self._collapsing_sets_by_size.values()):
             pass
 
-
-        # 4) Substitute specifier subsets that match macros witin each set:
+        # 4) Substitute specifier subsets that match macros within each set:
         #   (win7, win10, release) -> (win, release)
         self.collapse_macros(self._configuration_macros, specifiers_list)
 

@@ -89,6 +89,7 @@ void SharedWorkerHost::Start(bool pause_on_start) {
   params.name = instance_->name();
   params.content_security_policy = instance_->content_security_policy();
   params.security_policy_type = instance_->security_policy_type();
+  params.creation_address_space = instance_->creation_address_space();
   params.pause_on_start = pause_on_start;
   params.route_id = worker_route_id_;
   Send(new WorkerProcessMsg_CreateWorker(params));
@@ -181,22 +182,9 @@ void SharedWorkerHost::WorkerConnected(int message_port_id) {
   }
 }
 
-void SharedWorkerHost::AllowDatabase(const GURL& url,
-                                     const base::string16& name,
-                                     const base::string16& display_name,
-                                     bool* result) {
-  if (!instance_)
-    return;
-  *result = GetContentClient()->browser()->AllowWorkerDatabase(
-      url,
-      name,
-      display_name,
-      instance_->resource_context(),
-      GetRenderFrameIDsForWorker());
-}
-
-void SharedWorkerHost::AllowFileSystem(const GURL& url,
-                                       scoped_ptr<IPC::Message> reply_msg) {
+void SharedWorkerHost::AllowFileSystem(
+    const GURL& url,
+    std::unique_ptr<IPC::Message> reply_msg) {
   if (!instance_)
     return;
   GetContentClient()->browser()->AllowWorkerFileSystem(
@@ -209,7 +197,7 @@ void SharedWorkerHost::AllowFileSystem(const GURL& url,
 }
 
 void SharedWorkerHost::AllowFileSystemResponse(
-    scoped_ptr<IPC::Message> reply_msg,
+    std::unique_ptr<IPC::Message> reply_msg,
     bool allowed) {
   WorkerProcessHostMsg_RequestFileSystemAccessSync::WriteReplyParams(
       reply_msg.get(),
@@ -236,8 +224,8 @@ void SharedWorkerHost::RelayMessage(
     WorkerMsg_Connect::Param param;
     if (!WorkerMsg_Connect::Read(&message, &param))
       return;
-    int sent_message_port_id = base::get<0>(param);
-    int new_routing_id = base::get<1>(param);
+    int sent_message_port_id = std::get<0>(param);
+    int new_routing_id = std::get<1>(param);
 
     DCHECK(container_render_filter_);
     new_routing_id = container_render_filter_->GetNextRoutingID();

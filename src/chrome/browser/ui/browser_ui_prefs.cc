@@ -19,6 +19,18 @@
 #include "base/win/windows_version.h"
 #endif
 
+namespace {
+
+uint32_t GetHomeButtonAndHomePageIsNewTabPageFlags() {
+#if defined(OS_IOS) || defined(OS_ANDROID)
+  return PrefRegistry::NO_REGISTRATION_FLAGS;
+#else
+  return user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
+#endif
+}
+
+}  // namespace
+
 namespace chrome {
 
 void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
@@ -32,11 +44,9 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(
       prefs::kHomePageIsNewTabPage,
       true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kShowHomeButton,
-      false,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+      GetHomeButtonAndHomePageIsNewTabPageFlags());
+  registry->RegisterBooleanPref(prefs::kShowHomeButton, false,
+                                GetHomeButtonAndHomePageIsNewTabPageFlags());
   registry->RegisterBooleanPref(
       prefs::kDeleteBrowsingHistory,
       true,
@@ -65,13 +75,19 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kDeleteHostedAppsData,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kDeleteMediaLicenses,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kDeleteTimePeriod,
       0,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kClearBrowsingDataHistoryNoticeShownTimes, 0);
   registry->RegisterInt64Pref(prefs::kLastClearBrowsingDataTime, 0);
   registry->RegisterIntegerPref(prefs::kModuleConflictBubbleShown, 0);
-  registry->RegisterBooleanPref(prefs::kCheckDefaultBrowser, true);
+  registry->RegisterInt64Pref(prefs::kDefaultBrowserLastDeclined, 0);
   bool reset_check_default = false;
 #if defined(OS_WIN)
   reset_check_default = base::win::GetVersion() >= base::win::VERSION_WIN10;
@@ -134,6 +150,10 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   // us from having to hard-code pref registration in the several unit tests
   // that use this preference.
   registry->RegisterBooleanPref(prefs::kShowUpdatePromotionInfoBar, true);
+  registry->RegisterBooleanPref(
+      prefs::kShowFullscreenToolbar,
+      true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kHideFullscreenToolbar,
       false,

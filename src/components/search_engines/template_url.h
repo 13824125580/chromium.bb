@@ -7,16 +7,17 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
+#include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_id.h"
 #include "ui/gfx/geometry/size.h"
@@ -467,6 +468,8 @@ class TemplateURLRef {
   mutable std::string search_term_key_;
   mutable size_t search_term_position_in_path_;
   mutable url::Parsed::ComponentType search_term_key_location_;
+  mutable std::string search_term_value_prefix_;
+  mutable std::string search_term_value_suffix_;
 
   mutable PostParams post_params_;
 
@@ -522,10 +525,7 @@ class TemplateURL {
   // Generates a suitable keyword for the specified url, which must be valid.
   // This is guaranteed not to return an empty string, since TemplateURLs should
   // never have an empty keyword.
-  // |accept_languages| is a list of languages, which will be used in
-  // IDN-decoding of |url|'s hostname.
-  static base::string16 GenerateKeyword(const GURL& url,
-                                        const std::string& accept_languages);
+  static base::string16 GenerateKeyword(const GURL& url);
 
   // Generates a favicon URL from the specified url.
   static GURL GenerateFaviconURL(const GURL& url);
@@ -615,7 +615,8 @@ class TemplateURL {
 
   // This setter shouldn't be used except by TemplateURLService and
   // TemplateURLServiceClient implementations.
-  void set_extension_info(scoped_ptr<AssociatedExtensionInfo> extension_info) {
+  void set_extension_info(
+      std::unique_ptr<AssociatedExtensionInfo> extension_info) {
     extension_info_ = std::move(extension_info);
   }
 
@@ -643,6 +644,11 @@ class TemplateURL {
   // this for TemplateURLs of type NORMAL_CONTROLLED_BY_EXTENSION or
   // OMNIBOX_API_EXTENSION.
   std::string GetExtensionId() const;
+
+  // Returns the type of this search engine, or SEARCH_ENGINE_OTHER if no
+  // engines match.
+  SearchEngineType GetEngineType(
+      const SearchTermsData& search_terms_data) const;
 
   // Use the alternate URLs and the search URL to match the provided |url|
   // and extract |search_terms| from it. Returns false and an empty
@@ -747,7 +753,10 @@ class TemplateURL {
   TemplateURLRef image_url_ref_;
   TemplateURLRef new_tab_url_ref_;
   TemplateURLRef contextual_search_url_ref_;
-  scoped_ptr<AssociatedExtensionInfo> extension_info_;
+  std::unique_ptr<AssociatedExtensionInfo> extension_info_;
+
+  // Caches the computed engine type across successive calls to GetEngineType().
+  mutable SearchEngineType engine_type_;
 
   // TODO(sky): Add date last parsed OSD file.
 

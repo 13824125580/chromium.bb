@@ -89,6 +89,7 @@ component("ime") {
     "linux/linux_input_method_context_factory.h",
     "mock_input_method.cc",
     "mock_input_method.h",
+    "text_edit_commands.h",
     "text_input_client.cc",
     "text_input_client.h",
     "ui_base_ime_export.h",
@@ -110,9 +111,11 @@ component("ime") {
     "//net",
     "//third_party/icu",
     "//ui/base",
+    "//ui/display",
     "//ui/events",
     "//ui/gfx",
     "//ui/gfx/geometry",
+    "//ui/gfx/range",
     "//url",
   ]
 
@@ -131,6 +134,15 @@ component("ime") {
     sources += [
       "input_method_android.cc",
       "input_method_android.h",
+    ]
+  }
+
+  if (!is_chromeos && is_linux) {
+    sources += [
+      "linux/text_edit_command_auralinux.cc",
+      "linux/text_edit_command_auralinux.h",
+      "linux/text_edit_key_bindings_delegate_auralinux.cc",
+      "linux/text_edit_key_bindings_delegate_auralinux.h",
     ]
   }
 
@@ -163,7 +175,7 @@ component("ime") {
   }
 
   if (use_pango) {
-    configs += [ "//build/config/linux:pangocairo" ]
+    configs += [ "//build/config/linux/pangocairo" ]
   } else {
     sources -= [
       "composition_text_util_pango.cc",

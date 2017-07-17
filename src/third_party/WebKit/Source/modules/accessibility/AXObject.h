@@ -31,13 +31,16 @@
 #define AXObject_h
 
 #include "core/editing/VisiblePosition.h"
+#include "core/editing/markers/DocumentMarker.h"
+#include "core/inspector/protocol/Accessibility.h"
 #include "modules/ModulesExport.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/graphics/Color.h"
-#include "platform/inspector_protocol/TypeBuilder.h"
 #include "wtf/Forward.h"
 #include "wtf/Vector.h"
+
+class SkMatrix44;
 
 namespace blink {
 
@@ -47,7 +50,6 @@ class AXObjectCacheImpl;
 class Element;
 class FrameView;
 class IntPoint;
-class NameSource;
 class Node;
 class LayoutObject;
 class ScrollableArea;
@@ -214,6 +216,8 @@ enum AccessibilityState {
 };
 
 class AccessibilityText final : public GarbageCollectedFinalized<AccessibilityText> {
+    WTF_MAKE_NONCOPYABLE(AccessibilityText);
+
 public:
     DEFINE_INLINE_TRACE()
     {
@@ -273,6 +277,17 @@ enum AccessibilityOptionalBool {
     OptionalBoolUndefined = 0,
     OptionalBoolTrue,
     OptionalBoolFalse
+};
+
+enum AriaCurrentState {
+    AriaCurrentStateUndefined = 0,
+    AriaCurrentStateFalse,
+    AriaCurrentStateTrue,
+    AriaCurrentStatePage,
+    AriaCurrentStateStep,
+    AriaCurrentStateLocation,
+    AriaCurrentStateDate,
+    AriaCurrentStateTime
 };
 
 enum InvalidState {
@@ -378,6 +393,8 @@ public:
 };
 
 class NameSourceRelatedObject : public GarbageCollectedFinalized<NameSourceRelatedObject> {
+    WTF_MAKE_NONCOPYABLE(NameSourceRelatedObject);
+
 public:
     WeakMember<AXObject> object;
     String text;
@@ -455,7 +472,16 @@ public:
     }
 };
 
+} // namespace blink
+
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::IgnoredReason);
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::NameSource);
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::DescriptionSource);
+
+namespace blink {
+
 class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
+    WTF_MAKE_NONCOPYABLE(AXObject);
 public:
     typedef HeapVector<Member<AXObject>> AXObjectVector;
 
@@ -547,6 +573,7 @@ public:
     virtual bool isAXLayoutObject() const { return false; }
     virtual bool isAXListBox() const { return false; }
     virtual bool isAXListBoxOption() const { return false; }
+    virtual bool isAXRadioInput() const { return false; }
     virtual bool isAXSVGRoot() const { return false; }
 
     // Check object role or purpose.
@@ -645,6 +672,8 @@ public:
     void setLastKnownIsIgnoredValue(bool);
     bool hasInheritedPresentationalRole() const;
     bool isPresentationalChild() const;
+    bool ancestorExposesActiveDescendant() const;
+    bool computeAncestorExposesActiveDescendant() const;
 
     //
     // Accessible name calculation
@@ -693,11 +722,13 @@ public:
     //
 
     virtual const AtomicString& accessKey() const { return nullAtom; }
-    virtual RGBA32 backgroundColor() const { return Color::transparent; }
+    RGBA32 backgroundColor() const;
+    virtual RGBA32 computeBackgroundColor() const { return Color::transparent; }
     virtual RGBA32 color() const { return Color::black; }
     // Used by objects of role ColorWellRole.
     virtual RGBA32 colorValue() const { return Color::transparent; }
     virtual bool canvasHasFallbackContent() const { return false; }
+    virtual String fontFamily() const { return nullAtom; }
     // Font size is in pixels.
     virtual float fontSize() const { return 0.0f; }
     virtual int headingLevel() const { return 0; }
@@ -707,7 +738,7 @@ public:
     virtual String text() const { return String(); }
     virtual AccessibilityTextDirection textDirection() const { return AccessibilityTextDirectionLTR; }
     virtual int textLength() const { return 0; }
-    virtual TextStyle textStyle() const { return TextStyleNone; }
+    virtual TextStyle getTextStyle() const { return TextStyleNone; }
     virtual KURL url() const { return KURL(); }
 
     // Load inline text boxes for just this node, even if
@@ -719,16 +750,20 @@ public:
     virtual AXObject* nextOnLine() const { return nullptr; }
     virtual AXObject* previousOnLine() const { return nullptr; }
 
+    // For all node objects. The start and end character offset of each
+    // marker, such as spelling or grammar error.
+    virtual void markers(Vector<DocumentMarker::MarkerType>&, Vector<AXRange>&) const {}
     // For an inline text box.
     // The integer horizontal pixel offset of each character in the string; negative values for RTL.
     virtual void textCharacterOffsets(Vector<int>&) const { }
-    // The start and end character offset of each word in the inline text box.
-    virtual void wordBoundaries(Vector<AXRange>& words) const { }
+    // The start and end character offset of each word in the object's text.
+    virtual void wordBoundaries(Vector<AXRange>&) const {}
 
     // Properties of interactive elements.
-    virtual String actionVerb() const;
+    String actionVerb() const;
     virtual AccessibilityButtonState checkboxOrRadioValue() const;
-    virtual InvalidState invalidState() const { return InvalidStateUndefined; }
+    virtual AriaCurrentState ariaCurrentState() const { return AriaCurrentStateUndefined; }
+    virtual InvalidState getInvalidState() const { return InvalidStateUndefined; }
     // Only used when invalidState() returns InvalidStateOther.
     virtual String ariaInvalidValue() const { return String(); }
     virtual String valueDescription() const { return String(); }
@@ -738,7 +773,7 @@ public:
     virtual String stringValue() const { return String(); }
 
     // ARIA attributes.
-    virtual AXObject* activeDescendant() const { return 0; }
+    virtual AXObject* activeDescendant() { return nullptr; }
     virtual String ariaAutoComplete() const { return String(); }
     virtual String ariaDescribedByAttribute() const { return String(); }
     virtual void ariaFlowToElements(AXObjectVector&) const { }
@@ -755,14 +790,14 @@ public:
     virtual AccessibilityRole ariaRoleAttribute() const { return UnknownRole; }
     virtual bool ariaRoleHasPresentationalChildren() const { return false; }
     virtual AXObject* ancestorForWhichThisIsAPresentationalChild() const { return 0; }
-    virtual bool shouldFocusActiveDescendant() const { return false; }
+    bool supportsActiveDescendant() const;
     bool supportsARIAAttributes() const;
     virtual bool supportsARIADragging() const { return false; }
     virtual bool supportsARIADropping() const { return false; }
     virtual bool supportsARIAFlowTo() const { return false; }
     virtual bool supportsARIAOwns() const { return false; }
     bool supportsRangeValue() const;
-    virtual SortDirection sortDirection() const { return SortDirectionUndefined; }
+    virtual SortDirection getSortDirection() const { return SortDirectionUndefined; }
 
     // Returns 0-based index.
     int indexInParent() const;
@@ -774,7 +809,7 @@ public:
 
     // ARIA live-region features.
     bool isLiveRegion() const;
-    const AXObject* liveRegionRoot() const;
+    AXObject* liveRegionRoot() const;
     virtual const AtomicString& liveRegionStatus() const { return nullAtom; }
     virtual const AtomicString& liveRegionRelevant() const { return nullAtom; }
     virtual bool liveRegionAtomic() const { return false; }
@@ -785,11 +820,26 @@ public:
     bool containerLiveRegionAtomic() const;
     bool containerLiveRegionBusy() const;
 
-    // Location and click point in frame-relative coordinates.
+    // Location and click point in frame-relative coordinates. DEPRECATED, to be
+    // replaced by getRelativeBounds.
     virtual LayoutRect elementRect() const { return m_explicitElementRect; }
     void setElementRect(LayoutRect r) { m_explicitElementRect = r; }
     virtual void markCachedElementRectDirty() const;
     virtual IntPoint clickPoint();
+
+    // Transformation relative to the parent frame, if local (otherwise returns identity).
+    // DEPRECATED, to be replaced by getRelativeBounds.
+    virtual SkMatrix44 transformFromLocalParentFrame() const;
+
+    // NEW bounds calculation interface. Every object's bounding box is returned
+    // relative to a container object (which is guaranteed to be an ancestor) and
+    // optionally a transformation matrix that needs to be applied too.
+    // To compute the absolute bounding box of an element, start with its
+    // boundsInContainer and apply the transform. Then as long as its container is
+    // not null, walk up to its container and offset by the container's offset from
+    // origin, the container's scroll position if any, and apply the container's transform.
+    // Do this until you reach the root of the tree.
+    virtual void getRelativeBounds(AXObject** container, FloatRect& boundsInContainer, SkMatrix44& containerTransform) const;
 
     // Hit testing.
     // Called on the root AX object to return the deepest available element.
@@ -823,9 +873,9 @@ public:
     virtual double estimatedLoadingProgress() const { return 0; }
 
     // DOM and layout tree access.
-    virtual Node* node() const { return 0; }
-    virtual LayoutObject* layoutObject() const { return 0; }
-    virtual Document* document() const;
+    virtual Node* getNode() const { return 0; }
+    virtual LayoutObject* getLayoutObject() const { return 0; }
+    virtual Document* getDocument() const;
     virtual FrameView* documentFrameView() const;
     virtual Element* anchorElement() const { return 0; }
     virtual Element* actionElement() const { return 0; }
@@ -906,10 +956,10 @@ protected:
     static String recursiveTextAlternative(const AXObject&, bool inAriaLabelledByTraversal, AXObjectSet& visited);
     bool isHiddenForTextAlternativeCalculation() const;
     String ariaTextAlternative(bool recursive, bool inAriaLabelledByTraversal, AXObjectSet& visited, AXNameFrom&, AXRelatedObjectVector*, NameSources*, bool* foundTextAlternative) const;
-    String textFromElements(bool inAriaLabelledByTraversal, AXObjectSet& visited, WillBeHeapVector<RawPtrWillBeMember<Element>>& elements, AXRelatedObjectVector* relatedObjects) const;
+    String textFromElements(bool inAriaLabelledByTraversal, AXObjectSet& visited, HeapVector<Member<Element>>& elements, AXRelatedObjectVector* relatedObjects) const;
     void tokenVectorFromAttribute(Vector<String>&, const QualifiedName&) const;
-    void elementsFromAttribute(WillBeHeapVector<RawPtrWillBeMember<Element>>& elements, const QualifiedName&) const;
-    void ariaLabelledbyElementVector(WillBeHeapVector<RawPtrWillBeMember<Element>>& elements) const;
+    void elementsFromAttribute(HeapVector<Member<Element>>& elements, const QualifiedName&) const;
+    void ariaLabelledbyElementVector(HeapVector<Member<Element>>& elements) const;
     String textFromAriaLabelledby(AXObjectSet& visited, AXRelatedObjectVector* relatedObjects) const;
     String textFromAriaDescribedby(AXRelatedObjectVector* relatedObjects) const;
 
@@ -924,13 +974,15 @@ protected:
     // The following cached attribute values (the ones starting with m_cached*)
     // are only valid if m_lastModificationCount matches AXObjectCacheImpl::modificationCount().
     mutable int m_lastModificationCount;
+    mutable RGBA32 m_cachedBackgroundColor;
     mutable bool m_cachedIsIgnored : 1;
     mutable bool m_cachedIsInertOrAriaHidden : 1;
     mutable bool m_cachedIsDescendantOfLeafNode : 1;
     mutable bool m_cachedIsDescendantOfDisabledNode : 1;
     mutable bool m_cachedHasInheritedPresentationalRole : 1;
     mutable bool m_cachedIsPresentationalChild : 1;
-    mutable Member<const AXObject> m_cachedLiveRegionRoot;
+    mutable bool m_cachedAncestorExposesActiveDescendant : 1;
+    mutable Member<AXObject> m_cachedLiveRegionRoot;
 
     Member<AXObjectCacheImpl> m_axObjectCache;
 
@@ -949,9 +1001,5 @@ private:
     DEFINE_TYPE_CASTS(thisType, AXObject, object, object->predicate, object.predicate)
 
 } // namespace blink
-
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::IgnoredReason);
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::NameSource);
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::DescriptionSource);
 
 #endif // AXObject_h

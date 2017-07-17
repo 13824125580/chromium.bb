@@ -65,6 +65,11 @@ static NSAttributedString* attributedSubstringFromRange(const EphemeralRange& ra
     size_t length = range.endPosition().computeOffsetInContainerNode() - range.startPosition().computeOffsetInContainerNode();
 
     unsigned position = 0;
+
+    // TODO(dglazkov): The use of updateStyleAndLayoutIgnorePendingStylesheets needs to be audited.
+    // see http://crbug.com/590369 for more details.
+    range.startPosition().document()->updateStyleAndLayoutIgnorePendingStylesheets();
+
     for (TextIterator it(range.startPosition(), range.endPosition()); !it.atEnd() && [string length] < length; it.advance()) {
         unsigned numCharacters = it.length();
         if (!numCharacters)
@@ -72,7 +77,7 @@ static NSAttributedString* attributedSubstringFromRange(const EphemeralRange& ra
 
         Node* container = it.currentContainer();
         LayoutObject* layoutObject = container->layoutObject();
-        ASSERT(layoutObject);
+        DCHECK(layoutObject);
         if (!layoutObject)
             continue;
 
@@ -86,7 +91,7 @@ static NSAttributedString* attributedSubstringFromRange(const EphemeralRange& ra
         // to use the font.
         // TODO(shuchen): Support scaling the font as necessary according to CSS transforms.
         if (!font || floor(fontPlatformData.size()) != floor([[font fontDescriptor] pointSize]))
-            font = [NSFont systemFontOfSize:style->font().fontDescription().computedSize()];
+            font = [NSFont systemFontOfSize:style->font().getFontDescription().computedSize()];
         [attrs setObject:font forKey:NSFontAttributeName];
 
         if (style->visitedDependentColor(CSSPropertyColor).alpha())

@@ -2,19 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/views/controls/styled_label.h"
+
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/font_list.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/link.h"
-#include "ui/views/controls/styled_label.h"
 #include "ui/views/controls/styled_label_listener.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
@@ -46,7 +47,7 @@ class StyledLabelTest : public ViewsTestBase, public StyledLabelListener {
   }
 
  private:
-  scoped_ptr<StyledLabel> styled_;
+  std::unique_ptr<StyledLabel> styled_;
 
   DISALLOW_COPY_AND_ASSIGN(StyledLabelTest);
 };
@@ -228,7 +229,13 @@ TEST_F(StyledLabelTest, StyledRangeWithDisabledLineWrapping) {
   EXPECT_EQ(0, styled()->child_at(1)->x());
 }
 
-TEST_F(StyledLabelTest, StyledRangeUnderlined) {
+// TODO(mboc): Linux has never supported UNDERLINE, only virtually. Fix this.
+#if defined(OS_LINUX)
+#define MAYBE_StyledRangeUnderlined DISABLED_StyledRangeUnderlined
+#else
+#define MAYBE_StyledRangeUnderlined StyledRangeUnderlined
+#endif
+TEST_F(StyledLabelTest, MAYBE_StyledRangeUnderlined) {
   const std::string text("This is a test block of text, ");
   const std::string underlined_text("and this should be undelined");
   InitStyledLabel(text + underlined_text);
@@ -250,14 +257,20 @@ TEST_F(StyledLabelTest, StyledRangeUnderlined) {
       static_cast<Label*>(styled()->child_at(1))->font_list().GetFontStyle());
 }
 
-TEST_F(StyledLabelTest, StyledRangeBold) {
+// Fails on Mac, but only on 10.10. See http://crbug.com/622983.
+#if defined(OS_MACOSX)
+#define MAYBE_StyledRangeBold DISABLED_StyledRangeBold
+#else
+#define MAYBE_StyledRangeBold StyledRangeBold
+#endif
+TEST_F(StyledLabelTest, MAYBE_StyledRangeBold) {
   const std::string bold_text(
       "This is a block of text whose style will be set to BOLD in the test");
   const std::string text(" normal text");
   InitStyledLabel(bold_text + text);
 
   StyledLabel::RangeStyleInfo style_info;
-  style_info.font_style = gfx::Font::BOLD;
+  style_info.weight = gfx::Font::Weight::BOLD;
   styled()->AddStyleRange(
       gfx::Range(0u, static_cast<uint32_t>(bold_text.size())), style_info);
 
@@ -265,7 +278,8 @@ TEST_F(StyledLabelTest, StyledRangeBold) {
   // and normal style.
   Label label(ASCIIToUTF16(bold_text));
   const gfx::Size normal_label_size = label.GetPreferredSize();
-  label.SetFontList(label.font_list().DeriveWithStyle(gfx::Font::BOLD));
+  label.SetFontList(
+      label.font_list().DeriveWithWeight(gfx::Font::Weight::BOLD));
   const gfx::Size bold_label_size = label.GetPreferredSize();
 
   ASSERT_GE(bold_label_size.width(), normal_label_size.width());
@@ -291,13 +305,13 @@ TEST_F(StyledLabelTest, StyledRangeBold) {
   ASSERT_EQ(std::string(Label::kViewClassName),
             styled()->child_at(0)->GetClassName());
   EXPECT_EQ(
-      gfx::Font::BOLD,
-      static_cast<Label*>(styled()->child_at(0))->font_list().GetFontStyle());
+      gfx::Font::Weight::BOLD,
+      static_cast<Label*>(styled()->child_at(0))->font_list().GetFontWeight());
   ASSERT_EQ(std::string(Label::kViewClassName),
             styled()->child_at(1)->GetClassName());
   EXPECT_EQ(
-      gfx::Font::BOLD,
-      static_cast<Label*>(styled()->child_at(1))->font_list().GetFontStyle());
+      gfx::Font::Weight::BOLD,
+      static_cast<Label*>(styled()->child_at(1))->font_list().GetFontWeight());
   ASSERT_EQ(std::string(Label::kViewClassName),
             styled()->child_at(2)->GetClassName());
   EXPECT_EQ(

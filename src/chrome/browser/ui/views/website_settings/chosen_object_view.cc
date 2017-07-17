@@ -14,7 +14,7 @@
 #include "ui/views/layout/grid_layout.h"
 
 ChosenObjectView::ChosenObjectView(
-    scoped_ptr<WebsiteSettingsUI::ChosenObjectInfo> info)
+    std::unique_ptr<WebsiteSettingsUI::ChosenObjectInfo> info)
     : info_(std::move(info)) {
   views::GridLayout* layout = new views::GridLayout(this);
   SetLayoutManager(layout);
@@ -45,7 +45,8 @@ ChosenObjectView::ChosenObjectView(
                   views::GridLayout::CENTER);
   // Create the delete button.
   delete_button_ = new views::ImageButton(this);
-  delete_button_->SetFocusable(true);
+  delete_button_->SetFocusForPlatform();
+  delete_button_->set_request_focus_on_press(true);
   delete_button_->SetTooltipText(
       l10n_util::GetStringUTF16(info_->ui_info.delete_tooltip_string_id));
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();

@@ -8,13 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/base/media_export.h"
 #include "media/base/media_log_event.h"
 #include "media/base/pipeline_impl.h"
@@ -42,38 +42,46 @@ class MEDIA_EXPORT MediaLog : public base::RefCountedThreadSafe<MediaLog> {
 
   // Add an event to this log. Overriden by inheritors to actually do something
   // with it.
-  virtual void AddEvent(scoped_ptr<MediaLogEvent> event);
+  virtual void AddEvent(std::unique_ptr<MediaLogEvent> event);
+
+  // Retrieve an error message, if any.
+  virtual std::string GetLastErrorMessage();
+
+  // Records the domain and registry of the current frame security origin to a
+  // Rappor privacy-preserving metric. See:
+  //   https://www.chromium.org/developers/design-documents/rappor
+  virtual void RecordRapporWithSecurityOrigin(const std::string& metric);
 
   // Helper methods to create events and their parameters.
-  scoped_ptr<MediaLogEvent> CreateEvent(MediaLogEvent::Type type);
-  scoped_ptr<MediaLogEvent> CreateBooleanEvent(
-      MediaLogEvent::Type type, const std::string& property, bool value);
-  scoped_ptr<MediaLogEvent> CreateStringEvent(MediaLogEvent::Type type,
-                                              const std::string& property,
-                                              const std::string& value);
-  scoped_ptr<MediaLogEvent> CreateTimeEvent(MediaLogEvent::Type type,
-                                            const std::string& property,
-                                            base::TimeDelta value);
-  scoped_ptr<MediaLogEvent> CreateLoadEvent(const std::string& url);
-  scoped_ptr<MediaLogEvent> CreateSeekEvent(float seconds);
-  scoped_ptr<MediaLogEvent> CreatePipelineStateChangedEvent(
+  std::unique_ptr<MediaLogEvent> CreateEvent(MediaLogEvent::Type type);
+  std::unique_ptr<MediaLogEvent> CreateBooleanEvent(MediaLogEvent::Type type,
+                                                    const std::string& property,
+                                                    bool value);
+  std::unique_ptr<MediaLogEvent> CreateStringEvent(MediaLogEvent::Type type,
+                                                   const std::string& property,
+                                                   const std::string& value);
+  std::unique_ptr<MediaLogEvent> CreateTimeEvent(MediaLogEvent::Type type,
+                                                 const std::string& property,
+                                                 base::TimeDelta value);
+  std::unique_ptr<MediaLogEvent> CreateLoadEvent(const std::string& url);
+  std::unique_ptr<MediaLogEvent> CreateSeekEvent(float seconds);
+  std::unique_ptr<MediaLogEvent> CreatePipelineStateChangedEvent(
       PipelineImpl::State state);
-  scoped_ptr<MediaLogEvent> CreatePipelineErrorEvent(PipelineStatus error);
-  scoped_ptr<MediaLogEvent> CreateVideoSizeSetEvent(
-      size_t width, size_t height);
-  scoped_ptr<MediaLogEvent> CreateBufferedExtentsChangedEvent(int64_t start,
-                                                              int64_t current,
-                                                              int64_t end);
+  std::unique_ptr<MediaLogEvent> CreatePipelineErrorEvent(PipelineStatus error);
+  std::unique_ptr<MediaLogEvent> CreateVideoSizeSetEvent(size_t width,
+                                                         size_t height);
+  std::unique_ptr<MediaLogEvent> CreateBufferedExtentsChangedEvent(
+      int64_t start,
+      int64_t current,
+      int64_t end);
 
   // Report a log message at the specified log level.
   void AddLogEvent(MediaLogLevel level, const std::string& message);
 
   // Report a property change without an accompanying event.
   void SetStringProperty(const std::string& key, const std::string& value);
-  void SetIntegerProperty(const std::string& key, int value);
   void SetDoubleProperty(const std::string& key, double value);
   void SetBooleanProperty(const std::string& key, bool value);
-  void SetTimeProperty(const std::string& key, base::TimeDelta value);
 
  protected:
   friend class base::RefCountedThreadSafe<MediaLog>;

@@ -6,19 +6,19 @@
 #define CC_PLAYBACK_DISPLAY_ITEM_LIST_H_
 
 #include <stddef.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/contiguous_container.h"
 #include "cc/playback/discardable_image_map.h"
 #include "cc/playback/display_item.h"
 #include "cc/playback/display_item_list_settings.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -30,9 +30,9 @@ class AxisTransform2d;
 }  // namespace gfx
 
 namespace cc {
+class ClientPictureCache;
 class DisplayItem;
 class DrawingDisplayItem;
-class ImageSerializationProcessor;
 
 namespace proto {
 class DisplayItemList;
@@ -55,22 +55,23 @@ class CC_EXPORT DisplayItemList
   // (crbug.com/548434).
   static scoped_refptr<DisplayItemList> CreateFromProto(
       const proto::DisplayItemList& proto,
-      ImageSerializationProcessor* image_serialization_processor);
+      ClientPictureCache* client_picture_cache,
+      std::vector<uint32_t>* used_engine_picture_ids);
 
   // Creates a Protobuf representing the state of this DisplayItemList.
-  // TODO(dtrainor): Don't resend DisplayItems that were already serialized
-  // (crbug.com/548434).
-  void ToProtobuf(proto::DisplayItemList* proto,
-                  ImageSerializationProcessor* image_serialization_processor);
+  void ToProtobuf(proto::DisplayItemList* proto);
 
+  // TODO(trchen): Deprecated. Apply clip and scale on the canvas instead.
   void Raster(SkCanvas* canvas,
               SkPicture::AbortCallback* callback,
               const gfx::Rect& canvas_target_playback_rect,
               const gfx::AxisTransform2d& contents_transform) const;
 
+  void Raster(SkCanvas* canvas, SkPicture::AbortCallback* callback) const;
+
   // This is a fast path for use only if canvas_ is set and
   // retain_individual_display_items_ is false. This method also updates
-  // is_suitable_for_gpu_rasterization_ and approximate_op_count_.
+  // approximate_op_count_.
   void RasterIntoCanvas(const DisplayItem& display_item);
 
   // Because processing happens in this function, all the set up for
@@ -83,10 +84,6 @@ class CC_EXPORT DisplayItemList
     auto* item = &items_.AllocateAndConstruct<DisplayItemType>(
         std::forward<Args>(args)...);
     approximate_op_count_ += item->ApproximateOpCount();
-    // TODO(crbug.com/513016): None of the items might individually trigger a
-    // veto even though they collectively have enough "bad" operations that a
-    // corresponding flattened Picture would get vetoed.
-    is_suitable_for_gpu_rasterization_ &= item->IsSuitableForGpuRasterization();
     ProcessAppendedItem(item);
     return *item;
   }
@@ -95,6 +92,9 @@ class CC_EXPORT DisplayItemList
   // applicable, create an internally cached SkPicture.
   void Finalize();
 
+  void SetIsSuitableForGpuRasterization(bool is_suitable) {
+    is_suitable_for_gpu_rasterization_ = is_suitable;
+  }
   bool IsSuitableForGpuRasterization() const;
   int ApproximateOpCount() const;
   size_t ApproximateMemoryUsage() const;
@@ -102,7 +102,7 @@ class CC_EXPORT DisplayItemList
 
   bool RetainsIndividualDisplayItems() const;
 
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat> AsValue(
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> AsValue(
       bool include_items) const;
 
   void EmitTraceSnapshot() const;
@@ -111,11 +111,16 @@ class CC_EXPORT DisplayItemList
   void GetDiscardableImagesInRect(const gfx::Rect& rect,
                                   const gfx::Scaling2d& raster_scale,
                                   std::vector<DrawImage>* images);
-  bool MayHaveDiscardableImages() const;
-
-  bool HasDiscardableImageInRect(const gfx::Rect& layer_rect) const;
 
   gfx::Rect VisualRectForTesting(int index) { return visual_rects_[index]; }
+
+  ContiguousContainer<DisplayItem>::const_iterator begin() const {
+    return items_.begin();
+  }
+
+  ContiguousContainer<DisplayItem>::const_iterator end() const {
+    return items_.end();
+  }
 
  private:
   DisplayItemList(gfx::Rect layer_rect,
@@ -132,10 +137,9 @@ class CC_EXPORT DisplayItemList
   // |items_| . These rects are intentionally kept separate
   // because they are not needed while walking the |items_| for raster.
   std::vector<gfx::Rect> visual_rects_;
-  skia::RefPtr<SkPicture> picture_;
+  sk_sp<SkPicture> picture_;
 
-  scoped_ptr<SkPictureRecorder> recorder_;
-  skia::RefPtr<SkCanvas> canvas_;
+  std::unique_ptr<SkPictureRecorder> recorder_;
   const DisplayItemListSettings settings_;
   bool retain_individual_display_items_;
 

@@ -29,10 +29,12 @@
 
 #include "WebCommon.h"
 #include "WebNonCopyable.h"
+#include "base/logging.h"
 #include <cstddef>
 
 #if INSIDE_BLINK
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 #endif
 
 namespace blink {
@@ -48,7 +50,7 @@ class WebPrivateOwnPtr : public WebNonCopyable {
 public:
     WebPrivateOwnPtr() : m_ptr(nullptr) {}
     WebPrivateOwnPtr(std::nullptr_t) : m_ptr(nullptr) {}
-    ~WebPrivateOwnPtr() { BLINK_ASSERT(!m_ptr); }
+    ~WebPrivateOwnPtr() { DCHECK(!m_ptr); }
 
     explicit WebPrivateOwnPtr(T* ptr)
         : m_ptr(ptr)
@@ -58,7 +60,8 @@ public:
     T* get() const { return m_ptr; }
 
 #if INSIDE_BLINK
-    template<typename U> WebPrivateOwnPtr(const PassOwnPtr<U>&, EnsurePtrConvertibleArgDecl(U, T));
+    template <typename U>
+    WebPrivateOwnPtr(std::unique_ptr<U>, EnsurePtrConvertibleArgDecl(U, T));
 
     void reset(T* ptr)
     {
@@ -66,21 +69,27 @@ public:
         m_ptr = ptr;
     }
 
-    void reset(const PassOwnPtr<T>& o)
+    void reset(std::unique_ptr<T> o)
     {
-        reset(o.leakPtr());
+        reset(o.release());
     }
 
-    PassOwnPtr<T> release()
+    std::unique_ptr<T> release()
     {
         T* ptr = m_ptr;
         m_ptr = nullptr;
-        return adoptPtr(ptr);
+        return wrapUnique(ptr);
+    }
+
+    T& operator*() const
+    {
+        DCHECK(m_ptr);
+        return *m_ptr;
     }
 
     T* operator->() const
     {
-        BLINK_ASSERT(m_ptr);
+        DCHECK(m_ptr);
         return m_ptr;
     }
 #endif // INSIDE_BLINK
@@ -90,8 +99,10 @@ private:
 };
 
 #if INSIDE_BLINK
-template<typename T> template<typename U> inline WebPrivateOwnPtr<T>::WebPrivateOwnPtr(const PassOwnPtr<U>& o, EnsurePtrConvertibleArgDefn(U, T))
-    : m_ptr(o.leakPtr())
+template <typename T>
+template <typename U>
+inline WebPrivateOwnPtr<T>::WebPrivateOwnPtr(std::unique_ptr<U> o, EnsurePtrConvertibleArgDefn(U, T))
+    : m_ptr(o.release())
 {
     static_assert(!std::is_array<T>::value, "Pointers to array must never be converted");
 }

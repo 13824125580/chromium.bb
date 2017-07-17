@@ -28,6 +28,19 @@ public class IntentUtils {
     private static final int MAX_INTENT_SIZE_THRESHOLD = 750000;
 
     /**
+     * Just like {@link Intent#hasExtra(String)} but doesn't throw exceptions.
+     */
+    public static boolean safeHasExtra(Intent intent, String name) {
+        try {
+            return intent.hasExtra(name);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "hasExtra failed on intent " + intent);
+            return false;
+        }
+    }
+
+    /**
      * Just like {@link Intent#getBooleanExtra(String, boolean)} but doesn't throw exceptions.
      */
     public static boolean safeGetBooleanExtra(Intent intent, String name, boolean defaultValue) {
@@ -63,6 +76,32 @@ public class IntentUtils {
             // Catches un-parceling exceptions.
             Log.e(TAG, "getInt failed on bundle " + bundle);
             return defaultValue;
+        }
+    }
+
+    /**
+     * Just like {@link Intent#getIntArrayExtra(String)} but doesn't throw exceptions.
+     */
+    public static int[] safeGetIntArrayExtra(Intent intent, String name) {
+        try {
+            return intent.getIntArrayExtra(name);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "getIntArrayExtra failed on intent " + intent);
+            return null;
+        }
+    }
+
+    /**
+     * Just like {@link Bundle#getIntArray(String)} but doesn't throw exceptions.
+     */
+    public static int[] safeGetIntArray(Bundle bundle, String name) {
+        try {
+            return bundle.getIntArray(name);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "getIntArray failed on bundle " + bundle);
+            return null;
         }
     }
 
@@ -217,6 +256,7 @@ public class IntentUtils {
      * Creates a temporary copy of the extra Bundle, which is required as
      * Intent#getBinderExtra() doesn't exist, but Bundle.getBinder() does.
      */
+    @VisibleForTesting
     public static IBinder safeGetBinderExtra(Intent intent, String name) {
         if (!intent.hasExtra(name)) return null;
         Bundle extras = intent.getExtras();

@@ -1,6 +1,5 @@
 # Do NOT add chrome to the list below. We shouldn't be including files
-# from src/chrome in src/content. Also, we may only depend on files in
-# src/components that are shared with the mojo html_viewer.
+# from src/chrome in src/content.
 include_rules = [
   # The subdirectories in content/ will manually allow their own include
   # directories in content/ so we disallow all of them.
@@ -10,10 +9,9 @@ include_rules = [
   "+content/grit",
   "+content/public/common",
   "+content/public/test",
-  "+content/shell",  # for content_browsertests
   "+content/test",
 
-  "+blink",
+  "+blink/public/resources/grit",
 
   "+cc",
   "-cc/blink",
@@ -22,17 +20,27 @@ include_rules = [
   "-cc/base/scoped_ptr_deque.h",
   "-cc/base/scoped_ptr_vector.h",
 
+  "-components",
+  # Content can depend on components that are:
+  #   1) related to the implementation of the web platform
+  #   2) shared code between third_party/WebKit and content
+  # It should not depend on chrome features or implementation details, i.e. the
+  # original components/ directories which was code split out from chrome/ to be
+  # shared with iOS. This includes, but isn't limited to, browser features such
+  # as autofill or extensions, and chrome implementation details such as
+  # settings, packaging details, installation or crash reporting.
+
   "+crypto",
   "+grit/blink_resources.h",
   "+grit/content_strings.h",
 
   "+dbus",
   "+gpu",
+  "+media",
   "+mojo/common",
   "+mojo/edk/embedder",
   "+mojo/edk/js",
   "+mojo/edk/test",
-  "+mojo/message_pump",
   "+mojo/public",
   "+net",
   "+ppapi",
@@ -61,13 +69,13 @@ include_rules = [
   "+third_party/flac",
   "+third_party/libjingle",
   "+third_party/mozilla",
-  "+third_party/npapi/bindings",
   "+third_party/ocmock",
   "+third_party/re2",
   "+third_party/skia",
   "+third_party/sqlite",
   "+third_party/khronos",
   "+third_party/webrtc",
+  "+third_party/webrtc_overrides",
   "+third_party/zlib/google",
   "+third_party/WebKit/public/platform",
   "+third_party/WebKit/public/web",
@@ -79,6 +87,7 @@ include_rules = [
   "+ui/aura",
   "+ui/base",
   "+ui/compositor",
+  "+ui/display",
   "+ui/events",
   "+ui/gfx",
   "+ui/gl",
@@ -112,3 +121,11 @@ include_rules = [
   # For generated JNI includes.
   "+jni",
 ]
+
+# content -> content/shell dependency is not allowed, except for browser tests.
+specific_include_rules = {
+  ".*_browsertest[a-z_]*\.(cc|h)": [
+    "+content/shell/browser",
+    "+content/shell/common",
+  ],
+}

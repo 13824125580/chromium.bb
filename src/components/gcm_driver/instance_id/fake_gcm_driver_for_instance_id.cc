@@ -9,18 +9,19 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/gcm_driver/gcm_client.h"
 
 namespace instance_id {
 
-FakeGCMDriverForInstanceID::FakeGCMDriverForInstanceID() {
-}
+FakeGCMDriverForInstanceID::FakeGCMDriverForInstanceID()
+    : gcm::FakeGCMDriver(base::ThreadTaskRunnerHandle::Get()) {}
 
 FakeGCMDriverForInstanceID::~FakeGCMDriverForInstanceID() {
 }
 
-gcm::InstanceIDHandler* FakeGCMDriverForInstanceID::GetInstanceIDHandler() {
+gcm::InstanceIDHandler*
+FakeGCMDriverForInstanceID::GetInstanceIDHandlerInternal() {
   return this;
 }
 

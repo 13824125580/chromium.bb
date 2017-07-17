@@ -5,9 +5,6 @@
 /**
  * @fileoverview 'settings-search-engine-entry' is a component for showing a
  * search engine with its name, domain and query URL.
- *
- * @group Chrome Settings Elements
- * @element settings-search-engine-entry
  */
 Polymer({
   is: 'settings-search-engine-entry',
@@ -27,7 +24,7 @@ Polymer({
     },
   },
 
-  /** @private {!settings.SearchEnginesBrowserProxy} */
+  /** @private {settings.SearchEnginesBrowserProxy} */
   browserProxy_: null,
 
   /** @override */
@@ -73,5 +70,15 @@ Polymer({
   /** @private */
   closePopupMenu_: function() {
     this.$$('iron-dropdown').close();
+  },
+
+  /**
+   * @param {?string} url The icon URL if available.
+   * @return {string} A set of icon URLs.
+   * @private
+   */
+  getIconSet_: function(url) {
+    // Force default icon, if no |engine.iconURL| is available.
+    return cr.icon.getFaviconImageSet(url || '');
   },
 });

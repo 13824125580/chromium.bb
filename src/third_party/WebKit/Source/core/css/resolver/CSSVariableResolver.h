@@ -14,6 +14,7 @@
 namespace blink {
 
 class CSSParserTokenRange;
+class CSSPendingSubstitutionValue;
 class CSSVariableData;
 class CSSVariableReferenceValue;
 class StyleResolverState;
@@ -22,22 +23,25 @@ class StyleVariableData;
 class CSSVariableResolver {
 public:
     static void resolveVariableDefinitions(StyleVariableData*);
-    static void resolveAndApplyVariableReferences(StyleResolverState&, CSSPropertyID, const CSSVariableReferenceValue&);
+    static const CSSValue* resolveVariableReferences(StyleResolverState&, CSSPropertyID, const CSSVariableReferenceValue&);
+    static const CSSValue* resolvePendingSubstitutions(StyleResolverState&, CSSPropertyID, const CSSPendingSubstitutionValue&);
 
     // Shorthand properties are not supported.
-    static PassRefPtrWillBeRawPtr<CSSValue> resolveVariableReferences(StyleVariableData*, CSSPropertyID, const CSSVariableReferenceValue&);
+    static CSSValue* resolveVariableReferences(StyleVariableData*, CSSPropertyID, const CSSVariableReferenceValue&);
 
 private:
     CSSVariableResolver(StyleVariableData*);
 
     // These return false if we encounter a reference to an invalid variable with no fallback
 
-    // Resolves a range which may contain var() references
+    // Resolves a range which may contain var() references or @apply rules
     bool resolveTokenRange(CSSParserTokenRange, Vector<CSSParserToken>& result);
     // Resolves the fallback (if present) of a var() reference, starting from the comma
     bool resolveFallback(CSSParserTokenRange, Vector<CSSParserToken>& result);
     // Resolves the contents of a var() reference
     bool resolveVariableReference(CSSParserTokenRange, Vector<CSSParserToken>& result);
+    // Consumes and resolves an @apply rule
+    void resolveApplyAtRule(CSSParserTokenRange&, Vector<CSSParserToken>& result);
 
     // These return null if the custom property is invalid
 

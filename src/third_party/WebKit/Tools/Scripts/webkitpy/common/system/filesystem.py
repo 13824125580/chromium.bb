@@ -28,6 +28,7 @@
 
 """Wrapper object for the file system / source tree."""
 
+import stat
 import codecs
 import errno
 import exceptions
@@ -38,6 +39,7 @@ import shutil
 import sys
 import tempfile
 import time
+
 
 class FileSystem(object):
     """FileSystem interface for webkitpy.
@@ -147,6 +149,7 @@ class FileSystem(object):
         methods. If you need a string, coerce the object to a string and go from there.
         """
         class TemporaryDirectory(object):
+
             def __init__(self, **kwargs):
                 self._kwargs = kwargs
                 self._directory_path = tempfile.mkdtemp(**self._kwargs)
@@ -170,7 +173,7 @@ class FileSystem(object):
         """Create the specified directory if it doesn't already exist."""
         try:
             os.makedirs(self.join(*path))
-        except OSError, e:
+        except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
 
@@ -203,7 +206,9 @@ class FileSystem(object):
 
     def open_text_file_for_reading(self, path):
         # Note: There appears to be an issue with the returned file objects
-        # not being seekable. See http://stackoverflow.com/questions/1510188/can-seek-and-tell-work-with-utf-8-encoded-documents-in-python .
+        # not being seekable. See
+        # http://stackoverflow.com/questions/1510188/can-seek-and-tell-work-with-utf-8-encoded-documents-in-python
+        # .
         return codecs.open(path, 'r', 'utf8')
 
     def open_text_file_for_writing(self, path):
@@ -250,7 +255,7 @@ class FileSystem(object):
             try:
                 osremove(path)
                 return True
-            except exceptions.WindowsError, e:
+            except exceptions.WindowsError as e:
                 time.sleep(sleep_interval)
                 retry_timeout_sec -= sleep_interval
                 if retry_timeout_sec < 0:
@@ -270,3 +275,6 @@ class FileSystem(object):
     def splitext(self, path):
         """Return (dirname + os.sep + basename, '.' + ext)"""
         return os.path.splitext(path)
+
+    def make_executable(self, file_path):
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP)

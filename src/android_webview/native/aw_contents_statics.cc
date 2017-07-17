@@ -12,6 +12,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/url_constants.h"
 #include "jni/AwContentsStatics_jni.h"
 #include "net/cert/cert_database.h"
@@ -50,36 +51,6 @@ void ClearClientCertPreferences(JNIEnv* env,
       FROM_HERE,
       base::Bind(&NotifyClientCertificatesChanged),
       base::Bind(&ClientCertificatesCleared, base::Owned(j_callback)));
-}
-
-// static
-void SetDataReductionProxyKey(JNIEnv* env,
-                              const JavaParamRef<jclass>&,
-                              const JavaParamRef<jstring>& key) {
-  AwBrowserContext* browser_context = AwBrowserContext::GetDefault();
-  DCHECK(browser_context);
-  DCHECK(browser_context->GetRequestContext());
-  // The following call to GetRequestContext() could possibly be the first such
-  // call, which means AwURLRequestContextGetter::InitializeURLRequestContext
-  // will be called on IO thread as a result.
-  AwURLRequestContextGetter* aw_url_request_context_getter =
-      static_cast<AwURLRequestContextGetter*>(
-          browser_context->GetRequestContext());
-
-  // This PostTask has to be called after GetRequestContext, because SetKeyOnIO
-  // needs a valid DataReductionProxyRequestOptions object.
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&AwURLRequestContextGetter::SetKeyOnIO,
-                                     aw_url_request_context_getter,
-                                     ConvertJavaStringToUTF8(env, key)));
-}
-
-// static
-void SetDataReductionProxyEnabled(JNIEnv* env,
-                                  const JavaParamRef<jclass>&,
-                                  jboolean enabled) {
-  AwBrowserContext::SetDataReductionProxyEnabled(enabled);
 }
 
 // static

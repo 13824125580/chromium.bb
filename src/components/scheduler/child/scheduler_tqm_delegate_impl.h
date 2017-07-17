@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_SCHEDULER_CHILD_SCHEDULER_TQM_DELEGATE_IMPL_H_
 #define COMPONENTS_SCHEDULER_CHILD_SCHEDULER_TQM_DELEGATE_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/time/tick_clock.h"
@@ -18,7 +20,7 @@ class SCHEDULER_EXPORT SchedulerTqmDelegateImpl : public SchedulerTqmDelegate {
   // |message_loop| is not owned and must outlive the lifetime of this object.
   static scoped_refptr<SchedulerTqmDelegateImpl> Create(
       base::MessageLoop* message_loop,
-      scoped_ptr<base::TickClock> time_source);
+      std::unique_ptr<base::TickClock> time_source);
 
   // SchedulerTqmDelegate implementation
   void SetDefaultTaskRunner(
@@ -39,12 +41,12 @@ class SCHEDULER_EXPORT SchedulerTqmDelegateImpl : public SchedulerTqmDelegate {
 
  private:
   SchedulerTqmDelegateImpl(base::MessageLoop* message_loop,
-                           scoped_ptr<base::TickClock> time_source);
+                           std::unique_ptr<base::TickClock> time_source);
 
   // Not owned.
   base::MessageLoop* message_loop_;
   scoped_refptr<SingleThreadTaskRunner> message_loop_task_runner_;
-  scoped_ptr<base::TickClock> time_source_;
+  std::unique_ptr<base::TickClock> time_source_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerTqmDelegateImpl);
 };

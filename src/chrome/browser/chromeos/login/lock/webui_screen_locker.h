@@ -7,13 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "ash/shell_delegate.h"
 #include "ash/wm/lock_state_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker_delegate.h"
@@ -24,7 +24,7 @@
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "ui/gfx/display_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
@@ -58,7 +58,7 @@ class WebUIScreenLocker : public WebUILoginView,
                           public PowerManagerClient::Observer,
                           public ash::VirtualKeyboardStateObserver,
                           public keyboard::KeyboardControllerObserver,
-                          public gfx::DisplayObserver,
+                          public display::DisplayObserver,
                           public content::WebContentsObserver {
  public:
   explicit WebUIScreenLocker(ScreenLocker* screen_locker);
@@ -114,14 +114,6 @@ class WebUIScreenLocker : public WebUILoginView,
 
   // content::WebContentsObserver:
   void RenderProcessGone(base::TerminationStatus status) override;
-  // TODO(jdufault): Remove PluginCrashed, PluginHungStatusChanged,
-  // WebContentsDestroyed overrides once crbug.com/452599 is resolved.
-  void PluginCrashed(const base::FilePath& plugin_path,
-                     base::ProcessId plugin_pid) override;
-  void PluginHungStatusChanged(int plugin_child_id,
-                               const base::FilePath& plugin_path,
-                               bool is_hung) override;
-  void WebContentsDestroyed() override;
 
   // ash::KeyboardStateObserver:
   void OnVirtualKeyboardStateChanged(bool activated) override;
@@ -129,10 +121,10 @@ class WebUIScreenLocker : public WebUILoginView,
   // keyboard::KeyboardControllerObserver:
   void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
 
-  // gfx::DisplayObserver:
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  // display::DisplayObserver:
+  void OnDisplayAdded(const display::Display& new_display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics) override;
 
   // Returns instance of the OOBE WebUI.
@@ -150,27 +142,27 @@ class WebUIScreenLocker : public WebUILoginView,
   void ResetAndFocusUserPod();
 
   // The screen locker window.
-  views::Widget* lock_window_;
+  views::Widget* lock_window_ = nullptr;
 
   // Sign-in Screen controller instance (owns login screens).
-  scoped_ptr<SignInScreenController> signin_screen_controller_;
+  std::unique_ptr<SignInScreenController> signin_screen_controller_;
 
   // Login UI implementation instance.
-  scoped_ptr<WebUILoginDisplay> login_display_;
+  std::unique_ptr<WebUILoginDisplay> login_display_;
 
   // Tracks when the lock window is displayed and ready.
-  bool lock_ready_;
+  bool lock_ready_ = false;
 
   // Tracks when the WebUI finishes loading.
-  bool webui_ready_;
+  bool webui_ready_ = false;
 
   // Time when lock was initiated, required for metrics.
   base::TimeTicks lock_time_;
 
-  scoped_ptr<login::NetworkStateHelper> network_state_helper_;
+  std::unique_ptr<login::NetworkStateHelper> network_state_helper_;
 
-  // True is subscribed as keyboard controller observer.
-  bool is_observing_keyboard_;
+  // True iff this object is observing a keyboard controller.
+  bool is_observing_keyboard_ = false;
 
   base::WeakPtrFactory<WebUIScreenLocker> weak_factory_;
 

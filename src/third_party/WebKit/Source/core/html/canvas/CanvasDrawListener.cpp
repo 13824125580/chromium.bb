@@ -4,6 +4,8 @@
 
 #include "core/html/canvas/CanvasDrawListener.h"
 
+#include <memory>
+
 namespace blink {
 
 CanvasDrawListener::~CanvasDrawListener() {}
@@ -23,9 +25,9 @@ void CanvasDrawListener::requestFrame()
     m_frameCaptureRequested = true;
 }
 
-CanvasDrawListener::CanvasDrawListener(const PassOwnPtr<WebCanvasCaptureHandler> handler)
+CanvasDrawListener::CanvasDrawListener(std::unique_ptr<WebCanvasCaptureHandler> handler)
     : m_frameCaptureRequested(true)
-    , m_handler(handler)
+    , m_handler(std::move(handler))
 {
 }
 

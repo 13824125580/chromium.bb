@@ -47,6 +47,11 @@ class FakeDesktopPlatformBackend(FakePlatformBackend):
       return 'win'
 
 
+class FakeContextMap(object):
+  def __init__(self, contexts):
+    self.contexts = contexts
+
+
 class FakeDevtoolsClient(object):
   def __init__(self, remote_port):
     self.is_alive = True
@@ -57,8 +62,8 @@ class FakeDevtoolsClient(object):
   def IsAlive(self):
     return self.is_alive
 
-  def StartChromeTracing(self, trace_options, filter_string, timeout=10):
-    del trace_options, filter_string, timeout  # unused
+  def StartChromeTracing(self, trace_options, timeout=10):
+    del trace_options, timeout  # unused
     self.is_tracing_running = True
 
   def StopChromeTracing(self, trace_data_builder):
@@ -69,6 +74,9 @@ class FakeDevtoolsClient(object):
 
   def IsChromeTracingSupported(self):
     return True
+
+  def GetUpdatedInspectableContexts(self):
+    return FakeContextMap([])
 
 
 class ChromeTracingAgentTest(unittest.TestCase):
@@ -81,16 +89,21 @@ class ChromeTracingAgentTest(unittest.TestCase):
     assert chrome_tracing_agent.ChromeTracingAgent.IsSupported(platform_backend)
     agent = chrome_tracing_agent.ChromeTracingAgent(platform_backend)
     config = tracing_config.TracingConfig()
-    config.tracing_category_filter.AddIncludedCategory('foo')
     config.enable_chrome_trace = enable_chrome_trace
+    config.chrome_trace_config.category_filter.AddIncludedCategory('foo')
     agent._platform_backend.tracing_controller_backend.is_tracing_running = True
+    agent._test_config = config
     agent.StartAgentTracing(config, 10)
     return agent
+
+  def FlushTracing(self, agent):
+    agent.FlushAgentTracing(agent._test_config, 10, None)
 
   def StopTracing(self, agent):
     agent._platform_backend.tracing_controller_backend.is_tracing_running = (
         False)
-    agent.StopAgentTracing(None)
+    agent.StopAgentTracing()
+    agent.CollectAgentTraceData(None)
 
   def testRegisterDevtoolsClient(self):
     chrome_tracing_devtools_manager.RegisterDevToolsClient(
@@ -187,6 +200,57 @@ class ChromeTracingAgentTest(unittest.TestCase):
     self.StopTracing(tracing_agent1)
 
     tracing_agent2 = self.StartTracing(self.platform2)
+    self.assertTrue(devtool4.is_tracing_running)
+    self.StopTracing(tracing_agent2)
+    self.assertFalse(devtool4.is_tracing_running)
+
+  def testFlushTracing(self):
+    devtool1 = FakeDevtoolsClient(1)
+    devtool2 = FakeDevtoolsClient(2)
+    devtool3 = FakeDevtoolsClient(3)
+    devtool4 = FakeDevtoolsClient(2)
+
+    # Register devtools 1, 2, 3 on platform1 and devtool 4 on platform 2.
+    chrome_tracing_devtools_manager.RegisterDevToolsClient(
+        devtool1, self.platform1)
+    chrome_tracing_devtools_manager.RegisterDevToolsClient(
+        devtool2, self.platform1)
+    chrome_tracing_devtools_manager.RegisterDevToolsClient(
+        devtool3, self.platform1)
+    chrome_tracing_devtools_manager.RegisterDevToolsClient(
+        devtool4, self.platform2)
+    devtool2.is_alive = False
+
+    tracing_agent1 = self.StartTracing(self.platform1)
+
+    self.assertTrue(devtool1.is_tracing_running)
+    self.assertFalse(devtool2.is_tracing_running)
+    self.assertTrue(devtool3.is_tracing_running)
+    # Devtool 4 shouldn't have tracing started although it has the same remote
+    # port as devtool 2.
+    self.assertFalse(devtool4.is_tracing_running)
+
+    for _ in xrange(5):
+      self.FlushTracing(tracing_agent1)
+      self.assertTrue(devtool1.is_tracing_running)
+      self.assertFalse(devtool2.is_tracing_running)
+      self.assertTrue(devtool3.is_tracing_running)
+      self.assertFalse(devtool4.is_tracing_running)
+
+    self.StopTracing(tracing_agent1)
+    self.assertFalse(devtool1.is_tracing_running)
+    self.assertFalse(devtool2.is_tracing_running)
+    self.assertFalse(devtool3.is_tracing_running)
+    self.assertFalse(devtool4.is_tracing_running)
+
+    # Test that it is ok to start, flush & stop tracing on platform1 again.
+    tracing_agent1 = self.StartTracing(self.platform1)
+    self.FlushTracing(tracing_agent1)
+    self.StopTracing(tracing_agent1)
+
+    tracing_agent2 = self.StartTracing(self.platform2)
+    self.assertTrue(devtool4.is_tracing_running)
+    self.FlushTracing(tracing_agent2)
     self.assertTrue(devtool4.is_tracing_running)
     self.StopTracing(tracing_agent2)
     self.assertFalse(devtool4.is_tracing_running)

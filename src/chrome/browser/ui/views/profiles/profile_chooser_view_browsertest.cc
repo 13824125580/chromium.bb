@@ -8,7 +8,9 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "chrome/browser/browser_process.h"
@@ -22,7 +24,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/profiles/avatar_menu_button.h"
+#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "chrome/browser/ui/views/profiles/user_manager_view.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -33,6 +35,7 @@
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "ui/events/event_utils.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/webview/webview.h"
 
 namespace {
@@ -131,15 +134,13 @@ class ProfileChooserViewExtensionsTest : public ExtensionBrowserTest {
     views::View* button = browser_view->frame()->GetNewAvatarMenuButton();
     if (!button)
       NOTREACHED() << "NewAvatarButton not found.";
-    if (browser_view->frame()->GetAvatarMenuButton())
-      NOTREACHED() << "Old Avatar Menu Button found.";
 
     ProfileChooserView::close_on_deactivate_for_testing_ = false;
 
     ui::MouseEvent e(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(),
                      ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON, 0);
     button->OnMouseReleased(e);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(ProfileChooserView::IsShowing());
 
     // Create this observer before lock is pressed to avoid a race condition.
@@ -173,15 +174,6 @@ class ProfileChooserViewExtensionsTest : public ExtensionBrowserTest {
     return registry;
   }
 
-  void WaitForUserManager() {
-    // If the User Manager hasn't shown yet, wait for it to show up.
-    // TODO(mlerman): As per crbug.com/450221, we should somehow observe when
-    // the UserManager is created and wait for that event.
-    if (!UserManager::IsShowing())
-      base::MessageLoop::current()->RunUntilIdle();
-    EXPECT_TRUE(UserManager::IsShowing());
-  }
-
   content::WindowedNotificationObserver* window_close_observer() {
     return window_close_observer_.get();
   }
@@ -190,21 +182,22 @@ class ProfileChooserViewExtensionsTest : public ExtensionBrowserTest {
     return ProfileChooserView::profile_bubble_;
   }
 
-  views::View* signin_current_profile_link() {
-    return ProfileChooserView::profile_bubble_->signin_current_profile_link_;
+  views::View* signin_current_profile_button() {
+    return ProfileChooserView::profile_bubble_->signin_current_profile_button_;
   }
 
   void ShowSigninView() {
+    DCHECK(!switches::UsePasswordSeparatedSigninFlow());
     DCHECK(current_profile_bubble());
     DCHECK(current_profile_bubble()->avatar_menu_);
     current_profile_bubble()->ShowView(
         profiles::BUBBLE_VIEW_MODE_GAIA_SIGNIN,
         current_profile_bubble()->avatar_menu_.get());
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
-  scoped_ptr<content::WindowedNotificationObserver> window_close_observer_;
+  std::unique_ptr<content::WindowedNotificationObserver> window_close_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileChooserViewExtensionsTest);
 };
@@ -228,10 +221,15 @@ IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, SigninButtonHasFocus) {
   ASSERT_TRUE(profiles::IsMultipleProfilesEnabled());
   ASSERT_NO_FATAL_FAILURE(OpenProfileChooserView(browser()));
 
-  EXPECT_TRUE(signin_current_profile_link()->HasFocus());
+  EXPECT_TRUE(signin_current_profile_button()->HasFocus());
 }
 
 IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, ContentAreaHasFocus) {
+  // The ProfileChooserView doesn't handle sign in under the new password
+  // separated signin flow.
+  if (switches::UsePasswordSeparatedSigninFlow())
+    return;
+
   ASSERT_TRUE(profiles::IsMultipleProfilesEnabled());
 
   ASSERT_NO_FATAL_FAILURE(OpenProfileChooserView(browser()));
@@ -257,11 +255,13 @@ IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, ViewProfileUMA) {
       ProfileMetrics::PROFILE_AVATAR_MENU_UPGRADE_VIEW, 1);
 }
 
-// Flaky: http://crbug.com/450221
-// WaitForUserManager()'s RunUntilIdle isn't always sufficient for the
-// UserManager to be showing.
-IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, DISABLED_LockProfile) {
+IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, LockProfile) {
   ASSERT_TRUE(profiles::IsMultipleProfilesEnabled());
+
+  // Set up the message loop for the user manager.
+  scoped_refptr<content::MessageLoopRunner> runner(
+      new content::MessageLoopRunner);
+  UserManager::AddOnUserManagerShownCallbackForTesting(runner->QuitClosure());
 
   SetupProfilesForLock(browser()->profile());
   EXPECT_EQ(1U, BrowserList::GetInstance()->size());
@@ -276,27 +276,34 @@ IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest, DISABLED_LockProfile) {
   window_close_observer()->Wait();
   EXPECT_TRUE(BrowserList::GetInstance()->empty());
 
-  WaitForUserManager();
+  // Wait until the user manager is shown.
+  runner->Run();
+
   // We need to hide the User Manager or else the process can't die.
   UserManager::Hide();
 }
 
-// Flaky: http://crbug.com/450221
-// WaitForUserManager()'s RunUntilIdle isn't always sufficient for the
-// UserManager to be showing.
 IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest,
-                       DISABLED_LockProfileBlockExtensions) {
+                       LockProfileBlockExtensions) {
   ASSERT_TRUE(profiles::IsMultipleProfilesEnabled());
   // Make sure we have at least one enabled extension.
   extensions::ExtensionRegistry* registry =
       GetPreparedRegistry(browser()->profile());
+
+  // Set up the message loop for the user manager.
+  scoped_refptr<content::MessageLoopRunner> runner(
+      new content::MessageLoopRunner);
+  UserManager::AddOnUserManagerShownCallbackForTesting(runner->QuitClosure());
+
   SetupProfilesForLock(browser()->profile());
 
   ASSERT_NO_FATAL_FAILURE(OpenProfileChooserView(browser()));
   ClickProfileChooserViewLockButton();
   window_close_observer()->Wait();
 
-  WaitForUserManager();
+  // Wait until the user manager is shown.
+  runner->Run();
+
   // Assert that the ExtensionService is blocked.
   ASSERT_EQ(1U, registry->blocked_extensions().size());
 
@@ -304,16 +311,18 @@ IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest,
   UserManager::Hide();
 }
 
-// Flaky: http://crbug.com/450221
-// WaitForUserManager()'s RunUntilIdle isn't always sufficient for the
-// UserManager to be showing.
 IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest,
-                       DISABLED_LockProfileNoBlockOtherProfileExtensions) {
+                       LockProfileNoBlockOtherProfileExtensions) {
   ASSERT_TRUE(profiles::IsMultipleProfilesEnabled());
   // Make sure we have at least one enabled extension.
   extensions::ExtensionRegistry* registry =
       GetPreparedRegistry(browser()->profile());
   const size_t total_enabled_extensions = registry->enabled_extensions().size();
+
+  // Set up the message loop for the user manager.
+  scoped_refptr<content::MessageLoopRunner> runner(
+      new content::MessageLoopRunner);
+  UserManager::AddOnUserManagerShownCallbackForTesting(runner->QuitClosure());
 
   // Create a different profile and then lock it.
   Profile *signed_in = CreateTestingProfile("signed_in");
@@ -327,7 +336,9 @@ IN_PROC_BROWSER_TEST_F(ProfileChooserViewExtensionsTest,
   window_close_observer()->Wait();
   EXPECT_EQ(1U, BrowserList::GetInstance()->size());
 
-  WaitForUserManager();
+  // Wait until the user manager is shown.
+  runner->Run();
+
   // Assert that the first profile's extensions are not blocked.
   ASSERT_EQ(total_enabled_extensions, registry->enabled_extensions().size());
   ASSERT_EQ(0U, registry->blocked_extensions().size());

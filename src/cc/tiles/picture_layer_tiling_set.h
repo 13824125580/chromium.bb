@@ -40,12 +40,12 @@ class CC_EXPORT PictureLayerTilingSet {
     size_t end;
   };
 
-  static scoped_ptr<PictureLayerTilingSet> Create(
+  static std::unique_ptr<PictureLayerTilingSet> Create(
       WhichTree tree,
       PictureLayerTilingClient* client,
-      size_t tiling_interest_area_padding,
+      int tiling_interest_area_padding,
       float skewport_target_time_in_seconds,
-      int skewport_extrapolation_limit_in_content);
+      int skewport_extrapolation_limit_in_screen_pixels);
 
   ~PictureLayerTilingSet();
 
@@ -59,7 +59,7 @@ class CC_EXPORT PictureLayerTilingSet {
 
   // This function is called on the active tree during activation.
   void UpdateTilingsToCurrentRasterSourceForActivation(
-      scoped_refptr<DisplayListRasterSource> raster_source,
+      scoped_refptr<RasterSource> raster_source,
       const PictureLayerTilingSet* pending_twin_set,
       const Region& layer_invalidation,
       const gfx::Scaling2d& minimum_contents_scale,
@@ -67,19 +67,18 @@ class CC_EXPORT PictureLayerTilingSet {
 
   // This function is called on the sync tree during commit.
   void UpdateTilingsToCurrentRasterSourceForCommit(
-      scoped_refptr<DisplayListRasterSource> raster_source,
+      scoped_refptr<RasterSource> raster_source,
       const Region& layer_invalidation,
       const gfx::Scaling2d& minimum_contents_scale,
       const gfx::Scaling2d& maximum_contents_scale);
 
   // This function is called on the sync tree right after commit.
   void UpdateRasterSourceDueToLCDChange(
-      const scoped_refptr<DisplayListRasterSource>& raster_source,
+      scoped_refptr<RasterSource> raster_source,
       const Region& layer_invalidation);
 
-  PictureLayerTiling* AddTiling(
-      const gfx::AxisTransform2d& contents_transform,
-      scoped_refptr<DisplayListRasterSource> raster_source);
+  PictureLayerTiling* AddTiling(const gfx::AxisTransform2d& contents_transform,
+                                scoped_refptr<RasterSource> raster_source);
   size_t num_tilings() const { return tilings_.size(); }
   int NumHighResTilings() const;
   PictureLayerTiling* tiling_at(size_t idx) { return tilings_[idx].get(); }
@@ -122,6 +121,7 @@ class CC_EXPORT PictureLayerTilingSet {
   void RemoveAllTiles();
 
   // Update the rects and priorities for tiles based on the given information.
+  // Returns true if PrepareTiles is required.
   bool UpdateTilePriorities(const gfx::Rect& required_rect_in_layer_space,
                             const gfx::Scaling2d& ideal_contents_scale,
                             double current_frame_time_in_seconds,
@@ -179,30 +179,81 @@ class CC_EXPORT PictureLayerTilingSet {
 
   TilingRange GetTilingRange(TilingRangeType type) const;
 
+ protected:
+  struct FrameVisibleRect {
+    FrameVisibleRect(const gfx::Rect& rect, double time_in_seconds)
+        : visible_rect_in_layer_space(rect),
+          frame_time_in_seconds(time_in_seconds) {}
+
+    gfx::Rect visible_rect_in_layer_space;
+    double frame_time_in_seconds;
+  };
+
+  struct StateSinceLastTilePriorityUpdate {
+    class AutoClear {
+     public:
+      explicit AutoClear(StateSinceLastTilePriorityUpdate* state_to_clear)
+          : state_to_clear_(state_to_clear) {}
+      ~AutoClear() { *state_to_clear_ = StateSinceLastTilePriorityUpdate(); }
+
  private:
+      StateSinceLastTilePriorityUpdate* state_to_clear_;
+    };
+
+    StateSinceLastTilePriorityUpdate()
+        : invalidated(false), added_tilings(false) {}
+
+    bool invalidated;
+    bool added_tilings;
+  };
+
   explicit PictureLayerTilingSet(
       WhichTree tree,
       PictureLayerTilingClient* client,
-      size_t tiling_interest_area_padding,
+      int tiling_interest_area_padding,
       float skewport_target_time_in_seconds,
-      int skewport_extrapolation_limit_in_content_pixels);
+      int skewport_extrapolation_limit_in_screen_pixels);
 
   void CopyTilingsAndPropertiesFromPendingTwin(
       const PictureLayerTilingSet* pending_twin_set,
-      const scoped_refptr<DisplayListRasterSource>& raster_source,
+      scoped_refptr<RasterSource> raster_source,
       const Region& layer_invalidation);
 
   void VerifyTilings(const PictureLayerTilingSet* pending_twin_set) const;
 
-  std::vector<scoped_ptr<PictureLayerTiling>> tilings_;
+  bool TilingsNeedUpdate(const gfx::Rect& required_rect_in_layer_space,
+                         double current_frame_time_in_Seconds);
+  gfx::Rect ComputeSkewport(const gfx::Rect& visible_rect_in_layer_space,
+                            double current_frame_time_in_seconds,
+                            float ideal_contents_scale);
+  gfx::Rect ComputeSoonBorderRect(const gfx::Rect& visible_rect_in_layer_space,
+                                  float ideal_contents_scale);
+  void UpdatePriorityRects(const gfx::Rect& visible_rect_in_layer_space,
+                           double current_frame_time_in_seconds,
+                           float ideal_contents_scale);
 
-  const size_t tiling_interest_area_padding_;
+  std::vector<std::unique_ptr<PictureLayerTiling>> tilings_;
+
+  const int tiling_interest_area_padding_;
   const float skewport_target_time_in_seconds_;
-  const int skewport_extrapolation_limit_in_content_pixels_;
+  const int skewport_extrapolation_limit_in_screen_pixels_;
   WhichTree tree_;
   PictureLayerTilingClient* client_;
+  // State saved for computing velocities based on finite differences.
+  // .front() of the list refers to the most recent FrameVisibleRect.
+  std::list<FrameVisibleRect> visible_rect_history_;
+  StateSinceLastTilePriorityUpdate state_since_last_tile_priority_update_;
+
+  scoped_refptr<RasterSource> raster_source_;
+
+  gfx::Rect visible_rect_in_layer_space_;
+  gfx::Rect skewport_in_layer_space_;
+  gfx::Rect soon_border_rect_in_layer_space_;
+  gfx::Rect eventually_rect_in_layer_space_;
 
   friend class Iterator;
+
+ private:
   DISALLOW_COPY_AND_ASSIGN(PictureLayerTilingSet);
 };
 

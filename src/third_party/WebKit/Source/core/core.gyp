@@ -62,37 +62,6 @@
 
   'targets': [
     {
-      # GN version: //third_party/WebKit/Source/core/inspector:instrumentation_sources
-      'target_name': 'inspector_instrumentation_sources',
-      'type': 'none',
-      'dependencies': [],
-      'actions': [
-        {
-          'action_name': 'generateInspectorInstrumentation',
-          'inputs': [
-            # The python script in action below.
-            'inspector/CodeGeneratorInstrumentation.py',
-            # Input file for the script.
-            'inspector/InspectorInstrumentation.idl',
-          ],
-          'outputs': [
-            '<(blink_core_output_dir)/InspectorConsoleInstrumentationInl.h',
-            '<(blink_core_output_dir)/InspectorInstrumentationInl.h',
-            '<(blink_core_output_dir)/InspectorOverridesInl.h',
-            '<(blink_core_output_dir)/InstrumentingAgentsInl.h',
-            '<(blink_core_output_dir)/InspectorInstrumentationImpl.cpp',
-          ],
-          'action': [
-            'python',
-            'inspector/CodeGeneratorInstrumentation.py',
-            'inspector/InspectorInstrumentation.idl',
-            '--output_dir', '<(blink_core_output_dir)',
-          ],
-          'message': 'Generating Inspector instrumentation code from InspectorInstrumentation.idl',
-        }
-      ]
-    },
-    {
       # GN version: //third_party/WebKit/Source/core:core_generated
       'target_name': 'webcore_generated',
       'type': 'static_library',
@@ -100,7 +69,8 @@
       'dependencies': [
         'webcore_prerequisites',
         'core_generated.gyp:make_core_generated',
-        'inspector_instrumentation_sources',
+        'inspector/inspector.gyp:instrumentation_sources',
+        'inspector/inspector.gyp:protocol_sources',
         '../bindings/core/v8/generated.gyp:bindings_core_v8_generated',
         # FIXME: don't depend on bindings_modules http://crbug.com/358074
         '../bindings/modules/generated.gyp:modules_event_generated',
@@ -114,12 +84,11 @@
         '<(DEPTH)/third_party/libwebp/libwebp.gyp:libwebp',
         '<(DEPTH)/third_party/libxml/libxml.gyp:libxml',
         '<(DEPTH)/third_party/libxslt/libxslt.gyp:libxslt',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/third_party/snappy/snappy.gyp:snappy',
         '<(DEPTH)/third_party/sqlite/sqlite.gyp:sqlite',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'include_dirs': [
         '<@(webcore_include_dirs)',
@@ -159,7 +128,8 @@
       'target_name': 'webcore_prerequisites',
       'type': 'none',
       'dependencies': [
-        'inspector_instrumentation_sources',
+        'inspector/inspector.gyp:instrumentation_sources',
+        'inspector/inspector.gyp:protocol_sources',
         'core_generated.gyp:make_core_generated',
         '../bindings/core/v8/generated.gyp:bindings_core_v8_generated',
         # FIXME: don't depend on bindings_modules http://crbug.com/358074
@@ -177,13 +147,13 @@
         '<(DEPTH)/third_party/libwebp/libwebp.gyp:libwebp',
         '<(DEPTH)/third_party/libxml/libxml.gyp:libxml',
         '<(DEPTH)/third_party/libxslt/libxslt.gyp:libxslt',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/ots/ots.gyp:ots',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/third_party/sqlite/sqlite.gyp:sqlite',
         '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'export_dependent_settings': [
         '../wtf/wtf.gyp:wtf',
@@ -196,13 +166,12 @@
         '<(DEPTH)/third_party/libwebp/libwebp.gyp:libwebp',
         '<(DEPTH)/third_party/libxml/libxml.gyp:libxml',
         '<(DEPTH)/third_party/libxslt/libxslt.gyp:libxslt',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/ots/ots.gyp:ots',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/third_party/sqlite/sqlite.gyp:sqlite',
         '<(DEPTH)/third_party/zlib/zlib.gyp:zlib',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'direct_dependent_settings': {
         'defines': [
@@ -289,6 +258,13 @@
       ],
       # Disable c4267 warnings until we fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
+      'conditions': [
+        # Shard this target into parts to work around linker limitations.
+        # on link time code generation builds. See crbug.com/599186
+        ['OS=="win" and buildtype=="Official"', {
+          'msvs_shard': 5,
+        }],
+      ],
     },
     {
       # GN version: //third_party/WebKit/Source/core:html
@@ -301,7 +277,7 @@
         '<@(webcore_html_files)',
       ],
       'conditions': [
-        # Shard this taret into parts to work around linker limitations.
+        # Shard this target into parts to work around linker limitations.
         # on link time code generation builds.
         ['OS=="win" and buildtype=="Official"', {
           'msvs_shard': 5,
@@ -340,7 +316,7 @@
         '<@(webcore_rendering_files)',
       ],
       'conditions': [
-        # Shard this taret into parts to work around linker limitations.
+        # Shard this target into parts to work around linker limitations.
         # on link time code generation builds.
         ['OS=="win" and buildtype=="Official"', {
           'msvs_shard': 5,
@@ -451,20 +427,18 @@
         '../platform/blink_platform.gyp:blink_platform',
         '../wtf/wtf.gyp:wtf',
         '<(DEPTH)/skia/skia.gyp:skia',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'export_dependent_settings': [
         'webcore_generated',
         '../platform/blink_platform.gyp:blink_platform',
         '../wtf/wtf.gyp:wtf',
         '<(DEPTH)/skia/skia.gyp:skia',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'direct_dependent_settings': {
         'include_dirs': [
@@ -485,7 +459,8 @@
 
         # webcore_generated dependency
         'core_generated.gyp:make_core_generated',
-        'inspector_instrumentation_sources',
+        'inspector/inspector.gyp:instrumentation_sources',
+        'inspector/inspector.gyp:protocol_sources',
         '../bindings/core/v8/generated.gyp:bindings_core_v8_generated',
         # FIXME: don't depend on bindings_modules http://crbug.com/358074
         '../bindings/modules/generated.gyp:modules_event_generated',
@@ -499,22 +474,20 @@
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/libxml/libxml.gyp:libxml',
         '<(DEPTH)/third_party/libxslt/libxslt.gyp:libxslt',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/third_party/snappy/snappy.gyp:snappy',
         '<(DEPTH)/third_party/sqlite/sqlite.gyp:sqlite',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'export_dependent_settings': [
         '../platform/blink_platform.gyp:blink_platform',
         '../wtf/wtf.gyp:wtf',
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/skia/skia.gyp:skia',
-        '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
         '<(DEPTH)/third_party/qcms/qcms.gyp:qcms',
         '<(DEPTH)/url/url.gyp:url_lib',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
       ],
       'direct_dependent_settings': {
         'include_dirs': [
@@ -522,7 +495,7 @@
         ],
       },
       'conditions': [
-        ['component!="shared_library" or link_core_modules_separately==0', {
+        ['component!="shared_library"', {
         }, {
           'defines': [
             'BLINK_CORE_IMPLEMENTATION=1',

@@ -12,15 +12,16 @@
 #include "WebSize.h"
 #include "WebVector.h"
 
-#include "third_party/skia/include/core/SkColorFilter.h"
-#include "third_party/skia/include/core/SkRRect.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "third_party/skia/include/core/SkXfermode.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
 
+class SkColorFilter;
 class SkImageFilter;
 class SkMatrix44;
 class SkPicture;
+struct SkRect;
+class SkRRect;
 
 namespace cc {
 class FilterOperations;
@@ -36,8 +37,7 @@ class WebDisplayItemList {
 public:
     virtual ~WebDisplayItemList() { }
 
-    // This grabs a ref on the passed-in SkPicture.
-    virtual void appendDrawingItem(const WebRect& visualRect, const SkPicture*) { }
+    virtual void appendDrawingItem(const WebRect& visualRect, sk_sp<const SkPicture>) { }
 
     virtual void appendClipItem(const WebRect& visualRect, const WebRect& clipRect, const WebVector<SkRRect>& roundedClipRects) { }
     virtual void appendEndClipItem(const WebRect& visualRect) { }
@@ -59,6 +59,8 @@ public:
     using ScrollContainerId = const void*;
     virtual void appendScrollItem(const WebRect& visualRect, const WebSize& scrollOffset, ScrollContainerId) { }
     virtual void appendEndScrollItem(const WebRect& visualRect) { }
+
+    virtual void setIsSuitableForGpuRasterization(bool isSuitable) { }
 };
 
 } // namespace blink

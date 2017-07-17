@@ -23,7 +23,6 @@
 
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -31,7 +30,7 @@ namespace blink {
 class Event;
 class ExecutionContext;
 
-class CORE_EXPORT EventListener : public RefCountedWillBeGarbageCollectedFinalized<EventListener> {
+class CORE_EXPORT EventListener : public GarbageCollectedFinalized<EventListener> {
 public:
     enum ListenerType {
         JSEventListenerType,

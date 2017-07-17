@@ -1,5 +1,0 @@
-{
-  "url": "mojo://desktop_wm/",
-  "name": "Desktop Window Manager",
-  "capabilities": { "*": ["*"] }
-}

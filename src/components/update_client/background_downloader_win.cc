@@ -418,7 +418,7 @@ HRESULT CleanupStaleJobs(
 }  // namespace
 
 BackgroundDownloader::BackgroundDownloader(
-    scoped_ptr<CrxDownloader> successor,
+    std::unique_ptr<CrxDownloader> successor,
     net::URLRequestContextGetter* context_getter,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner)
     : CrxDownloader(task_runner, std::move(successor)),
@@ -442,6 +442,10 @@ void BackgroundDownloader::OnTimer() {
   task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&BackgroundDownloader::OnDownloading, base::Unretained(this)));
+}
+
+bool BackgroundDownloader::TimerIsRunning() const {
+  return timer_.get() && timer_->IsRunning();
 }
 
 void BackgroundDownloader::DoStartDownload(const GURL& url) {
@@ -566,7 +570,7 @@ void BackgroundDownloader::OnDownloading() {
 void BackgroundDownloader::EndDownload(HRESULT error) {
   DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
-  DCHECK(!timer_->IsRunning());
+  DCHECK(!TimerIsRunning());
 
   const base::Time download_end_time(base::Time::Now());
   const base::TimeDelta download_time =

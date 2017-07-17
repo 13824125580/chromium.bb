@@ -8028,6 +8028,10 @@ OPJ_BOOL opj_j2k_read_tile_header(      opj_j2k_t * p_j2k,
         *p_tile_index = p_j2k->m_current_tile_number;
         *p_go_on = OPJ_TRUE;
         *p_data_size = opj_tcd_get_decoded_tile_size(p_j2k->m_tcd);
+        if (*p_data_size == (OPJ_UINT32)-1) {
+                return OPJ_FALSE;
+        }
+
         *p_tile_x0 = p_j2k->m_tcd->tcd_image->tiles->x0;
         *p_tile_y0 = p_j2k->m_tcd->tcd_image->tiles->y0;
         *p_tile_x1 = p_j2k->m_tcd->tcd_image->tiles->x1;
@@ -8744,7 +8748,9 @@ static OPJ_BOOL opj_j2k_read_SPCod_SPCoc(  opj_j2k_t *p_j2k,
                                 p_j2k->m_specific_param.m_decoder.m_default_tcp;
 
         /* precondition again */
-        assert(compno < p_j2k->m_private_image->numcomps);
+        if (compno >= p_j2k->m_private_image->numcomps) {
+                return OPJ_FALSE;
+        }
 
         l_tccp = &l_tcp->tccps[compno];
         l_current_ptr = p_header_data;
@@ -9008,7 +9014,9 @@ static OPJ_BOOL opj_j2k_read_SQcd_SQcc(opj_j2k_t *p_j2k,
                                 p_j2k->m_specific_param.m_decoder.m_default_tcp;
 
         /* precondition again*/
-        assert(p_comp_no <  p_j2k->m_private_image->numcomps);
+        if (p_comp_no >=  p_j2k->m_private_image->numcomps) {
+            return OPJ_FALSE;
+        }
 
         l_tccp = &l_tcp->tccps[p_comp_no];
         l_current_ptr = p_header_data;

@@ -41,6 +41,8 @@ MOCK_METHOD2(BindRenderbufferEXT, void(GLenum target, GLuint renderbuffer));
 MOCK_METHOD2(BindSampler, void(GLuint unit, GLuint sampler));
 MOCK_METHOD2(BindTexture, void(GLenum target, GLuint texture));
 MOCK_METHOD2(BindTransformFeedback, void(GLenum target, GLuint id));
+MOCK_METHOD3(BindUniformLocationCHROMIUM,
+             void(GLuint program, GLint location, const char* name));
 MOCK_METHOD1(BindVertexArrayOES, void(GLuint array));
 MOCK_METHOD0(BlendBarrierKHR, void());
 MOCK_METHOD4(BlendColor,
@@ -522,6 +524,7 @@ MOCK_METHOD2(PixelStorei, void(GLenum pname, GLint param));
 MOCK_METHOD2(PointParameteri, void(GLenum pname, GLint param));
 MOCK_METHOD2(PolygonOffset, void(GLfloat factor, GLfloat units));
 MOCK_METHOD0(PopGroupMarkerEXT, void());
+MOCK_METHOD1(PrimitiveRestartIndex, void(GLuint index));
 MOCK_METHOD4(ProgramBinary,
              void(GLuint program,
                   GLenum binaryFormat,

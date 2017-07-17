@@ -54,8 +54,6 @@ public:
     virtual bool isLayoutMultiColumnFlowThread() const { return false; }
     virtual bool isLayoutPagedFlowThread() const { return false; }
 
-    bool supportsPaintInvalidationStateCachedOffsets() const override { return false; }
-
     static LayoutFlowThread* locateFlowThreadContainingBlockOf(const LayoutObject&);
 
     void layout() override;
@@ -82,7 +80,7 @@ public:
     void invalidateColumnSets();
     bool hasValidColumnSetInfo() const { return !m_columnSetsInvalidated && !m_multiColumnSetList.isEmpty(); }
 
-    void mapToVisibleRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect&, const PaintInvalidationState*) const override;
+    bool mapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect&, VisualRectFlags = DefaultVisualRectFlags) const override;
 
     LayoutUnit pageLogicalHeightForOffset(LayoutUnit);
     LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit, PageBoundaryRule);
@@ -107,11 +105,7 @@ public:
     // rectangles are completely physical in terms of writing mode.
     LayoutRect fragmentsBoundingBox(const LayoutRect& layerBoundingBox) const;
 
-    LayoutPoint flowThreadPointToVisualPoint(const LayoutPoint& flowThreadPoint) const
-    {
-        return flowThreadPoint + columnOffset(flowThreadPoint);
-    }
-
+    virtual LayoutPoint flowThreadPointToVisualPoint(const LayoutPoint& flowThreadPoint) const = 0;
     virtual LayoutPoint visualPointToFlowThreadPoint(const LayoutPoint& visualPoint) const = 0;
 
     virtual LayoutMultiColumnSet* columnSetAtBlockOffset(LayoutUnit) const = 0;

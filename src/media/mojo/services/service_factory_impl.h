@@ -5,20 +5,18 @@
 #ifndef MEDIA_MOJO_SERVICES_SERVICE_FACTORY_IMPL_H_
 #define MEDIA_MOJO_SERVICES_SERVICE_FACTORY_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/mojo/interfaces/service_factory.mojom.h"
 #include "media/mojo/services/mojo_cdm_service_context.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "mojo/shell/public/cpp/connector.h"
-#include "mojo/shell/public/cpp/message_loop_ref.h"
+#include "services/shell/public/cpp/connector.h"
+#include "services/shell/public/cpp/shell_connection_ref.h"
 
-namespace mojo {
-class MessageLoopRef;
 namespace shell {
 namespace mojom {
 class InterfaceProvider;
-}
 }
 }
 
@@ -29,35 +27,43 @@ class MediaLog;
 class MojoMediaClient;
 class RendererFactory;
 
-class ServiceFactoryImpl : public interfaces::ServiceFactory {
+class ServiceFactoryImpl : public mojom::ServiceFactory {
  public:
-  ServiceFactoryImpl(mojo::InterfaceRequest<interfaces::ServiceFactory> request,
-                     mojo::shell::mojom::InterfaceProvider* interfaces,
+  ServiceFactoryImpl(mojo::InterfaceRequest<mojom::ServiceFactory> request,
+                     shell::mojom::InterfaceProvider* interfaces,
                      scoped_refptr<MediaLog> media_log,
-                     scoped_ptr<mojo::MessageLoopRef> parent_app_refcount,
+                     std::unique_ptr<shell::ShellConnectionRef> connection_ref,
                      MojoMediaClient* mojo_media_client);
   ~ServiceFactoryImpl() final;
 
-  // interfaces::ServiceFactory implementation.
-  void CreateRenderer(
-      mojo::InterfaceRequest<interfaces::Renderer> renderer) final;
-  void CreateCdm(
-      mojo::InterfaceRequest<interfaces::ContentDecryptionModule> cdm) final;
+  // mojom::ServiceFactory implementation.
+  void CreateAudioDecoder(mojom::AudioDecoderRequest request) final;
+  void CreateVideoDecoder(mojom::VideoDecoderRequest request) final;
+  void CreateRenderer(mojom::RendererRequest request) final;
+  void CreateCdm(mojom::ContentDecryptionModuleRequest request) final;
 
  private:
+#if defined(ENABLE_MOJO_RENDERER)
   RendererFactory* GetRendererFactory();
+
+  std::unique_ptr<RendererFactory> renderer_factory_;
+#endif  // defined(ENABLE_MOJO_RENDERER)
+
+#if defined(ENABLE_MOJO_CDM)
   CdmFactory* GetCdmFactory();
 
+  std::unique_ptr<CdmFactory> cdm_factory_;
+#endif  // defined(ENABLE_MOJO_CDM)
+
   MojoCdmServiceContext cdm_service_context_;
+  mojo::StrongBinding<mojom::ServiceFactory> binding_;
+#if defined(ENABLE_MOJO_CDM)
+  shell::mojom::InterfaceProvider* interfaces_;
+#endif
 
-  mojo::StrongBinding<interfaces::ServiceFactory> binding_;
-  mojo::shell::mojom::InterfaceProvider* interfaces_;
   scoped_refptr<MediaLog> media_log_;
-  scoped_ptr<mojo::MessageLoopRef> parent_app_refcount_;
+  std::unique_ptr<shell::ShellConnectionRef> connection_ref_;
   MojoMediaClient* mojo_media_client_;
-
-  scoped_ptr<RendererFactory> renderer_factory_;
-  scoped_ptr<CdmFactory> cdm_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceFactoryImpl);
 };

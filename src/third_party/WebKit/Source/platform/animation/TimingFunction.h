@@ -25,12 +25,11 @@
 #ifndef TimingFunction_h
 #define TimingFunction_h
 
+#include "cc/animation/timing_function.h"
 #include "platform/animation/AnimationUtilities.h" // For blend()
-#include "platform/animation/UnitBezier.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Heap.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "ui/gfx/geometry/cubic_bezier.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 #include "wtf/StdLibExtras.h"
@@ -42,13 +41,13 @@ namespace blink {
 class PLATFORM_EXPORT TimingFunction : public RefCounted<TimingFunction> {
 public:
 
-    enum Type {
-        LinearFunction, CubicBezierFunction, StepsFunction
+    enum FunctionType {
+        kLinearFunction, kCubicBezierFunction, kStepsFunction
     };
 
     virtual ~TimingFunction() { }
 
-    Type type() const { return m_type; }
+    FunctionType type() const { return m_type; }
 
     virtual String toString() const = 0;
 
@@ -60,37 +59,14 @@ public:
     // calling evaluate();
     virtual void range(double* minValue, double* maxValue) const = 0;
 
-    enum RangeHalf {
-        Lower, // Timing function values < 0.5
-        Upper // Timing function values >= 0.5
-    };
-
-    struct PartitionRegion {
-        RangeHalf half;
-        double start; // inclusive
-        double end; // exclusive
-
-        PartitionRegion(RangeHalf half, double start, double end)
-            : half(half)
-            , start(start)
-            , end(end)
-        { }
-    };
-
-    // Partitions the timing function into a number of regions,
-    // representing the ranges in which the function's value is < 0.5
-    // and >= 0.5, and hence whether interpolation 0 or 1 should be
-    // used.
-    virtual void partition(Vector<PartitionRegion>& regions) const = 0;
-
 protected:
-    TimingFunction(Type type)
+    TimingFunction(FunctionType type)
         : m_type(type)
     {
     }
 
 private:
-    Type m_type;
+    FunctionType m_type;
 };
 
 class PLATFORM_EXPORT LinearTimingFunction final : public TimingFunction {
@@ -107,55 +83,41 @@ public:
 
     double evaluate(double fraction, double) const override;
     void range(double* minValue, double* maxValue) const override;
-    void partition(Vector<PartitionRegion>& regions) const override;
 private:
     LinearTimingFunction()
-        : TimingFunction(LinearFunction)
+        : TimingFunction(kLinearFunction)
     {
     }
 };
 
 class PLATFORM_EXPORT CubicBezierTimingFunction final : public TimingFunction {
 public:
-    enum SubType {
-        Ease,
-        EaseIn,
-        EaseOut,
-        EaseInOut,
-        Custom
-    };
+    using EaseType = cc::CubicBezierTimingFunction::EaseType;
 
     static PassRefPtr<CubicBezierTimingFunction> create(double x1, double y1, double x2, double y2)
     {
-        return adoptRef(new CubicBezierTimingFunction(Custom, x1, y1, x2, y2));
+        return adoptRef(new CubicBezierTimingFunction(EaseType::CUSTOM, x1, y1, x2, y2));
     }
 
-    static CubicBezierTimingFunction* preset(SubType subType)
+    static CubicBezierTimingFunction* preset(EaseType easeType)
     {
-        switch (subType) {
-        case Ease:
-            {
-                DEFINE_STATIC_REF(CubicBezierTimingFunction, ease, (adoptRef(new CubicBezierTimingFunction(Ease, 0.25, 0.1, 0.25, 1.0))));
-                return ease;
-            }
-        case EaseIn:
-            {
-                DEFINE_STATIC_REF(CubicBezierTimingFunction, easeIn, (adoptRef(new CubicBezierTimingFunction(EaseIn, 0.42, 0.0, 1.0, 1.0))));
-                return easeIn;
-            }
-        case EaseOut:
-            {
-                DEFINE_STATIC_REF(CubicBezierTimingFunction, easeOut, (adoptRef(new CubicBezierTimingFunction(EaseOut, 0.0, 0.0, 0.58, 1.0))));
-                return easeOut;
-            }
-        case EaseInOut:
-            {
-                DEFINE_STATIC_REF(CubicBezierTimingFunction, easeInOut, (adoptRef(new CubicBezierTimingFunction(EaseInOut, 0.42, 0.0, 0.58, 1.0))));
-                return easeInOut;
-            }
+        DEFINE_STATIC_REF(CubicBezierTimingFunction, ease, (adoptRef(new CubicBezierTimingFunction(EaseType::EASE, 0.25, 0.1, 0.25, 1.0))));
+        DEFINE_STATIC_REF(CubicBezierTimingFunction, easeIn, (adoptRef(new CubicBezierTimingFunction(EaseType::EASE_IN, 0.42, 0.0, 1.0, 1.0))));
+        DEFINE_STATIC_REF(CubicBezierTimingFunction, easeOut, (adoptRef(new CubicBezierTimingFunction(EaseType::EASE_OUT, 0.0, 0.0, 0.58, 1.0))));
+        DEFINE_STATIC_REF(CubicBezierTimingFunction, easeInOut, (adoptRef(new CubicBezierTimingFunction(EaseType::EASE_IN_OUT, 0.42, 0.0, 0.58, 1.0))));
+
+        switch (easeType) {
+        case EaseType::EASE:
+            return ease;
+        case EaseType::EASE_IN:
+            return easeIn;
+        case EaseType::EASE_OUT:
+            return easeOut;
+        case EaseType::EASE_IN_OUT:
+            return easeInOut;
         default:
-            ASSERT_NOT_REACHED();
-            return 0;
+            NOTREACHED();
+            return nullptr;
         }
     }
 
@@ -165,23 +127,23 @@ public:
 
     double evaluate(double fraction, double accuracy) const override;
     void range(double* minValue, double* maxValue) const override;
-    void partition(Vector<PartitionRegion>& regions) const override;
 
     double x1() const { return m_x1; }
     double y1() const { return m_y1; }
     double x2() const { return m_x2; }
     double y2() const { return m_y2; }
 
-    SubType subType() const { return m_subType; }
+    EaseType getEaseType() const { return m_easeType; }
 
 private:
-    explicit CubicBezierTimingFunction(SubType subType, double x1, double y1, double x2, double y2)
-        : TimingFunction(CubicBezierFunction)
+    explicit CubicBezierTimingFunction(EaseType easeType, double x1, double y1, double x2, double y2)
+        : TimingFunction(kCubicBezierFunction)
+        , m_bezier(x1, y1, x2, y2)
         , m_x1(x1)
         , m_y1(y1)
         , m_x2(x2)
         , m_y2(y2)
-        , m_subType(subType)
+        , m_easeType(easeType)
     {
     }
 
@@ -190,45 +152,40 @@ private:
     // number of solutions found.
     size_t findIntersections(double intersectionY, double& solution1, double& solution2, double& solution3) const;
 
-    double m_x1;
-    double m_y1;
-    double m_x2;
-    double m_y2;
-    SubType m_subType;
-    mutable OwnPtr<UnitBezier> m_bezier;
+    gfx::CubicBezier m_bezier;
+    const double m_x1;
+    const double m_y1;
+    const double m_x2;
+    const double m_y2;
+    const EaseType m_easeType;
 };
 
 class PLATFORM_EXPORT StepsTimingFunction final : public TimingFunction {
 public:
-    enum StepAtPosition {
-        Start,
-        Middle,
-        End
-    };
+    using StepPosition = cc::StepsTimingFunction::StepPosition;
 
-    static PassRefPtr<StepsTimingFunction> create(int steps, StepAtPosition stepAtPosition)
+    static PassRefPtr<StepsTimingFunction> create(int steps, StepPosition stepPosition)
     {
-        return adoptRef(new StepsTimingFunction(steps, stepAtPosition));
+        return adoptRef(new StepsTimingFunction(steps, stepPosition));
     }
 
-    static StepsTimingFunction* preset(StepAtPosition position)
+    static StepsTimingFunction* preset(StepPosition position)
     {
-        DEFINE_STATIC_REF(StepsTimingFunction, start, create(1, Start));
-        DEFINE_STATIC_REF(StepsTimingFunction, middle, create(1, Middle));
-        DEFINE_STATIC_REF(StepsTimingFunction, end, create(1, End));
+        DEFINE_STATIC_REF(StepsTimingFunction, start, create(1, StepPosition::START));
+        DEFINE_STATIC_REF(StepsTimingFunction, middle, create(1, StepPosition::MIDDLE));
+        DEFINE_STATIC_REF(StepsTimingFunction, end, create(1, StepPosition::END));
         switch (position) {
-        case Start:
+        case StepPosition::START:
             return start;
-        case Middle:
+        case StepPosition::MIDDLE:
             return middle;
-        case End:
+        case StepPosition::END:
             return end;
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             return end;
         }
     }
-
 
     ~StepsTimingFunction() override { }
 
@@ -236,21 +193,20 @@ public:
 
     double evaluate(double fraction, double) const override;
     void range(double* minValue, double* maxValue) const override;
-    void partition(Vector<PartitionRegion>& regions) const override;
 
     int numberOfSteps() const { return m_steps; }
-    StepAtPosition stepAtPosition() const { return m_stepAtPosition; }
+    StepPosition getStepPosition() const { return m_stepPosition; }
 
 private:
-    StepsTimingFunction(int steps, StepAtPosition stepAtPosition)
-        : TimingFunction(StepsFunction)
+    StepsTimingFunction(int steps, StepPosition stepPosition)
+        : TimingFunction(kStepsFunction)
         , m_steps(steps)
-        , m_stepAtPosition(stepAtPosition)
+        , m_stepPosition(stepPosition)
     {
     }
 
     int m_steps;
-    StepAtPosition m_stepAtPosition;
+    StepPosition m_stepPosition;
 };
 
 PLATFORM_EXPORT bool operator==(const LinearTimingFunction&, const TimingFunction&);
@@ -263,8 +219,8 @@ PLATFORM_EXPORT bool operator!=(const TimingFunction&, const TimingFunction&);
 #define DEFINE_TIMING_FUNCTION_TYPE_CASTS(typeName) \
     DEFINE_TYPE_CASTS( \
         typeName##TimingFunction, TimingFunction, value, \
-        value->type() == TimingFunction::typeName##Function, \
-        value.type() == TimingFunction::typeName##Function)
+        value->type() == TimingFunction::k##typeName##Function, \
+        value.type() == TimingFunction::k##typeName##Function)
 
 DEFINE_TIMING_FUNCTION_TYPE_CASTS(Linear);
 DEFINE_TIMING_FUNCTION_TYPE_CASTS(CubicBezier);

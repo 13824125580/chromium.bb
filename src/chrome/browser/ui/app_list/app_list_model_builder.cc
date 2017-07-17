@@ -42,7 +42,8 @@ void AppListModelBuilder::InitializeWithProfile(Profile* profile,
   BuildModel();
 }
 
-void AppListModelBuilder::InsertApp(scoped_ptr<app_list::AppListItem> app) {
+void AppListModelBuilder::InsertApp(
+    std::unique_ptr<app_list::AppListItem> app) {
   if (service_) {
     service_->AddItem(std::move(app));
     return;
@@ -50,8 +51,9 @@ void AppListModelBuilder::InsertApp(scoped_ptr<app_list::AppListItem> app) {
   model_->AddItem(std::move(app));
 }
 
-void AppListModelBuilder::RemoveApp(const std::string& id) {
-  if (service_) {
+void AppListModelBuilder::RemoveApp(const std::string& id,
+                                    bool unsynced_change) {
+  if (!unsynced_change && service_) {
     service_->RemoveUninstalledItem(id);
     return;
   }

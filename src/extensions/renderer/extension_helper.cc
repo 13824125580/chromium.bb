@@ -41,13 +41,17 @@ bool ExtensionHelper::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
+void ExtensionHelper::OnDestruct() {
+  delete this;
+}
+
 void ExtensionHelper::DraggableRegionsChanged(blink::WebFrame* frame) {
   blink::WebVector<blink::WebDraggableRegion> webregions =
       frame->document().draggableRegions();
   std::vector<DraggableRegion> regions;
   for (size_t i = 0; i < webregions.size(); ++i) {
     DraggableRegion region;
-    render_view()->convertViewportToWindow(&webregions[i].bounds);
+    render_view()->ConvertViewportToWindowViaWidget(&webregions[i].bounds);
     region.bounds = webregions[i].bounds;
     region.draggable = webregions[i].draggable;
     regions.push_back(region);

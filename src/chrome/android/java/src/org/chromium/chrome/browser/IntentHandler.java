@@ -23,16 +23,19 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.externalnav.IntentWithGesturesHandler;
 import org.chromium.chrome.browser.omnibox.AutocompleteController;
+import org.chromium.chrome.browser.rappor.RapporServiceBridge;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.document.ActivityDelegate;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.common.Referrer;
+import org.chromium.ui.base.PageTransition;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -84,6 +87,13 @@ public class IntentHandler {
     public static final String EXTRA_PARENT_INTENT = "com.android.chrome.parent_intent";
 
     /**
+     * ComponentName of the parent Activity. Can be used by an Activity launched on top of another
+     * Activity (e.g. BookmarkActivity) to intent back into the Activity it sits on top of.
+     */
+    public static final String EXTRA_PARENT_COMPONENT =
+            "org.chromium.chrome.browser.parent_component";
+
+    /**
      * Transition type is only set internally by a first-party app and has to be signed.
      */
     public static final String EXTRA_PAGE_TRANSITION_TYPE = "com.google.chrome.transition_type";
@@ -98,6 +108,12 @@ public class IntentHandler {
      * flow.
      */
     public static final String EXTRA_INVOKED_FROM_FRE = "com.android.chrome.invoked_from_fre";
+
+    /**
+     * An extra to indicate that the intent was triggered from a launcher shortcut.
+     */
+    public static final String EXTRA_INVOKED_FROM_SHORTCUT =
+            "com.android.chrome.invoked_from_shortcut";
 
     /**
      * Intent extra used to identify the sending application.
@@ -118,6 +134,17 @@ public class IntentHandler {
      * Key to associate a timestamp with an intent.
      */
     private static final String EXTRA_TIMESTAMP_MS = "org.chromium.chrome.browser.timestamp";
+
+    /**
+     * For multi-window, passes the id of the window.
+     */
+    public static final String EXTRA_WINDOW_ID = "org.chromium.chrome.browser.window_id";
+
+    /**
+     * Records package names of other applications in the system that could have handled
+     * this intent.
+     */
+    public static final String EXTRA_EXTERNAL_NAV_PACKAGES = "org.chromium.chrome.browser.eenp";
 
     /**
      * Fake ComponentName used in constructing TRUSTED_APPLICATION_CODE_EXTRA.
@@ -168,9 +195,6 @@ public class IntentHandler {
 
         return sFakeComponentName;
     }
-
-    // Intent extra used by QSB to send extra HTTP headers.
-    private static final String EXTRA_BROWSER_HEADERS = "com.android.browser.headers";
 
     /** Intent extra to open an incognito tab. */
     public static final String EXTRA_OPEN_NEW_INCOGNITO_TAB =
@@ -280,6 +304,22 @@ public class IntentHandler {
     }
 
     /**
+     * Records an action when a user chose to handle a URL in Chrome that could have been handled
+     * by an application installed on the phone. Also records the name of that application.
+     * This doesn't include generic URL handlers, such as browsers.
+     */
+    private void recordAppHandlersForIntent(Intent intent) {
+        List<String> packages = IntentUtils.safeGetStringArrayListExtra(intent,
+                IntentHandler.EXTRA_EXTERNAL_NAV_PACKAGES);
+        if (packages != null && packages.size() > 0) {
+            RecordUserAction.record("MobileExternalNavigationReceived");
+            for (String name : packages) {
+                RapporServiceBridge.sampleString("Android.ExternalNavigationNotChosen", name);
+            }
+        }
+    }
+
+    /**
      * Handles an Intent after the ChromeTabbedActivity decides that it shouldn't ignore the
      * Intent.
      *
@@ -306,6 +346,7 @@ public class IntentHandler {
                 IntentUtils.safeGetStringExtra(intent, Browser.EXTRA_APPLICATION_ID),
                 tabIdToBringToFront, hasUserGesture, intent);
         recordExternalIntentSourceUMA(intent);
+        recordAppHandlersForIntent(intent);
         return true;
     }
 
@@ -805,6 +846,7 @@ public class IntentHandler {
 
         String url = getUrlFromVoiceSearchResult(intent);
         if (url == null) url = ActivityDelegate.getInitialUrlForDocument(intent);
+        if (url == null) url = getUrlForCustomTab(intent);
         if (url == null) url = intent.getDataString();
         if (url == null) return null;
 
@@ -813,6 +855,13 @@ public class IntentHandler {
             url = getUrlFromGoogleChromeSchemeUrl(url);
         }
         return TextUtils.isEmpty(url) ? null : url;
+    }
+
+    private static String getUrlForCustomTab(Intent intent) {
+        if (intent == null || intent.getData() == null) return null;
+        Uri data = intent.getData();
+        return TextUtils.equals(data.getScheme(), UrlConstants.CUSTOM_TAB_SCHEME)
+                ? data.getQuery() : null;
     }
 
     /**
@@ -868,5 +917,27 @@ public class IntentHandler {
             return sPendingReferrer.second;
         }
         return null;
+    }
+
+    /**
+     * Some applications may request to load the URL with a particular transition type.
+     * @param context The application context.
+     * @param intent Intent causing the URL load, may be null.
+     * @param defaultTransition The transition to return if none specified in the intent.
+     * @return The transition type to use for loading the URL.
+     */
+    public static int getTransitionTypeFromIntent(Context context, Intent intent,
+            int defaultTransition) {
+        if (intent == null) return defaultTransition;
+        int transitionType = IntentUtils.safeGetIntExtra(
+                intent, IntentHandler.EXTRA_PAGE_TRANSITION_TYPE, PageTransition.LINK);
+        if (transitionType == PageTransition.TYPED) {
+            return transitionType;
+        } else if (transitionType != PageTransition.LINK
+                && isIntentChromeOrFirstParty(intent, context)) {
+            // 1st party applications may specify any transition type.
+            return transitionType;
+        }
+        return defaultTransition;
     }
 }

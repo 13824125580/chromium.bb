@@ -5,6 +5,8 @@
 #ifndef CONTENT_RENDERER_SCHEDULER_TQM_DELEGATE_FOR_TEST_H_
 #define CONTENT_RENDERER_SCHEDULER_TQM_DELEGATE_FOR_TEST_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "components/scheduler/child/scheduler_tqm_delegate.h"
@@ -17,7 +19,7 @@ class SchedulerTqmDelegateForTest : public SchedulerTqmDelegate {
  public:
   static scoped_refptr<SchedulerTqmDelegateForTest> Create(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      scoped_ptr<base::TickClock> time_source);
+      std::unique_ptr<base::TickClock> time_source);
 
   // SchedulerTqmDelegate implementation
   void SetDefaultTaskRunner(
@@ -43,7 +45,7 @@ class SchedulerTqmDelegateForTest : public SchedulerTqmDelegate {
  private:
   SchedulerTqmDelegateForTest(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      scoped_ptr<base::TickClock> time_source);
+      std::unique_ptr<base::TickClock> time_source);
 
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
 

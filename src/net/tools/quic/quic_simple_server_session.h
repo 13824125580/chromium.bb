@@ -9,18 +9,20 @@
 
 #include <stdint.h>
 
+#include <deque>
+#include <list>
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/quic/quic_crypto_server_stream.h"
 #include "net/quic/quic_protocol.h"
+#include "net/quic/quic_server_session_base.h"
 #include "net/quic/quic_spdy_session.h"
 #include "net/tools/quic/quic_in_memory_cache.h"
-#include "net/tools/quic/quic_server_session_base.h"
 #include "net/tools/quic/quic_simple_server_stream.h"
 
 namespace net {
@@ -46,7 +48,7 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
     PromisedStreamInfo(SpdyHeaderBlock request_headers,
                        QuicStreamId stream_id,
                        SpdyPriority priority)
-        : request_headers(request_headers),
+        : request_headers(std::move(request_headers)),
           stream_id(stream_id),
           priority(priority),
           is_cancelled(false) {}
@@ -58,8 +60,10 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
 
   QuicSimpleServerSession(const QuicConfig& config,
                           QuicConnection* connection,
-                          QuicServerSessionVisitor* visitor,
-                          const QuicCryptoServerConfig* crypto_config);
+                          QuicServerSessionBase::Visitor* visitor,
+                          QuicServerSessionBase::Helper* helper,
+                          const QuicCryptoServerConfig* crypto_config,
+                          QuicCompressedCertsCache* compressed_certs_cache);
 
   ~QuicSimpleServerSession() override;
 
@@ -76,8 +80,8 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
   // And enqueue HEADERS block in those PUSH_PROMISED for sending push response
   // later.
   virtual void PromisePushResources(
-      const string& request_url,
-      const list<QuicInMemoryCache::ServerPushInfo>& resources,
+      const std::string& request_url,
+      const std::list<QuicInMemoryCache::ServerPushInfo>& resources,
       QuicStreamId original_stream_id,
       const SpdyHeaderBlock& original_request_headers);
 
@@ -97,7 +101,8 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
 
   // QuicServerSessionBaseMethod:
   QuicCryptoServerStreamBase* CreateQuicCryptoServerStream(
-      const QuicCryptoServerConfig* crypto_config) override;
+      const QuicCryptoServerConfig* crypto_config,
+      QuicCompressedCertsCache* compressed_certs_cache) override;
 
  private:
   friend class test::QuicSimpleServerSessionPeer;
@@ -109,14 +114,14 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
   // Copying the rest headers ensures they are the same as the original
   // request, especially cookies.
   SpdyHeaderBlock SynthesizePushRequestHeaders(
-      string request_url,
+      std::string request_url,
       QuicInMemoryCache::ServerPushInfo resource,
       const SpdyHeaderBlock& original_request_headers);
 
   // Send PUSH_PROMISE frame on headers stream.
   void SendPushPromise(QuicStreamId original_stream_id,
                        QuicStreamId promised_stream_id,
-                       const SpdyHeaderBlock& headers);
+                       SpdyHeaderBlock headers);
 
   // Fetch response from cache for request headers enqueued into
   // promised_headers_and_streams_ and send them on dedicated stream until
@@ -149,4 +154,4 @@ class QuicSimpleServerSession : public QuicServerSessionBase {
 
 }  // namespace net
 
-#endif  // NET_TOOLS_QUIC_QUIC_SERVER_SESSION_H_
+#endif  // NET_TOOLS_QUIC_QUIC_SIMPLE_SERVER_SESSION_H_

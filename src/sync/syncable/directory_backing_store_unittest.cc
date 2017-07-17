@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -21,7 +21,6 @@
 #include "build/build_config.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
-#include "sql/test/scoped_error_ignorer.h"
 #include "sql/test/test_helpers.h"
 #include "sync/base/sync_export.h"
 #include "sync/internal_api/public/base/node_ordinal.h"
@@ -46,8 +45,8 @@ void CatastrophicErrorHandler(bool* catastrophic_error_handler_was_called) {
 }
 
 // Create a dirty EntryKernel with an ID derived from |id| + |id_suffix|.
-scoped_ptr<EntryKernel> CreateEntry(int id, const std::string &id_suffix) {
-  scoped_ptr<EntryKernel> entry(new EntryKernel());
+std::unique_ptr<EntryKernel> CreateEntry(int id, const std::string& id_suffix) {
+  std::unique_ptr<EntryKernel> entry(new EntryKernel());
   std::string id_string = base::Int64ToString(id) + id_suffix;
   entry->put(ID, Id::CreateFromClientString(id_string));
   entry->put(META_HANDLE, id);
@@ -110,7 +109,7 @@ class MigrationTest : public testing::TestWithParam<int> {
 
   void SetUpCurrentDatabaseAndCheckVersion(sql::Connection* connection) {
     SetUpVersion90Database(connection);  // Prepopulates data.
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), connection));
     ASSERT_EQ(kCurrentDBVersion, dbs->GetVersion());
 
@@ -3013,7 +3012,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion67To68) {
   ASSERT_TRUE(connection.DoesColumnExist("metas", "unsanitized_name"));
   ASSERT_TRUE(connection.DoesColumnExist("metas", "server_name"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
 
   ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3028,7 +3027,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion68To69) {
   SetUpVersion68Database(&connection);
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3069,7 +3068,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion69To70) {
   ASSERT_FALSE(connection.DoesColumnExist("metas", "unique_client_tag"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3096,7 +3095,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion70To71) {
   ASSERT_FALSE(connection.DoesTableExist("models"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3132,7 +3131,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion71To72) {
   ASSERT_TRUE(connection.DoesTableExist("extended_attributes"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3152,7 +3151,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion72To73) {
   ASSERT_FALSE(connection.DoesColumnExist("share_info", "notification_state"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3185,7 +3184,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion73To74) {
           "autofill_profiles_added_during_migration"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3219,7 +3218,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion74To75) {
   ASSERT_TRUE(connection.DoesColumnExist("models", "last_download_timestamp"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
 
     ASSERT_FALSE(dbs->needs_column_refresh());
@@ -3248,7 +3247,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion75To76) {
   ASSERT_TRUE(connection.DoesColumnExist("share_info",
       "autofill_profiles_added_during_migration"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_FALSE(dbs->needs_column_refresh());
   ASSERT_TRUE(dbs->MigrateVersion75To76());
@@ -3263,7 +3262,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion76To77) {
   ASSERT_TRUE(connection.OpenInMemory());
   SetUpVersion76Database(&connection);
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_FALSE(dbs->needs_column_refresh());
 
@@ -3290,7 +3289,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion77To78) {
   ASSERT_FALSE(connection.DoesColumnExist("metas", "BASE_SERVER_SPECIFICS"));
 
   {
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
     ASSERT_FALSE(dbs->needs_column_refresh());
     ASSERT_TRUE(dbs->MigrateVersion77To78());
@@ -3307,7 +3306,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion78To79) {
   ASSERT_TRUE(connection.OpenInMemory());
   SetUpVersion78Database(&connection);
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_FALSE(dbs->needs_column_refresh());
   ASSERT_TRUE(dbs->MigrateVersion78To79());
@@ -3320,7 +3319,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion79To80) {
   ASSERT_TRUE(connection.OpenInMemory());
   SetUpVersion79Database(&connection);
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_FALSE(dbs->needs_column_refresh());
   ASSERT_TRUE(dbs->MigrateVersion79To80());
@@ -3354,7 +3353,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
   ASSERT_TRUE(s.Step());
   ASSERT_EQ(sql::COLUMN_TYPE_INTEGER, s.ColumnType(1));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion80To81());
   ASSERT_EQ(81, dbs->GetVersion());
@@ -3378,7 +3377,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion81To82) {
   SetUpVersion81Database(&connection);
   ASSERT_FALSE(connection.DoesColumnExist("models", "transaction_version"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_FALSE(dbs->needs_column_refresh());
   ASSERT_TRUE(dbs->MigrateVersion81To82());
@@ -3394,7 +3393,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion82To83) {
   SetUpVersion82Database(&connection);
   ASSERT_FALSE(connection.DoesColumnExist("metas", "transaction_version"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion82To83());
   ASSERT_EQ(83, dbs->GetVersion());
@@ -3408,7 +3407,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion83To84) {
   SetUpVersion83Database(&connection);
   ASSERT_FALSE(connection.DoesTableExist("deleted_metas"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion83To84());
   ASSERT_EQ(84, dbs->GetVersion());
@@ -3422,7 +3421,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion84To85) {
   SetUpVersion84Database(&connection);
   ASSERT_TRUE(connection.DoesColumnExist("models", "initial_sync_ended"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion84To85());
   ASSERT_EQ(85, dbs->GetVersion());
@@ -3440,7 +3439,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion85To86) {
   EXPECT_FALSE(connection.DoesColumnExist("metas", "server_unique_position"));
   EXPECT_FALSE(connection.DoesColumnExist("metas", "unique_bookmark_tag"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion85To86());
   EXPECT_EQ(86, dbs->GetVersion());
@@ -3456,7 +3455,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion86To87) {
   SetUpVersion86Database(&connection);
   EXPECT_FALSE(connection.DoesColumnExist("metas", "attachment_metadata"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   EXPECT_TRUE(dbs->MigrateVersion86To87());
   EXPECT_EQ(87, dbs->GetVersion());
@@ -3469,7 +3468,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion87To88) {
   ASSERT_TRUE(connection.OpenInMemory());
   SetUpVersion87Database(&connection);
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion87To88());
   ASSERT_EQ(88, dbs->GetVersion());
@@ -3483,7 +3482,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion88To89) {
   ASSERT_FALSE(
       connection.DoesColumnExist("metas", "server_attachment_metadata"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion88To89());
   ASSERT_EQ(89, dbs->GetVersion());
@@ -3501,7 +3500,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion89To90) {
   ASSERT_TRUE(connection.DoesColumnExist("share_info", "next_id"));
   ASSERT_TRUE(connection.DoesColumnExist("share_info", "notification_state"));
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_TRUE(dbs->MigrateVersion89To90());
   ASSERT_EQ(90, dbs->GetVersion());
@@ -3539,7 +3538,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateToLatestAndDump) {
     ASSERT_TRUE(connection.Open(GetDatabasePath()));
     SetUpVersion89Database(&connection);  // Update this.
 
-    scoped_ptr<TestDirectoryBackingStore> dbs(
+    std::unique_ptr<TestDirectoryBackingStore> dbs(
         new TestDirectoryBackingStore(GetUsername(), &connection));
     ASSERT_TRUE(dbs->MigrateVersion89To90());  // Update this.
     ASSERT_TRUE(LoadAndIgnoreReturnedData(dbs.get()));
@@ -3554,7 +3553,7 @@ TEST_F(DirectoryBackingStoreTest, DetectInvalidPosition) {
   ASSERT_TRUE(connection.OpenInMemory());
   SetUpVersion86Database(&connection);
 
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   ASSERT_EQ(86, dbs->GetVersion());
 
@@ -3672,7 +3671,7 @@ TEST_P(MigrationTest, ToCurrentVersion) {
   STLValueDeleter<Directory::MetahandlesMap> index_deleter(&handles_map);
 
   {
-    scoped_ptr<OnDiskDirectoryBackingStore> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStore> dbs(
         new OnDiskDirectoryBackingStore(GetUsername(), GetDatabasePath()));
     ASSERT_EQ(OPENED, dbs->Load(&handles_map, &delete_journals,
                                 &metahandles_to_purge, &dir_info));
@@ -4022,7 +4021,7 @@ bool OnDiskDirectoryBackingStoreForTest::DidFailFirstOpenAttempt() {
 // due to read-only file system), is not tested here.
 TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
   {
-    scoped_ptr<OnDiskDirectoryBackingStore> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStore> dbs(
         new OnDiskDirectoryBackingStore(GetUsername(), GetDatabasePath()));
     EXPECT_TRUE(LoadAndIgnoreReturnedData(dbs.get()));
   }
@@ -4036,7 +4035,7 @@ TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
   }
 
   {
-    scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
         new OnDiskDirectoryBackingStoreForTest(GetUsername(),
                                                GetDatabasePath()));
 
@@ -4047,7 +4046,7 @@ TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
 
 TEST_F(DirectoryBackingStoreTest, MinorCorruptionAndUpgrade) {
   {
-    scoped_ptr<OnDiskDirectoryBackingStore> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStore> dbs(
         new OnDiskDirectoryBackingStore(GetUsername(), GetDatabasePath()));
     EXPECT_TRUE(LoadAndIgnoreReturnedData(dbs.get()));
   }
@@ -4062,7 +4061,7 @@ TEST_F(DirectoryBackingStoreTest, MinorCorruptionAndUpgrade) {
   }
 
   {
-    scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
         new OnDiskDirectoryBackingStoreForTest(GetUsername(),
                                                GetDatabasePath()));
     dbs->SetCatastrophicErrorHandler(base::Bind(&base::DoNothing));
@@ -4081,7 +4080,7 @@ TEST_F(DirectoryBackingStoreTest, DeleteEntries) {
   ASSERT_TRUE(connection.OpenInMemory());
 
   SetUpCurrentDatabaseAndCheckVersion(&connection);
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   Directory::MetahandlesMap handles_map;
   JournalIndex  delete_journals;
@@ -4142,7 +4141,7 @@ TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
   ASSERT_TRUE(connection.Open(GetDatabasePath()));
 
   SetUpCurrentDatabaseAndCheckVersion(&connection);
-  scoped_ptr<TestDirectoryBackingStore> dbs(
+  std::unique_ptr<TestDirectoryBackingStore> dbs(
       new TestDirectoryBackingStore(GetUsername(), &connection));
   Directory::MetahandlesMap handles_map;
   JournalIndex delete_journals;
@@ -4171,7 +4170,7 @@ TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
 // See that a catastrophic error handler remains set across instances of the
 // underlying sql:Connection.
 TEST_F(DirectoryBackingStoreTest, CatastrophicErrorHandler_KeptAcrossReset) {
-  scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+  std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
       new OnDiskDirectoryBackingStoreForTest(GetUsername(), GetDatabasePath()));
   // See that by default there is no catastrophic error handler.
   ASSERT_FALSE(dbs->db_->has_error_callback());
@@ -4192,7 +4191,7 @@ TEST_F(DirectoryBackingStoreTest,
   const base::Closure handler =
       base::Bind(&CatastrophicErrorHandler, &was_called);
   {
-    scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
         new OnDiskDirectoryBackingStoreForTest(GetUsername(),
                                                GetDatabasePath()));
     dbs->SetCatastrophicErrorHandler(handler);
@@ -4214,19 +4213,13 @@ TEST_F(DirectoryBackingStoreTest,
   ASSERT_TRUE(sql::test::CorruptSizeInHeader(GetDatabasePath()));
 
   {
-    scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+    std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
         new OnDiskDirectoryBackingStoreForTest(GetUsername(),
                                                GetDatabasePath()));
     dbs->SetCatastrophicErrorHandler(handler);
     ASSERT_TRUE(dbs->db_->has_error_callback());
-    {
-      // The corruption will be detected when we attempt to load the data. Use a
-      // ScopedErrorIgnorer to ensure we don't crash in debug builds.
-      sql::ScopedErrorIgnorer error_ignorer;
-      error_ignorer.IgnoreError(SQLITE_CORRUPT);
-      ASSERT_TRUE(LoadAndIgnoreReturnedData(dbs.get()));
-      ASSERT_TRUE(error_ignorer.CheckIgnoredErrors());
-    }
+    ASSERT_TRUE(LoadAndIgnoreReturnedData(dbs.get()));
+
     // See that the first open failed as expected.
     ASSERT_TRUE(dbs->DidFailFirstOpenAttempt());
   }
@@ -4246,7 +4239,7 @@ TEST_F(DirectoryBackingStoreTest,
   const base::Closure handler =
       base::Bind(&CatastrophicErrorHandler, &was_called);
   // Create a DB with many entries.
-  scoped_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
+  std::unique_ptr<OnDiskDirectoryBackingStoreForTest> dbs(
       new OnDiskDirectoryBackingStoreForTest(GetUsername(), GetDatabasePath()));
   dbs->SetCatastrophicErrorHandler(handler);
   ASSERT_TRUE(dbs->db_->has_error_callback());
@@ -4256,7 +4249,7 @@ TEST_F(DirectoryBackingStoreTest,
   const std::string suffix(400, 'o');
   for (int i = 0; i < corruption_testing::kNumEntriesRequiredForCorruption;
        ++i) {
-    scoped_ptr<EntryKernel> large_entry = CreateEntry(i, suffix);
+    std::unique_ptr<EntryKernel> large_entry = CreateEntry(i, suffix);
     snapshot.dirty_metas.insert(large_entry.release());
   }
   ASSERT_TRUE(dbs->SaveChanges(snapshot));

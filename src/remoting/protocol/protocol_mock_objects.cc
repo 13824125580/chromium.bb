@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "remoting/protocol/video_stream.h"
 
 namespace remoting {
@@ -55,11 +55,11 @@ MockPairingRegistryDelegate::MockPairingRegistryDelegate() {
 MockPairingRegistryDelegate::~MockPairingRegistryDelegate() {
 }
 
-scoped_ptr<base::ListValue> MockPairingRegistryDelegate::LoadAll() {
-  scoped_ptr<base::ListValue> result(new base::ListValue());
+std::unique_ptr<base::ListValue> MockPairingRegistryDelegate::LoadAll() {
+  std::unique_ptr<base::ListValue> result(new base::ListValue());
   for (Pairings::const_iterator i = pairings_.begin(); i != pairings_.end();
        ++i) {
-    result->Append(i->second.ToValue().release());
+    result->Append(i->second.ToValue());
   }
   return result;
 }
@@ -91,7 +91,7 @@ bool MockPairingRegistryDelegate::Delete(const std::string& client_id) {
 }
 
 SynchronousPairingRegistry::SynchronousPairingRegistry(
-    scoped_ptr<Delegate> delegate)
+    std::unique_ptr<Delegate> delegate)
     : PairingRegistry(base::ThreadTaskRunnerHandle::Get(),
                       std::move(delegate)) {}
 SynchronousPairingRegistry::~SynchronousPairingRegistry() {}

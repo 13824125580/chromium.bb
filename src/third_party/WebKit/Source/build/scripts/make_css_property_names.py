@@ -14,10 +14,9 @@ HEADER_TEMPLATE = """
 #ifndef %(class_name)s_h
 #define %(class_name)s_h
 
-#include "core/css/parser/CSSParserMode.h"
-#include "wtf/HashFunctions.h"
-#include "wtf/HashTraits.h"
-#include <string.h>
+#include "core/CoreExport.h"
+#include "wtf/Assertions.h"
+#include <stddef.h>
 
 namespace WTF {
 class AtomicString;
@@ -28,7 +27,9 @@ namespace blink {
 
 enum CSSPropertyID {
     CSSPropertyInvalid = 0,
-    CSSPropertyVariable = 1,
+    // This isn't a property, but we need to know the position of @apply rules in style rules
+    CSSPropertyApplyAtRule = 1,
+    CSSPropertyVariable = 2,
 %(property_enums)s
 };
 
@@ -45,7 +46,7 @@ WTF::String getJSPropertyName(CSSPropertyID);
 
 inline CSSPropertyID convertToCSSPropertyID(int value)
 {
-    ASSERT((value >= firstCSSProperty && value <= lastCSSProperty) || value == CSSPropertyInvalid || value == CSSPropertyVariable);
+    ASSERT(value >= CSSPropertyInvalid && value <= lastCSSProperty);
     return static_cast<CSSPropertyID>(value);
 }
 
@@ -58,18 +59,9 @@ inline bool isPropertyAlias(CSSPropertyID id) { return id & 512; }
 
 CSSPropertyID unresolvedCSSPropertyID(const WTF::String&);
 
-CSSPropertyID cssPropertyID(const WTF::String&);
+CSSPropertyID CORE_EXPORT cssPropertyID(const WTF::String&);
 
 } // namespace blink
-
-namespace WTF {
-template<> struct DefaultHash<blink::CSSPropertyID> { typedef IntHash<unsigned> Hash; };
-template<> struct HashTraits<blink::CSSPropertyID> : GenericHashTraits<blink::CSSPropertyID> {
-    static const bool emptyValueIsZero = true;
-    static void constructDeletedValue(blink::CSSPropertyID& slot, bool) { slot = static_cast<blink::CSSPropertyID>(blink::lastUnresolvedCSSProperty + 1); }
-    static bool isDeletedValue(blink::CSSPropertyID value) { return value == (blink::lastUnresolvedCSSProperty + 1); }
-};
-}
 
 #endif // %(class_name)s_h
 """
@@ -137,17 +129,15 @@ const AtomicString& getPropertyNameAtomicString(CSSPropertyID id)
     int index = id - firstCSSProperty;
     static AtomicString* propertyStrings = new AtomicString[lastUnresolvedCSSProperty]; // Intentionally never destroyed.
     AtomicString& propertyString = propertyStrings[index];
-    if (propertyString.isNull()) {
-        const char* propertyName = propertyNameStringsPool + propertyNameStringsOffsets[index];
-        propertyString = AtomicString(propertyName, strlen(propertyName), AtomicString::ConstructFromLiteral);
-    }
+    if (propertyString.isNull())
+        propertyString = AtomicString(propertyNameStringsPool + propertyNameStringsOffsets[index]);
     return propertyString;
 }
 
 String getPropertyNameString(CSSPropertyID id)
 {
     // We share the StringImpl with the AtomicStrings.
-    return getPropertyNameAtomicString(id).string();
+    return getPropertyNameAtomicString(id).getString();
 }
 
 String getJSPropertyName(CSSPropertyID id)

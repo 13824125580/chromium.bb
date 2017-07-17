@@ -5,19 +5,21 @@
 #include "chrome/browser/extensions/activity_log/fullstream_ui_policy.h"
 
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -43,21 +45,18 @@ namespace extensions {
 class FullStreamUIPolicyTest : public testing::Test {
  public:
   FullStreamUIPolicyTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-        saved_cmdline_(base::CommandLine::NO_PROGRAM) {
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
 #if defined OS_CHROMEOS
     test_user_manager_.reset(new chromeos::ScopedTestUserManager());
 #endif
-    base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
-    saved_cmdline_ = *base::CommandLine::ForCurrentProcess();
+    base::CommandLine no_program_command_line(base::CommandLine::NO_PROGRAM);
     profile_.reset(new TestingProfile());
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableExtensionActivityLogging);
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableExtensionActivityLogTesting);
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+    command_line->AppendSwitch(switches::kEnableExtensionActivityLogging);
+    command_line->AppendSwitch(switches::kEnableExtensionActivityLogTesting);
     extension_service_ = static_cast<TestExtensionSystem*>(
         ExtensionSystem::Get(profile_.get()))->CreateExtensionService
-            (&command_line, base::FilePath(), false);
+            (&no_program_command_line, base::FilePath(), false);
   }
 
   ~FullStreamUIPolicyTest() override {
@@ -67,17 +66,15 @@ class FullStreamUIPolicyTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
     profile_.reset(NULL);
     base::RunLoop().RunUntilIdle();
-    // Restore the original command line and undo the affects of SetUp().
-    *base::CommandLine::ForCurrentProcess() = saved_cmdline_;
   }
 
   // A wrapper function for CheckReadFilteredData, so that we don't need to
   // enter empty string values for parameters we don't care about.
-  void CheckReadData(
-      ActivityLogDatabasePolicy* policy,
-      const std::string& extension_id,
-      int day,
-      const base::Callback<void(scoped_ptr<Action::ActionVector>)>& checker) {
+  void CheckReadData(ActivityLogDatabasePolicy* policy,
+                     const std::string& extension_id,
+                     int day,
+                     const base::Callback<void(
+                         std::unique_ptr<Action::ActionVector>)>& checker) {
     CheckReadFilteredData(
         policy, extension_id, Action::ACTION_ANY, "", "", "", day, checker);
   }
@@ -92,7 +89,8 @@ class FullStreamUIPolicyTest : public testing::Test {
       const std::string& page_url,
       const std::string& arg_url,
       const int days_ago,
-      const base::Callback<void(scoped_ptr<Action::ActionVector>)>& checker) {
+      const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
+          checker) {
     // Submit a request to the policy to read back some data, and call the
     // checker function when results are available.  This will happen on the
     // database thread.
@@ -110,15 +108,15 @@ class FullStreamUIPolicyTest : public testing::Test {
 
     // Wait for results; either the checker or the timeout callbacks should
     // cause the main loop to exit.
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
 
     timeout.Cancel();
   }
 
-  static void CheckWrapper(
-      const base::Callback<void(scoped_ptr<Action::ActionVector>)>& checker,
-      const base::Closure& done,
-      scoped_ptr<Action::ActionVector> results) {
+  static void CheckWrapper(const base::Callback<void(
+                               std::unique_ptr<Action::ActionVector>)>& checker,
+                           const base::Closure& done,
+                           std::unique_ptr<Action::ActionVector> results) {
     checker.Run(std::move(results));
     done.Run();
   }
@@ -129,31 +127,31 @@ class FullStreamUIPolicyTest : public testing::Test {
   }
 
   static void RetrieveActions_LogAndFetchActions(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     ASSERT_EQ(2, static_cast<int>(i->size()));
   }
 
   static void RetrieveActions_FetchFilteredActions0(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     ASSERT_EQ(0, static_cast<int>(i->size()));
   }
 
   static void RetrieveActions_FetchFilteredActions1(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     ASSERT_EQ(1, static_cast<int>(i->size()));
   }
 
   static void RetrieveActions_FetchFilteredActions2(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     ASSERT_EQ(2, static_cast<int>(i->size()));
   }
 
   static void RetrieveActions_FetchFilteredActions300(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     ASSERT_EQ(300, static_cast<int>(i->size()));
   }
 
-  static void Arguments_Present(scoped_ptr<Action::ActionVector> i) {
+  static void Arguments_Present(std::unique_ptr<Action::ActionVector> i) {
     scoped_refptr<Action> last = i->front();
     CheckAction(*last.get(),
                 "odlameecjipmbmbejkplpemijjgpljce",
@@ -166,7 +164,7 @@ class FullStreamUIPolicyTest : public testing::Test {
   }
 
   static void Arguments_GetTodaysActions(
-      scoped_ptr<Action::ActionVector> actions) {
+      std::unique_ptr<Action::ActionVector> actions) {
     ASSERT_EQ(2, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
                 "punky",
@@ -187,7 +185,7 @@ class FullStreamUIPolicyTest : public testing::Test {
   }
 
   static void Arguments_GetOlderActions(
-      scoped_ptr<Action::ActionVector> actions) {
+      std::unique_ptr<Action::ActionVector> actions) {
     ASSERT_EQ(2, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
                 "punky",
@@ -207,7 +205,7 @@ class FullStreamUIPolicyTest : public testing::Test {
                 "");
   }
 
-  static void AllURLsRemoved(scoped_ptr<Action::ActionVector> actions) {
+  static void AllURLsRemoved(std::unique_ptr<Action::ActionVector> actions) {
     ASSERT_EQ(2, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
                 "punky",
@@ -227,7 +225,7 @@ class FullStreamUIPolicyTest : public testing::Test {
                 "");
   }
 
-  static void SomeURLsRemoved(scoped_ptr<Action::ActionVector> actions) {
+  static void SomeURLsRemoved(std::unique_ptr<Action::ActionVector> actions) {
     // These will be in the vector in reverse time order.
     ASSERT_EQ(5, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
@@ -297,13 +295,14 @@ class FullStreamUIPolicyTest : public testing::Test {
   void CheckRemoveActions(
       ActivityLogDatabasePolicy* policy,
       const std::vector<int64_t>& action_ids,
-      const base::Callback<void(scoped_ptr<Action::ActionVector>)>& checker) {
+      const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
+          checker) {
     // Use a mock clock to ensure that events are not recorded on the wrong day
     // when the test is run close to local midnight.
     base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
     mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                        base::TimeDelta::FromHours(12));
-    policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+    policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
     // Record some actions
     scoped_refptr<Action> action =
@@ -344,11 +343,11 @@ class FullStreamUIPolicyTest : public testing::Test {
     policy->DeleteDatabase();
   }
 
-  static void AllActionsDeleted(scoped_ptr<Action::ActionVector> actions) {
+  static void AllActionsDeleted(std::unique_ptr<Action::ActionVector> actions) {
     ASSERT_EQ(0, static_cast<int>(actions->size()));
   }
 
-  static void NoActionsDeleted(scoped_ptr<Action::ActionVector> actions) {
+  static void NoActionsDeleted(std::unique_ptr<Action::ActionVector> actions) {
     // These will be in the vector in reverse time order.
     ASSERT_EQ(4, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
@@ -389,7 +388,7 @@ class FullStreamUIPolicyTest : public testing::Test {
     ASSERT_EQ(2, actions->at(3)->action_id());
   }
 
-  static void Action1Deleted(scoped_ptr<Action::ActionVector> actions) {
+  static void Action1Deleted(std::unique_ptr<Action::ActionVector> actions) {
     // These will be in the vector in reverse time order.
     ASSERT_EQ(2, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
@@ -412,7 +411,7 @@ class FullStreamUIPolicyTest : public testing::Test {
     ASSERT_EQ(4, actions->at(1)->action_id());
   }
 
-  static void Action2Deleted(scoped_ptr<Action::ActionVector> actions) {
+  static void Action2Deleted(std::unique_ptr<Action::ActionVector> actions) {
     // These will be in the vector in reverse time order.
     ASSERT_EQ(2, static_cast<int>(actions->size()));
     CheckAction(*actions->at(0).get(),
@@ -437,18 +436,13 @@ class FullStreamUIPolicyTest : public testing::Test {
 
  protected:
   ExtensionService* extension_service_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   content::TestBrowserThreadBundle thread_bundle_;
-  // Used to preserve a copy of the original command line.
-  // The test framework will do this itself as well. However, by then,
-  // it is too late to call ActivityLog::RecomputeLoggingIsEnabled() in
-  // TearDown().
-  base::CommandLine saved_cmdline_;
 
 #if defined OS_CHROMEOS
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 };
 
@@ -457,13 +451,14 @@ TEST_F(FullStreamUIPolicyTest, Construct) {
   policy->Init();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Test extension")
-                                     .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test extension")
+                           .Set("version", "1.0.0")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
   extension_service_->AddExtension(extension.get());
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   scoped_refptr<Action> action = new Action(extension->id(),
                                             base::Time::Now(),
                                             Action::ACTION_API_CALL,
@@ -478,10 +473,11 @@ TEST_F(FullStreamUIPolicyTest, LogAndFetchActions) {
   policy->Init();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Test extension")
-                                     .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test extension")
+                           .Set("version", "1.0.0")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
   extension_service_->AddExtension(extension.get());
   GURL gurl("http://www.google.com");
@@ -491,14 +487,14 @@ TEST_F(FullStreamUIPolicyTest, LogAndFetchActions) {
                                                 base::Time::Now(),
                                                 Action::ACTION_API_CALL,
                                                 "tabs.testMethod");
-  action_api->set_args(make_scoped_ptr(new base::ListValue()));
+  action_api->set_args(base::WrapUnique(new base::ListValue()));
   policy->ProcessAction(action_api);
 
   scoped_refptr<Action> action_dom = new Action(extension->id(),
                                                 base::Time::Now(),
                                                 Action::ACTION_DOM_ACCESS,
                                                 "document.write");
-  action_dom->set_args(make_scoped_ptr(new base::ListValue()));
+  action_dom->set_args(base::WrapUnique(new base::ListValue()));
   action_dom->set_page_url(gurl);
   policy->ProcessAction(action_dom);
 
@@ -516,10 +512,11 @@ TEST_F(FullStreamUIPolicyTest, LogAndFetchFilteredActions) {
   policy->Init();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Test extension")
-                                     .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test extension")
+                           .Set("version", "1.0.0")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
   extension_service_->AddExtension(extension.get());
   GURL gurl("http://www.google.com");
@@ -529,14 +526,14 @@ TEST_F(FullStreamUIPolicyTest, LogAndFetchFilteredActions) {
                                                 base::Time::Now(),
                                                 Action::ACTION_API_CALL,
                                                 "tabs.testMethod");
-  action_api->set_args(make_scoped_ptr(new base::ListValue()));
+  action_api->set_args(base::WrapUnique(new base::ListValue()));
   policy->ProcessAction(action_api);
 
   scoped_refptr<Action> action_dom = new Action(extension->id(),
                                                 base::Time::Now(),
                                                 Action::ACTION_DOM_ACCESS,
                                                 "document.write");
-  action_dom->set_args(make_scoped_ptr(new base::ListValue()));
+  action_dom->set_args(base::WrapUnique(new base::ListValue()));
   action_dom->set_page_url(gurl);
   policy->ProcessAction(action_dom);
 
@@ -614,14 +611,15 @@ TEST_F(FullStreamUIPolicyTest, LogWithArguments) {
   policy->Init();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Test extension")
-                                     .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test extension")
+                           .Set("version", "1.0.0")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
   extension_service_->AddExtension(extension.get());
 
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Set(0, new base::StringValue("hello"));
   args->Set(1, new base::StringValue("world"));
   scoped_refptr<Action> action = new Action(extension->id(),
@@ -650,7 +648,7 @@ TEST_F(FullStreamUIPolicyTest, GetTodaysActions) {
   base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
   mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                      base::TimeDelta::FromHours(12));
-  policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+  policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
   // Record some actions
   scoped_refptr<Action> action =
@@ -696,7 +694,7 @@ TEST_F(FullStreamUIPolicyTest, GetOlderActions) {
   base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
   mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                      base::TimeDelta::FromHours(12));
-  policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+  policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
   // Record some actions
   scoped_refptr<Action> action =
@@ -749,7 +747,7 @@ TEST_F(FullStreamUIPolicyTest, RemoveAllURLs) {
   base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
   mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                      base::TimeDelta::FromHours(12));
-  policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+  policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
   // Record some actions
   scoped_refptr<Action> action =
@@ -792,7 +790,7 @@ TEST_F(FullStreamUIPolicyTest, RemoveSpecificURLs) {
   base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
   mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                      base::TimeDelta::FromHours(12));
-  policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+  policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
   // Record some actions
   // This should have the page url and args url cleared.
@@ -868,7 +866,7 @@ TEST_F(FullStreamUIPolicyTest, RemoveExtensionData) {
   base::SimpleTestClock* mock_clock = new base::SimpleTestClock();
   mock_clock->SetNow(base::Time::Now().LocalMidnight() +
                      base::TimeDelta::FromHours(12));
-  policy->SetClockForTesting(scoped_ptr<base::Clock>(mock_clock));
+  policy->SetClockForTesting(std::unique_ptr<base::Clock>(mock_clock));
 
   // Record some actions
   scoped_refptr<Action> action = new Action("deleteextensiondata",
@@ -935,7 +933,7 @@ TEST_F(FullStreamUIPolicyTest, CapReturns) {
   BrowserThread::PostTaskAndReply(
       BrowserThread::DB, FROM_HERE, base::Bind(&base::DoNothing),
       base::MessageLoop::current()->QuitWhenIdleClosure());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   CheckReadFilteredData(
       policy,
@@ -955,10 +953,11 @@ TEST_F(FullStreamUIPolicyTest, DeleteDatabase) {
   policy->Init();
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(std::move(DictionaryBuilder()
-                                     .Set("name", "Test extension")
-                                     .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2)))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test extension")
+                           .Set("version", "1.0.0")
+                           .Set("manifest_version", 2)
+                           .Build())
           .Build();
   extension_service_->AddExtension(extension.get());
   GURL gurl("http://www.google.com");
@@ -968,14 +967,14 @@ TEST_F(FullStreamUIPolicyTest, DeleteDatabase) {
                                                 base::Time::Now(),
                                                 Action::ACTION_API_CALL,
                                                 "tabs.testMethod");
-  action_api->set_args(make_scoped_ptr(new base::ListValue()));
+  action_api->set_args(base::WrapUnique(new base::ListValue()));
   policy->ProcessAction(action_api);
 
   scoped_refptr<Action> action_dom = new Action(extension->id(),
                                                 base::Time::Now(),
                                                 Action::ACTION_DOM_ACCESS,
                                                 "document.write");
-  action_dom->set_args(make_scoped_ptr(new base::ListValue()));
+  action_dom->set_args(base::WrapUnique(new base::ListValue()));
   action_dom->set_page_url(gurl);
   policy->ProcessAction(action_dom);
 

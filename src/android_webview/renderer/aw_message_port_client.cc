@@ -4,6 +4,9 @@
 
 #include "android_webview/renderer/aw_message_port_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "android_webview/common/aw_message_port_messages.h"
 #include "content/public/child/v8_value_converter.h"
 #include "content/public/renderer/render_frame.h"
@@ -41,6 +44,10 @@ bool AwMessagePortClient::OnMessageReceived(
   return handled;
 }
 
+void AwMessagePortClient::OnDestruct() {
+  delete this;
+}
+
 void AwMessagePortClient::OnWebToAppMessage(
     int message_port_id,
     const base::string16& message,
@@ -57,14 +64,14 @@ void AwMessagePortClient::OnWebToAppMessage(
   WebSerializedScriptValue v = WebSerializedScriptValue::fromString(message);
   v8::Local<v8::Value> v8value = v.deserialize();
 
-  scoped_ptr<V8ValueConverter> converter;
+  std::unique_ptr<V8ValueConverter> converter;
   converter.reset(V8ValueConverter::create());
   converter->SetDateAllowed(true);
   converter->SetRegExpAllowed(true);
   base::ListValue result;
-  base::Value* value = converter->FromV8Value(v8value, context);
+  std::unique_ptr<base::Value> value = converter->FromV8Value(v8value, context);
   if (value) {
-    result.Append(value);
+    result.Append(std::move(value));
   }
 
   Send(new AwMessagePortHostMsg_ConvertedWebToAppMessage(
@@ -85,11 +92,11 @@ void AwMessagePortClient::OnAppToWebMessage(
   v8::Local<v8::Context> context = main_frame->mainWorldScriptContext();
   v8::Context::Scope context_scope(context);
   DCHECK(!context.IsEmpty());
-  scoped_ptr<V8ValueConverter> converter;
+  std::unique_ptr<V8ValueConverter> converter;
   converter.reset(V8ValueConverter::create());
   converter->SetDateAllowed(true);
   converter->SetRegExpAllowed(true);
-  scoped_ptr<base::Value> value(new base::StringValue(message));
+  std::unique_ptr<base::Value> value(new base::StringValue(message));
   v8::Local<v8::Value> result_value =
       converter->ToV8Value(value.get(), context);
   WebSerializedScriptValue serialized_script_value =

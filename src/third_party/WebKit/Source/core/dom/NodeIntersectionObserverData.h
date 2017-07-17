@@ -13,35 +13,25 @@ class Node;
 class IntersectionObservation;
 class IntersectionObserver;
 
-class NodeIntersectionObserverData : public GarbageCollectedFinalized<NodeIntersectionObserverData> {
+class NodeIntersectionObserverData : public GarbageCollected<NodeIntersectionObserverData> {
 public:
-    DECLARE_TRACE();
     NodeIntersectionObserverData();
-    ~NodeIntersectionObserverData();
 
-    bool hasIntersectionObserver() const;
-    bool hasIntersectionObservation() const;
     IntersectionObservation* getObservationFor(IntersectionObserver&);
     void addObservation(IntersectionObservation&);
     void removeObservation(IntersectionObserver&);
     void activateValidIntersectionObservers(Node&);
     void deactivateAllIntersectionObservers(Node&);
 
-#if !ENABLE(OILPAN)
-    void dispose();
-#endif
+    DECLARE_TRACE();
 
-    WeakPtrWillBeRawPtr<Node> createWeakPtr(Node*);
+    DECLARE_TRACE_WRAPPERS();
 
 private:
     // IntersectionObservers for which the Node owning this data is root.
     HeapHashSet<WeakMember<IntersectionObserver>> m_intersectionObservers;
     // IntersectionObservations for which the Node owning this data is target.
     HeapHashMap<Member<IntersectionObserver>, Member<IntersectionObservation>> m_intersectionObservations;
-
-#if !ENABLE(OILPAN)
-    OwnPtr<WeakPtrFactory<Node>> m_weakPointerFactory;
-#endif
 };
 
 } // namespace blink

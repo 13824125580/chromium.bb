@@ -7,29 +7,31 @@
 
 #include "base/macros.h"
 #include "components/mus/public/interfaces/window_tree.mojom.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "components/mus/ws/user_id.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace mus {
 namespace ws {
 
-class ConnectionManager;
+class WindowServer;
 
 class WindowTreeFactory : public mus::mojom::WindowTreeFactory {
  public:
-  explicit WindowTreeFactory(ConnectionManager* connection_manager);
+  WindowTreeFactory(WindowServer* window_server,
+                    const UserId& user_id,
+                    const std::string& client_name,
+                    mojom::WindowTreeFactoryRequest request);
+ private:
   ~WindowTreeFactory() override;
-
-  void AddBinding(
-      mojo::InterfaceRequest<mus::mojom::WindowTreeFactory> request);
 
   // mus::mojom::WindowTreeFactory:
   void CreateWindowTree(mojo::InterfaceRequest<mojom::WindowTree> tree_request,
                         mojom::WindowTreeClientPtr client) override;
 
- private:
-  ConnectionManager* connection_manager_;
-
-  mojo::BindingSet<mus::mojom::WindowTreeFactory> binding_;
+  WindowServer* window_server_;
+  const UserId user_id_;
+  const std::string client_name_;
+  mojo::StrongBinding<mus::mojom::WindowTreeFactory> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowTreeFactory);
 };

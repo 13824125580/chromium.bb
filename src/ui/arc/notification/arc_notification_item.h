@@ -5,6 +5,7 @@
 #ifndef UI_ARC_NOTIFICATION_ARC_NOTIFICATION_ITEM_H_
 #define UI_ARC_NOTIFICATION_ARC_NOTIFICATION_ITEM_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -25,9 +26,10 @@ class ArcNotificationItem {
                       message_center::MessageCenter* message_center,
                       const std::string& notification_key,
                       const AccountId& profile_id);
-  ~ArcNotificationItem();
+  virtual ~ArcNotificationItem();
 
-  void UpdateWithArcNotificationData(const ArcNotificationData& data);
+  virtual void UpdateWithArcNotificationData(
+      const mojom::ArcNotificationData& data);
 
   // Methods called from ArcNotificationManager:
   void OnClosedFromAndroid(bool by_user);
@@ -36,6 +38,36 @@ class ArcNotificationItem {
   void Close(bool by_user);
   void Click();
   void ButtonClick(int button_index);
+
+  const std::string& notification_key() const { return notification_key_; }
+
+ protected:
+  static int ConvertAndroidPriority(int android_priority);
+  static gfx::Image ConvertAndroidSmallIcon(
+      const mojom::ArcBitmapPtr& arc_bitmap);
+
+  // Checks whether there is on-going |notification_|. If so, cache the |data|
+  // in |newer_data_| and returns true. Otherwise, returns false.
+  bool CacheArcNotificationData(const mojom::ArcNotificationData& data);
+
+  // Sets the pending |notification_|.
+  void SetNotification(
+      std::unique_ptr<message_center::Notification> notification);
+
+  // Add |notification_| to message center and update again if there is
+  // |newer_data_|.
+  void AddToMessageCenter();
+
+  bool CalledOnValidThread() const;
+
+  const AccountId& profile_id() const { return profile_id_; }
+  const std::string& notification_id() const { return notification_id_; }
+  message_center::MessageCenter* message_center() { return message_center_; }
+  ArcNotificationManager* manager() { return manager_; }
+
+  message_center::Notification* pending_notification() {
+    return notification_.get();
+  }
 
  private:
   void OnImageDecoded(const SkBitmap& bitmap);
@@ -49,7 +81,7 @@ class ArcNotificationItem {
 
   // Stores on-going notification data during the image decoding.
   // This field will be removed after removing async task of image decoding.
-  scoped_ptr<message_center::Notification> notification_;
+  std::unique_ptr<message_center::Notification> notification_;
 
   // The flag to indicate that the removing is initiated by the manager and we
   // don't need to notify a remove event to the manager.
@@ -61,7 +93,7 @@ class ArcNotificationItem {
   // Stores the latest notification data which is newer than the on-going data.
   // If the on-going data is either none or the latest, this is null.
   // This field will be removed after removing async task of image decoding.
-  ArcNotificationDataPtr newer_data_;
+  mojom::ArcNotificationDataPtr newer_data_;
 
   base::ThreadChecker thread_checker_;
   base::WeakPtrFactory<ArcNotificationItem> weak_ptr_factory_;

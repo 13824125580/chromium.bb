@@ -7,14 +7,16 @@
 #include "platform/SharedBuffer.h"
 #include "platform/image-decoders/ImageDecoderTestHelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 namespace {
 
-PassOwnPtr<ImageDecoder> createDecoder()
+std::unique_ptr<ImageDecoder> createDecoder()
 {
-    return adoptPtr(new BMPImageDecoder(ImageDecoder::AlphaNotPremultiplied, ImageDecoder::GammaAndColorProfileApplied, ImageDecoder::noDecodedImageByteLimit));
+    return wrapUnique(new BMPImageDecoder(ImageDecoder::AlphaNotPremultiplied, ImageDecoder::GammaAndColorProfileApplied, ImageDecoder::noDecodedImageByteLimit));
 }
 
 } // anonymous namespace
@@ -25,7 +27,7 @@ TEST(BMPImageDecoderTest, isSizeAvailable)
     RefPtr<SharedBuffer> data = readFile(bmpFile);
     ASSERT_TRUE(data.get());
 
-    OwnPtr<ImageDecoder> decoder = createDecoder();
+    std::unique_ptr<ImageDecoder> decoder = createDecoder();
     decoder->setData(data.get(), true);
     EXPECT_TRUE(decoder->isSizeAvailable());
     EXPECT_EQ(256, decoder->size().width());
@@ -38,14 +40,14 @@ TEST(BMPImageDecoderTest, parseAndDecode)
     RefPtr<SharedBuffer> data = readFile(bmpFile);
     ASSERT_TRUE(data.get());
 
-    OwnPtr<ImageDecoder> decoder = createDecoder();
+    std::unique_ptr<ImageDecoder> decoder = createDecoder();
     decoder->setData(data.get(), true);
 
     ImageFrame* frame = decoder->frameBufferAtIndex(0);
     ASSERT_TRUE(frame);
-    EXPECT_EQ(ImageFrame::FrameComplete, frame->status());
-    EXPECT_EQ(256, frame->getSkBitmap().width());
-    EXPECT_EQ(256, frame->getSkBitmap().height());
+    EXPECT_EQ(ImageFrame::FrameComplete, frame->getStatus());
+    EXPECT_EQ(256, frame->bitmap().width());
+    EXPECT_EQ(256, frame->bitmap().height());
     EXPECT_FALSE(decoder->failed());
 }
 
@@ -56,12 +58,12 @@ TEST(BMPImageDecoderTest, emptyImage)
     RefPtr<SharedBuffer> data = readFile(bmpFile);
     ASSERT_TRUE(data.get());
 
-    OwnPtr<ImageDecoder> decoder = createDecoder();
+    std::unique_ptr<ImageDecoder> decoder = createDecoder();
     decoder->setData(data.get(), true);
 
     ImageFrame* frame = decoder->frameBufferAtIndex(0);
     ASSERT_TRUE(frame);
-    EXPECT_EQ(ImageFrame::FrameEmpty, frame->status());
+    EXPECT_EQ(ImageFrame::FrameEmpty, frame->getStatus());
     EXPECT_TRUE(decoder->failed());
 }
 

@@ -27,6 +27,7 @@
 #define JPEGImageDecoder_h
 
 #include "platform/image-decoders/ImageDecoder.h"
+#include <memory>
 
 namespace blink {
 
@@ -40,22 +41,21 @@ public:
 
     // ImageDecoder:
     String filenameExtension() const override { return "jpg"; }
-    void onSetData(SharedBuffer* data) override;
-    bool hasColorProfile() const override { return m_hasColorProfile; }
+    void onSetData(SegmentReader* data) override;
     IntSize decodedSize() const override { return m_decodedSize; }
-    IntSize decodedYUVSize(int component, SizeType) const override;
     bool setSize(unsigned width, unsigned height) override;
+    IntSize decodedYUVSize(int component) const override;
+    size_t decodedYUVWidthBytes(int component) const override;
     bool canDecodeToYUV() override;
     bool decodeToYUV() override;
-    void setImagePlanes(PassOwnPtr<ImagePlanes>) override;
-    bool hasImagePlanes() const { return m_imagePlanes; }
+    void setImagePlanes(std::unique_ptr<ImagePlanes>) override;
+    bool hasImagePlanes() const { return m_imagePlanes.get(); }
 
     bool outputScanlines();
     unsigned desiredScaleNumerator() const;
     void complete();
 
     void setOrientation(ImageOrientation orientation) { m_orientation = orientation; }
-    void setHasColorProfile(bool hasColorProfile) { m_hasColorProfile = hasColorProfile; }
     void setDecodedSize(unsigned width, unsigned height);
 
 private:
@@ -68,10 +68,9 @@ private:
     // data coming, sets the "decode failure" flag.
     void decode(bool onlySize);
 
-    OwnPtr<JPEGImageReader> m_reader;
-    OwnPtr<ImagePlanes> m_imagePlanes;
+    std::unique_ptr<JPEGImageReader> m_reader;
+    std::unique_ptr<ImagePlanes> m_imagePlanes;
     IntSize m_decodedSize;
-    bool m_hasColorProfile;
 };
 
 } // namespace blink

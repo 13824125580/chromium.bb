@@ -36,12 +36,12 @@ class ScriptLoaderClient;
 class ScriptSourceCode;
 class LocalFrame;
 
-class CORE_EXPORT ScriptLoader : public NoBaseWillBeGarbageCollectedFinalized<ScriptLoader>, public ScriptResourceClient {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ScriptLoader);
+class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>, public ScriptResourceClient {
+    USING_GARBAGE_COLLECTED_MIXIN(ScriptLoader);
 public:
-    static PassOwnPtrWillBeRawPtr<ScriptLoader> create(Element* element, bool createdByParser, bool isEvaluated)
+    static ScriptLoader* create(Element* element, bool createdByParser, bool isEvaluated, bool createdDuringDocumentWrite = false)
     {
-        return adoptPtrWillBeNoop(new ScriptLoader(element, createdByParser, isEvaluated));
+        return new ScriptLoader(element, createdByParser, isEvaluated, createdDuringDocumentWrite);
     }
 
     ~ScriptLoader() override;
@@ -50,6 +50,8 @@ public:
     Element* element() const { return m_element; }
 
     enum LegacyTypeSupport { DisallowLegacyTypeInTypeAttribute, AllowLegacyTypeInTypeAttribute };
+    static bool isValidScriptTypeAndLanguage(const String& typeAttributeValue, const String& languageAttributeValue, LegacyTypeSupport supportLegacyTypes);
+
     bool prepareScript(const TextPosition& scriptStartPosition = TextPosition::minimumPosition(), LegacyTypeSupport = DisallowLegacyTypeInTypeAttribute);
 
     String scriptCharset() const { return m_characterEncoding; }
@@ -81,12 +83,15 @@ public:
     void handleAsyncAttribute();
 
     virtual bool isReady() const { return m_pendingScript && m_pendingScript->isReady(); }
+    bool errorOccurred() const { return m_pendingScript && m_pendingScript->errorOccurred(); }
 
     // Clears the connection to the PendingScript (and Element and Resource).
     void detach();
 
+    bool wasCreatedDuringDocumentWrite() { return m_createdDuringDocumentWrite; }
+
 protected:
-    ScriptLoader(Element*, bool createdByParser, bool isEvaluated);
+    ScriptLoader(Element*, bool createdByParser, bool isEvaluated, bool createdDuringDocumentWrite);
 
 private:
     bool ignoresLoadRequest() const;
@@ -101,8 +106,8 @@ private:
     void notifyFinished(Resource*) override;
     String debugName() const override { return "ScriptLoader"; }
 
-    RawPtrWillBeMember<Element> m_element;
-    RefPtrWillBeMember<ScriptResource> m_resource;
+    Member<Element> m_element;
+    Member<ScriptResource> m_resource;
     WTF::OrdinalNumber m_startLineNumber;
     String m_characterEncoding;
     String m_fallbackCharacterEncoding;
@@ -116,8 +121,9 @@ private:
     bool m_willExecuteInOrder : 1;
     bool m_willExecuteWhenDocumentFinishedParsing : 1;
     bool m_forceAsync : 1;
+    const bool m_createdDuringDocumentWrite : 1;
 
-    OwnPtrWillBeMember<PendingScript> m_pendingScript;
+    Member<PendingScript> m_pendingScript;
 };
 
 ScriptLoader* toScriptLoaderIfPossible(Element*);

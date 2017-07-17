@@ -146,6 +146,12 @@ UIImage* BlurImage(UIImage* image,
                    CGFloat saturationDeltaFactor,
                    UIImage* maskImage);
 
+// Returns an output image where each pixel has RGB values equal to a color and
+// the alpha value sampled from the given image. The RGB values of the image are
+// ignored. If the color has alpha value of less than one, then the entire
+// output image's alpha is scaled by the color's alpha value.
+UIImage* TintImage(UIImage* image, UIColor* color);
+
 // Returns a cropped image using |cropRect| on |image|.
 UIImage* CropImage(UIImage* image, const CGRect& cropRect);
 
@@ -219,6 +225,10 @@ void ApplyVisualConstraintsWithMetricsAndOptions(
     NSLayoutFormatOptions options,
     UIView* unused_parentView);
 
+// Adds a constraint that |view1| and |view2| are center-aligned horizontally
+// and vertically.
+void AddSameCenterConstraints(UIView* view1, UIView* view2);
+
 // Adds a constraint that |view1| and |view2| are center-aligned horizontally.
 // |view1| and |view2| must be in the same view hierarchy.
 void AddSameCenterXConstraint(UIView* view1, UIView* view2);
@@ -234,6 +244,10 @@ void AddSameCenterYConstraint(UIView* view1, UIView* view2);
 void AddSameCenterYConstraint(UIView* unused_parentView,
                               UIView* subview1,
                               UIView* subview2);
+
+// Adds constraints to make two views' sizes equal by pinning leading, trailing,
+// top and bottom anchors.
+void AddSameSizeConstraint(UIView* view1, UIView* view2);
 
 // Whether the |environment| has a compact horizontal size class.
 bool IsCompact(id<UITraitEnvironment> environment);

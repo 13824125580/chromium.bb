@@ -5,8 +5,9 @@
 #ifndef CC_LAYERS_NINE_PATCH_LAYER_H_
 #define CC_LAYERS_NINE_PATCH_LAYER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/ui_resource_layer.h"
@@ -20,7 +21,7 @@ class ScopedUIResource;
 
 class CC_EXPORT NinePatchLayer : public UIResourceLayer {
  public:
-  static scoped_refptr<NinePatchLayer> Create(const LayerSettings& settings);
+  static scoped_refptr<NinePatchLayer> Create();
 
   void PushPropertiesTo(LayerImpl* layer) override;
 
@@ -42,9 +43,9 @@ class CC_EXPORT NinePatchLayer : public UIResourceLayer {
   void SetNearestNeighbor(bool nearest_neighbor);
 
  private:
-  explicit NinePatchLayer(const LayerSettings& settings);
+  NinePatchLayer();
   ~NinePatchLayer() override;
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   gfx::Rect border_;
   bool fill_center_;

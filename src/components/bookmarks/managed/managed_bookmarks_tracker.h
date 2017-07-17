@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -38,6 +40,7 @@ class ManagedBookmarksTracker {
   static const char kName[];
   static const char kUrl[];
   static const char kChildren[];
+  static const char kFolderName[];
 
   // If |is_supervised| is true, this will track supervised bookmarks rather
   // than managed bookmarks.
@@ -49,7 +52,7 @@ class ManagedBookmarksTracker {
 
   // Returns the initial list of managed bookmarks, which can be passed to
   // LoadInitial() to do the initial load.
-  scoped_ptr<base::ListValue> GetInitialManagedBookmarks();
+  std::unique_ptr<base::ListValue> GetInitialManagedBookmarks();
 
   // Loads the initial managed/supervised bookmarks in |list| into |folder|.
   // New nodes will be assigned IDs starting at |next_node_id|.

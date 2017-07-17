@@ -10,18 +10,19 @@
 #include "bindings/core/v8/V8Binding.h"
 #include "bindings/core/v8/V8PerformanceObserver.h"
 #include "bindings/core/v8/V8PerformanceObserverEntryList.h"
+#include "bindings/core/v8/V8PrivateProperty.h"
 #include "core/dom/ExecutionContext.h"
 #include "wtf/Assertions.h"
 
 namespace blink {
 
 V8PerformanceObserverCallback::V8PerformanceObserverCallback(v8::Local<v8::Function> callback, v8::Local<v8::Object> owner, ScriptState* scriptState)
-    : ActiveDOMCallback(scriptState->executionContext())
+    : ActiveDOMCallback(scriptState->getExecutionContext())
     , m_callback(scriptState->isolate(), callback)
     , m_scriptState(scriptState)
 {
-    V8HiddenValue::setHiddenValue(scriptState, owner, V8HiddenValue::callback(scriptState->isolate()), callback);
-    m_callback.setWeak(this, &setWeakCallback);
+    V8PrivateProperty::getPerformanceObserverCallback(scriptState->isolate()).set(scriptState->context(), owner, callback);
+    m_callback.setPhantom();
 }
 
 V8PerformanceObserverCallback::~V8PerformanceObserverCallback()
@@ -58,12 +59,7 @@ void V8PerformanceObserverCallback::handleEvent(PerformanceObserverEntryList* en
 
     v8::TryCatch exceptionCatcher(m_scriptState->isolate());
     exceptionCatcher.SetVerbose(true);
-    ScriptController::callFunction(m_scriptState->executionContext(), m_callback.newLocal(m_scriptState->isolate()), thisObject, 2, argv, m_scriptState->isolate());
-}
-
-void V8PerformanceObserverCallback::setWeakCallback(const v8::WeakCallbackInfo<V8PerformanceObserverCallback>& data)
-{
-    data.GetParameter()->m_callback.clear();
+    ScriptController::callFunction(m_scriptState->getExecutionContext(), m_callback.newLocal(m_scriptState->isolate()), thisObject, 2, argv, m_scriptState->isolate());
 }
 
 DEFINE_TRACE(V8PerformanceObserverCallback)

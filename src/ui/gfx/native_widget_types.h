@@ -9,7 +9,6 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "ui/gfx/gfx_export.h"
 
 #if defined(OS_ANDROID)
 #include <jni.h>
@@ -193,49 +192,6 @@ typedef NativeImageType* NativeImage;
 // See comment at the top of the file for usage.
 typedef intptr_t NativeViewId;
 
-// PluginWindowHandle is an abstraction wrapping "the types of windows
-// used by NPAPI plugins". On Windows it's an HWND, on X it's an X
-// window id.
-#if defined(OS_WIN)
-  typedef HWND PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = NULL;
-#elif defined(USE_X11)
-  typedef unsigned long PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#elif defined(OS_ANDROID)
-  typedef uint32_t PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#elif defined(USE_OZONE)
-  typedef intptr_t PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#else
-  typedef uint32_t PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#endif
-
-enum SurfaceType {
-  EMPTY,
-  NATIVE_DIRECT,
-  NULL_TRANSPORT,
-  SURFACE_TYPE_LAST = NULL_TRANSPORT
-};
-
-struct GLSurfaceHandle {
-  GLSurfaceHandle() : handle(kNullPluginWindow), transport_type(EMPTY) {}
-  GLSurfaceHandle(PluginWindowHandle handle_, SurfaceType transport_)
-      : handle(handle_), transport_type(transport_) {
-    DCHECK(!is_null() || handle == kNullPluginWindow);
-    DCHECK(transport_type != NULL_TRANSPORT ||
-           handle == kNullPluginWindow);
-  }
-  bool is_null() const { return transport_type == EMPTY; }
-  bool is_transport() const {
-    return transport_type == NULL_TRANSPORT;
-  }
-  PluginWindowHandle handle;
-  SurfaceType transport_type;
-};
-
 // AcceleratedWidget provides a surface to compositors to paint pixels.
 #if defined(OS_WIN)
 typedef HWND AcceleratedWidget;
@@ -253,7 +209,7 @@ const AcceleratedWidget kNullAcceleratedWidget = 0;
 typedef ANativeWindow* AcceleratedWidget;
 const AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(USE_OZONE)
-typedef intptr_t AcceleratedWidget;
+typedef int32_t AcceleratedWidget;
 const AcceleratedWidget kNullAcceleratedWidget = 0;
 #else
 #error unknown platform

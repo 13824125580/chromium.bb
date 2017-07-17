@@ -15,7 +15,7 @@
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/context_state.h"
@@ -65,6 +65,7 @@ struct TextureSignature {
   bool can_render_;
   bool can_render_to_;
   bool npot_;
+  bool emulating_rgb_;
 
   // Since we will be hashing this signature structure, the padding must be
   // zero initialized. Although the C++11 specifications specify that this is
@@ -86,7 +87,8 @@ struct TextureSignature {
                    bool has_image,
                    bool can_render,
                    bool can_render_to,
-                   bool npot) {
+                   bool npot,
+                   bool emulating_rgb) {
     memset(this, 0, sizeof(TextureSignature));
     target_ = target;
     level_ = level;
@@ -113,6 +115,7 @@ struct TextureSignature {
     can_render_ = can_render;
     can_render_to_ = can_render_to;
     npot_ = npot;
+    emulating_rgb_ = emulating_rgb;
   }
 };
 
@@ -263,6 +266,51 @@ class FormatTypeValidator {
   std::set<FormatType, FormatTypeCompare> supported_combinations_;
 };
 
+static const Texture::CompatibilitySwizzle kSwizzledFormats[] = {
+    {GL_ALPHA, GL_RED, GL_ZERO, GL_ZERO, GL_ZERO, GL_RED},
+    {GL_LUMINANCE, GL_RED, GL_RED, GL_RED, GL_RED, GL_ONE},
+    {GL_LUMINANCE_ALPHA, GL_RG, GL_RED, GL_RED, GL_RED, GL_GREEN},
+};
+
+// static
+const Texture::CompatibilitySwizzle* GetCompatibilitySwizzle(GLenum format) {
+  size_t count = arraysize(kSwizzledFormats);
+  for (size_t i = 0; i < count; ++i) {
+    if (kSwizzledFormats[i].format == format)
+      return &kSwizzledFormats[i];
+  }
+  return nullptr;
+}
+
+GLenum GetSwizzleForChannel(GLenum channel,
+                            const Texture::CompatibilitySwizzle* swizzle) {
+  if (!swizzle)
+    return channel;
+
+  switch (channel) {
+    case GL_ZERO:
+      return GL_ZERO;
+    case GL_ONE:
+      return GL_ONE;
+    case GL_RED:
+      return swizzle->red;
+    case GL_GREEN:
+      return swizzle->green;
+    case GL_BLUE:
+      return swizzle->blue;
+    case GL_ALPHA:
+      return swizzle->alpha;
+    default:
+      NOTREACHED();
+      return GL_NONE;
+  }
+}
+
+// A 32-bit and 64-bit compatible way of converting a pointer to a GLuint.
+GLuint ToGLuint(const void* ptr) {
+  return static_cast<GLuint>(reinterpret_cast<size_t>(ptr));
+}
+
 base::LazyInstance<const FormatTypeValidator>::Leaky g_format_type_validator =
     LAZY_INSTANCE_INITIALIZER;
 
@@ -316,6 +364,10 @@ Texture::Texture(GLuint service_id)
       usage_(GL_NONE),
       base_level_(0),
       max_level_(1000),
+      swizzle_r_(GL_RED),
+      swizzle_g_(GL_GREEN),
+      swizzle_b_(GL_BLUE),
+      swizzle_a_(GL_ALPHA),
       max_level_set_(-1),
       texture_complete_(false),
       texture_mips_dirty_(false),
@@ -327,7 +379,9 @@ Texture::Texture(GLuint service_id)
       has_images_(false),
       estimated_size_(0),
       can_render_condition_(CAN_RENDER_ALWAYS),
-      texture_max_anisotropy_initialized_(false) {}
+      texture_max_anisotropy_initialized_(false),
+      compatibility_swizzle_(nullptr),
+      emulating_rgb_(false) {}
 
 Texture::~Texture() {
   if (mailbox_manager_)
@@ -403,6 +457,8 @@ Texture::LevelInfo::~LevelInfo() {
 Texture::FaceInfo::FaceInfo()
     : num_mip_levels(0) {
 }
+
+Texture::FaceInfo::FaceInfo(const FaceInfo& other) = default;
 
 Texture::FaceInfo::~FaceInfo() {
 }
@@ -536,7 +592,8 @@ void Texture::AddToSignature(
                                   info.image.get() != NULL,
                                   CanRender(feature_info),
                                   CanRenderTo(feature_info, level),
-                                  npot_);
+                                  npot_,
+                                  emulating_rgb_);
 
   signature->append(TextureTag, sizeof(TextureTag));
   signature->append(reinterpret_cast<const char*>(&signature_data),
@@ -815,6 +872,19 @@ void Texture::UpdateHasImages() {
     (*it)->manager()->UpdateNumImages(delta);
 }
 
+void Texture::UpdateEmulatingRGB() {
+  for (const FaceInfo& face_info : face_infos_) {
+    for (const LevelInfo& level_info : face_info.level_infos) {
+      if (level_info.image && level_info.image->EmulatingRGB()) {
+        emulating_rgb_ = true;
+        return;
+      }
+    }
+  }
+  emulating_rgb_ = false;
+}
+
+
 void Texture::IncAllFramebufferStateChangeCount() {
   for (RefSet::iterator it = refs_.begin(); it != refs_.end(); ++it)
     (*it)->manager()->IncFramebufferStateChangeCount();
@@ -932,6 +1002,27 @@ void Texture::SetLevelInfo(GLenum target,
     // TODO(gman): If textures tracked which framebuffers they were attached to
     // we could just mark those framebuffers as not complete.
     IncAllFramebufferStateChangeCount();
+  }
+}
+
+void Texture::SetStreamTextureServiceId(GLuint service_id) {
+  GLuint new_service_id = service_id ? service_id : owned_service_id_;
+
+  // Take no action if this isn't an OES_EXTERNAL texture.
+  if (target_ && target_ != GL_TEXTURE_EXTERNAL_OES)
+    return;
+
+  if (service_id_ != new_service_id) {
+    service_id_ = new_service_id;
+    IncrementManagerServiceIdGeneration();
+    if (gl::GLContext* context = gl::GLContext::GetCurrent()) {
+      // It would be preferable to pass in the decoder, and ask it to do this
+      // instead.  However, there are several cases, such as TextureDefinition,
+      // that show up without a clear context owner.  So, instead, we use the
+      // current state's state restorer.
+      if (gl::GLStateRestorer* restorer = context->GetGLStateRestorer())
+        restorer->RestoreAllExternalTextureBindingsIfNeeded();
+    }
   }
 }
 
@@ -1099,6 +1190,33 @@ GLenum Texture::SetParameteri(
       }
       usage_ = param;
       break;
+    case GL_TEXTURE_SWIZZLE_R:
+      if (!feature_info->validators()->texture_swizzle.IsValid(param)) {
+        return GL_INVALID_ENUM;
+      }
+      swizzle_r_ = param;
+      break;
+    case GL_TEXTURE_SWIZZLE_G:
+      if (!feature_info->validators()->texture_swizzle.IsValid(param)) {
+        return GL_INVALID_ENUM;
+      }
+      swizzle_g_ = param;
+      break;
+    case GL_TEXTURE_SWIZZLE_B:
+      if (!feature_info->validators()->texture_swizzle.IsValid(param)) {
+        return GL_INVALID_ENUM;
+      }
+      swizzle_b_ = param;
+      break;
+    case GL_TEXTURE_SWIZZLE_A:
+      if (!feature_info->validators()->texture_swizzle.IsValid(param)) {
+        return GL_INVALID_ENUM;
+      }
+      swizzle_a_ = param;
+      break;
+    case GL_TEXTURE_IMMUTABLE_FORMAT:
+    case GL_TEXTURE_IMMUTABLE_LEVELS:
+      return GL_INVALID_ENUM;
     default:
       NOTREACHED();
       return GL_INVALID_ENUM;
@@ -1123,7 +1241,7 @@ GLenum Texture::SetParameterf(
     case GL_TEXTURE_MAX_LEVEL:
     case GL_TEXTURE_USAGE_ANGLE:
       {
-        GLint iparam = static_cast<GLint>(param);
+        GLint iparam = static_cast<GLint>(std::round(param));
         return SetParameteri(feature_info, pname, iparam);
       }
     case GL_TEXTURE_MIN_LOD:
@@ -1137,6 +1255,9 @@ GLenum Texture::SetParameterf(
         return GL_INVALID_VALUE;
       }
       break;
+    case GL_TEXTURE_IMMUTABLE_FORMAT:
+    case GL_TEXTURE_IMMUTABLE_LEVELS:
+      return GL_INVALID_ENUM;
     default:
       NOTREACHED();
       return GL_INVALID_ENUM;
@@ -1244,6 +1365,21 @@ bool Texture::ClearRenderableLevels(GLES2Decoder* decoder) {
   return true;
 }
 
+GLint Texture::GetImmutableLevels() const {
+  if (!immutable_)
+    return 0;
+  GLint levels = 0;
+  if (immutable_) {
+    DCHECK(face_infos_.size() > 0);
+    for (size_t ii = 0; ii < face_infos_[0].level_infos.size(); ++ii) {
+      const Texture::LevelInfo& info = face_infos_[0].level_infos[ii];
+      if (info.target != 0)
+        levels++;
+    }
+  }
+  return levels;
+}
+
 gfx::Rect Texture::GetLevelClearedRect(GLenum target, GLint level) const {
   size_t face_index = GLES2Util::GLTargetToFaceIndex(target);
   if (face_index >= face_infos_.size() ||
@@ -1291,8 +1427,7 @@ bool Texture::ClearLevel(
     GLES2Decoder* decoder, GLenum target, GLint level) {
   DCHECK(decoder);
   size_t face_index = GLES2Util::GLTargetToFaceIndex(target);
-  if (face_index >= face_infos_.size() ||
-      level < base_level_ ||
+  if (face_index >= face_infos_.size() || level < 0 ||
       level >= static_cast<GLint>(face_infos_[face_index].level_infos.size())) {
     return true;
   }
@@ -1316,30 +1451,45 @@ bool Texture::ClearLevel(
     if (!cleared)
       return false;
   } else {
-    // Clear all remaining sub regions.
-    const int x[] = {
+    if (decoder->IsCompressedTextureFormat(info.internal_format)) {
+      // An uncleared level of a compressed texture can only occur when
+      // allocating the texture with TexStorage2D. In this case the level
+      // is cleared just before a call to CompressedTexSubImage2D, to avoid
+      // having to clear a sub-rectangle of a compressed texture, which
+      // would be problematic.
+      DCHECK(IsImmutable());
+      DCHECK(info.cleared_rect == gfx::Rect());
+      bool cleared = decoder->ClearCompressedTextureLevel(
+          this, info.target, info.level, info.internal_format,
+          info.width, info.height);
+      if (!cleared)
+        return false;
+    } else {
+      // Clear all remaining sub regions.
+      const int x[] = {
         0, info.cleared_rect.x(), info.cleared_rect.right(), info.width};
-    const int y[] = {
+      const int y[] = {
         0, info.cleared_rect.y(), info.cleared_rect.bottom(), info.height};
 
-    for (size_t j = 0; j < 3; ++j) {
-      for (size_t i = 0; i < 3; ++i) {
-        // Center of nine patch is already cleared.
-        if (j == 1 && i == 1)
-          continue;
+      for (size_t j = 0; j < 3; ++j) {
+        for (size_t i = 0; i < 3; ++i) {
+          // Center of nine patch is already cleared.
+          if (j == 1 && i == 1)
+            continue;
 
-        gfx::Rect rect(x[i], y[j], x[i + 1] - x[i], y[j + 1] - y[j]);
-        if (rect.IsEmpty())
-          continue;
+          gfx::Rect rect(x[i], y[j], x[i + 1] - x[i], y[j + 1] - y[j]);
+          if (rect.IsEmpty())
+            continue;
 
-        // NOTE: It seems kind of gross to call back into the decoder for this
-        // but only the decoder knows all the state (like unpack_alignment_)
-        // that's needed to be able to call GL correctly.
-        bool cleared = decoder->ClearLevel(
-            this, info.target, info.level, info.format, info.type,
-            rect.x(), rect.y(), rect.width(), rect.height());
-        if (!cleared)
-          return false;
+          // NOTE: It seems kind of gross to call back into the decoder for this
+          // but only the decoder knows all the state (like unpack_alignment_)
+          // that's needed to be able to call GL correctly.
+          bool cleared = decoder->ClearLevel(
+              this, info.target, info.level, info.format, info.type,
+              rect.x(), rect.y(), rect.width(), rect.height());
+          if (!cleared)
+            return false;
+        }
       }
     }
   }
@@ -1354,14 +1504,13 @@ void Texture::SetLevelImageInternal(GLenum target,
                                     gl::GLImage* image,
                                     GLStreamTextureImage* stream_texture_image,
                                     ImageState state) {
+  DCHECK(!stream_texture_image || stream_texture_image == image);
   DCHECK_GE(level, 0);
   size_t face_index = GLES2Util::GLTargetToFaceIndex(target);
-  DCHECK_LT(static_cast<size_t>(face_index),
-            face_infos_.size());
+  DCHECK_LT(static_cast<size_t>(face_index), face_infos_.size());
   DCHECK_LT(static_cast<size_t>(level),
             face_infos_[face_index].level_infos.size());
-  Texture::LevelInfo& info =
-      face_infos_[face_index].level_infos[level];
+  Texture::LevelInfo& info = face_infos_[face_index].level_infos[level];
   DCHECK_EQ(info.target, target);
   DCHECK_EQ(info.level, level);
   info.image = image;
@@ -1370,20 +1519,36 @@ void Texture::SetLevelImageInternal(GLenum target,
 
   UpdateCanRenderCondition();
   UpdateHasImages();
+  UpdateEmulatingRGB();
 }
 
 void Texture::SetLevelImage(GLenum target,
                             GLint level,
                             gl::GLImage* image,
                             ImageState state) {
+  SetStreamTextureServiceId(0);
   SetLevelImageInternal(target, level, image, nullptr, state);
 }
 
 void Texture::SetLevelStreamTextureImage(GLenum target,
                                          GLint level,
                                          GLStreamTextureImage* image,
-                                         ImageState state) {
+                                         ImageState state,
+                                         GLuint service_id) {
+  SetStreamTextureServiceId(service_id);
   SetLevelImageInternal(target, level, image, image, state);
+}
+
+void Texture::SetLevelImageState(GLenum target, GLint level, ImageState state) {
+  DCHECK_GE(level, 0);
+  size_t face_index = GLES2Util::GLTargetToFaceIndex(target);
+  DCHECK_LT(static_cast<size_t>(face_index), face_infos_.size());
+  DCHECK_LT(static_cast<size_t>(level),
+            face_infos_[face_index].level_infos.size());
+  Texture::LevelInfo& info = face_infos_[face_index].level_infos[level];
+  DCHECK_EQ(info.target, target);
+  DCHECK_EQ(info.level, level);
+  info.image_state = state;
 }
 
 const Texture::LevelInfo* Texture::GetLevelInfo(GLint target,
@@ -1483,7 +1648,8 @@ bool Texture::CanRenderTo(const FeatureInfo* feature_info, GLint level) const {
             IsValid(internal_format) &&
         internal_format != GL_ALPHA &&
         internal_format != GL_LUMINANCE &&
-        internal_format != GL_LUMINANCE_ALPHA) ||
+        internal_format != GL_LUMINANCE_ALPHA &&
+        internal_format != GL_SRGB_EXT) ||
        feature_info->validators()->
            texture_sized_color_renderable_internal_format.IsValid(
                internal_format));
@@ -1494,28 +1660,36 @@ bool Texture::CanRenderTo(const FeatureInfo* feature_info, GLint level) const {
   return (color_renderable || depth_renderable || stencil_renderable);
 }
 
-void Texture::SetUnownedServiceId(GLuint service_id) {
-  GLuint new_service_id = service_id;
+GLenum Texture::GetCompatibilitySwizzleForChannel(GLenum channel) {
+  return GetSwizzleForChannel(channel, compatibility_swizzle_);
+}
 
-  // Take no action if this isn't an OES_EXTERNAL texture.
-  if (target_ && target_ != GL_TEXTURE_EXTERNAL_OES)
+void Texture::SetCompatibilitySwizzle(const CompatibilitySwizzle* swizzle) {
+  if (compatibility_swizzle_ == swizzle)
     return;
 
-  if (!service_id)
-    new_service_id = owned_service_id_;
+  compatibility_swizzle_ = swizzle;
+  glTexParameteri(target_, GL_TEXTURE_SWIZZLE_R,
+                  GetSwizzleForChannel(swizzle_r_, swizzle));
+  glTexParameteri(target_, GL_TEXTURE_SWIZZLE_G,
+                  GetSwizzleForChannel(swizzle_g_, swizzle));
+  glTexParameteri(target_, GL_TEXTURE_SWIZZLE_B,
+                  GetSwizzleForChannel(swizzle_b_, swizzle));
+  glTexParameteri(target_, GL_TEXTURE_SWIZZLE_A,
+                  GetSwizzleForChannel(swizzle_a_, swizzle));
+}
 
-  if (service_id_ != new_service_id) {
-    service_id_ = new_service_id;
-    IncrementManagerServiceIdGeneration();
-    if (gfx::GLContext* context = gfx::GLContext::GetCurrent()) {
-      // It would be preferable to pass in the decoder, and ask it to do this
-      // instead.  However, there are several cases, such as TextureDefinition,
-      // that show up without a clear context owner.  So, instead, we use the
-      // current state's state restorer.
-      if (gfx::GLStateRestorer* restorer = context->GetGLStateRestorer())
-        restorer->RestoreAllExternalTextureBindingsIfNeeded();
-    }
+void Texture::ApplyFormatWorkarounds(FeatureInfo* feature_info) {
+  if (feature_info->gl_version_info().is_desktop_core_profile) {
+    if (static_cast<size_t>(base_level_) >= face_infos_[0].level_infos.size())
+      return;
+    const Texture::LevelInfo& info = face_infos_[0].level_infos[base_level_];
+    SetCompatibilitySwizzle(GetCompatibilitySwizzle(info.format));
   }
+}
+
+bool Texture::EmulatingRGB() {
+  return emulating_rgb_;
 }
 
 TextureRef::TextureRef(TextureManager* manager,
@@ -1524,7 +1698,8 @@ TextureRef::TextureRef(TextureManager* manager,
     : manager_(manager),
       texture_(texture),
       client_id_(client_id),
-      num_observers_(0) {
+      num_observers_(0),
+      force_context_lost_(false) {
   DCHECK(manager_);
   DCHECK(texture_);
   texture_->AddTextureRef(this);
@@ -1539,8 +1714,13 @@ scoped_refptr<TextureRef> TextureRef::Create(TextureManager* manager,
 
 TextureRef::~TextureRef() {
   manager_->StopTracking(this);
-  texture_->RemoveTextureRef(this, manager_->have_context_);
+  texture_->RemoveTextureRef(
+      this, force_context_lost_ ? false : manager_->have_context_);
   manager_ = NULL;
+}
+
+void TextureRef::ForceContextLost() {
+  force_context_lost_ = true;
 }
 
 TextureManager::TextureManager(MemoryTracker* memory_tracker,
@@ -1549,6 +1729,7 @@ TextureManager::TextureManager(MemoryTracker* memory_tracker,
                                GLint max_cube_map_texture_size,
                                GLint max_rectangle_texture_size,
                                GLint max_3d_texture_size,
+                               GLint max_array_texture_layers,
                                bool use_default_textures)
     : memory_type_tracker_(new MemoryTypeTracker(memory_tracker)),
       memory_tracker_(memory_tracker),
@@ -1558,14 +1739,15 @@ TextureManager::TextureManager(MemoryTracker* memory_tracker,
       max_cube_map_texture_size_(max_cube_map_texture_size),
       max_rectangle_texture_size_(max_rectangle_texture_size),
       max_3d_texture_size_(max_3d_texture_size),
+      max_array_texture_layers_(max_array_texture_layers),
       max_levels_(ComputeMipMapCount(GL_TEXTURE_2D,
                                      max_texture_size,
                                      max_texture_size,
-                                     max_texture_size)),
+                                     0)),
       max_cube_map_levels_(ComputeMipMapCount(GL_TEXTURE_CUBE_MAP,
                                               max_cube_map_texture_size,
                                               max_cube_map_texture_size,
-                                              max_cube_map_texture_size)),
+                                              0)),
       max_3d_levels_(ComputeMipMapCount(GL_TEXTURE_3D,
                                         max_3d_texture_size,
                                         max_3d_texture_size,
@@ -1599,7 +1781,8 @@ bool TextureManager::Initialize() {
         GL_TEXTURE_2D_ARRAY, &black_texture_ids_[kTexture2DArray]);
   }
 
-  if (feature_info_->feature_flags().oes_egl_image_external) {
+  if (feature_info_->feature_flags().oes_egl_image_external ||
+      feature_info_->feature_flags().nv_egl_stream_consumer_external) {
     default_textures_[kExternalOES] = CreateDefaultAndBlackTextures(
         GL_TEXTURE_EXTERNAL_OES, &black_texture_ids_[kExternalOES]);
   }
@@ -1684,15 +1867,17 @@ scoped_refptr<TextureRef>
 
 bool TextureManager::ValidForTarget(
     GLenum target, GLint level, GLsizei width, GLsizei height, GLsizei depth) {
+  if (level < 0 || level >= MaxLevelsForTarget(target))
+    return false;
   GLsizei max_size = MaxSizeForTarget(target) >> level;
-  return level >= 0 &&
-         width >= 0 &&
+  GLsizei max_depth =
+      (target == GL_TEXTURE_2D_ARRAY ? max_array_texture_layers() : max_size);
+  return width >= 0 &&
          height >= 0 &&
          depth >= 0 &&
-         level < MaxLevelsForTarget(target) &&
          width <= max_size &&
          height <= max_size &&
-         depth <= max_size &&
+         depth <= max_depth &&
          (level == 0 || feature_info_->feature_flags().npot_ok ||
           (!GLES2Util::IsNPOT(width) &&
            !GLES2Util::IsNPOT(height) &&
@@ -1793,7 +1978,18 @@ void TextureManager::SetParameteri(
           error_state, result, function_name, pname, param);
     }
   } else {
-    glTexParameteri(texture->target(), pname, param);
+    switch (pname) {
+      case GL_TEXTURE_SWIZZLE_R:
+      case GL_TEXTURE_SWIZZLE_G:
+      case GL_TEXTURE_SWIZZLE_B:
+      case GL_TEXTURE_SWIZZLE_A:
+        glTexParameteri(texture->target(), pname,
+                        texture->GetCompatibilitySwizzleForChannel(param));
+        break;
+      default:
+        glTexParameteri(texture->target(), pname, param);
+        break;
+    }
   }
 }
 
@@ -1927,9 +2123,19 @@ void TextureManager::SetLevelStreamTextureImage(TextureRef* ref,
                                                 GLenum target,
                                                 GLint level,
                                                 GLStreamTextureImage* image,
-                                                Texture::ImageState state) {
+                                                Texture::ImageState state,
+                                                GLuint service_id) {
   DCHECK(ref);
-  ref->texture()->SetLevelStreamTextureImage(target, level, image, state);
+  ref->texture()->SetLevelStreamTextureImage(target, level, image, state,
+                                             service_id);
+}
+
+void TextureManager::SetLevelImageState(TextureRef* ref,
+                                        GLenum target,
+                                        GLint level,
+                                        Texture::ImageState state) {
+  DCHECK(ref);
+  ref->texture()->SetLevelImageState(target, level, state);
 }
 
 size_t TextureManager::GetSignatureSize() const {
@@ -1965,7 +2171,7 @@ void TextureManager::IncFramebufferStateChangeCount() {
 }
 
 bool TextureManager::ValidateTextureParameters(
-    ErrorState* error_state, const char* function_name,
+    ErrorState* error_state, const char* function_name, bool tex_image_call,
     GLenum format, GLenum type, GLint internal_format, GLint level) {
   const Validators* validators = feature_info_->validators();
   if (!validators->texture_format.IsValid(format)) {
@@ -1978,20 +2184,22 @@ bool TextureManager::ValidateTextureParameters(
         error_state, function_name, type, "type");
     return false;
   }
-  if (!g_format_type_validator.Get().IsValid(internal_format, format, type)) {
-    ERRORSTATE_SET_GL_ERROR(
-        error_state, GL_INVALID_OPERATION, function_name,
-        "invalid internalformat/format/type combination");
+  // For TexSubImage calls, internal_format isn't part of the parameters.
+  // So the validation is not necessary for TexSubImage.
+  if (tex_image_call &&
+      !validators->texture_internal_format.IsValid(internal_format)) {
+    std::string msg = base::StringPrintf("invalid internal_format 0x%x",
+                                         internal_format);
+    ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_VALUE, function_name,
+                             msg.c_str());
     return false;
   }
-  // For TexSubImage calls, internal_format isn't part of the parameters,
-  // so its validation needs to be after the internal_format/format/type
-  // combination validation. Otherwise, an unexpected INVALID_VALUE could be
-  // generated instead of INVALID_OPERATION.
-  if (!validators->texture_internal_format.IsValid(internal_format)) {
-    ERRORSTATE_SET_GL_ERROR(
-        error_state, GL_INVALID_VALUE, function_name,
-        "invalid internal_format");
+  if (!g_format_type_validator.Get().IsValid(internal_format, format, type)) {
+    std::string msg = base::StringPrintf(
+        "invalid internalformat/format/type combination 0x%x/0x%x/0x%x",
+        internal_format, format, type);
+    ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_OPERATION, function_name,
+                            msg.c_str());
     return false;
   }
   if (!feature_info_->IsES3Enabled()) {
@@ -2078,7 +2286,7 @@ bool TextureManager::ValidateTexImage(
     return false;
   }
   if (!ValidateTextureParameters(
-      error_state, function_name, args.format, args.type,
+      error_state, function_name, true, args.format, args.type,
       args.internal_format, args.level)) {
     return false;
   }
@@ -2113,6 +2321,40 @@ bool TextureManager::ValidateTexImage(
     return false;
   }
 
+  Buffer* buffer = state->bound_pixel_unpack_buffer.get();
+  if (buffer) {
+    if (buffer->GetMappedRange()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer should not be mapped to client memory");
+      return false;
+    }
+    base::CheckedNumeric<uint32_t> size = args.pixels_size;
+    GLuint offset = ToGLuint(args.pixels);
+    size += offset;
+    if (!size.IsValid()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_VALUE, function_name,
+          "size + offset overflow");
+      return false;
+    }
+    uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
+    if (buffer_size < size.ValueOrDefault(0)) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer is not large enough");
+      return false;
+    }
+    size_t type_size = GLES2Util::GetGLTypeSizeForTextures(args.type);
+    DCHECK_LT(0u, type_size);
+    if (offset % type_size != 0) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "offset is not evenly divisible by elements");
+      return false;
+    }
+  }
+
   if (!memory_type_tracker_->EnsureGPUMemoryAvailable(args.pixels_size)) {
     ERRORSTATE_SET_GL_ERROR(error_state, GL_OUT_OF_MEMORY, function_name,
                             "out of memory");
@@ -2135,6 +2377,8 @@ void TextureManager::ValidateAndDoTexImage(
     return;
   }
 
+  Buffer* buffer = state->bound_pixel_unpack_buffer.get();
+
   // ValidateTexImage is passed already.
   Texture* texture = texture_ref->texture();
   bool need_cube_map_workaround =
@@ -2142,7 +2386,8 @@ void TextureManager::ValidateAndDoTexImage(
       (texture_state->force_cube_complete ||
        (texture_state->force_cube_map_positive_x_allocation &&
         args.target != GL_TEXTURE_CUBE_MAP_POSITIVE_X));
-  if (need_cube_map_workaround) {
+  if (need_cube_map_workaround && !buffer) {
+    // TODO(zmo): The following code does not work with an unpack buffer bound.
     std::vector<GLenum> undefined_faces;
     if (texture_state->force_cube_complete) {
       int width = 0;
@@ -2164,7 +2409,6 @@ void TextureManager::ValidateAndDoTexImage(
         undefined_faces.push_back(GL_TEXTURE_CUBE_MAP_POSITIVE_X);
       }
     }
-
     if (!memory_type_tracker_->EnsureGPUMemoryAvailable(
             (undefined_faces.size() + 1) * args.pixels_size)) {
       ERRORSTATE_SET_GL_ERROR(state->GetErrorState(), GL_OUT_OF_MEMORY,
@@ -2172,19 +2416,87 @@ void TextureManager::ValidateAndDoTexImage(
       return;
     }
     DoTexImageArguments new_args = args;
-    scoped_ptr<char[]> zero(new char[args.pixels_size]);
+    std::unique_ptr<char[]> zero(new char[args.pixels_size]);
     memset(zero.get(), 0, args.pixels_size);
     for (GLenum face : undefined_faces) {
       new_args.target = face;
       new_args.pixels = zero.get();
-      DoTexImage(texture_state, state->GetErrorState(), framebuffer_state,
+      DoTexImage(texture_state, state, framebuffer_state,
                  function_name, texture_ref, new_args);
       texture->MarkLevelAsInternalWorkaround(face, args.level);
     }
   }
 
-  DoTexImage(texture_state, state->GetErrorState(), framebuffer_state,
+  if (texture_state->unpack_overlapping_rows_separately_unpack_buffer &&
+      buffer) {
+    ContextState::Dimension dimension =
+        (args.command_type == DoTexImageArguments::kTexImage3D)
+            ? ContextState::k3D
+            : ContextState::k2D;
+    const PixelStoreParams unpack_params(state->GetUnpackParams(dimension));
+    if (unpack_params.row_length != 0 &&
+        unpack_params.row_length < args.width) {
+      // The rows overlap in unpack memory. Upload the texture row by row to
+      // work around driver bug.
+
+      ReserveTexImageToBeFilled(texture_state, state, framebuffer_state,
+                                function_name, texture_ref, args);
+
+      DoTexSubImageArguments sub_args = {
+          args.target, args.level, 0, 0, 0, args.width, args.height, args.depth,
+          args.format, args.type, args.pixels, args.pixels_size, args.padding,
+          args.command_type == DoTexImageArguments::kTexImage3D
+              ? DoTexSubImageArguments::kTexSubImage3D
+              : DoTexSubImageArguments::kTexSubImage2D};
+      DoTexSubImageRowByRowWorkaround(texture_state, state, sub_args,
+                                      unpack_params);
+
+      SetLevelCleared(texture_ref, args.target, args.level, true);
+      return;
+    }
+  }
+
+  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer) {
+    uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
+    if (buffer_size - args.pixels_size - ToGLuint(args.pixels) < args.padding) {
+      // In ValidateTexImage(), we already made sure buffer size is no less
+      // than offset + pixels_size.
+      ReserveTexImageToBeFilled(texture_state, state, framebuffer_state,
+                                function_name, texture_ref, args);
+
+      DoTexSubImageArguments sub_args = {
+          args.target, args.level, 0, 0, 0, args.width, args.height, args.depth,
+          args.format, args.type, args.pixels, args.pixels_size, args.padding,
+          args.command_type == DoTexImageArguments::kTexImage3D ?
+              DoTexSubImageArguments::kTexSubImage3D :
+              DoTexSubImageArguments::kTexSubImage2D};
+      DoTexSubImageWithAlignmentWorkaround(texture_state, state, sub_args);
+
+      SetLevelCleared(texture_ref, args.target, args.level, true);
+      return;
+    }
+  }
+  DoTexImage(texture_state, state, framebuffer_state,
              function_name, texture_ref, args);
+}
+
+void TextureManager::ReserveTexImageToBeFilled(
+    DecoderTextureState* texture_state,
+    ContextState* state,
+    DecoderFramebufferState* framebuffer_state,
+    const char* function_name,
+    TextureRef* texture_ref,
+    const DoTexImageArguments& args) {
+  Buffer* buffer = state->bound_pixel_unpack_buffer.get();
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  state->SetBoundBuffer(GL_PIXEL_UNPACK_BUFFER, nullptr);
+  DoTexImageArguments new_args = args;
+  new_args.pixels = nullptr;
+  // pixels_size might be incorrect, but it's not used in this case.
+  DoTexImage(texture_state, state, framebuffer_state, function_name,
+             texture_ref, new_args);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer->service_id());
+  state->SetBoundBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
 }
 
 bool TextureManager::ValidateTexSubImage(ContextState* state,
@@ -2202,21 +2514,7 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
                                          args.target, "target");
     return false;
   }
-  if (args.width < 0) {
-    ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_VALUE, function_name,
-                            "width < 0");
-    return false;
-  }
-  if (args.height < 0) {
-    ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_VALUE, function_name,
-                            "height < 0");
-    return false;
-  }
-  if (args.depth < 0) {
-    ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_VALUE, function_name,
-                            "depth < 0");
-    return false;
-  }
+  DCHECK(args.width >= 0 && args.height >= 0 && args.depth >= 0);
   TextureRef* local_texture_ref = GetTextureInfoForTarget(state, args.target);
   if (!local_texture_ref) {
     ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_OPERATION, function_name,
@@ -2228,11 +2526,13 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
   GLenum internal_format = 0;
   if (!texture->GetLevelType(args.target, args.level, &current_type,
                              &internal_format)) {
+    std::string msg = base::StringPrintf(
+        "level %d does not exist", args.level);
     ERRORSTATE_SET_GL_ERROR(error_state, GL_INVALID_OPERATION, function_name,
-                            "level does not exist.");
+                            msg.c_str());
     return false;
   }
-  if (!ValidateTextureParameters(error_state, function_name, args.format,
+  if (!ValidateTextureParameters(error_state, function_name, false, args.format,
                                  args.type, internal_format, args.level)) {
     return false;
   }
@@ -2258,7 +2558,40 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
         "can not supply data for depth or stencil textures");
     return false;
   }
-  DCHECK(args.pixels);
+
+  Buffer* buffer = state->bound_pixel_unpack_buffer.get();
+  if (buffer) {
+    if (buffer->GetMappedRange()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer should not be mapped to client memory");
+      return error::kNoError;
+    }
+    base::CheckedNumeric<uint32_t> size = args.pixels_size;
+    GLuint offset = ToGLuint(args.pixels);
+    size += offset;
+    if (!size.IsValid()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_VALUE, function_name,
+          "size + offset overflow");
+      return error::kNoError;
+    }
+    uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
+    if (buffer_size < size.ValueOrDefault(0)) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer is not large enough");
+      return error::kNoError;
+    }
+    size_t type_size = GLES2Util::GetGLTypeSizeForTextures(args.type);
+    DCHECK_LT(0u, type_size);
+    if (offset % type_size != 0) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "offset is not evenly divisible by elements");
+      return error::kNoError;
+    }
+  }
   *texture_ref = local_texture_ref;
   return true;
 }
@@ -2283,6 +2616,7 @@ void TextureManager::ValidateAndDoTexSubImage(
   bool ok = texture->GetLevelSize(args.target, args.level, &tex_width,
                                   &tex_height, &tex_depth);
   DCHECK(ok);
+  bool full_image;
   if (args.xoffset != 0 || args.yoffset != 0 || args.zoffset != 0 ||
       args.width != tex_width || args.height != tex_height ||
       args.depth != tex_depth) {
@@ -2305,20 +2639,40 @@ void TextureManager::ValidateAndDoTexSubImage(
         return;
       }
     }
-    ScopedTextureUploadTimer timer(texture_state);
-    if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
-      glTexSubImage3D(args.target, args.level, args.xoffset, args.yoffset,
-                      args.zoffset, args.width, args.height, args.depth,
-                      AdjustTexFormat(args.format), args.type, args.pixels);
-    } else {
-      glTexSubImage2D(args.target, args.level, args.xoffset, args.yoffset,
-                      args.width, args.height, AdjustTexFormat(args.format),
-                      args.type, args.pixels);
-    }
-    return;
+    full_image = false;
+  } else {
+    SetLevelCleared(texture_ref, args.target, args.level, true);
+    full_image = true;
   }
 
-  if (!texture_state->texsubimage_faster_than_teximage &&
+  Buffer* buffer = state->bound_pixel_unpack_buffer.get();
+
+  if (texture_state->unpack_overlapping_rows_separately_unpack_buffer &&
+      buffer) {
+    ContextState::Dimension dimension =
+        (args.command_type == DoTexSubImageArguments::kTexSubImage3D)
+            ? ContextState::k3D
+            : ContextState::k2D;
+    const PixelStoreParams unpack_params(state->GetUnpackParams(dimension));
+    if (unpack_params.row_length != 0 &&
+        unpack_params.row_length < args.width) {
+      // The rows overlap in unpack memory. Upload the texture row by row to
+      // work around driver bug.
+      DoTexSubImageRowByRowWorkaround(texture_state, state, args,
+                                      unpack_params);
+      return;
+    }
+  }
+
+  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer) {
+    uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
+    if (buffer_size - args.pixels_size - ToGLuint(args.pixels) < args.padding) {
+      DoTexSubImageWithAlignmentWorkaround(texture_state, state, args);
+      return;
+    }
+  }
+
+  if (full_image && !texture_state->texsubimage_faster_than_teximage &&
       !texture->IsImmutable() && !texture->HasImages()) {
     ScopedTextureUploadTimer timer(texture_state);
     GLenum internal_format;
@@ -2327,48 +2681,239 @@ void TextureManager::ValidateAndDoTexSubImage(
     // NOTE: In OpenGL ES 2/3 border is always zero. If that changes we'll need
     // to look it up.
     if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
-      glTexImage3D(args.target, args.level, internal_format, args.width,
-                   args.height, args.depth, 0, AdjustTexFormat(args.format),
-                   args.type, args.pixels);
+      glTexImage3D(
+          args.target, args.level,
+          AdjustTexInternalFormat(feature_info_.get(), internal_format),
+          args.width, args.height, args.depth, 0,
+          AdjustTexFormat(feature_info_.get(), args.format), args.type,
+          args.pixels);
     } else {
-      glTexImage2D(args.target, args.level, internal_format, args.width,
-                   args.height, 0, AdjustTexFormat(args.format), args.type,
-                   args.pixels);
+      glTexImage2D(
+          args.target, args.level,
+          AdjustTexInternalFormat(feature_info_.get(), internal_format),
+          args.width, args.height, 0,
+          AdjustTexFormat(feature_info_.get(), args.format), args.type,
+          args.pixels);
     }
   } else {
     ScopedTextureUploadTimer timer(texture_state);
     if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
       glTexSubImage3D(args.target, args.level, args.xoffset, args.yoffset,
                       args.zoffset, args.width, args.height, args.depth,
-                      AdjustTexFormat(args.format), args.type, args.pixels);
+                      AdjustTexFormat(feature_info_.get(), args.format),
+                      args.type, args.pixels);
     } else {
       glTexSubImage2D(args.target, args.level, args.xoffset, args.yoffset,
-                      args.width, args.height, AdjustTexFormat(args.format),
+                      args.width, args.height,
+                      AdjustTexFormat(feature_info_.get(), args.format),
                       args.type, args.pixels);
     }
   }
-  SetLevelCleared(texture_ref, args.target, args.level, true);
 }
 
-GLenum TextureManager::AdjustTexFormat(GLenum format) const {
+void TextureManager::DoTexSubImageWithAlignmentWorkaround(
+    DecoderTextureState* texture_state,
+    ContextState* state,
+    const DoTexSubImageArguments& args) {
+  DCHECK(state->bound_pixel_unpack_buffer.get());
+  DCHECK(args.width > 0 && args.height > 0 && args.depth > 0);
+
+  ScopedTextureUploadTimer timer(texture_state);
+  uint32_t offset = ToGLuint(args.pixels);
+  if (args.command_type == DoTexSubImageArguments::kTexSubImage2D) {
+    PixelStoreParams params = state->GetUnpackParams(ContextState::k2D);
+    if (args.height > 1) {
+      glTexSubImage2D(args.target, args.level, args.xoffset, args.yoffset,
+                      args.width, args.height - 1,
+                      AdjustTexFormat(feature_info_.get(), args.format),
+                      args.type, args.pixels);
+      GLint actual_width = state->unpack_row_length > 0 ?
+          state->unpack_row_length : args.width;
+      uint32_t size;
+      uint32_t padding;
+      // No need to worry about integer overflow here.
+      GLES2Util::ComputeImageDataSizesES3(actual_width, args.height - 1, 1,
+                                          args.format, args.type,
+                                          params,
+                                          &size,
+                                          nullptr, nullptr, nullptr,
+                                          &padding);
+      DCHECK_EQ(args.padding, padding);
+      // Last row should be padded, not unpadded.
+      offset += size + padding;
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(args.target, args.level, args.xoffset,
+                    args.yoffset + args.height - 1, args.width, 1,
+                    AdjustTexFormat(feature_info_.get(), args.format),
+                    args.type, reinterpret_cast<const void*>(offset));
+    glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpack_alignment);
+    {
+      uint32_t size;
+      GLES2Util::ComputeImageDataSizesES3(args.width, 1, 1,
+                                          args.format, args.type,
+                                          params,
+                                          &size,
+                                          nullptr, nullptr, nullptr, nullptr);
+      offset += size;
+    }
+  } else {  // kTexSubImage3D
+    PixelStoreParams params = state->GetUnpackParams(ContextState::k3D);
+    GLint actual_width = state->unpack_row_length > 0 ?
+        state->unpack_row_length : args.width;
+    if (args.depth > 1) {
+      glTexSubImage3D(args.target, args.level, args.xoffset, args.yoffset,
+                      args.zoffset, args.width, args.height, args.depth - 1,
+                      AdjustTexFormat(feature_info_.get(), args.format),
+                      args.type, args.pixels);
+      GLint actual_height = state->unpack_image_height > 0 ?
+          state->unpack_image_height : args.height;
+      uint32_t size;
+      uint32_t padding;
+      // No need to worry about integer overflow here.
+      GLES2Util::ComputeImageDataSizesES3(actual_width, actual_height,
+                                          args.depth - 1,
+                                          args.format, args.type,
+                                          params,
+                                          &size,
+                                          nullptr, nullptr, nullptr,
+                                          &padding);
+      DCHECK_EQ(args.padding, padding);
+      // Last row should be padded, not unpadded.
+      offset += size + padding;
+    }
+    if (args.height > 1) {
+      glTexSubImage3D(args.target, args.level, args.xoffset, args.yoffset,
+                      args.zoffset + args.depth - 1, args.width,
+                      args.height - 1, 1,
+                      AdjustTexFormat(feature_info_.get(), args.format),
+                      args.type, reinterpret_cast<const void*>(offset));
+      uint32_t size;
+      uint32_t padding;
+      // No need to worry about integer overflow here.
+      GLES2Util::ComputeImageDataSizesES3(actual_width, args.height - 1, 1,
+                                          args.format, args.type,
+                                          params,
+                                          &size,
+                                          nullptr, nullptr, nullptr,
+                                          &padding);
+      DCHECK_EQ(args.padding, padding);
+      // Last row should be padded, not unpadded.
+      offset += size + padding;
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage3D(args.target, args.level, args.xoffset,
+                    args.yoffset + args.height - 1,
+                    args.zoffset + args.depth - 1, args.width, 1, 1,
+                    AdjustTexFormat(feature_info_.get(), args.format),
+                    args.type, reinterpret_cast<const void*>(offset));
+    glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpack_alignment);
+    {
+      uint32_t size;
+      GLES2Util::ComputeImageDataSizesES3(args.width, 1, 1,
+                                          args.format, args.type,
+                                          params,
+                                          &size,
+                                          nullptr, nullptr, nullptr, nullptr);
+      offset += size;
+    }
+  }
+  DCHECK_EQ(ToGLuint(args.pixels) + args.pixels_size, offset);
+}
+
+void TextureManager::DoTexSubImageRowByRowWorkaround(
+    DecoderTextureState* texture_state,
+    ContextState* state,
+    const DoTexSubImageArguments& args,
+    const PixelStoreParams& unpack_params) {
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  DCHECK_EQ(0, state->unpack_skip_pixels);
+  DCHECK_EQ(0, state->unpack_skip_rows);
+  DCHECK_EQ(0, state->unpack_skip_images);
+
+  GLenum format = AdjustTexFormat(feature_info_.get(), args.format);
+
+  GLsizei row_bytes = unpack_params.row_length *
+                      GLES2Util::ComputeImageGroupSize(format, args.type);
+  GLsizei alignment_diff = row_bytes % unpack_params.alignment;
+  if (alignment_diff != 0) {
+    row_bytes += unpack_params.alignment - alignment_diff;
+  }
+  DCHECK_EQ(0, row_bytes % unpack_params.alignment);
+  if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
+    GLsizei image_height = args.height;
+    if (unpack_params.image_height != 0) {
+      image_height = unpack_params.image_height;
+    }
+    GLsizei image_bytes = row_bytes * image_height;
+    for (GLsizei image = 0; image < args.depth; ++image) {
+      GLsizei image_byte_offset = image * image_bytes;
+      for (GLsizei row = 0; row < args.height; ++row) {
+        GLsizei byte_offset = image_byte_offset + row * row_bytes;
+        const GLubyte* row_pixels =
+            reinterpret_cast<const GLubyte*>(args.pixels) + byte_offset;
+        glTexSubImage3D(args.target, args.level, args.xoffset,
+                        row + args.yoffset, image + args.zoffset, args.width, 1,
+                        1, format, args.type, row_pixels);
+      }
+    }
+  } else {
+    for (GLsizei row = 0; row < args.height; ++row) {
+      GLsizei byte_offset = row * row_bytes;
+      const GLubyte* row_pixels =
+          reinterpret_cast<const GLubyte*>(args.pixels) + byte_offset;
+      glTexSubImage2D(args.target, args.level, args.xoffset, row + args.yoffset,
+                      args.width, 1, format, args.type, row_pixels);
+    }
+  }
+
+  // Restore unpack state
+  glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_params.alignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_params.row_length);
+}
+
+// static
+GLenum TextureManager::AdjustTexInternalFormat(
+    const gles2::FeatureInfo* feature_info,
+    GLenum format) {
+  if (feature_info->gl_version_info().is_desktop_core_profile) {
+    const Texture::CompatibilitySwizzle* swizzle =
+        GetCompatibilitySwizzle(format);
+    if (swizzle)
+      return swizzle->dest_format;
+  }
+  return format;
+}
+
+// static
+GLenum TextureManager::AdjustTexFormat(const gles2::FeatureInfo* feature_info,
+                                       GLenum format) {
   // TODO(bajones): GLES 3 allows for internal format and format to differ.
   // This logic may need to change as a result.
-  if (gfx::GetGLImplementation() == gfx::kGLImplementationDesktopGL) {
+  if (!feature_info->gl_version_info().is_es) {
     if (format == GL_SRGB_EXT)
       return GL_RGB;
     if (format == GL_SRGB_ALPHA_EXT)
       return GL_RGBA;
+  }
+  if (feature_info->gl_version_info().is_desktop_core_profile) {
+    const Texture::CompatibilitySwizzle* swizzle =
+        GetCompatibilitySwizzle(format);
+    if (swizzle)
+      return swizzle->dest_format;
   }
   return format;
 }
 
 void TextureManager::DoTexImage(
     DecoderTextureState* texture_state,
-    ErrorState* error_state,
+    ContextState* state,
     DecoderFramebufferState* framebuffer_state,
     const char* function_name,
     TextureRef* texture_ref,
     const DoTexImageArguments& args) {
+  ErrorState* error_state = state->GetErrorState();
   Texture* texture = texture_ref->texture();
   GLsizei tex_width = 0;
   GLsizei tex_height = 0;
@@ -2384,7 +2929,10 @@ void TextureManager::DoTexImage(
           args.target, args.level, &tex_type, &tex_internal_format) &&
       args.type == tex_type && args.internal_format == tex_internal_format;
 
-  if (level_is_same && !args.pixels) {
+  bool unpack_buffer_bound =
+      (state->bound_pixel_unpack_buffer.get() != nullptr);
+
+  if (level_is_same && !args.pixels && !unpack_buffer_bound) {
     // Just set the level texture but mark the texture as uncleared.
     SetLevelInfo(
         texture_ref, args.target, args.level, args.internal_format, args.width,
@@ -2399,16 +2947,18 @@ void TextureManager::DoTexImage(
   }
 
   if (texture_state->texsubimage_faster_than_teximage &&
-      level_is_same && args.pixels) {
+      level_is_same && args.pixels && !unpack_buffer_bound) {
     {
       ScopedTextureUploadTimer timer(texture_state);
       if (args.command_type == DoTexImageArguments::kTexImage3D) {
-        glTexSubImage3D(args.target, args.level, 0, 0, 0,
-                        args.width, args.height, args.depth,
-                        args.format, args.type, args.pixels);
+        glTexSubImage3D(args.target, args.level, 0, 0, 0, args.width,
+                        args.height, args.depth,
+                        AdjustTexFormat(feature_info_.get(), args.format),
+                        args.type, args.pixels);
       } else {
         glTexSubImage2D(args.target, args.level, 0, 0, args.width, args.height,
-                        AdjustTexFormat(args.format), args.type, args.pixels);
+                        AdjustTexFormat(feature_info_.get(), args.format),
+                        args.type, args.pixels);
       }
     }
     SetLevelInfo(texture_ref, args.target, args.level, args.internal_format,
@@ -2422,13 +2972,19 @@ void TextureManager::DoTexImage(
   {
     ScopedTextureUploadTimer timer(texture_state);
     if (args.command_type == DoTexImageArguments::kTexImage3D) {
-      glTexImage3D(args.target, args.level, args.internal_format, args.width,
-                   args.height, args.depth, args.border, args.format,
-                   args.type, args.pixels);
+      glTexImage3D(
+          args.target, args.level,
+          AdjustTexInternalFormat(feature_info_.get(), args.internal_format),
+          args.width, args.height, args.depth, args.border,
+          AdjustTexFormat(feature_info_.get(), args.format), args.type,
+          args.pixels);
     } else {
-      glTexImage2D(args.target, args.level, args.internal_format, args.width,
-                   args.height, args.border, AdjustTexFormat(args.format),
-                   args.type, args.pixels);
+      glTexImage2D(
+          args.target, args.level,
+          AdjustTexInternalFormat(feature_info_.get(), args.internal_format),
+          args.width, args.height, args.border,
+          AdjustTexFormat(feature_info_.get(), args.format), args.type,
+          args.pixels);
     }
   }
   GLenum error = ERRORSTATE_PEEK_GL_ERROR(error_state, function_name);
@@ -2440,11 +2996,12 @@ void TextureManager::DoTexImage(
         GetAllGLErrors());
   }
   if (error == GL_NO_ERROR) {
-    bool set_as_cleared = (args.pixels != nullptr);
+    bool set_as_cleared = (args.pixels != nullptr || unpack_buffer_bound);
     SetLevelInfo(
         texture_ref, args.target, args.level, args.internal_format, args.width,
         args.height, args.depth, args.border, args.format, args.type,
         set_as_cleared ? gfx::Rect(args.width, args.height) : gfx::Rect());
+    texture->ApplyFormatWorkarounds(feature_info_.get());
     texture_state->tex_image_failed = false;
   }
 }
@@ -2523,7 +3080,7 @@ void TextureManager::DumpTextureRef(base::trace_event::ProcessMemoryDump* pmd,
 
   // Add the |client_guid| which expresses shared ownership with the client
   // process.
-  auto client_guid = gfx::GetGLTextureClientGUIDForTracing(
+  auto client_guid = gl::GetGLTextureClientGUIDForTracing(
       memory_tracker_->ShareGroupTracingGUID(), ref->client_id());
   pmd->CreateSharedGlobalAllocatorDump(client_guid);
   pmd->AddOwnershipEdge(dump->guid(), client_guid);
@@ -2532,7 +3089,7 @@ void TextureManager::DumpTextureRef(base::trace_event::ProcessMemoryDump* pmd,
   // |client_guid|s.
   // TODO(ericrk): May need to ensure uniqueness using GLShareGroup and
   // potentially cross-share-group sharing via EGLImages. crbug.com/512534
-  auto service_guid = gfx::GetGLTextureServiceGUIDForTracing(
+  auto service_guid = gl::GetGLTextureServiceGUIDForTracing(
       memory_tracker_->ShareGroupTracingGUID(), ref->texture()->service_id());
   pmd->CreateSharedGlobalAllocatorDump(service_guid);
 

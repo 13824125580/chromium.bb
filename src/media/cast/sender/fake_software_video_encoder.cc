@@ -21,9 +21,8 @@ FakeSoftwareVideoEncoder::FakeSoftwareVideoEncoder(
     const VideoSenderConfig& video_config)
     : video_config_(video_config),
       next_frame_is_key_(true),
-      frame_id_(0),
-      frame_size_(0) {
-}
+      frame_id_(FrameId::first()),
+      frame_size_(0) {}
 
 FakeSoftwareVideoEncoder::~FakeSoftwareVideoEncoder() {}
 
@@ -56,18 +55,18 @@ void FakeSoftwareVideoEncoder::Encode(
   base::DictionaryValue values;
   values.SetBoolean("key",
                     encoded_frame->dependency == EncodedFrame::KEY);
-  values.SetInteger("ref", encoded_frame->referenced_frame_id);
-  values.SetInteger("id", encoded_frame->frame_id);
+  values.SetInteger("ref", encoded_frame->referenced_frame_id.lower_32_bits());
+  values.SetInteger("id", encoded_frame->frame_id.lower_32_bits());
   values.SetInteger("size", frame_size_);
   base::JSONWriter::Write(values, &encoded_frame->data);
   encoded_frame->data.resize(
       std::max<size_t>(encoded_frame->data.size(), frame_size_), ' ');
 
   if (encoded_frame->dependency == EncodedFrame::KEY) {
-    encoded_frame->deadline_utilization = 1.0;
+    encoded_frame->encoder_utilization = 1.0;
     encoded_frame->lossy_utilization = 6.0;
   } else {
-    encoded_frame->deadline_utilization = 0.8;
+    encoded_frame->encoder_utilization = 0.8;
     encoded_frame->lossy_utilization = 0.8;
   }
 }

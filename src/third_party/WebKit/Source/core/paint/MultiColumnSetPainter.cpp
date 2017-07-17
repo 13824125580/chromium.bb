@@ -8,6 +8,7 @@
 #include "core/paint/BlockPainter.h"
 #include "core/paint/BoxPainter.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
+#include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintInfo.h"
 #include "platform/geometry/LayoutPoint.h"
 
@@ -42,7 +43,7 @@ void MultiColumnSetPainter::paintColumnRules(const PaintInfo& paintInfo, const L
     EBorderStyle ruleStyle = blockStyle.columnRuleStyle();
     LayoutUnit ruleThickness(blockStyle.columnRuleWidth());
     LayoutUnit colGap = m_layoutMultiColumnSet.columnGap();
-    bool renderRule = ruleStyle > BHIDDEN && !ruleTransparent;
+    bool renderRule = ruleStyle > BorderStyleHidden && !ruleTransparent;
     if (!renderRule)
         return;
 
@@ -50,12 +51,12 @@ void MultiColumnSetPainter::paintColumnRules(const PaintInfo& paintInfo, const L
     if (colCount <= 1)
         return;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutMultiColumnSet, DisplayItem::ColumnRules, paintOffset))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutMultiColumnSet, DisplayItem::ColumnRules))
         return;
 
     LayoutRect paintRect = m_layoutMultiColumnSet.visualOverflowRect();
     paintRect.moveBy(paintOffset);
-    LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutMultiColumnSet, DisplayItem::ColumnRules, paintRect, paintOffset);
+    LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutMultiColumnSet, DisplayItem::ColumnRules, paintRect);
 
     bool leftToRight = m_layoutMultiColumnSet.style()->isLeftToRightDirection();
     LayoutUnit currLogicalLeftOffset = leftToRight ? LayoutUnit() : m_layoutMultiColumnSet.contentLogicalWidth();

@@ -17,17 +17,16 @@ import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.EmbedContentViewActivity;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
+import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
-import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoScreen;
+import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoUtils;
 import org.chromium.chrome.browser.preferences.datareduction.DataReductionProxyUma;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.signin.SigninAccessPoint;
-import org.chromium.chrome.browser.signin.SigninManager;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
@@ -57,7 +56,7 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
     // Outcoming results:
     public static final String RESULT_CLOSE_APP = "Close App";
     public static final String RESULT_SIGNIN_ACCOUNT_NAME = "ResultSignInTo";
-    public static final String RESULT_SHOW_SYNC_SETTINGS = "ResultShowSyncSettings";
+    public static final String RESULT_SHOW_SIGNIN_SETTINGS = "ResultShowSignInSettings";
 
     // UMA constants.
     private static final String UMA_SIGNIN_CHOICE = "MobileFre.SignInChoice";
@@ -79,7 +78,7 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
     private boolean mShowWelcomePage = true;
 
     private String mResultSignInAccountName;
-    private boolean mResultShowSyncSettings;
+    private boolean mResultShowSignInSettings;
 
     private boolean mNativeSideIsInitialized;
 
@@ -115,6 +114,16 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
         }
     }
 
+    /**
+     * Returns whether metrics reporting is currently opt-in. This is used to determine if the
+     * enable metrics reporting checkbox on first-run should be initially checked. Opt-in means it
+     * is not initially checked, opt-out means it is. This is not guaranteed to be correct outside
+     * of the first-run situation, as the default may change over time.
+     */
+    private static boolean isMetricsReportingOptIn() {
+        return ChromeVersionInfo.isStableBuild();
+    }
+
     // Activity:
 
     @Override
@@ -138,7 +147,7 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
 
         mProfileDataCache = new ProfileDataCache(FirstRunActivity.this, null);
         mProfileDataCache.setProfile(Profile.getLastUsedProfile());
-        new FirstRunFlowSequencer(this, mFreProperties) {
+        new FirstRunFlowSequencer(this, mFreProperties, isMetricsReportingOptIn()) {
             @Override
             public void onFlowIsKnown(Bundle freProperties) {
                 if (freProperties == null) {
@@ -254,7 +263,7 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
             boolean defaultAccountName =
                     sGlue.isDefaultAccountName(getApplicationContext(), mResultSignInAccountName);
             int choice;
-            if (mResultShowSyncSettings) {
+            if (mResultShowSignInSettings) {
                 if (defaultAccountName) {
                     choice = SIGNIN_SETTINGS_DEFAULT_ACCOUNT;
                 } else {
@@ -286,17 +295,18 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
         }
 
         mFreProperties.putString(RESULT_SIGNIN_ACCOUNT_NAME, mResultSignInAccountName);
-        mFreProperties.putBoolean(RESULT_SHOW_SYNC_SETTINGS, mResultShowSyncSettings);
+        mFreProperties.putBoolean(RESULT_SHOW_SIGNIN_SETTINGS, mResultShowSignInSettings);
         FirstRunFlowSequencer.markFlowAsCompleted(this, mFreProperties);
 
-        if (DataReductionPromoScreen
-                .getDisplayedDataReductionPromo(getApplicationContext())) {
+        if (DataReductionPromoUtils.getDisplayedFreOrSecondRunPromo()) {
             if (DataReductionProxySettings.getInstance().isDataReductionProxyEnabled()) {
                 DataReductionProxyUma
                         .dataReductionProxyUIAction(DataReductionProxyUma.ACTION_FRE_ENABLED);
+                DataReductionPromoUtils.saveFrePromoOptOut(false);
             } else {
                 DataReductionProxyUma
                         .dataReductionProxyUIAction(DataReductionProxyUma.ACTION_FRE_DISABLED);
+                DataReductionPromoUtils.saveFrePromoOptOut(true);
             }
         }
 
@@ -306,18 +316,11 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
     }
 
     @Override
-    public void onSigninDialogShown() {
-        RecordUserAction.record("MobileFre.SignInShown");
-        RecordUserAction.record("Signin_Impression_FromStartPage");
-        SigninManager.logSigninStartAccessPoint(SigninAccessPoint.START_PAGE);
-    }
-
-    @Override
     public void refuseSignIn() {
         RecordHistogram.recordEnumeratedHistogram(
                 UMA_SIGNIN_CHOICE, SIGNIN_NO_THANKS, SIGNIN_OPTION_COUNT);
         mResultSignInAccountName = null;
-        mResultShowSyncSettings = false;
+        mResultShowSignInSettings = false;
     }
 
     @Override
@@ -326,8 +329,8 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
     }
 
     @Override
-    public void askToOpenSyncSettings() {
-        mResultShowSyncSettings = true;
+    public void askToOpenSignInSettings() {
+        mResultShowSignInSettings = true;
     }
 
     @Override
@@ -342,6 +345,7 @@ public class FirstRunActivity extends AppCompatActivity implements FirstRunPageD
 
     @Override
     public void acceptTermsOfService(boolean allowCrashUpload) {
+        UmaUtils.recordMetricsReportingDefaultOptIn(isMetricsReportingOptIn());
         sGlue.acceptTermsOfService(getApplicationContext(), allowCrashUpload);
         flushPersistentData();
         stopProgressionIfNotAcceptedTermsOfService();

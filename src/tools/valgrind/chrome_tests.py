@@ -322,7 +322,9 @@ class ChromeTests:
     return self.SimpleTest("chrome", "cast_unittests")
 
   def TestCC(self):
-    return self.SimpleTest("cc", "cc_unittests")
+    return self.SimpleTest("cc", "cc_unittests",
+                           cmd_args=[
+                               "--cc-layer-tree-test-long-timeout"])
 
   def TestChromeApp(self):
     return self.SimpleTest("chrome_app", "chrome_app_unittests")
@@ -388,6 +390,9 @@ class ChromeTests:
   def TestInstallerUtil(self):
     return self.SimpleTest("installer_util", "installer_util_unittests")
 
+  def TestInstallStatic(self):
+    return self.SimpleTest("install_static", "install_static_unittests")
+
   def TestJingle(self):
     return self.SimpleTest("chrome", "jingle_unittests")
 
@@ -410,10 +415,6 @@ class ChromeTests:
     return self.SimpleTest("mojo_public_bindings",
                            "mojo_public_bindings_unittests")
 
-  def TestMojoPublicEnv(self):
-    return self.SimpleTest("mojo_public_env",
-                           "mojo_public_environment_unittests")
-
   def TestMojoPublicSystem(self):
     return self.SimpleTest("mojo_public_system",
                            "mojo_public_system_unittests")
@@ -421,10 +422,6 @@ class ChromeTests:
   def TestMojoPublicSysPerf(self):
     return self.SimpleTest("mojo_public_sysperf",
                            "mojo_public_system_perftests")
-
-  def TestMojoPublicUtility(self):
-    return self.SimpleTest("mojo_public_utility",
-                           "mojo_public_utility_unittests")
 
   def TestMojoSystem(self):
     return self.SimpleTest("mojo_system", "mojo_system_unittests")
@@ -513,11 +510,6 @@ class ChromeTests:
     return self.SimpleTest("chrome", "interactive_ui_tests",
                            valgrind_test_args=self.UI_VALGRIND_ARGS,
                            cmd_args=self.UI_TEST_ARGS)
-
-  def TestSafeBrowsing(self):
-    return self.SimpleTest("chrome", "safe_browsing_tests",
-                           valgrind_test_args=self.UI_VALGRIND_ARGS,
-                           cmd_args=(["--ui-test-action-max-timeout=450000"]))
 
   def TestSyncIntegration(self):
     return self.SimpleTest("chrome", "sync_integration_tests",
@@ -689,6 +681,7 @@ class ChromeTests:
     "ipc": TestIpc,              "ipc_tests": TestIpc,
     "installer_util": TestInstallerUtil,
     "installer_util_unittests": TestInstallerUtil,
+    "install_static_unittests": TestInstallStatic,
     "interactive_ui": TestInteractiveUI,
     "jingle": TestJingle,        "jingle_unittests": TestJingle,
     "keyboard": TestKeyboard,    "keyboard_unittests": TestKeyboard,
@@ -703,12 +696,8 @@ class ChromeTests:
     "mojo_system_unittests": TestMojoSystem,
     "mojo_public_system": TestMojoPublicSystem,
     "mojo_public_system_unittests": TestMojoPublicSystem,
-    "mojo_public_utility": TestMojoPublicUtility,
-    "mojo_public_utility_unittests": TestMojoPublicUtility,
     "mojo_public_bindings": TestMojoPublicBindings,
     "mojo_public_bindings_unittests": TestMojoPublicBindings,
-    "mojo_public_env": TestMojoPublicEnv,
-    "mojo_public_environment_unittests": TestMojoPublicEnv,
     "mojo_public_sysperf": TestMojoPublicSysPerf,
     "net": TestNet,              "net_unittests": TestNet,
     "net_perf": TestNetPerf,     "net_perftests": TestNetPerf,
@@ -717,7 +706,6 @@ class ChromeTests:
     "ppapi": TestPPAPI,          "ppapi_unittests": TestPPAPI,
     "printing": TestPrinting,    "printing_unittests": TestPrinting,
     "remoting": TestRemoting,    "remoting_unittests": TestRemoting,
-    "safe_browsing": TestSafeBrowsing, "safe_browsing_tests": TestSafeBrowsing,
     "sandbox": TestLinuxSandbox, "sandbox_linux_unittests": TestLinuxSandbox,
     "skia": TestSkia,            "skia_unittests": TestSkia,
     "sql": TestSql,              "sql_unittests": TestSql,

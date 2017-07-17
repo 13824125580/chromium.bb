@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/policy/affiliation_test_helper.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/dbus/session_manager_client.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_utils.h"
@@ -49,7 +52,7 @@ class UserAffiliationBrowserTest
     chromeos::FakeSessionManagerClient* fake_session_manager_client =
         new chromeos::FakeSessionManagerClient;
     chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        make_scoped_ptr<chromeos::SessionManagerClient>(
+        base::WrapUnique<chromeos::SessionManagerClient>(
             fake_session_manager_client));
 
     UserPolicyBuilder user_policy;
@@ -69,6 +72,9 @@ class UserAffiliationBrowserTest
     affiliation_test_helper::SetUserAffiliationIDs(
         &user_policy, fake_session_manager_client, kAffiliatedUser,
         user_affiliation_ids);
+
+    // Set retry delay to prevent timeouts.
+    policy::DeviceManagementService::SetRetryDelayForTesting(0);
   }
 
  private:

@@ -65,25 +65,12 @@ bool SupportsPlatformPaint(const SkCanvas* canvas) {
   return GetPlatformDevice(GetTopDevice(*canvas)) != nullptr;
 }
 
-PlatformSurface BeginPlatformPaint(SkCanvas* canvas) {
-  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
-  if (platform_device)
-    return platform_device->BeginPlatformPaint();
-
-  return 0;
-}
-
-void EndPlatformPaint(SkCanvas* canvas) {
-  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
-  if (platform_device)
-    platform_device->EndPlatformPaint();
-}
-
 size_t PlatformCanvasStrideForWidth(unsigned width) {
   return 4 * width;
 }
 
-SkCanvas* CreateCanvas(const skia::RefPtr<SkBaseDevice>& device, OnFailureType failureType) {
+SkCanvas* CreateCanvas(const sk_sp<SkBaseDevice>& device,
+                       OnFailureType failureType) {
   if (!device) {
     if (CRASH_ON_FAILURE == failureType)
       SK_CRASH();
@@ -110,11 +97,28 @@ bool IsPreviewMetafile(const SkCanvas& canvas) {
 CGContextRef GetBitmapContext(const SkCanvas& canvas) {
   SkBaseDevice* device = GetTopDevice(canvas);
   PlatformDevice* platform_device = GetPlatformDevice(device);
-  return platform_device ?  platform_device->GetBitmapContext() :
+  SkIRect clip_bounds;
+  canvas.getClipDeviceBounds(&clip_bounds);
+  return platform_device ?
+      platform_device->GetBitmapContext(
+          canvas.getTotalMatrix(), clip_bounds) :
       nullptr;
 }
 
 #endif
 
+ScopedPlatformPaint::ScopedPlatformPaint(SkCanvas* canvas) :
+    canvas_(canvas),
+    platform_surface_(nullptr) {
+  // TODO(tomhudson) we're assuming non-null canvas?
+  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
+  if (platform_device) {
+    // Compensate for drawing to a layer rather than the entire canvas
+    SkMatrix ctm;
+    SkIRect clip_bounds;
+    canvas->temporary_internal_describeTopLayer(&ctm, &clip_bounds);
+    platform_surface_ = platform_device->BeginPlatformPaint(ctm, clip_bounds);
+  }
+}
 
 }  // namespace skia

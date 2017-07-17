@@ -35,6 +35,7 @@
 #include "core/page/Page.h"
 #include "modules/webdatabase/Database.h"
 #include "modules/webdatabase/DatabaseClient.h"
+#include "modules/webdatabase/DatabaseTracker.h"
 #include "modules/webdatabase/InspectorDatabaseResource.h"
 #include "modules/webdatabase/SQLError.h"
 #include "modules/webdatabase/SQLResultSet.h"
@@ -46,9 +47,10 @@
 #include "modules/webdatabase/SQLTransactionErrorCallback.h"
 #include "modules/webdatabase/sqlite/SQLValue.h"
 #include "platform/inspector_protocol/Values.h"
+#include "wtf/RefCounted.h"
 #include "wtf/Vector.h"
 
-typedef blink::protocol::Dispatcher::DatabaseCommandHandler::ExecuteSQLCallback ExecuteSQLCallback;
+typedef blink::protocol::Database::Backend::ExecuteSQLCallback ExecuteSQLCallback;
 
 namespace blink {
 
@@ -58,17 +60,28 @@ static const char databaseAgentEnabled[] = "databaseAgentEnabled";
 
 namespace {
 
-void reportTransactionFailed(ExecuteSQLCallback* requestCallback, SQLError* error)
-{
-    OwnPtr<protocol::Database::Error> errorObject = protocol::Database::Error::create()
-        .setMessage(error->message())
-        .setCode(error->code()).build();
-    requestCallback->sendSuccess(Maybe<protocol::Array<String>>(), Maybe<protocol::Array<RefPtr<protocol::Value>>>(), errorObject.release());
-}
+class ExecuteSQLCallbackWrapper : public RefCounted<ExecuteSQLCallbackWrapper> {
+public:
+    static PassRefPtr<ExecuteSQLCallbackWrapper> create(std::unique_ptr<ExecuteSQLCallback> callback) { return adoptRef(new ExecuteSQLCallbackWrapper(std::move(callback))); }
+    ~ExecuteSQLCallbackWrapper() { }
+    ExecuteSQLCallback* get() { return m_callback.get(); }
+
+    void reportTransactionFailed(SQLError* error)
+    {
+        std::unique_ptr<protocol::Database::Error> errorObject = protocol::Database::Error::create()
+            .setMessage(error->message())
+            .setCode(error->code()).build();
+        m_callback->sendSuccess(Maybe<protocol::Array<String>>(), Maybe<protocol::Array<protocol::Value>>(), std::move(errorObject));
+    }
+
+private:
+    explicit ExecuteSQLCallbackWrapper(std::unique_ptr<ExecuteSQLCallback> callback) : m_callback(std::move(callback)) { }
+    std::unique_ptr<ExecuteSQLCallback> m_callback;
+};
 
 class StatementCallback final : public SQLStatementCallback {
 public:
-    static StatementCallback* create(PassRefPtr<ExecuteSQLCallback> requestCallback)
+    static StatementCallback* create(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
     {
         return new StatementCallback(requestCallback);
     }
@@ -84,34 +97,33 @@ public:
     {
         SQLResultSetRowList* rowList = resultSet->rows();
 
-        OwnPtr<protocol::Array<String>> columnNames = protocol::Array<String>::create();
+        std::unique_ptr<protocol::Array<String>> columnNames = protocol::Array<String>::create();
         const Vector<String>& columns = rowList->columnNames();
         for (size_t i = 0; i < columns.size(); ++i)
             columnNames->addItem(columns[i]);
 
-        OwnPtr<protocol::Array<RefPtr<protocol::Value>>> values = protocol::Array<RefPtr<protocol::Value>>::create();
+        std::unique_ptr<protocol::Array<protocol::Value>> values = protocol::Array<protocol::Value>::create();
         const Vector<SQLValue>& data = rowList->values();
         for (size_t i = 0; i < data.size(); ++i) {
             const SQLValue& value = rowList->values()[i];
-            switch (value.type()) {
+            switch (value.getType()) {
             case SQLValue::StringValue: values->addItem(protocol::StringValue::create(value.string())); break;
             case SQLValue::NumberValue: values->addItem(protocol::FundamentalValue::create(value.number())); break;
             case SQLValue::NullValue: values->addItem(protocol::Value::null()); break;
             }
         }
-        m_requestCallback->sendSuccess(columnNames.release(), values.release(), Maybe<protocol::Database::Error>());
+        m_requestCallback->get()->sendSuccess(std::move(columnNames), std::move(values), Maybe<protocol::Database::Error>());
         return true;
     }
 
 private:
-    StatementCallback(PassRefPtr<ExecuteSQLCallback> requestCallback)
-        : m_requestCallback(requestCallback) { }
-    RefPtr<ExecuteSQLCallback> m_requestCallback;
+    StatementCallback(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback) : m_requestCallback(requestCallback) { }
+    RefPtr<ExecuteSQLCallbackWrapper> m_requestCallback;
 };
 
 class StatementErrorCallback final : public SQLStatementErrorCallback {
 public:
-    static StatementErrorCallback* create(PassRefPtr<ExecuteSQLCallback> requestCallback)
+    static StatementErrorCallback* create(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
     {
         return new StatementErrorCallback(requestCallback);
     }
@@ -125,19 +137,18 @@ public:
 
     bool handleEvent(SQLTransaction*, SQLError* error) override
     {
-        reportTransactionFailed(m_requestCallback.get(), error);
+        m_requestCallback->reportTransactionFailed(error);
         return true;
     }
 
 private:
-    StatementErrorCallback(PassRefPtr<ExecuteSQLCallback> requestCallback)
-        : m_requestCallback(requestCallback) { }
-    RefPtr<ExecuteSQLCallback> m_requestCallback;
+    StatementErrorCallback(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback) : m_requestCallback(requestCallback) { }
+    RefPtr<ExecuteSQLCallbackWrapper> m_requestCallback;
 };
 
 class TransactionCallback final : public SQLTransactionCallback {
 public:
-    static TransactionCallback* create(const String& sqlStatement, PassRefPtr<ExecuteSQLCallback> requestCallback)
+    static TransactionCallback* create(const String& sqlStatement, PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
     {
         return new TransactionCallback(sqlStatement, requestCallback);
     }
@@ -151,26 +162,23 @@ public:
 
     bool handleEvent(SQLTransaction* transaction) override
     {
-        if (!m_requestCallback->isActive())
-            return true;
-
         Vector<SQLValue> sqlValues;
-        SQLStatementCallback* callback = StatementCallback::create(m_requestCallback.get());
-        SQLStatementErrorCallback* errorCallback = StatementErrorCallback::create(m_requestCallback.get());
+        SQLStatementCallback* callback = StatementCallback::create(m_requestCallback);
+        SQLStatementErrorCallback* errorCallback = StatementErrorCallback::create(m_requestCallback);
         transaction->executeSQL(m_sqlStatement, sqlValues, callback, errorCallback, IGNORE_EXCEPTION);
         return true;
     }
 private:
-    TransactionCallback(const String& sqlStatement, PassRefPtr<ExecuteSQLCallback> requestCallback)
+    TransactionCallback(const String& sqlStatement, PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
         : m_sqlStatement(sqlStatement)
         , m_requestCallback(requestCallback) { }
     String m_sqlStatement;
-    RefPtr<ExecuteSQLCallback> m_requestCallback;
+    RefPtr<ExecuteSQLCallbackWrapper> m_requestCallback;
 };
 
 class TransactionErrorCallback final : public SQLTransactionErrorCallback {
 public:
-    static TransactionErrorCallback* create(PassRefPtr<ExecuteSQLCallback> requestCallback)
+    static TransactionErrorCallback* create(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
     {
         return new TransactionErrorCallback(requestCallback);
     }
@@ -184,13 +192,13 @@ public:
 
     bool handleEvent(SQLError* error) override
     {
-        reportTransactionFailed(m_requestCallback.get(), error);
+        m_requestCallback->reportTransactionFailed(error);
         return true;
     }
 private:
-    TransactionErrorCallback(PassRefPtr<ExecuteSQLCallback> requestCallback)
+    TransactionErrorCallback(PassRefPtr<ExecuteSQLCallbackWrapper> requestCallback)
         : m_requestCallback(requestCallback) { }
-    RefPtr<ExecuteSQLCallback> m_requestCallback;
+    RefPtr<ExecuteSQLCallbackWrapper> m_requestCallback;
 };
 
 class TransactionSuccessCallback final : public VoidCallback {
@@ -210,7 +218,12 @@ private:
 
 } // namespace
 
-void InspectorDatabaseAgent::didOpenDatabase(Database* database, const String& domain, const String& name, const String& version)
+void InspectorDatabaseAgent::registerDatabaseOnCreation(blink::Database* database)
+{
+    didOpenDatabase(database, database->getSecurityOrigin()->host(), database->stringIdentifier(), database->version());
+}
+
+void InspectorDatabaseAgent::didOpenDatabase(blink::Database* database, const String& domain, const String& name, const String& version)
 {
     if (InspectorDatabaseResource* resource = findByFileName(database->fileName())) {
         resource->setDatabase(database);
@@ -220,8 +233,8 @@ void InspectorDatabaseAgent::didOpenDatabase(Database* database, const String& d
     InspectorDatabaseResource* resource = InspectorDatabaseResource::create(database, domain, name, version);
     m_resources.set(resource->id(), resource);
     // Resources are only bound while visible.
-    if (frontend() && m_enabled)
-        resource->bind(frontend());
+    ASSERT(m_enabled && frontend());
+    resource->bind(frontend());
 }
 
 void InspectorDatabaseAgent::didCommitLoadForLocalFrame(LocalFrame* frame)
@@ -234,11 +247,9 @@ void InspectorDatabaseAgent::didCommitLoadForLocalFrame(LocalFrame* frame)
 }
 
 InspectorDatabaseAgent::InspectorDatabaseAgent(Page* page)
-    : InspectorBaseAgent<InspectorDatabaseAgent, protocol::Frontend::Database>("Database")
-    , m_page(page)
+    : m_page(page)
     , m_enabled(false)
 {
-    DatabaseClient::fromPage(page)->setInspectorAgent(this);
 }
 
 InspectorDatabaseAgent::~InspectorDatabaseAgent()
@@ -251,10 +262,9 @@ void InspectorDatabaseAgent::enable(ErrorString*)
         return;
     m_enabled = true;
     m_state->setBoolean(DatabaseAgentState::databaseAgentEnabled, m_enabled);
-
-    DatabaseResourcesHeapMap::iterator databasesEnd = m_resources.end();
-    for (DatabaseResourcesHeapMap::iterator it = m_resources.begin(); it != databasesEnd; ++it)
-        it->value->bind(frontend());
+    if (DatabaseClient* client = DatabaseClient::fromPage(m_page))
+        client->setInspectorAgent(this);
+    DatabaseTracker::tracker().forEachOpenDatabaseInPage(m_page, WTF::bind(&InspectorDatabaseAgent::registerDatabaseOnCreation, wrapPersistent(this)));
 }
 
 void InspectorDatabaseAgent::disable(ErrorString*)
@@ -263,14 +273,20 @@ void InspectorDatabaseAgent::disable(ErrorString*)
         return;
     m_enabled = false;
     m_state->setBoolean(DatabaseAgentState::databaseAgentEnabled, m_enabled);
+    if (DatabaseClient* client = DatabaseClient::fromPage(m_page))
+        client->setInspectorAgent(nullptr);
+    m_resources.clear();
 }
 
 void InspectorDatabaseAgent::restore()
 {
-    m_enabled = m_state->booleanProperty(DatabaseAgentState::databaseAgentEnabled, false);
+    if (m_state->booleanProperty(DatabaseAgentState::databaseAgentEnabled, false)) {
+        ErrorString error;
+        enable(&error);
+    }
 }
 
-void InspectorDatabaseAgent::getDatabaseTableNames(ErrorString* error, const String& databaseId, OwnPtr<protocol::Array<String>>* names)
+void InspectorDatabaseAgent::getDatabaseTableNames(ErrorString* error, const String& databaseId, std::unique_ptr<protocol::Array<String>>* names)
 {
     if (!m_enabled) {
         *error = "Database agent is not enabled";
@@ -279,7 +295,7 @@ void InspectorDatabaseAgent::getDatabaseTableNames(ErrorString* error, const Str
 
     *names = protocol::Array<String>::create();
 
-    Database* database = databaseForId(databaseId);
+    blink::Database* database = databaseForId(databaseId);
     if (database) {
         Vector<String> tableNames = database->tableNames();
         unsigned length = tableNames.size();
@@ -288,23 +304,24 @@ void InspectorDatabaseAgent::getDatabaseTableNames(ErrorString* error, const Str
     }
 }
 
-void InspectorDatabaseAgent::executeSQL(ErrorString*, const String& databaseId, const String& query, PassRefPtr<ExecuteSQLCallback> prpRequestCallback)
+void InspectorDatabaseAgent::executeSQL(ErrorString*, const String& databaseId, const String& query, std::unique_ptr<ExecuteSQLCallback> prpRequestCallback)
 {
-    RefPtr<ExecuteSQLCallback> requestCallback = prpRequestCallback;
+    std::unique_ptr<ExecuteSQLCallback> requestCallback = std::move(prpRequestCallback);
 
     if (!m_enabled) {
         requestCallback->sendFailure("Database agent is not enabled");
         return;
     }
 
-    Database* database = databaseForId(databaseId);
+    blink::Database* database = databaseForId(databaseId);
     if (!database) {
         requestCallback->sendFailure("Database not found");
         return;
     }
 
-    SQLTransactionCallback* callback = TransactionCallback::create(query, requestCallback.get());
-    SQLTransactionErrorCallback* errorCallback = TransactionErrorCallback::create(requestCallback.get());
+    RefPtr<ExecuteSQLCallbackWrapper> wrapper = ExecuteSQLCallbackWrapper::create(std::move(requestCallback));
+    SQLTransactionCallback* callback = TransactionCallback::create(query, wrapper);
+    SQLTransactionErrorCallback* errorCallback = TransactionErrorCallback::create(wrapper);
     VoidCallback* successCallback = TransactionSuccessCallback::create();
     database->transaction(callback, errorCallback, successCallback);
 }
@@ -318,7 +335,7 @@ InspectorDatabaseResource* InspectorDatabaseAgent::findByFileName(const String& 
     return 0;
 }
 
-Database* InspectorDatabaseAgent::databaseForId(const String& databaseId)
+blink::Database* InspectorDatabaseAgent::databaseForId(const String& databaseId)
 {
     DatabaseResourcesHeapMap::iterator it = m_resources.find(databaseId);
     if (it == m_resources.end())

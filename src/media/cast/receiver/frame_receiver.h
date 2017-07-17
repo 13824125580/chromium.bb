@@ -9,10 +9,10 @@
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "media/cast/cast_receiver.h"
@@ -56,7 +56,7 @@ class FrameReceiver : public RtpPayloadFeedback,
   FrameReceiver(const scoped_refptr<CastEnvironment>& cast_environment,
                 const FrameReceiverConfig& config,
                 EventMediaType event_media_type,
-                CastTransportSender* const transport);
+                CastTransport* const transport);
 
   ~FrameReceiver() final;
 
@@ -68,7 +68,7 @@ class FrameReceiver : public RtpPayloadFeedback,
 
   // Called to deliver another packet, possibly a duplicate, and possibly
   // out-of-order.  Returns true if the parsing of the packet succeeded.
-  bool ProcessPacket(scoped_ptr<Packet> packet);
+  bool ProcessPacket(std::unique_ptr<Packet> packet);
 
  protected:
   friend class FrameReceiverTest;  // Invokes ProcessParsedPacket().
@@ -96,7 +96,7 @@ class FrameReceiver : public RtpPayloadFeedback,
   // loop, but make sure that FrameReceiver is still alive before the callback
   // is run.
   void EmitOneFrame(const ReceiveEncodedFrameCallback& callback,
-                    scoped_ptr<EncodedFrame> encoded_frame) const;
+                    std::unique_ptr<EncodedFrame> encoded_frame) const;
 
   // Computes the playout time for a frame with the given |rtp_timestamp|.
   // Because lip-sync info is refreshed regularly, calling this method with the
@@ -115,10 +115,26 @@ class FrameReceiver : public RtpPayloadFeedback,
   // Actually send the next RTCP report.
   void SendNextRtcpReport();
 
+  // Interface to send RTCP reports.
+  // |cast_message|, |rtcp_events| and |rtp_receiver_statistics| are optional;
+  // if |cast_message| is provided the RTCP receiver report will contain a Cast
+  // ACK/NACK feedback message; |target_delay| is sent together with
+  // |cast_message|. If |rtcp_events| is provided the RTCP receiver report will
+  // include event log messages
+  void SendRtcpReport(
+      uint32_t rtp_receiver_ssrc,
+      uint32_t rtp_sender_ssrc,
+      const RtcpTimeData& time_data,
+      const RtcpCastMessage* cast_message,
+      const RtcpPliMessage* pli_message,
+      base::TimeDelta target_delay,
+      const ReceiverRtcpEventSubscriber::RtcpEvents* rtcp_events,
+      const RtpReceiverStatistics* rtp_receiver_statistics);
+
   const scoped_refptr<CastEnvironment> cast_environment_;
 
   // Transport used to send data back.
-  CastTransportSender* const transport_;
+  CastTransport* const transport_;
 
   // Deserializes a packet into a RtpHeader + payload bytes.
   RtpParser packet_parser_;
@@ -174,7 +190,8 @@ class FrameReceiver : public RtpPayloadFeedback,
   bool is_waiting_for_consecutive_frame_;
 
   // This mapping allows us to log FRAME_ACK_SENT as a frame event. In addition
-  // it allows the event to be transmitted via RTCP.
+  // it allows the event to be transmitted via RTCP.  The index into this ring
+  // buffer is the lower 8 bits of the FrameId.
   RtpTimeTicks frame_id_to_rtp_timestamp_[256];
 
   // Lip-sync values used to compute the playout time of each frame from its RTP

@@ -4,10 +4,36 @@
 
 #include "blimp/engine/app/blimp_content_browser_client.h"
 #include "blimp/engine/app/blimp_browser_main_parts.h"
-#include "blimp/engine/common/blimp_browser_context.h"
+#include "blimp/engine/app/settings_manager.h"
+#include "blimp/engine/feature/geolocation/blimp_location_provider.h"
+#include "blimp/engine/mojo/blob_channel_service.h"
+#include "content/public/browser/geolocation_delegate.h"
+#include "services/shell/public/cpp/interface_registry.h"
 
 namespace blimp {
 namespace engine {
+
+namespace {
+// A provider of services needed by Geolocation.
+class BlimpGeolocationDelegate : public content::GeolocationDelegate {
+ public:
+  BlimpGeolocationDelegate() = default;
+
+  bool UseNetworkLocationProviders() final { return false; }
+
+  content::LocationProvider* OverrideSystemLocationProvider() final {
+    if (!location_provider_)
+      location_provider_ = base::WrapUnique(new BlimpLocationProvider());
+    return location_provider_.get();
+  }
+
+ private:
+  std::unique_ptr<BlimpLocationProvider> location_provider_;
+
+  DISALLOW_COPY_AND_ASSIGN(BlimpGeolocationDelegate);
+};
+
+}  // anonymous namespace
 
 BlimpContentBrowserClient::BlimpContentBrowserClient() {}
 
@@ -20,19 +46,34 @@ content::BrowserMainParts* BlimpContentBrowserClient::CreateBrowserMainParts(
   return blimp_browser_main_parts_;
 }
 
-net::URLRequestContextGetter* BlimpContentBrowserClient::CreateRequestContext(
-    content::BrowserContext* content_browser_context,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  BlimpBrowserContext* blimp_context =
-      static_cast<BlimpBrowserContext*>(content_browser_context);
-  return blimp_context->CreateRequestContext(protocol_handlers,
-                                             std::move(request_interceptors))
-      .get();
+void BlimpContentBrowserClient::OverrideWebkitPrefs(
+    content::RenderViewHost* render_view_host,
+    content::WebPreferences* prefs) {
+  if (!blimp_browser_main_parts_)
+    return;
+
+  if (!blimp_browser_main_parts_->GetSettingsManager())
+    return;
+
+  blimp_browser_main_parts_->GetSettingsManager()->UpdateWebkitPreferences(
+      prefs);
 }
 
 BlimpBrowserContext* BlimpContentBrowserClient::GetBrowserContext() {
   return blimp_browser_main_parts_->GetBrowserContext();
+}
+
+content::GeolocationDelegate*
+BlimpContentBrowserClient::CreateGeolocationDelegate() {
+  return new BlimpGeolocationDelegate();
+}
+
+void BlimpContentBrowserClient::ExposeInterfacesToRenderer(
+    shell::InterfaceRegistry* registry,
+    content::RenderProcessHost* render_process_host) {
+  registry->AddInterface<mojom::BlobChannel>(
+      base::Bind(&BlobChannelService::Create,
+                 blimp_browser_main_parts_->GetBlobChannelSender()));
 }
 
 }  // namespace engine

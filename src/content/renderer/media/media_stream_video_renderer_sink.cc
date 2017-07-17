@@ -5,7 +5,7 @@
 #include "content/renderer/media/media_stream_video_renderer_sink.h"
 
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
@@ -50,16 +50,15 @@ void MediaStreamVideoRendererSink::Start() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(state_, STOPPED);
 
-  AddToVideoTrack(
-      this,
-      media::BindToCurrentLoop(
-          base::Bind(
-              &MediaStreamVideoRendererSink::OnVideoFrame,
-              weak_factory_.GetWeakPtr())),
-      video_track_);
+  MediaStreamVideoSink::ConnectToTrack(
+      video_track_, media::BindToCurrentLoop(
+                        base::Bind(&MediaStreamVideoRendererSink::OnVideoFrame,
+                                   weak_factory_.GetWeakPtr())),
+      // Local display video rendering is considered a secure link.
+      true);
   state_ = STARTED;
 
-  if (video_track_.source().readyState() ==
+  if (video_track_.source().getReadyState() ==
           blink::WebMediaStreamSource::ReadyStateEnded ||
       !video_track_.isEnabled()) {
     RenderSignalingFrame();
@@ -69,14 +68,14 @@ void MediaStreamVideoRendererSink::Start() {
 void MediaStreamVideoRendererSink::Stop() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(state_ == STARTED || state_ == PAUSED);
-  RemoveFromVideoTrack(this, video_track_);
+  MediaStreamVideoSink::DisconnectFromTrack();
   weak_factory_.InvalidateWeakPtrs();
   state_ = STOPPED;
   frame_size_.set_width(kMinFrameSize);
   frame_size_.set_height(kMinFrameSize);
 }
 
-void MediaStreamVideoRendererSink::Play() {
+void MediaStreamVideoRendererSink::Resume() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   if (state_ == PAUSED)
     state_ = STARTED;

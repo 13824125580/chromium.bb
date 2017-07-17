@@ -6,7 +6,6 @@
 # "command_buffer_common" just forwarding) and goes into a static library in
 # non-component build. This needs to match the GYP build which was likely an
 # attempt to make larger components to help with loading.
-import("//mojo/public/tools/bindings/mojom.gni")
 
 group("common") {
   if (is_component_build) {
@@ -41,6 +40,8 @@ source_set("common_sources") {
     "gles2_cmd_format_autogen.h",
     "gles2_cmd_ids.h",
     "gles2_cmd_ids_autogen.h",
+    "gpu_memory_buffer_support.cc",
+    "gpu_memory_buffer_support.h",
     "id_allocator.cc",
     "id_allocator.h",
     "id_type.h",
@@ -50,13 +51,17 @@ source_set("common_sources") {
     "mailbox_holder.h",
     "sync_token.cc",
     "sync_token.h",
+    "texture_in_use_response.h",
     "thread_local.h",
     "time.h",
-    "value_state.cc",
-    "value_state.h",
   ]
 
   configs += [ "//gpu:gpu_implementation" ]
+
+  public_deps = [
+    "//ui/gfx:memory_buffer",
+    "//ui/gfx/geometry",
+  ]
 
   deps = [
     ":gles2_utils",
@@ -75,21 +80,8 @@ component("gles2_utils") {
 
   deps = [
     "//base",
+    "//ui/gfx/geometry",
   ]
 
   all_dependent_configs = [ "//third_party/khronos:khronos_headers" ]
-}
-
-mojom("interfaces") {
-  sources = [
-    "capabilities.mojom",
-    "command_buffer.mojom",
-    "mailbox.mojom",
-    "mailbox_holder.mojom",
-    "sync_token.mojom",
-    "value_state.mojom",
-  ]
-
-  typemaps = [ "mojo.typemap" ]
-  typemap_deps = [ "//gpu/ipc" ]
 }

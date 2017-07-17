@@ -25,16 +25,18 @@ class PermissionBubbleRequestImpl : public PermissionBubbleRequest {
   PermissionBubbleRequestImpl(
       const GURL& request_origin,
       content::PermissionType permission_type,
-      const std::string& display_languages,
       const PermissionDecidedCallback& permission_decided_callback,
       const base::Closure delete_callback);
 
   ~PermissionBubbleRequestImpl() override;
 
+ protected:
+  void RegisterActionTaken() { action_taken_ = true; }
+
+ private:
   // PermissionBubbleRequest:
   gfx::VectorIconId GetVectorIconId() const override;
   int GetIconId() const override;
-  base::string16 GetMessageText() const override;
   base::string16 GetMessageTextFragment() const override;
   GURL GetOrigin() const override;
   // Remember to call RegisterActionTaken for these methods if you are
@@ -43,14 +45,10 @@ class PermissionBubbleRequestImpl : public PermissionBubbleRequest {
   void PermissionDenied() override;
   void Cancelled() override;
   void RequestFinished() override;
+  PermissionBubbleType GetPermissionBubbleType() const override;
 
- protected:
-  void RegisterActionTaken() { action_taken_ = true; }
-
- private:
   GURL request_origin_;
   content::PermissionType permission_type_;
-  std::string display_languages_;
 
   // Called once a decision is made about the permission.
   const PermissionDecidedCallback permission_decided_callback_;

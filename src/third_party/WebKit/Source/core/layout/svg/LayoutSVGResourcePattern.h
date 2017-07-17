@@ -26,8 +26,8 @@
 #include "core/svg/PatternAttributes.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 class SkPicture;
 
@@ -53,24 +53,17 @@ public:
     LayoutSVGResourceType resourceType() const override { return s_resourceType; }
 
 private:
-    PassOwnPtr<PatternData> buildPatternData(const LayoutObject&);
-    PassRefPtr<const SkPicture> asPicture(const FloatRect& tile, const AffineTransform&) const;
+    std::unique_ptr<PatternData> buildPatternData(const LayoutObject&);
+    PassRefPtr<SkPicture> asPicture(const FloatRect& tile, const AffineTransform&) const;
     PatternData* patternForLayoutObject(const LayoutObject&);
 
     const LayoutSVGResourceContainer* resolveContentElement() const;
 
     bool m_shouldCollectPatternAttributes : 1;
-#if ENABLE(OILPAN)
     Persistent<PatternAttributesWrapper> m_attributesWrapper;
 
     PatternAttributes& mutableAttributes() { return m_attributesWrapper->attributes(); }
     const PatternAttributes& attributes() const { return m_attributesWrapper->attributes(); }
-#else
-    PatternAttributes m_attributes;
-
-    PatternAttributes& mutableAttributes() { return m_attributes; }
-    const PatternAttributes& attributes() const { return m_attributes; }
-#endif
 
     // FIXME: we can almost do away with this per-object map, but not quite: the tile size can be
     // relative to the client bounding box, and it gets captured in the cached Pattern shader.
@@ -78,7 +71,7 @@ private:
     // should be able to cache a single display list per LayoutSVGResourcePattern + one
     // Pattern(shader) for each client -- this would avoid re-recording when multiple clients
     // share the same pattern.
-    HashMap<const LayoutObject*, OwnPtr<PatternData>> m_patternMap;
+    HashMap<const LayoutObject*, std::unique_ptr<PatternData>> m_patternMap;
 };
 
 } // namespace blink

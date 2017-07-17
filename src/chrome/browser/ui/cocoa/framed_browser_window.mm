@@ -17,8 +17,10 @@
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #include "grit/theme_resources.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 // Implementer's note: Moving the window controls is tricky. When altering the
 // code, ensure that:
@@ -42,6 +44,7 @@ const CGFloat kWindowGradientHeight = 24.0;
 - (void)adjustZoomButton:(NSNotification*)notification;
 - (void)adjustButton:(NSButton*)button
               ofKind:(NSWindowButton)kind;
+- (void)childWindowsDidChange;
 
 @end
 
@@ -166,7 +169,7 @@ const CGFloat kWindowGradientHeight = 24.0;
 // The tab strip view covers our window buttons. So we add hit testing here
 // to find them properly and return them to the accessibility system.
 - (id)accessibilityHitTest:(NSPoint)point {
-  NSPoint windowPoint = [self convertScreenToBase:point];
+  NSPoint windowPoint = ui::ConvertPointFromScreenToWindow(self, point);
   NSControl* controls[] = { closeButton_, zoomButton_, miniaturizeButton_ };
   id value = nil;
   for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
@@ -209,21 +212,6 @@ const CGFloat kWindowGradientHeight = 24.0;
     return frame;
 
   return [super constrainFrameRect:frame toScreen:screen];
-}
-
-// This method is overridden in order to send the toggle fullscreen message
-// through the cross-platform browser framework before going fullscreen.  The
-// message will eventually come back as a call to |-toggleSystemFullScreen|,
-// which in turn calls AppKit's |NSWindow -toggleFullScreen:|.
-- (void)toggleFullScreen:(id)sender {
-  id delegate = [self delegate];
-  if ([delegate respondsToSelector:@selector(handleLionToggleFullscreen)])
-    [delegate handleLionToggleFullscreen];
-}
-
-- (void)toggleSystemFullScreen {
-  if ([super respondsToSelector:@selector(toggleFullScreen:)])
-    [super toggleFullScreen:nil];
 }
 
 - (NSPoint)fullScreenButtonOriginAdjustment {
@@ -282,9 +270,10 @@ const CGFloat kWindowGradientHeight = 24.0;
       themeImageColor = themeProvider->GetNSImageColorNamed(themeImageID);
   }
 
-  // If no theme image, use a gradient if incognito.
+  // If not Material Design, use a gradient if Incognito and no theme image.
   NSGradient* gradient = nil;
-  if (!themeImageColor && incognito)
+  if (!ui::MaterialDesignController::IsModeMaterial() &&
+      !themeImageColor && incognito)
     gradient = themeProvider->GetNSGradient(
         active ? ThemeProperties::GRADIENT_FRAME_INCOGNITO :
                  ThemeProperties::GRADIENT_FRAME_INCOGNITO_INACTIVE);
@@ -354,6 +343,23 @@ const CGFloat kWindowGradientHeight = 24.0;
     return [NSColor whiteColor];
   else
     return [NSColor windowFrameTextColor];
+}
+
+- (void)addChildWindow:(NSWindow*)childWindow
+               ordered:(NSWindowOrderingMode)orderingMode {
+  [super addChildWindow:childWindow ordered:orderingMode];
+  [self childWindowsDidChange];
+}
+
+- (void)removeChildWindow:(NSWindow*)childWindow {
+  [super removeChildWindow:childWindow];
+  [self childWindowsDidChange];
+}
+
+- (void)childWindowsDidChange {
+  id delegate = [self delegate];
+  if ([delegate respondsToSelector:@selector(childWindowsDidChange)])
+    [delegate childWindowsDidChange];
 }
 
 @end

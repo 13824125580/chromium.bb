@@ -20,10 +20,9 @@ class WriteUnblockedAlarm : public QuicAlarm::Delegate {
   explicit WriteUnblockedAlarm(PacketDroppingTestWriter* writer)
       : writer_(writer) {}
 
-  QuicTime OnAlarm() override {
+  void OnAlarm() override {
     DVLOG(1) << "Unblocking socket.";
     writer_->OnCanWrite();
-    return QuicTime::Zero();
   }
 
  private:
@@ -36,7 +35,12 @@ class DelayAlarm : public QuicAlarm::Delegate {
  public:
   explicit DelayAlarm(PacketDroppingTestWriter* writer) : writer_(writer) {}
 
-  QuicTime OnAlarm() override { return writer_->ReleaseOldPackets(); }
+  void OnAlarm() override {
+    QuicTime new_deadline = writer_->ReleaseOldPackets();
+    if (new_deadline.IsInitialized()) {
+      writer_->SetDelayAlarm(new_deadline);
+    }
+  }
 
  private:
   PacketDroppingTestWriter* writer_;
@@ -62,11 +66,12 @@ PacketDroppingTestWriter::PacketDroppingTestWriter()
 PacketDroppingTestWriter::~PacketDroppingTestWriter() {}
 
 void PacketDroppingTestWriter::Initialize(QuicConnectionHelperInterface* helper,
+                                          QuicAlarmFactory* alarm_factory,
                                           Delegate* on_can_write) {
   clock_ = helper->GetClock();
   write_unblocked_alarm_.reset(
-      helper->CreateAlarm(new WriteUnblockedAlarm(this)));
-  delay_alarm_.reset(helper->CreateAlarm(new DelayAlarm(this)));
+      alarm_factory->CreateAlarm(new WriteUnblockedAlarm(this)));
+  delay_alarm_.reset(alarm_factory->CreateAlarm(new DelayAlarm(this)));
   on_can_write_.reset(on_can_write);
 }
 
@@ -201,6 +206,10 @@ QuicTime PacketDroppingTestWriter::ReleaseOldPackets() {
     ReleaseNextPacket();
   }
   return QuicTime::Zero();
+}
+
+void PacketDroppingTestWriter::SetDelayAlarm(QuicTime new_deadline) {
+  delay_alarm_->Set(new_deadline);
 }
 
 void PacketDroppingTestWriter::OnCanWrite() {

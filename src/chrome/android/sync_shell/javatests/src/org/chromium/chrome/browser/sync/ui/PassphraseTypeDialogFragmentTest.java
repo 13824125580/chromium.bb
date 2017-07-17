@@ -9,15 +9,15 @@ import android.widget.CheckedTextView;
 import android.widget.ListView;
 
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.test.ChromeActivityTestCaseBase;
+import org.chromium.chrome.browser.sync.SyncTestBase;
 import org.chromium.sync.PassphraseType;
 
 /**
  * Tests to make sure that PassphraseTypeDialogFragment presents the correct options.
  */
-public class PassphraseTypeDialogFragmentTest extends ChromeActivityTestCaseBase<ChromeActivity> {
+public class PassphraseTypeDialogFragmentTest extends SyncTestBase {
     private static final String TAG = "PassphraseTypeDialogFragmentTest";
 
     private static final boolean ENABLED = true;
@@ -38,15 +38,6 @@ public class PassphraseTypeDialogFragmentTest extends ChromeActivityTestCaseBase
 
     private PassphraseTypeDialogFragment mTypeFragment;
 
-    public PassphraseTypeDialogFragmentTest() {
-        super(ChromeActivity.class);
-    }
-
-    @Override
-    public void startMainActivity() throws InterruptedException {
-        startMainActivityOnBlankPage();
-    }
-
     @SmallTest
     @Feature({"Sync"})
     public void testKeystoreEncryptionOptions() throws Exception {
@@ -65,8 +56,11 @@ public class PassphraseTypeDialogFragmentTest extends ChromeActivityTestCaseBase
                 new TypeOptions(PassphraseType.KEYSTORE_PASSPHRASE, DISABLED, UNCHECKED));
     }
 
-    @SmallTest
-    @Feature({"Sync"})
+    /*
+     * @SmallTest
+     * @Feature({"Sync"})
+     */
+    @FlakyTest(message = "crbug.com/588050")
     public void testFrozenImplicitEncryptionOptions() throws Exception {
         createFragment(PassphraseType.FROZEN_IMPLICIT_PASSPHRASE, true);
         assertPassphraseTypeOptions(

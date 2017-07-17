@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/base_paths.h"
+#include "base/environment.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -837,6 +838,45 @@ TEST_F(FileUtilTest, ChangeDirectoryPermissionsAndEnumerate) {
   EXPECT_FALSE(PathExists(subdir_path));
 }
 
+TEST_F(FileUtilTest, ExecutableExistsInPath) {
+  // Create two directories that we will put in our PATH
+  const char kPath[] = "PATH";
+  const FilePath::CharType kDir1[] = FPL("dir1");
+  const FilePath::CharType kDir2[] = FPL("dir2");
+
+  FilePath dir1 = temp_dir_.path().Append(kDir1);
+  FilePath dir2 = temp_dir_.path().Append(kDir2);
+  ASSERT_TRUE(CreateDirectory(dir1));
+  ASSERT_TRUE(CreateDirectory(dir2));
+
+  std::unique_ptr<Environment> env(base::Environment::Create());
+
+  ASSERT_TRUE(env->SetVar(kPath, dir1.value() + ":" + dir2.value()));
+
+  const FilePath::CharType kRegularFileName[] = FPL("regular_file");
+  const FilePath::CharType kExeFileName[] = FPL("exe");
+  const FilePath::CharType kDneFileName[] = FPL("does_not_exist");
+
+  const FilePath kExePath = dir1.Append(kExeFileName);
+  const FilePath kRegularFilePath = dir2.Append(kRegularFileName);
+
+  // Write file.
+  const std::string kData("hello");
+  ASSERT_EQ(static_cast<int>(kData.length()),
+            WriteFile(kExePath, kData.data(), kData.length()));
+  ASSERT_TRUE(PathExists(kExePath));
+  ASSERT_EQ(static_cast<int>(kData.length()),
+            WriteFile(kRegularFilePath, kData.data(), kData.length()));
+  ASSERT_TRUE(PathExists(kRegularFilePath));
+
+  ASSERT_TRUE(SetPosixFilePermissions(dir1.Append(kExeFileName),
+                                      FILE_PERMISSION_EXECUTE_BY_USER));
+
+  EXPECT_TRUE(ExecutableExistsInPath(env.get(), kExeFileName));
+  EXPECT_FALSE(ExecutableExistsInPath(env.get(), kRegularFileName));
+  EXPECT_FALSE(ExecutableExistsInPath(env.get(), kDneFileName));
+}
+
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN)
@@ -1366,7 +1406,7 @@ TEST_F(FileUtilTest, CopyDirectoryWithTrailingSeparators) {
 #if defined(OS_WIN)
   FilePath from_path =
       temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir\\\\\\"));
-#elif defined (OS_POSIX)
+#elif defined(OS_POSIX)
   FilePath from_path =
       temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir///"));
 #endif
@@ -1662,6 +1702,61 @@ TEST_F(FileUtilTest, GetTempDirTest) {
     free(original_tmp);
   } else {
     ::_tputenv_s(kTmpKey, _T(""));
+  }
+}
+
+TEST_F(FileUtilTest, IsOnNetworkDrive) {
+  struct LocalTestData {
+    const FilePath::CharType* input;
+    bool expected;
+  };
+
+  const LocalTestData local_cases[] = {
+    { FPL(""),                               false },
+    { FPL("c:\\"),                           false },
+    { FPL("c:"),                             false },
+    { FPL("c:\\windows\\notepad.exe"),       false }
+  };
+
+  for (const auto& test_case : local_cases) {
+    FilePath input(test_case.input);
+    bool observed = IsOnNetworkDrive(input);
+    EXPECT_EQ(test_case.expected, observed) << " input: " << input.value();
+  }
+
+  std::unique_ptr<Environment> env(Environment::Create());
+  // To test IsOnNetworkDrive() for remote cases, set up a file server
+  // and place a file called file.txt on the server e.g.
+  // \\DC01\TESTSHARE\file.txt
+  // then set the two environment variables:
+  // set BASE_TEST_FILE_SERVER=DC01
+  // set BASE_TEST_FILE_SHARE=TESTSHARE
+  if (!env->HasVar("BASE_TEST_FILE_SERVER") ||
+      !env->HasVar("BASE_TEST_FILE_SHARE")) {
+    return;
+  }
+
+  struct NetworkTestData {
+    const wchar_t* input;
+    bool expected;
+  };
+
+  const NetworkTestData network_cases[] = {
+    { L"\\\\%BASE_TEST_FILE_SERVER%",                                   false },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\",                                 false },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\file.txt",                         false },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\%BASE_TEST_FILE_SHARE%",           true },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\%BASE_TEST_FILE_SHARE%\\",         true },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\%BASE_TEST_FILE_SHARE%\\file.txt", true },
+    { L"\\\\%BASE_TEST_FILE_SERVER%\\%BASE_TEST_FILE_SHARE%\\no.txt",   false }
+  };
+
+  for (const auto& test_case : network_cases) {
+    wchar_t path[MAX_PATH] = {0};
+    ::ExpandEnvironmentStringsW(test_case.input, path, arraysize(path));
+    FilePath input(path);
+    EXPECT_EQ(test_case.expected, IsOnNetworkDrive(input)) << " input : "
+                                                           << input.value();
   }
 }
 #endif  // OS_WIN

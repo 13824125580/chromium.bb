@@ -40,16 +40,13 @@ public:
     // WebFrameWidget overrides:
     void close() override;
     WebSize size() override;
-    void willStartLiveResize() override;
     void resize(const WebSize&) override;
     void resizeVisualViewport(const WebSize&) override;
-    void willEndLiveResize() override;
     void didEnterFullScreen() override;
     void didExitFullScreen() override;
     void beginFrame(double lastFrameTimeMonotonic) override;
     void updateAllLifecyclePhases() override;
     void paint(WebCanvas*, const WebRect& viewPort) override;
-    void paintCompositedDeprecated(WebCanvas*, const WebRect&) override;
     void layoutAndPaintAsync(WebLayoutAndPaintAsyncCallback*) override;
     void compositeAndReadbackAsync(WebCompositeAndReadbackAsyncCallback*) override;
     void themeChanged() override;
@@ -62,7 +59,6 @@ public:
         const WebFloatSize& elasticOverscrollDelta,
         float scaleFactor,
         float topControlsShownRatioDelta) override;
-    void recordFrameTimingEvent(FrameTimingEventType, int64_t rectId, const WebVector<WebFrameTimingEvent>& events) override;
     void mouseCaptureLost() override;
     void setFocus(bool) override;
     bool setComposition(
@@ -91,19 +87,20 @@ public:
     void didChangeWindowResizerRect() override;
     WebColor backgroundColor() const override;
     WebPagePopup* pagePopup() const override;
-    void setTopControlsHeight(float height, bool topControlsShrinkLayoutSize) override;
     void updateTopControlsState(WebTopControlsState constraints, WebTopControlsState current, bool animate) override;
-    void setVisibilityState(WebPageVisibilityState, bool isInitialState) override;
+    void setVisibilityState(WebPageVisibilityState) override;
     bool isTransparent() const override;
     void setIsTransparent(bool) override;
     void setBaseBackgroundColor(WebColor) override;
     bool forSubframe() const { return false; }
     void scheduleAnimation() override;
+    CompositorProxyClient* createCompositorProxyClient() override;
+    WebWidgetClient* client() const override { return m_client; }
 
 private:
     WebWidgetClient* m_client;
     RefPtr<WebViewImpl> m_webView;
-    RefPtrWillBePersistent<WebLocalFrameImpl> m_mainFrame;
+    Persistent<WebLocalFrameImpl> m_mainFrame;
 };
 
 } // namespace blink

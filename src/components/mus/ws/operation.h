@@ -13,8 +13,8 @@
 namespace mus {
 namespace ws {
 
-class ConnectionManager;
-class WindowTreeImpl;
+class WindowServer;
+class WindowTree;
 
 enum class OperationType {
   NONE,
@@ -29,6 +29,7 @@ enum class OperationType {
   SET_CAPTURE,
   SET_FOCUS,
   SET_WINDOW_BOUNDS,
+  SET_WINDOW_OPACITY,
   SET_WINDOW_PREDEFINED_CURSOR,
   SET_WINDOW_PROPERTY,
   SET_WINDOW_VISIBILITY,
@@ -39,35 +40,33 @@ enum class OperationType {
 // by suboperations in the window server.
 class Operation {
  public:
-  Operation(WindowTreeImpl* connection,
-            ConnectionManager* connection_manager,
+  Operation(WindowTree* tree,
+            WindowServer* window_server,
             OperationType operation_type);
   ~Operation();
 
-  ConnectionSpecificId source_connection_id() const {
-    return source_connection_id_;
-  }
+  ClientSpecificId source_tree_id() const { return source_tree_id_; }
 
   const OperationType& type() const { return operation_type_; }
 
-  // Marks the connection with the specified id as having been sent a message
+  // Marks the tree with the specified id as having been sent a message
   // during the course of |this| operation.
-  void MarkConnectionAsMessaged(ConnectionSpecificId connection_id) {
-    message_ids_.insert(connection_id);
+  void MarkTreeAsMessaged(ClientSpecificId tree_id) {
+    message_ids_.insert(tree_id);
   }
 
-  // Returns true if MarkConnectionAsMessaged(connection_id) was invoked.
-  bool DidMessageConnection(ConnectionSpecificId connection_id) const {
-    return message_ids_.count(connection_id) > 0;
+  // Returns true if MarkTreeAsMessaged(tree_id) was invoked.
+  bool DidMessageTree(ClientSpecificId tree_id) const {
+    return message_ids_.count(tree_id) > 0;
   }
 
  private:
-  ConnectionManager* const connection_manager_;
-  const ConnectionSpecificId source_connection_id_;
+  WindowServer* const window_server_;
+  const ClientSpecificId source_tree_id_;
   const OperationType operation_type_;
 
-  // See description of MarkConnectionAsMessaged/DidMessageConnection.
-  std::set<ConnectionSpecificId> message_ids_;
+  // See description of MarkTreeAsMessaged/DidMessageTree.
+  std::set<ClientSpecificId> message_ids_;
 
   DISALLOW_COPY_AND_ASSIGN(Operation);
 };

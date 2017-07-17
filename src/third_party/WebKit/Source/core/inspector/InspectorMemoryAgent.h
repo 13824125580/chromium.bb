@@ -33,18 +33,16 @@
 
 #include "core/CoreExport.h"
 #include "core/inspector/InspectorBaseAgent.h"
-#include "wtf/PassOwnPtr.h"
+#include "core/inspector/protocol/Memory.h"
 
 namespace blink {
 
-typedef String ErrorString;
-
-class CORE_EXPORT InspectorMemoryAgent final : public InspectorBaseAgent<InspectorMemoryAgent, protocol::Frontend::Memory>, public protocol::Dispatcher::MemoryCommandHandler {
+class CORE_EXPORT InspectorMemoryAgent final : public InspectorBaseAgent<protocol::Memory::Metainfo> {
     WTF_MAKE_NONCOPYABLE(InspectorMemoryAgent);
 public:
-    static PassOwnPtrWillBeRawPtr<InspectorMemoryAgent> create()
+    static InspectorMemoryAgent* create()
     {
-        return adoptPtrWillBeNoop(new InspectorMemoryAgent());
+        return new InspectorMemoryAgent();
     }
     ~InspectorMemoryAgent() override;
 

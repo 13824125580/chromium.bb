@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <deque>
+#include <tuple>
 
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/media/webrtc/webrtc_identity_store.h"
@@ -19,14 +20,16 @@ namespace content {
 
 namespace {
 
-const char FAKE_URL[] = "http://fake.com";
-const char FAKE_FIRST_PARTY_URL[] = "http://fake.firstparty.com";
-const char FAKE_IDENTITY_NAME[] = "fake identity";
-const char FAKE_COMMON_NAME[] = "fake common name";
-const char FAKE_CERTIFICATE[] = "fake cert";
-const char FAKE_PRIVATE_KEY[] = "fake private key";
-const int FAKE_RENDERER_ID = 10;
-const int FAKE_REQUEST_ID = 1;
+const char kFakeUrl[] = "http://www.fake.com";
+const char kFakeSite[] = "http://fake.com";
+const char kOtherSite[] = "https://other.com";
+const char kFakeFirstPartyUrl[] = "http://fake.firstparty.com";
+const char kFakeidentityName[] = "fake identity";
+const char kFakeCommonName[] = "fake common name";
+const char kFakeCertificate[] = "fake cert";
+const char kFakePrivateKey[] = "fake private key";
+const int kFakeRendererId = 10;
+const int kFakeRequestId = 1;
 
 class WebRTCIdentityServiceHostTestBrowserClient
     : public TestContentBrowserClient {
@@ -94,12 +97,12 @@ class WebRTCIdentityServiceHostForTest : public WebRTCIdentityServiceHost {
  public:
   WebRTCIdentityServiceHostForTest(WebRTCIdentityStore* identity_store,
                                    ResourceContext* resource_context)
-      : WebRTCIdentityServiceHost(FAKE_RENDERER_ID,
+      : WebRTCIdentityServiceHost(kFakeRendererId,
                                   identity_store,
                                   resource_context) {
     ChildProcessSecurityPolicyImpl* policy =
         ChildProcessSecurityPolicyImpl::GetInstance();
-    policy->Add(FAKE_RENDERER_ID);
+    policy->Add(kFakeRendererId);
   }
 
   bool Send(IPC::Message* message) override {
@@ -122,7 +125,7 @@ class WebRTCIdentityServiceHostForTest : public WebRTCIdentityServiceHost {
   ~WebRTCIdentityServiceHostForTest() override {
     ChildProcessSecurityPolicyImpl* policy =
         ChildProcessSecurityPolicyImpl::GetInstance();
-    policy->Remove(FAKE_RENDERER_ID);
+    policy->Remove(kFakeRendererId);
   }
 
   std::deque<IPC::Message> messages_;
@@ -140,11 +143,11 @@ class WebRTCIdentityServiceHostTest : public ::testing::Test {
 
   void SendRequestToHost() {
     WebRTCIdentityMsg_RequestIdentity_Params params;
-    params.request_id = FAKE_REQUEST_ID;
-    params.url = GURL(FAKE_URL);
-    params.first_party_for_cookies = GURL(FAKE_FIRST_PARTY_URL);
-    params.identity_name = FAKE_IDENTITY_NAME;
-    params.common_name = FAKE_COMMON_NAME;
+    params.request_id = kFakeRequestId;
+    params.url = GURL(kFakeUrl);
+    params.first_party_for_cookies = GURL(kFakeFirstPartyUrl);
+    params.identity_name = kFakeidentityName;
+    params.common_name = kFakeCommonName;
     host_->OnMessageReceived(WebRTCIdentityMsg_RequestIdentity(params));
   }
 
@@ -157,10 +160,10 @@ class WebRTCIdentityServiceHostTest : public ::testing::Test {
     IPC::Message ipc = host_->GetLastMessage();
     EXPECT_EQ(ipc.type(), WebRTCIdentityHostMsg_RequestFailed::ID);
 
-    base::Tuple<int, int> error_in_message;
+    std::tuple<int, int> error_in_message;
     WebRTCIdentityHostMsg_RequestFailed::Read(&ipc, &error_in_message);
-    EXPECT_EQ(FAKE_REQUEST_ID, base::get<0>(error_in_message));
-    EXPECT_EQ(error, base::get<1>(error_in_message));
+    EXPECT_EQ(kFakeRequestId, std::get<0>(error_in_message));
+    EXPECT_EQ(error, std::get<1>(error_in_message));
   }
 
   void VerifyIdentityReadyMessage(const std::string& cert,
@@ -169,16 +172,16 @@ class WebRTCIdentityServiceHostTest : public ::testing::Test {
     IPC::Message ipc = host_->GetLastMessage();
     EXPECT_EQ(ipc.type(), WebRTCIdentityHostMsg_IdentityReady::ID);
 
-    base::Tuple<int, std::string, std::string> identity_in_message;
+    std::tuple<int, std::string, std::string> identity_in_message;
     WebRTCIdentityHostMsg_IdentityReady::Read(&ipc, &identity_in_message);
-    EXPECT_EQ(FAKE_REQUEST_ID, base::get<0>(identity_in_message));
-    EXPECT_EQ(cert, base::get<1>(identity_in_message));
-    EXPECT_EQ(key, base::get<2>(identity_in_message));
+    EXPECT_EQ(kFakeRequestId, std::get<0>(identity_in_message));
+    EXPECT_EQ(cert, std::get<1>(identity_in_message));
+    EXPECT_EQ(key, std::get<2>(identity_in_message));
   }
 
  protected:
   TestBrowserThreadBundle browser_thread_bundle_;
-  scoped_ptr<MockResourceContext> mock_resource_context_;
+  std::unique_ptr<MockResourceContext> mock_resource_context_;
   scoped_refptr<MockWebRTCIdentityStore> store_;
   scoped_refptr<WebRTCIdentityServiceHostForTest> host_;
 };
@@ -193,8 +196,8 @@ TEST_F(WebRTCIdentityServiceHostTest, TestCacheDisabled) {
   SendRequestToHost();
   EXPECT_TRUE(store_->HasPendingRequest());
   EXPECT_FALSE(store_->enable_cache());
-  EXPECT_EQ(GURL(FAKE_URL), test_client.url());
-  EXPECT_EQ(GURL(FAKE_FIRST_PARTY_URL), test_client.first_party_url());
+  EXPECT_EQ(GURL(kFakeUrl), test_client.url());
+  EXPECT_EQ(GURL(kFakeFirstPartyUrl), test_client.first_party_url());
 
   // Restore the original content browser client.
   SetBrowserClientForTesting(old_client);
@@ -218,8 +221,8 @@ TEST_F(WebRTCIdentityServiceHostTest, TestOnlyOneRequestAllowed) {
 
 TEST_F(WebRTCIdentityServiceHostTest, TestOnIdentityReady) {
   SendRequestToHost();
-  store_->RunCompletionCallback(net::OK, FAKE_CERTIFICATE, FAKE_PRIVATE_KEY);
-  VerifyIdentityReadyMessage(FAKE_CERTIFICATE, FAKE_PRIVATE_KEY);
+  store_->RunCompletionCallback(net::OK, kFakeCertificate, kFakePrivateKey);
+  VerifyIdentityReadyMessage(kFakeCertificate, kFakePrivateKey);
 }
 
 TEST_F(WebRTCIdentityServiceHostTest, TestOnRequestFailed) {
@@ -231,16 +234,26 @@ TEST_F(WebRTCIdentityServiceHostTest, TestOnRequestFailed) {
 TEST_F(WebRTCIdentityServiceHostTest, TestOriginAccessDenied) {
   ChildProcessSecurityPolicyImpl* policy =
       ChildProcessSecurityPolicyImpl::GetInstance();
-  policy->Remove(FAKE_RENDERER_ID);
+  policy->LockToOrigin(kFakeRendererId, GURL(kOtherSite));
 
   SendRequestToHost();
   VerifyRequestFailedMessage(net::ERR_ACCESS_DENIED);
 }
 
+TEST_F(WebRTCIdentityServiceHostTest, TestOriginAccessAllowed) {
+  ChildProcessSecurityPolicyImpl* policy =
+      ChildProcessSecurityPolicyImpl::GetInstance();
+  policy->LockToOrigin(kFakeRendererId, GURL(kFakeSite));
+
+  SendRequestToHost();
+  store_->RunCompletionCallback(net::OK, kFakeCertificate, kFakePrivateKey);
+  VerifyIdentityReadyMessage(kFakeCertificate, kFakePrivateKey);
+}
+
 // Verifies that we do not crash if we try to cancel a completed request.
 TEST_F(WebRTCIdentityServiceHostTest, TestCancelAfterRequestCompleted) {
   SendRequestToHost();
-  store_->RunCompletionCallback(net::OK, FAKE_CERTIFICATE, FAKE_PRIVATE_KEY);
+  store_->RunCompletionCallback(net::OK, kFakeCertificate, kFakePrivateKey);
   SendCancelRequestToHost();
 }
 

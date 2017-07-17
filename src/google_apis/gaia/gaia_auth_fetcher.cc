@@ -52,7 +52,7 @@ bool ExtractOAuth2TokenPairResponse(const std::string& data,
   DCHECK(access_token);
   DCHECK(expires_in_secs);
 
-  scoped_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
   if (!value.get() || value->GetType() != base::Value::TYPE_DICTIONARY)
     return false;
 
@@ -70,6 +70,19 @@ bool ExtractOAuth2TokenPairResponse(const std::string& data,
       return false;
   }
   return true;
+}
+
+void GetCookiesFromResponse(const net::HttpResponseHeaders* headers,
+                            net::ResponseCookies* cookies) {
+  if (!headers)
+    return;
+
+  std::string value;
+  size_t iter = 0;
+  while (headers->EnumerateHeader(&iter, "Set-Cookie", &value)) {
+    if (!value.empty())
+      cookies->push_back(value);
+  }
 }
 
 const char kListIdpServiceRequested[] = "list_idp";
@@ -467,7 +480,7 @@ bool GaiaAuthFetcher::ParseListIdpSessionsResponse(const std::string& data,
                                                    std::string* login_hint) {
   DCHECK(login_hint);
 
-  scoped_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
   if (!value.get() || value->GetType() != base::Value::TYPE_DICTIONARY)
     return false;
 
@@ -944,8 +957,9 @@ void GaiaAuthFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
   DVLOG(2) << "data: " << data << "\n";
 #endif
 
-  DispatchFetchedRequest(url, data, source->GetCookies(), status,
-                         response_code);
+  net::ResponseCookies cookies;
+  GetCookiesFromResponse(source->GetResponseHeaders(), &cookies);
+  DispatchFetchedRequest(url, data, cookies, status, response_code);
 }
 
 void GaiaAuthFetcher::DispatchFetchedRequest(

@@ -9,11 +9,11 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <tuple>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/non_thread_safe.h"
@@ -39,8 +39,17 @@ static const size_t kMaxBurstSize = 20;
 struct PacketKey {
   base::TimeTicks capture_time;
   uint32_t ssrc;
-  uint32_t frame_id;
+  FrameId frame_id;
   uint16_t packet_id;
+
+  PacketKey();  // Do not use.  This is for STL containers.
+  PacketKey(base::TimeTicks capture_time,
+            uint32_t ssrc,
+            FrameId frame_id,
+            uint16_t packet_id);
+  PacketKey(const PacketKey& other);
+
+  ~PacketKey();
 
   bool operator==(const PacketKey& key) const {
     return std::tie(capture_time, ssrc, frame_id, packet_id) ==
@@ -85,11 +94,6 @@ class PacedPacketSender {
   virtual void CancelSendingPacket(const PacketKey& packet_key) = 0;
 
   virtual ~PacedPacketSender() {}
-
-  static PacketKey MakePacketKey(base::TimeTicks capture_time,
-                                 uint32_t ssrc,
-                                 uint32_t frame_id,
-                                 uint16_t packet_id);
 };
 
 class PacedSender : public PacedPacketSender,
@@ -105,7 +109,7 @@ class PacedSender : public PacedPacketSender,
       size_t max_burst_size,     // Should normally be kMaxBurstSize.
       base::TickClock* clock,
       std::vector<PacketEvent>* recent_packet_events,
-      PacketSender* external_transport,
+      PacketTransport* external_transport,
       const scoped_refptr<base::SingleThreadTaskRunner>& transport_task_runner);
 
   ~PacedSender() final;
@@ -198,7 +202,7 @@ class PacedSender : public PacedPacketSender,
   // These are externally-owned objects injected via the constructor.
   base::TickClock* const clock_;
   std::vector<PacketEvent>* const recent_packet_events_;
-  PacketSender* const transport_;
+  PacketTransport* const transport_;
 
   scoped_refptr<base::SingleThreadTaskRunner> transport_task_runner_;
   uint32_t audio_ssrc_;

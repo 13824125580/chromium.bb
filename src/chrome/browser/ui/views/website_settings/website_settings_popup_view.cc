@@ -11,7 +11,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
-#include "base/strings/string_number_conversions.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/certificate_viewer.h"
@@ -21,11 +21,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/collected_cookies_views.h"
 #include "chrome/browser/ui/views/website_settings/chosen_object_view.h"
 #include "chrome/browser/ui/views/website_settings/permission_selector_view.h"
 #include "chrome/browser/ui/website_settings/website_settings.h"
-#include "chrome/browser/ui/website_settings/website_settings_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -35,11 +35,13 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cert_store.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/common/constants.h"
 #include "grit/components_chromium_strings.h"
 #include "grit/components_google_chrome_strings.h"
 #include "grit/components_strings.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -49,7 +51,7 @@
 #include "ui/resources/grit/ui_resources.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
@@ -85,10 +87,6 @@ const int kHeaderPaddingTop = 12;
 // Spacing between the site identity label and the site identity status text in
 // the popup header.
 const int kHeaderRowSpacing = 4;
-
-// To make the bubble's arrow point directly at the location icon rather than at
-// the Omnibox's edge, inset the bubble's anchor rect by this amount of pixels.
-const int kLocationIconVerticalMargin = 5;
 
 // The max possible width of the popup.
 const int kMaxPopupWidth = 1000;
@@ -156,21 +154,23 @@ class PopupHeaderView : public views::View {
   DISALLOW_COPY_AND_ASSIGN(PopupHeaderView);
 };
 
-// Website Settings are not supported for internal Chrome pages. Instead of the
-// |WebsiteSettingsPopupView|, the |InternalPageInfoPopupView| is
-// displayed.
-class InternalPageInfoPopupView : public views::BubbleDelegateView {
+// Website Settings are not supported for internal Chrome pages and extension
+// pages. Instead of the |WebsiteSettingsPopupView|, the
+// |InternalPageInfoPopupView| is displayed.
+class InternalPageInfoPopupView : public views::BubbleDialogDelegateView {
  public:
   // If |anchor_view| is nullptr, or has no Widget, |parent_window| may be
   // provided to ensure this bubble is closed when the parent closes.
   InternalPageInfoPopupView(views::View* anchor_view,
-                            gfx::NativeView parent_window);
+                            gfx::NativeView parent_window,
+                            const GURL& url);
   ~InternalPageInfoPopupView() override;
 
-  // views::BubbleDelegateView:
+  // views::BubbleDialogDelegateView:
   views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) override;
   void OnWidgetDestroying(views::Widget* widget) override;
+  int GetDialogButtons() const override;
 
  private:
   friend class WebsiteSettingsPopupView;
@@ -286,7 +286,8 @@ void PopupHeaderView::SetSecuritySummary(
 
     views::StyledLabel::RangeStyleInfo link_style =
         views::StyledLabel::RangeStyleInfo::CreateForLink();
-    link_style.font_style |= gfx::Font::FontStyle::UNDERLINE;
+    if (!ui::MaterialDesignController::IsSecondaryUiMaterial())
+      link_style.font_style |= gfx::Font::FontStyle::UNDERLINE;
     link_style.disable_line_wrapping = false;
 
     status_->AddStyleRange(details_range, link_style);
@@ -299,12 +300,14 @@ void PopupHeaderView::SetSecuritySummary(
 }
 
 void PopupHeaderView::AddResetDecisionsButton() {
-  views::LabelButton* reset_decisions_button = new views::LabelButton(
-      button_listener_,
-      l10n_util::GetStringUTF16(
-          IDS_PAGEINFO_RESET_INVALID_CERTIFICATE_DECISIONS_BUTTON));
+  // TODO(estade): this looks pretty crazy as an MD button because the button
+  // text is very long. See crbug.com/512442
+  views::LabelButton* reset_decisions_button =
+      views::MdTextButton::CreateSecondaryUiButton(
+          button_listener_,
+          l10n_util::GetStringUTF16(
+              IDS_PAGEINFO_RESET_INVALID_CERTIFICATE_DECISIONS_BUTTON));
   reset_decisions_button->set_id(BUTTON_RESET_CERTIFICATE_DECISIONS);
-  reset_decisions_button->SetStyle(views::Button::STYLE_BUTTON);
 
   reset_decisions_button_container_->AddChildView(reset_decisions_button);
 
@@ -321,13 +324,27 @@ void PopupHeaderView::AddResetDecisionsButton() {
 
 InternalPageInfoPopupView::InternalPageInfoPopupView(
     views::View* anchor_view,
-    gfx::NativeView parent_window)
-    : BubbleDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT) {
+    gfx::NativeView parent_window,
+    const GURL& url)
+    : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT) {
   set_parent_window(parent_window);
 
+  int text = IDS_PAGE_INFO_INTERNAL_PAGE;
+  int icon = IDR_PRODUCT_LOGO_16;
+  if (url.SchemeIs(extensions::kExtensionScheme)) {
+    text = IDS_PAGE_INFO_EXTENSION_PAGE;
+    icon = IDR_PLUGINS_FAVICON;
+  } else if (url.SchemeIs(content::kViewSourceScheme)) {
+    text = IDS_PAGE_INFO_VIEW_SOURCE_PAGE;
+    // view-source scheme uses the same icon as chrome:// pages.
+    icon = IDR_PRODUCT_LOGO_16;
+  } else if (!url.SchemeIs(content::kChromeUIScheme)) {
+    NOTREACHED();
+  }
+
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_view_insets(gfx::Insets(kLocationIconVerticalMargin, 0,
-                                     kLocationIconVerticalMargin, 0));
+  set_anchor_view_insets(gfx::Insets(
+      GetLayoutConstant(LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET), 0));
 
   const int kSpacing = 16;
   SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal, kSpacing,
@@ -335,17 +352,16 @@ InternalPageInfoPopupView::InternalPageInfoPopupView(
   set_margins(gfx::Insets());
   views::ImageView* icon_view = new views::ImageView();
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  icon_view->SetImage(rb.GetImageSkiaNamed(IDR_PRODUCT_LOGO_16));
+  icon_view->SetImage(rb.GetImageSkiaNamed(icon));
   AddChildView(icon_view);
 
-  views::Label* label =
-      new views::Label(l10n_util::GetStringUTF16(IDS_PAGE_INFO_INTERNAL_PAGE));
+  views::Label* label = new views::Label(l10n_util::GetStringUTF16(text));
   label->SetMultiLine(true);
   label->SetAllowCharacterBreak(true);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   AddChildView(label);
 
-  views::BubbleDelegateView::CreateBubble(this);
+  views::BubbleDialogDelegateView::CreateBubble(this);
 }
 
 InternalPageInfoPopupView::~InternalPageInfoPopupView() {
@@ -354,7 +370,7 @@ InternalPageInfoPopupView::~InternalPageInfoPopupView() {
 views::NonClientFrameView* InternalPageInfoPopupView::CreateNonClientFrameView(
     views::Widget* widget) {
   views::BubbleFrameView* frame = static_cast<views::BubbleFrameView*>(
-      BubbleDelegateView::CreateNonClientFrameView(widget));
+      BubbleDialogDelegateView::CreateNonClientFrameView(widget));
   // 16px padding + half of icon width comes out to 24px.
   frame->bubble_border()->set_arrow_offset(
       24 + frame->bubble_border()->GetBorderThickness());
@@ -363,6 +379,10 @@ views::NonClientFrameView* InternalPageInfoPopupView::CreateNonClientFrameView(
 
 void InternalPageInfoPopupView::OnWidgetDestroying(views::Widget* widget) {
   is_popup_showing = false;
+}
+
+int InternalPageInfoPopupView::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -383,20 +403,22 @@ void WebsiteSettingsPopupView::ShowPopup(
   is_popup_showing = true;
   gfx::NativeView parent_window =
       anchor_view ? nullptr : web_contents->GetNativeView();
-  if (InternalChromePage(url)) {
+  if (url.SchemeIs(content::kChromeUIScheme) ||
+      url.SchemeIs(extensions::kExtensionScheme) ||
+      url.SchemeIs(content::kViewSourceScheme)) {
     // Use the concrete type so that |SetAnchorRect| can be called as a friend.
     InternalPageInfoPopupView* popup =
-        new InternalPageInfoPopupView(anchor_view, parent_window);
+        new InternalPageInfoPopupView(anchor_view, parent_window, url);
     if (!anchor_view)
       popup->SetAnchorRect(anchor_rect);
     popup->GetWidget()->Show();
-  } else {
-    WebsiteSettingsPopupView* popup = new WebsiteSettingsPopupView(
-        anchor_view, parent_window, profile, web_contents, url, security_info);
-    if (!anchor_view)
-      popup->SetAnchorRect(anchor_rect);
-    popup->GetWidget()->Show();
+    return;
   }
+  WebsiteSettingsPopupView* popup = new WebsiteSettingsPopupView(
+      anchor_view, parent_window, profile, web_contents, url, security_info);
+  if (!anchor_view)
+    popup->SetAnchorRect(anchor_rect);
+  popup->GetWidget()->Show();
 }
 
 // static
@@ -412,7 +434,7 @@ WebsiteSettingsPopupView::WebsiteSettingsPopupView(
     const GURL& url,
     const security_state::SecurityStateModel::SecurityInfo& security_info)
     : content::WebContentsObserver(web_contents),
-      BubbleDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
+      BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
       web_contents_(web_contents),
       header_(nullptr),
       separator_(nullptr),
@@ -429,8 +451,8 @@ WebsiteSettingsPopupView::WebsiteSettingsPopupView(
       profile->GetPrefs()->GetBoolean(prefs::kDevToolsDisabled);
 
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_view_insets(gfx::Insets(kLocationIconVerticalMargin, 0,
-                                     kLocationIconVerticalMargin, 0));
+  set_anchor_view_insets(gfx::Insets(
+      GetLayoutConstant(LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET), 0));
 
   views::GridLayout* layout = new views::GridLayout(this);
   SetLayoutManager(layout);
@@ -460,7 +482,7 @@ WebsiteSettingsPopupView::WebsiteSettingsPopupView(
   set_margins(gfx::Insets(kPopupMarginTop, kPopupMarginLeft,
                           kPopupMarginBottom, kPopupMarginRight));
 
-  views::BubbleDelegateView::CreateBubble(this);
+  views::BubbleDialogDelegateView::CreateBubble(this);
 
   presenter_.reset(new WebsiteSettings(
       this, profile, TabSpecificContentSettings::FromWebContents(web_contents),
@@ -487,6 +509,10 @@ void WebsiteSettingsPopupView::OnChosenObjectDeleted(
 void WebsiteSettingsPopupView::OnWidgetDestroying(views::Widget* widget) {
   is_popup_showing = false;
   presenter_->OnUIClosing();
+}
+
+int WebsiteSettingsPopupView::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
 }
 
 void WebsiteSettingsPopupView::ButtonPressed(views::Button* button,
@@ -541,13 +567,11 @@ void WebsiteSettingsPopupView::SetCookieInfo(
   base::string16 third_party_label_text;
   for (const auto& i : cookie_info_list) {
     if (i.is_first_party) {
-      first_party_label_text =
-          l10n_util::GetStringFUTF16(IDS_WEBSITE_SETTINGS_FIRST_PARTY_SITE_DATA,
-                                     base::IntToString16(i.allowed));
+      first_party_label_text = l10n_util::GetPluralStringFUTF16(
+          IDS_WEBSITE_SETTINGS_FIRST_PARTY_SITE_DATA, i.allowed);
     } else {
-      third_party_label_text =
-          l10n_util::GetStringFUTF16(IDS_WEBSITE_SETTINGS_THIRD_PARTY_SITE_DATA,
-                                     base::IntToString16(i.allowed));
+      third_party_label_text = l10n_util::GetPluralStringFUTF16(
+          IDS_WEBSITE_SETTINGS_THIRD_PARTY_SITE_DATA, i.allowed);
     }
   }
 
@@ -660,7 +684,7 @@ void WebsiteSettingsPopupView::SetPermissionInfo(
   for (auto object : chosen_object_info_list) {
     layout->StartRow(1, content_column);
     // The view takes ownership of the object info.
-    auto object_view = new ChosenObjectView(make_scoped_ptr(object));
+    auto object_view = new ChosenObjectView(base::WrapUnique(object));
     object_view->AddObserver(this);
     layout->AddView(object_view, 1, 1, views::GridLayout::LEADING,
                     views::GridLayout::CENTER);

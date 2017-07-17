@@ -6,11 +6,10 @@
 #define CC_TEST_LAYER_TREE_HOST_COMMON_TEST_H_
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
-#include "cc/layers/layer_lists.h"
-#include "cc/layers/layer_settings.h"
+#include "cc/layers/layer_collections.h"
 #include "cc/test/fake_layer_tree_host_client.h"
 #include "cc/test/layer_test_common.h"
 #include "cc/test/test_task_graph_runner.h"
@@ -40,16 +39,12 @@ class LayerTreeHostCommonTestBase : public LayerTestCommon::LayerImplTest {
   void SetLayerPropertiesForTestingInternal(
       LayerType* layer,
       const gfx::Transform& transform,
-      const gfx::Point3F& transform_origin,
       const gfx::PointF& position,
       const gfx::Size& bounds,
-      bool flatten_transform,
       bool is_3d_sorted) {
     layer->SetTransform(transform);
-    layer->SetTransformOrigin(transform_origin);
     layer->SetPosition(position);
     layer->SetBounds(bounds);
-    layer->SetShouldFlattenTransform(flatten_transform);
     layer->Set3dSortingContextId(is_3d_sorted ? 1 : 0);
   }
 
@@ -81,22 +76,18 @@ class LayerTreeHostCommonTestBase : public LayerTestCommon::LayerImplTest {
   void ExecuteCalculateDrawProperties(Layer* root_layer,
                                       float device_scale_factor,
                                       float page_scale_factor,
-                                      Layer* page_scale_application_layer,
-                                      bool can_use_lcd_text,
-                                      bool layers_always_allowed_lcd_text);
+                                      Layer* page_scale_application_layer);
 
   void ExecuteCalculateDrawProperties(LayerImpl* root_layer,
                                       float device_scale_factor,
                                       float page_scale_factor,
-                                      LayerImpl* page_scale_application_layer,
-                                      bool can_use_lcd_text,
-                                      bool layers_always_allowed_lcd_text);
+                                      LayerImpl* page_scale_application_layer);
 
   template <class LayerType>
   void ExecuteCalculateDrawProperties(LayerType* root_layer) {
     LayerType* page_scale_application_layer = NULL;
     ExecuteCalculateDrawProperties(root_layer, 1.f, 1.f,
-                                   page_scale_application_layer, false, false);
+                                   page_scale_application_layer);
   }
 
   template <class LayerType>
@@ -104,17 +95,7 @@ class LayerTreeHostCommonTestBase : public LayerTestCommon::LayerImplTest {
                                       float device_scale_factor) {
     LayerType* page_scale_application_layer = NULL;
     ExecuteCalculateDrawProperties(root_layer, device_scale_factor, 1.f,
-                                   page_scale_application_layer, false, false);
-  }
-
-  template <class LayerType>
-  void ExecuteCalculateDrawProperties(LayerType* root_layer,
-                                      float device_scale_factor,
-                                      float page_scale_factor,
-                                      LayerType* page_scale_application_layer) {
-    ExecuteCalculateDrawProperties(root_layer, device_scale_factor,
-                                   page_scale_factor,
-                                   page_scale_application_layer, false, false);
+                                   page_scale_application_layer);
   }
 
   void ExecuteCalculateDrawPropertiesWithPropertyTrees(Layer* layer);
@@ -139,19 +120,10 @@ class LayerTreeHostCommonTestBase : public LayerTestCommon::LayerImplTest {
   const LayerList& update_layer_list() const { return update_layer_list_; }
   bool UpdateLayerListContains(int id) const;
 
-  int render_surface_layer_list_count() const {
-    return render_surface_layer_list_count_;
-  }
-
-  const LayerSettings& layer_settings() { return layer_settings_; }
-
  private:
-  scoped_ptr<std::vector<LayerImpl*>> render_surface_layer_list_impl_;
+  std::unique_ptr<std::vector<LayerImpl*>> render_surface_layer_list_impl_;
   LayerList update_layer_list_;
-  scoped_ptr<LayerImplList> update_layer_list_impl_;
-  LayerSettings layer_settings_;
-
-  int render_surface_layer_list_count_;
+  std::unique_ptr<LayerImplList> update_layer_list_impl_;
 };
 
 class LayerTreeHostCommonTest : public LayerTreeHostCommonTestBase,
@@ -159,6 +131,33 @@ class LayerTreeHostCommonTest : public LayerTreeHostCommonTestBase,
  public:
   LayerTreeHostCommonTest();
   explicit LayerTreeHostCommonTest(const LayerTreeSettings& settings);
+
+ protected:
+  static void SetScrollOffsetDelta(LayerImpl* layer_impl,
+                                   const gfx::Vector2dF& delta) {
+    if (layer_impl->layer_tree_impl()
+            ->property_trees()
+            ->scroll_tree.SetScrollOffsetDeltaForTesting(layer_impl->id(),
+                                                         delta))
+      layer_impl->layer_tree_impl()->DidUpdateScrollOffset(
+          layer_impl->id(), layer_impl->transform_tree_index());
+  }
+
+  static float GetMaximumAnimationScale(LayerImpl* layer_impl) {
+    return layer_impl->layer_tree_impl()
+        ->property_trees()
+        ->GetAnimationScales(layer_impl->transform_tree_index(),
+                             layer_impl->layer_tree_impl())
+        .maximum_animation_scale;
+  }
+
+  static float GetStartingAnimationScale(LayerImpl* layer_impl) {
+    return layer_impl->layer_tree_impl()
+        ->property_trees()
+        ->GetAnimationScales(layer_impl->transform_tree_index(),
+                             layer_impl->layer_tree_impl())
+        .starting_animation_scale;
+  }
 };
 
 }  // namespace cc

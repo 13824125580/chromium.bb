@@ -18,9 +18,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/common/media/media_stream_options.h"
+#include "content/renderer/media/media_stream_constraints_util.h"
 #include "content/renderer/media/media_stream_source.h"
-#include "content/renderer/media/rtc_media_constraints.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
 #include "third_party/webrtc/modules/audio_processing/typing_detection.h"
 
@@ -30,15 +30,15 @@ const char MediaAudioConstraints::kEchoCancellation[] = "echoCancellation";
 const char MediaAudioConstraints::kGoogEchoCancellation[] =
     "googEchoCancellation";
 const char MediaAudioConstraints::kGoogExperimentalEchoCancellation[] =
-    "googEchoCancellation2";
+    "googExperimentalEchoCancellation";
 const char MediaAudioConstraints::kGoogAutoGainControl[] =
     "googAutoGainControl";
 const char MediaAudioConstraints::kGoogExperimentalAutoGainControl[] =
-    "googAutoGainControl2";
+    "googExperimentalAutoGainControl";
 const char MediaAudioConstraints::kGoogNoiseSuppression[] =
     "googNoiseSuppression";
 const char MediaAudioConstraints::kGoogExperimentalNoiseSuppression[] =
-    "googNoiseSuppression2";
+    "googExperimentalNoiseSuppression";
 const char MediaAudioConstraints::kGoogBeamforming[] = "googBeamforming";
 const char MediaAudioConstraints::kGoogArrayGeometry[] = "googArrayGeometry";
 const char MediaAudioConstraints::kGoogHighpassFilter[] = "googHighpassFilter";
@@ -48,6 +48,9 @@ const char MediaAudioConstraints::kGoogAudioMirroring[] = "googAudioMirroring";
 
 namespace {
 
+// Controls whether the hotword audio stream is used on supported platforms.
+const char kMediaStreamAudioHotword[] = "googHotword";
+
 // Constant constraint keys which enables default audio constraints on
 // mediastreams with audio.
 struct {
@@ -56,7 +59,7 @@ struct {
 } const kDefaultAudioConstraints[] = {
   { MediaAudioConstraints::kEchoCancellation, true },
   { MediaAudioConstraints::kGoogEchoCancellation, true },
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   { MediaAudioConstraints::kGoogExperimentalEchoCancellation, false },
 #else
   // Enable the extended filter mode AEC on all non-mobile platforms.
@@ -124,37 +127,37 @@ bool ScanConstraintsForBoolean(
     const blink::WebMediaConstraints& constraints,
     blink::BooleanConstraint blink::WebMediaTrackConstraintSet::*picker,
     bool the_default) {
-  const auto& the_field = constraints.basic().*picker;
-  if (the_field.hasExact()) {
-    return the_field.exact();
-  }
-  for (const auto& advanced_constraint : constraints.advanced()) {
-    const auto& the_field = advanced_constraint.*picker;
-    if (the_field.hasExact()) {
-      return the_field.exact();
-    }
+  bool value;
+  if (GetConstraintValueAsBoolean(constraints, picker, &value)) {
+    return value;
   }
   return the_default;
+}
+
+void SetIfNotSet(rtc::Optional<bool>* field, bool value) {
+  if (!*field) {
+    *field = rtc::Optional<bool>(value);
+  }
 }
 
 }  // namespace
 
 // TODO(xians): Remove this method after the APM in WebRtc is deprecated.
 void MediaAudioConstraints::ApplyFixedAudioConstraints(
-    RTCMediaConstraints* constraints) {
-  for (size_t i = 0; i < arraysize(kDefaultAudioConstraints); ++i) {
-    bool already_set_value;
-    if (!webrtc::FindConstraint(constraints, kDefaultAudioConstraints[i].key,
-                                &already_set_value, NULL)) {
-      const std::string value = kDefaultAudioConstraints[i].value ?
-          webrtc::MediaConstraintsInterface::kValueTrue :
-          webrtc::MediaConstraintsInterface::kValueFalse;
-      constraints->AddOptional(kDefaultAudioConstraints[i].key, value, false);
-    } else {
-      DVLOG(1) << "Constraint " << kDefaultAudioConstraints[i].key
-               << " already set to " << already_set_value;
-    }
-  }
+    cricket::AudioOptions* options) {
+  SetIfNotSet(&options->echo_cancellation, true);
+#if defined(OS_ANDROID)
+  SetIfNotSet(&options->extended_filter_aec, false);
+#else
+  // Enable the extended filter mode AEC on all non-mobile platforms.
+  SetIfNotSet(&options->extended_filter_aec, true);
+#endif
+  SetIfNotSet(&options->auto_gain_control, true);
+  SetIfNotSet(&options->experimental_agc, true);
+  SetIfNotSet(&options->noise_suppression, true);
+  SetIfNotSet(&options->highpass_filter, true);
+  SetIfNotSet(&options->typing_detection, true);
+  SetIfNotSet(&options->experimental_ns, true);
 }
 
 MediaAudioConstraints::MediaAudioConstraints(
@@ -166,9 +169,15 @@ MediaAudioConstraints::MediaAudioConstraints(
   // - gUM has a specific kMediaStreamSource, which is used by tab capture
   //   and screen capture.
   // - |kEchoCancellation| is explicitly set to false.
-  std::string value_str;
-  if (!constraints.basic().mediaStreamSource.isEmpty() ||
-      !constraints.basic().echoCancellation.matches(true)) {
+  bool echo_constraint;
+  std::string source_string;
+  if (GetConstraintValueAsString(
+          constraints, &blink::WebMediaTrackConstraintSet::mediaStreamSource,
+          &source_string) ||
+      (GetConstraintValueAsBoolean(
+           constraints, &blink::WebMediaTrackConstraintSet::echoCancellation,
+           &echo_constraint) &&
+       echo_constraint == false)) {
     default_audio_processing_constraint_value_ = false;
   }
 }
@@ -182,14 +191,11 @@ bool MediaAudioConstraints::GetEchoCancellationProperty() const {
 
   // If |kEchoCancellation| is specified in the constraints, it will
   // override the value of |kGoogEchoCancellation|.
-  const blink::WebMediaTrackConstraintSet& basic = constraints_.basic();
-  if (basic.echoCancellation.hasExact()) {
-    return basic.echoCancellation.exact();
-  }
-  for (const auto& advanced_constraint : constraints_.advanced()) {
-    if (advanced_constraint.echoCancellation.hasExact()) {
-      return advanced_constraint.echoCancellation.exact();
-    }
+  bool echo_value;
+  if (GetConstraintValueAsBoolean(
+          constraints_, &blink::WebMediaTrackConstraintSet::echoCancellation,
+          &echo_value)) {
+    return echo_value;
   }
   return ScanConstraintsForBoolean(
       constraints_, &blink::WebMediaTrackConstraintSet::googEchoCancellation,
@@ -284,27 +290,42 @@ bool MediaAudioConstraints::GetGoogExperimentalAutoGainControl() const {
 }
 
 std::string MediaAudioConstraints::GetGoogArrayGeometry() const {
-  const auto& the_field = constraints_.basic().googArrayGeometry;
-  if (the_field.hasMandatory()) {
-    return the_field.exact()[0].utf8();
-  }
-  for (const auto& advanced_constraint : constraints_.advanced()) {
-    const auto& the_field = advanced_constraint.googArrayGeometry;
-    if (the_field.hasMandatory()) {
-      return the_field.exact()[0].utf8();
-    }
+  std::string the_value;
+  if (GetConstraintValueAsString(
+          constraints_, &blink::WebMediaTrackConstraintSet::googArrayGeometry,
+          &the_value)) {
+    return the_value;
   }
   return "";
 }
 
 EchoInformation::EchoInformation()
-    : num_chunks_(0), echo_frames_received_(false) {
+    : delay_stats_time_ms_(0),
+      echo_frames_received_(false),
+      divergent_filter_stats_time_ms_(0),
+      num_divergent_filter_fraction_(0),
+      num_non_zero_divergent_filter_fraction_(0) {}
+
+EchoInformation::~EchoInformation() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  ReportAndResetAecDivergentFilterStats();
 }
 
-EchoInformation::~EchoInformation() {}
+void EchoInformation::UpdateAecStats(
+    webrtc::EchoCancellation* echo_cancellation) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (!echo_cancellation->is_enabled())
+    return;
+
+  UpdateAecDelayStats(echo_cancellation);
+  UpdateAecDivergentFilterStats(echo_cancellation);
+}
 
 void EchoInformation::UpdateAecDelayStats(
     webrtc::EchoCancellation* echo_cancellation) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   // Only start collecting stats if we know echo cancellation has measured an
   // echo. Otherwise we clutter the stats with for example cases where only the
   // microphone is used.
@@ -312,19 +333,18 @@ void EchoInformation::UpdateAecDelayStats(
     return;
 
   echo_frames_received_ = true;
+
   // In WebRTC, three echo delay metrics are calculated and updated every
   // five seconds. We use one of them, |fraction_poor_delays| to log in a UMA
   // histogram an Echo Cancellation quality metric. The stat in WebRTC has a
   // fixed aggregation window of five seconds, so we use the same query
   // frequency to avoid logging old values.
-  const int kNumChunksInFiveSeconds = 500;
-  if (!echo_cancellation->is_delay_logging_enabled() ||
-      !echo_cancellation->is_enabled()) {
+  if (!echo_cancellation->is_delay_logging_enabled())
     return;
-  }
 
-  num_chunks_++;
-  if (num_chunks_ < kNumChunksInFiveSeconds) {
+  delay_stats_time_ms_ += webrtc::AudioProcessing::kChunkSizeMs;
+  if (delay_stats_time_ms_ <
+      500 * webrtc::AudioProcessing::kChunkSizeMs) {  // 5 seconds
     return;
   }
 
@@ -333,7 +353,7 @@ void EchoInformation::UpdateAecDelayStats(
   if (echo_cancellation->GetDelayMetrics(
           &dummy_median, &dummy_std, &fraction_poor_delays) ==
       webrtc::AudioProcessing::kNoError) {
-    num_chunks_ = 0;
+    delay_stats_time_ms_ = 0;
     // Map |fraction_poor_delays| to an Echo Cancellation quality and log in UMA
     // histogram. See DelayBasedEchoQuality for information on histogram
     // buckets.
@@ -343,8 +363,55 @@ void EchoInformation::UpdateAecDelayStats(
   }
 }
 
+void EchoInformation::UpdateAecDivergentFilterStats(
+    webrtc::EchoCancellation* echo_cancellation) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (!echo_cancellation->are_metrics_enabled())
+    return;
+
+  divergent_filter_stats_time_ms_ += webrtc::AudioProcessing::kChunkSizeMs;
+  if (divergent_filter_stats_time_ms_ <
+      100 * webrtc::AudioProcessing::kChunkSizeMs) {  // 1 second
+    return;
+  }
+
+  webrtc::EchoCancellation::Metrics metrics;
+  if (echo_cancellation->GetMetrics(&metrics) ==
+      webrtc::AudioProcessing::kNoError) {
+    // If not yet calculated, |metrics.divergent_filter_fraction| is -1.0. After
+    // being calculated the first time, it is updated periodically.
+    if (metrics.divergent_filter_fraction < 0.0f) {
+      DCHECK_EQ(num_divergent_filter_fraction_, 0);
+      return;
+    }
+    if (metrics.divergent_filter_fraction > 0.0f) {
+      ++num_non_zero_divergent_filter_fraction_;
+    }
+  } else {
+    DLOG(WARNING) << "Get echo cancellation metrics failed.";
+  }
+  ++num_divergent_filter_fraction_;
+  divergent_filter_stats_time_ms_ = 0;
+}
+
+void EchoInformation::ReportAndResetAecDivergentFilterStats() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (num_divergent_filter_fraction_ == 0)
+    return;
+
+  int non_zero_percent = 100 * num_non_zero_divergent_filter_fraction_ /
+                         num_divergent_filter_fraction_;
+  UMA_HISTOGRAM_PERCENTAGE("WebRTC.AecFilterHasDivergence", non_zero_percent);
+
+  divergent_filter_stats_time_ms_ = 0;
+  num_non_zero_divergent_filter_fraction_ = 0;
+  num_divergent_filter_fraction_ = 0;
+}
+
 void EnableEchoCancellation(AudioProcessing* audio_processing) {
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   // Mobile devices are using AECM.
   CHECK_EQ(0, audio_processing->echo_control_mobile()->set_routing_mode(
                   webrtc::EchoControlMobile::kSpeakerphone));
@@ -403,7 +470,7 @@ void StopEchoCancellationDump(AudioProcessing* audio_processing) {
 }
 
 void EnableAutomaticGainControl(AudioProcessing* audio_processing) {
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   const webrtc::GainControl::Mode mode = webrtc::GainControl::kFixedDigital;
 #else
   const webrtc::GainControl::Mode mode = webrtc::GainControl::kAdaptiveAnalog;
@@ -443,6 +510,8 @@ void GetAecStats(webrtc::EchoCancellation* echo_cancellation,
     stats->echo_return_loss = echo_metrics.echo_return_loss.instant;
     stats->echo_return_loss_enhancement =
         echo_metrics.echo_return_loss_enhancement.instant;
+    stats->aec_divergent_filter_fraction =
+        echo_metrics.divergent_filter_fraction;
   }
 
   int median = 0, std = 0;

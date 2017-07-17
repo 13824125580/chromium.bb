@@ -35,18 +35,6 @@ class _PageCycler(perf_benchmark.PerfBenchmark):
         report_speed_index=options.report_speed_index)
 
 
-# This is an old page set, we intend to remove it after more modern benchmarks
-# work on CrOS.
-@benchmark.Enabled('chromeos')
-class PageCyclerDhtml(_PageCycler):
-  """Benchmarks for various DHTML operations like simple animations."""
-  page_set = page_sets.DhtmlPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'page_cycler.dhtml'
-
-
 class PageCyclerIntlArFaHe(_PageCycler):
   """Page load time for a variety of pages in Arabic, Farsi and Hebrew.
 
@@ -118,58 +106,13 @@ class PageCyclerIntlKoThVi(_PageCycler):
   def Name(cls):
     return 'page_cycler.intl_ko_th_vi'
 
-
-class PageCyclerMorejs(_PageCycler):
-  """Page load for a variety of pages that were JavaScript heavy in 2009."""
-  page_set = page_sets.MorejsPageSet
-
   @classmethod
-  def Name(cls):
-    return 'page_cycler.morejs'
-
-
-# This is an old page set, we intend to remove it after more modern benchmarks
-# work on CrOS.
-@benchmark.Enabled('chromeos')
-class PageCyclerMoz(_PageCycler):
-  """Page load for mozilla's original page set. Recorded in December 2000."""
-  page_set = page_sets.MozPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'page_cycler.moz'
-
-
-# Win, mac, linux: crbug.com/353260
-# Android: crbug.com/473161
-@benchmark.Disabled('linux', 'win', 'mac', 'android')
-class PageCyclerNetsimTop10(_PageCycler):
-  """Measures load time of the top 10 sites under simulated cable network.
-
-  Recorded in June, 2013.  Pages are loaded under the simplisticly simulated
-  bandwidth and RTT constraints of a cable modem (5Mbit/s down, 1Mbit/s up,
-  28ms RTT). Contention is realistically simulated, but slow start is not.
-  DNS lookups are 'free'.
-  """
-  tag = 'netsim'
-  page_set = page_sets.Top10PageSet
-  options = {
-      'extra_wpr_args_as_string': '--shaping_type=proxy --net=cable',
-      'pageset_repeat': 6,
-  }
-  cold_load_percent = 100
-
-  @classmethod
-  def Name(cls):
-    return 'page_cycler.netsim.top_10'
-
-  def CreatePageTest(self, options):
-    return page_cycler.PageCycler(
-        page_repeat=options.page_repeat,
-        pageset_repeat=options.pageset_repeat,
-        cold_load_percent=self.cold_load_percent,
-        report_speed_index=options.report_speed_index,
-        clear_cache_before_each_run=True)
+  def ShouldDisable(cls, possible_browser):
+    # http://crbug.com/597656 (Android Nexus 5X).
+    # http://crbug.com/605543 (Mac Snow Leopard).
+    return (possible_browser.browser_type == 'reference' and (
+              possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X' or
+              possible_browser.platform.GetOSVersionName() == 'snowleopard'))
 
 
 @benchmark.Enabled('android')
@@ -192,16 +135,6 @@ class PageCyclerTop10Mobile(_PageCycler):
     return stories
 
 
-@benchmark.Disabled('all')
-class PageCyclerKeyMobileSites(_PageCycler):
-  """Page load time benchmark for key mobile sites."""
-  page_set = page_sets.KeyMobileSitesPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'page_cycler.key_mobile_sites_smooth'
-
-
 @benchmark.Disabled('android')  # crbug.com/357326
 class PageCyclerToughLayoutCases(_PageCycler):
   """Page loading for the slowest layouts observed in the Alexa top 1 million.
@@ -215,9 +148,6 @@ class PageCyclerToughLayoutCases(_PageCycler):
     return 'page_cycler.tough_layout_cases'
 
 
-# crbug.com/273986: This test is flakey on Windows Chrome.
-@benchmark.Enabled('android', 'chromeos', 'linux', 'ios', 'mac',
-                   'mandoline-release', 'mandoline-debug')
 class PageCyclerTypical25(_PageCycler):
   """Page load time benchmark for a 25 typical web pages.
 
@@ -225,6 +155,16 @@ class PageCyclerTypical25(_PageCycler):
   sites. Runs against pages recorded in June, 2014.
   """
   options = {'pageset_repeat': 3}
+
+  @classmethod
+  def ShouldDisable(cls, possible_browser):  # http://crbug.com/597656
+    if (possible_browser.browser_type == 'reference' and
+        possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X'):
+      return True
+    # http://crbug.com/616781
+    if possible_browser.platform.GetDeviceTypeName() == 'AOSP on BullHead':
+      return True
+    return False
 
   @classmethod
   def Name(cls):
@@ -247,7 +187,6 @@ class PageCyclerBasicOopifIsolated(_PageCycler):
     options.AppendExtraBrowserArgs(['--site-per-process'])
 
 
-@benchmark.Disabled('reference')  # crbug.com/523346
 class PageCyclerBasicOopif(_PageCycler):
   """ A benchmark measuring performance of the out-of-process iframes page
   set, without running in out-of-process iframes mode.. """
@@ -257,11 +196,6 @@ class PageCyclerBasicOopif(_PageCycler):
   def Name(cls):
     return 'page_cycler.basic_oopif'
 
-
-@benchmark.Disabled('all')  # crbug.com/443730
-class PageCyclerBigJs(_PageCycler):
-  page_set = page_sets.BigJsPageSet
-
   @classmethod
-  def Name(cls):
-    return 'page_cycler.big_js'
+  def ShouldDisable(cls, possible_browser):
+    return cls.IsSvelte(possible_browser)  # http://crbug.com/607657

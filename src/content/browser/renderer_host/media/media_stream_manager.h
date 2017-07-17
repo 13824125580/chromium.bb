@@ -28,12 +28,13 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/system_monitor/system_monitor.h"
@@ -48,6 +49,10 @@
 
 namespace media {
 class AudioManager;
+}
+
+namespace url {
+class Origin;
 }
 
 namespace content {
@@ -72,7 +77,7 @@ class CONTENT_EXPORT MediaStreamManager
  public:
   // Callback to deliver the result of a media request.
   typedef base::Callback<void(const MediaStreamDevices& devices,
-                              scoped_ptr<MediaStreamUIProxy> ui)>
+                              std::unique_ptr<MediaStreamUIProxy> ui)>
       MediaRequestResponseCallback;
 
   // Adds |message| to native logs for outstanding device requests, for use by
@@ -104,7 +109,7 @@ class CONTENT_EXPORT MediaStreamManager
       int render_frame_id,
       int page_request_id,
       const StreamControls& controls,
-      const GURL& security_origin,
+      const url::Origin& security_origin,
       const MediaRequestResponseCallback& callback);
 
   // GenerateStream opens new media devices according to |components|.  It
@@ -114,10 +119,10 @@ class CONTENT_EXPORT MediaStreamManager
   void GenerateStream(MediaStreamRequester* requester,
                       int render_process_id,
                       int render_frame_id,
-                      const ResourceContext::SaltCallback& sc,
+                      const std::string& salt,
                       int page_request_id,
                       const StreamControls& controls,
-                      const GURL& security_origin,
+                      const url::Origin& security_origin,
                       bool user_gesture);
 
   void CancelRequest(int render_process_id,
@@ -146,10 +151,10 @@ class CONTENT_EXPORT MediaStreamManager
   virtual std::string EnumerateDevices(MediaStreamRequester* requester,
                                        int render_process_id,
                                        int render_frame_id,
-                                       const ResourceContext::SaltCallback& sc,
+                                       const std::string& salt,
                                        int page_request_id,
                                        MediaStreamType type,
-                                       const GURL& security_origin);
+                                       const url::Origin& security_origin);
 
   // Open a device identified by |device_id|.  |type| must be either
   // MEDIA_DEVICE_AUDIO_CAPTURE or MEDIA_DEVICE_VIDEO_CAPTURE.
@@ -157,20 +162,24 @@ class CONTENT_EXPORT MediaStreamManager
   void OpenDevice(MediaStreamRequester* requester,
                   int render_process_id,
                   int render_frame_id,
-                  const ResourceContext::SaltCallback& sc,
+                  const std::string& salt,
                   int page_request_id,
                   const std::string& device_id,
                   MediaStreamType type,
-                  const GURL& security_origin);
+                  const url::Origin& security_origin);
 
   // Finds and returns the device id corresponding to the given
   // |source_id|. Returns true if there was a raw device id that matched the
   // given |source_id|, false if nothing matched it.
   bool TranslateSourceIdToDeviceId(MediaStreamType stream_type,
-                                   const ResourceContext::SaltCallback& rc,
-                                   const GURL& security_origin,
+                                   const std::string& salt,
+                                   const url::Origin& security_origin,
                                    const std::string& source_id,
                                    std::string* device_id) const;
+
+  // Find |device_id| in the list of |requests_|, and returns its session id,
+  // or StreamDeviceInfo::kNoId if not found.
+  int VideoDeviceIdToSessionId(const std::string& device_id) const;
 
   // Called by UI to make sure the device monitor is started so that UI receive
   // notifications about device changes.
@@ -212,7 +221,7 @@ class CONTENT_EXPORT MediaStreamManager
 
   // Called by the tests to specify a fake UI that should be used for next
   // generated stream (or when using --use-fake-ui-for-media-stream).
-  void UseFakeUIForTests(scoped_ptr<FakeMediaStreamUIProxy> fake_ui);
+  void UseFakeUIForTests(std::unique_ptr<FakeMediaStreamUIProxy> fake_ui);
 
   // Register and unregister a new callback for receiving native log entries.
   // The registered callback will be invoked on the IO thread.
@@ -222,20 +231,38 @@ class CONTENT_EXPORT MediaStreamManager
       const base::Callback<void(const std::string&)>& callback);
   void UnregisterNativeLogCallback(int renderer_host_id);
 
+  // Register and unregister subscribers for device-change notifications.
+  // It is an error to try to subscribe a |subscriber| that is already
+  // subscribed or to cancel the subscription of a |subscriber| that is not
+  // subscribed. Also, subscribers must make sure to invoke
+  // CancelDeviceChangeNotifications() before destruction. Otherwise, dangling
+  // pointers and use-after-destruction problems will occur.
+  void SubscribeToDeviceChangeNotifications(MediaStreamRequester* subscriber);
+  void CancelDeviceChangeNotifications(MediaStreamRequester* subscriber);
+
   // Generates a hash of a device's unique ID usable by one
   // particular security origin.
-  static std::string GetHMACForMediaDeviceID(
-      const ResourceContext::SaltCallback& sc,
-      const GURL& security_origin,
-      const std::string& raw_unique_id);
+  static std::string GetHMACForMediaDeviceID(const std::string& salt,
+                                             const url::Origin& security_origin,
+                                             const std::string& raw_unique_id);
 
   // Convenience method to check if |device_guid| is an HMAC of
   // |raw_device_id| for |security_origin|.
-  static bool DoesMediaDeviceIDMatchHMAC(
-      const ResourceContext::SaltCallback& sc,
-      const GURL& security_origin,
-      const std::string& device_guid,
-      const std::string& raw_unique_id);
+  static bool DoesMediaDeviceIDMatchHMAC(const std::string& salt,
+                                         const url::Origin& security_origin,
+                                         const std::string& device_guid,
+                                         const std::string& raw_unique_id);
+
+  // Returns true if the renderer process identified with |render_process_id|
+  // is allowed to access |origin|.
+  static bool IsOriginAllowed(int render_process_id, const url::Origin& origin);
+
+  // Set whether the capturing is secure for the capturing session with given
+  // |session_id|, |render_process_id|, and the MediaStreamType |type|.
+  void SetCapturingLinkSecured(int render_process_id,
+                               int session_id,
+                               content::MediaStreamType type,
+                               bool is_secure);
 
  private:
   // Contains all data needed to keep track of requests.
@@ -376,8 +403,8 @@ class CONTENT_EXPORT MediaStreamManager
   // Returns false if the required device ID is present and invalid.
   // Otherwise, if no valid device is found, device_id is unchanged.
   bool PickDeviceId(MediaStreamType type,
-                    const ResourceContext::SaltCallback& salt_callback,
-                    const GURL& security_origin,
+                    const std::string& salt,
+                    const url::Origin& security_origin,
                     const TrackControls& controls,
                     std::string* device_id) const;
 
@@ -401,6 +428,8 @@ class CONTENT_EXPORT MediaStreamManager
       const base::Callback<void(const std::string&)>& callback);
   void DoNativeLogCallbackUnregistration(int renderer_host_id);
 
+  void NotifyDeviceChangeSubscribers(MediaStreamType type);
+
   // Task runner shared by VideoCaptureManager and AudioInputDeviceManager and
   // used for enumerating audio output devices.
   // Note: Enumeration tasks may take seconds to complete so must never be run
@@ -410,7 +439,7 @@ class CONTENT_EXPORT MediaStreamManager
   media::AudioManager* const audio_manager_;  // not owned
   scoped_refptr<AudioInputDeviceManager> audio_input_device_manager_;
   scoped_refptr<VideoCaptureManager> video_capture_manager_;
-  scoped_ptr<AudioOutputDeviceEnumerator> audio_output_device_enumerator_;
+  std::unique_ptr<AudioOutputDeviceEnumerator> audio_output_device_enumerator_;
 #if defined(OS_WIN)
   base::Thread video_capture_thread_;
 #endif
@@ -431,10 +460,13 @@ class CONTENT_EXPORT MediaStreamManager
   DeviceRequests requests_;
 
   bool use_fake_ui_;
-  scoped_ptr<FakeMediaStreamUIProxy> fake_ui_;
+  std::unique_ptr<FakeMediaStreamUIProxy> fake_ui_;
 
   // Maps render process hosts to log callbacks. Used on the IO thread.
   std::map<int, base::Callback<void(const std::string&)>> log_callbacks_;
+
+  // Objects subscribed to changes in the set of media devices.
+  std::vector<MediaStreamRequester*> device_change_subscribers_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamManager);
 };

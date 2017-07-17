@@ -31,7 +31,6 @@
 #include "modules/webaudio/AudioNodeOutput.h"
 #include "modules/webaudio/AudioParam.h"
 #include "wtf/Atomics.h"
-#include "wtf/MainThread.h"
 
 #if DEBUG_AUDIONODE_REFERENCES
 #include <stdio.h>
@@ -72,9 +71,9 @@ AudioHandler::~AudioHandler()
     ASSERT(!node());
     InstanceCounters::decrementCounter(InstanceCounters::AudioHandlerCounter);
 #if DEBUG_AUDIONODE_REFERENCES
-    --s_nodeCount[nodeType()];
+    --s_nodeCount[getNodeType()];
     fprintf(stderr, "%p: %2d: AudioNode::~AudioNode() %d [%d]\n",
-        this, nodeType(), m_connectionRefCount, s_nodeCount[nodeType()]);
+        this, getNodeType(), m_connectionRefCount, s_nodeCount[getNodeType()]);
 #endif
 }
 
@@ -98,6 +97,7 @@ void AudioHandler::dispose()
     ASSERT(context()->isGraphOwner());
 
     context()->deferredTaskHandler().removeChangedChannelCountMode(this);
+    context()->deferredTaskHandler().removeChangedChannelInterpretation(this);
     context()->deferredTaskHandler().removeAutomaticPullNode(this);
     for (auto& output : m_outputs)
         output->dispose();
@@ -174,7 +174,7 @@ void AudioHandler::setNodeType(NodeType type)
 
 #if DEBUG_AUDIONODE_REFERENCES
     ++s_nodeCount[type];
-    fprintf(stderr, "%p: %2d: AudioNode::AudioNode [%3d]\n", this, nodeType(), s_nodeCount[nodeType()]);
+    fprintf(stderr, "%p: %2d: AudioNode::AudioNode [%3d]\n", this, getNodeType(), s_nodeCount[getNodeType()]);
 #endif
 }
 
@@ -281,13 +281,18 @@ void AudioHandler::setChannelInterpretation(const String& interpretation, Except
     ASSERT(isMainThread());
     AbstractAudioContext::AutoLocker locker(context());
 
+    AudioBus::ChannelInterpretation oldMode = m_channelInterpretation;
+
     if (interpretation == "speakers") {
-        m_channelInterpretation = AudioBus::Speakers;
+        m_newChannelInterpretation = AudioBus::Speakers;
     } else if (interpretation == "discrete") {
-        m_channelInterpretation = AudioBus::Discrete;
+        m_newChannelInterpretation = AudioBus::Discrete;
     } else {
         ASSERT_NOT_REACHED();
     }
+
+    if (m_newChannelInterpretation != oldMode)
+        context()->deferredTaskHandler().addChangedChannelInterpretation(this);
 }
 
 void AudioHandler::updateChannelsForInputs()
@@ -507,12 +512,17 @@ void AudioHandler::updateChannelCountMode()
     updateChannelsForInputs();
 }
 
+void AudioHandler::updateChannelInterpretation()
+{
+    m_channelInterpretation = m_newChannelInterpretation;
+}
+
 unsigned AudioHandler::numberOfOutputChannels() const
 {
     // This should only be called for ScriptProcessorNodes which are the only nodes where you can
     // have an output with 0 channels.  All other nodes have have at least one output channel, so
     // there's no reason other nodes should ever call this function.
-    ASSERT_WITH_MESSAGE(1, "numberOfOutputChannels() not valid for node type %d", getNodeType());
+    DCHECK(0) << "numberOfOutputChannels() not valid for node type " << getNodeType();
     return 1;
 }
 // ----------------------------------------------------------------
@@ -549,7 +559,7 @@ DEFINE_TRACE(AudioNode)
     visitor->trace(m_context);
     visitor->trace(m_connectedNodes);
     visitor->trace(m_connectedParams);
-    RefCountedGarbageCollectedEventTargetWithInlineData<AudioNode>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
 }
 
 AbstractAudioContext* AudioNode::context() const
@@ -926,9 +936,9 @@ const AtomicString& AudioNode::interfaceName() const
     return EventTargetNames::AudioNode;
 }
 
-ExecutionContext* AudioNode::executionContext() const
+ExecutionContext* AudioNode::getExecutionContext() const
 {
-    return context()->executionContext();
+    return context()->getExecutionContext();
 }
 
 void AudioNode::didAddOutput(unsigned numberOfOutputs)

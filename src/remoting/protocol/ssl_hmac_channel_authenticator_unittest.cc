@@ -12,12 +12,13 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "base/timer/timer.h"
 #include "crypto/rsa_private_key.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/protocol/connection_tester.h"
 #include "remoting/protocol/fake_session.h"
@@ -113,12 +114,12 @@ class SslHmacChannelAuthenticatorTest : public testing::Test {
     base::Timer shutdown_timer(false, false);
     shutdown_timer.Start(FROM_HERE, TestTimeouts::action_timeout(),
                          base::MessageLoop::QuitWhenIdleClosure());
-    message_loop_.Run();
+    base::RunLoop().Run();
   }
 
   void OnHostConnected(const std::string& ref_argument,
                        int error,
-                       scoped_ptr<P2PStreamSocket> socket) {
+                       std::unique_ptr<P2PStreamSocket> socket) {
     // Try deleting the authenticator and verify that this doesn't destroy
     // reference parameters.
     host_auth_.reset();
@@ -128,7 +129,7 @@ class SslHmacChannelAuthenticatorTest : public testing::Test {
     host_socket_ = std::move(socket);
   }
 
-  void OnClientConnected(int error, scoped_ptr<P2PStreamSocket> socket) {
+  void OnClientConnected(int error, std::unique_ptr<P2PStreamSocket> socket) {
     client_auth_.reset();
     client_callback_.OnDone(error, socket.get());
     client_socket_ = std::move(socket);
@@ -138,14 +139,14 @@ class SslHmacChannelAuthenticatorTest : public testing::Test {
 
   scoped_refptr<RsaKeyPair> key_pair_;
   std::string host_cert_;
-  scoped_ptr<FakeStreamSocket> client_fake_socket_;
-  scoped_ptr<FakeStreamSocket> host_fake_socket_;
-  scoped_ptr<ChannelAuthenticator> client_auth_;
-  scoped_ptr<ChannelAuthenticator> host_auth_;
+  std::unique_ptr<FakeStreamSocket> client_fake_socket_;
+  std::unique_ptr<FakeStreamSocket> host_fake_socket_;
+  std::unique_ptr<ChannelAuthenticator> client_auth_;
+  std::unique_ptr<ChannelAuthenticator> host_auth_;
   MockChannelDoneCallback client_callback_;
   MockChannelDoneCallback host_callback_;
-  scoped_ptr<P2PStreamSocket> client_socket_;
-  scoped_ptr<P2PStreamSocket> host_socket_;
+  std::unique_ptr<P2PStreamSocket> client_socket_;
+  std::unique_ptr<P2PStreamSocket> host_socket_;
 
   DISALLOW_COPY_AND_ASSIGN(SslHmacChannelAuthenticatorTest);
 };
@@ -166,7 +167,7 @@ TEST_F(SslHmacChannelAuthenticatorTest, SuccessfulAuth) {
                                 100, 2);
 
   tester.Start();
-  message_loop_.Run();
+  base::RunLoop().Run();
   tester.CheckResults();
 }
 

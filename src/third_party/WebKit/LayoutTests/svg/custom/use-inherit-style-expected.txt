@@ -1,20 +1,43 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [0, 0, 100, 60],
-        [0, 0, 100, 60],
-        [0, 0, 100, 60]
-      ],
-      "paintInvalidationClients": [
-        "LayoutSVGContainer g id='g'",
-        "LayoutSVGContainer use",
-        "LayoutSVGRect rect id='rect'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGContainer g id='g'",
+          "rect": [0, 0, 100, 60],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGContainer use",
+          "rect": [0, 0, 100, 60],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGRect rect id='rect'",
+          "rect": [0, 0, 100, 60],
+          "reason": "style change"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGContainer g id='g'",
+      "reason": "style change"
+    },
+    {
+      "object": "LayoutSVGContainer use",
+      "reason": "style change"
+    },
+    {
+      "object": "LayoutSVGRect rect id='rect'",
+      "reason": "style change"
     }
   ]
 }

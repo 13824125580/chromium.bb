@@ -7,7 +7,9 @@
 
 #include "core/CoreExport.h"
 #include "core/animation/InterpolableValue.h"
-#include "platform/heap/Handle.h"
+#include "wtf/Forward.h"
+#include "wtf/RefCounted.h"
+#include <memory>
 
 namespace blink {
 
@@ -25,18 +27,18 @@ public:
     virtual bool isInvalidatableInterpolation() const { return false; }
     virtual bool isLegacyStyleInterpolation() const { return false; }
 
-    virtual PropertyHandle property() const = 0;
+    virtual PropertyHandle getProperty() const = 0;
     virtual bool dependsOnUnderlyingValue() const { return false; }
 
 protected:
-    const OwnPtr<InterpolableValue> m_start;
-    const OwnPtr<InterpolableValue> m_end;
+    const std::unique_ptr<InterpolableValue> m_start;
+    const std::unique_ptr<InterpolableValue> m_end;
 
     mutable double m_cachedFraction;
     mutable int m_cachedIteration;
-    mutable OwnPtr<InterpolableValue> m_cachedValue;
+    mutable std::unique_ptr<InterpolableValue> m_cachedValue;
 
-    Interpolation(PassOwnPtr<InterpolableValue> start, PassOwnPtr<InterpolableValue> end);
+    Interpolation(std::unique_ptr<InterpolableValue> start, std::unique_ptr<InterpolableValue> end);
 
 private:
     InterpolableValue* getCachedValueForTesting() const { return m_cachedValue.get(); }

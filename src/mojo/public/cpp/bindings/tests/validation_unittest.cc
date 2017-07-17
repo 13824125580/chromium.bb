@@ -12,16 +12,16 @@
 
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "mojo/message_pump/message_pump_mojo.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/c/system/macros.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/connector.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
-#include "mojo/public/cpp/bindings/lib/connector.h"
 #include "mojo/public/cpp/bindings/lib/filter_chain.h"
-#include "mojo/public/cpp/bindings/lib/message_header_validator.h"
 #include "mojo/public/cpp/bindings/lib/router.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/message_header_validator.h"
 #include "mojo/public/cpp/bindings/tests/validation_test_input_parser.h"
 #include "mojo/public/cpp/system/core.h"
 #include "mojo/public/cpp/test_support/test_support.h"
@@ -154,7 +154,7 @@ bool ReadTestCase(const std::string& test,
   message->Initialize(static_cast<uint32_t>(data.size()),
                       false /* zero_initialized */);
   if (!data.empty())
-    memcpy(message->buffer()->Allocate(data.size()), &data[0], data.size());
+    memcpy(message->mutable_data(), &data[0], data.size());
   message->mutable_handles()->resize(num_handles);
 
   return true;
@@ -165,6 +165,7 @@ void RunValidationTests(const std::string& prefix,
   std::vector<std::string> names =
       EnumerateSourceRootRelativeDirectory(GetPath("", ""));
   std::vector<std::string> tests = GetMatchingTests(names, prefix);
+  ASSERT_FALSE(tests.empty());
 
   for (size_t i = 0; i < tests.size(); ++i) {
     Message message;
@@ -175,7 +176,7 @@ void RunValidationTests(const std::string& prefix,
     base::RunLoop run_loop;
     mojo::internal::ValidationErrorObserverForTesting observer(
         run_loop.QuitClosure());
-    mojo_ignore_result(test_message_receiver->Accept(&message));
+    ignore_result(test_message_receiver->Accept(&message));
     if (expected != "PASS")  // Observer only gets called on errors.
       run_loop.Run();
     if (observer.last_error() == mojo::internal::VALIDATION_ERROR_NONE)
@@ -196,7 +197,7 @@ class DummyMessageReceiver : public MessageReceiver {
 
 class ValidationTest : public testing::Test {
  public:
-  ValidationTest() : loop_(common::MessagePumpMojo::Create()) {}
+  ValidationTest() {}
 
  protected:
   base::MessageLoop loop_;
@@ -238,7 +239,8 @@ class ValidationIntegrationTest : public ValidationTest {
                         ScopedMessagePipeHandle handle)
         : owner_(owner),
           connector_(std::move(handle),
-                     mojo::internal::Connector::SINGLE_THREADED_SEND) {
+                     mojo::Connector::SINGLE_THREADED_SEND,
+                     base::ThreadTaskRunnerHandle::Get()) {
       connector_.set_enforce_errors_from_incoming_receiver(false);
     }
     ~TestMessageReceiver() override {}
@@ -249,7 +251,7 @@ class ValidationIntegrationTest : public ValidationTest {
 
    public:
     ValidationIntegrationTest* owner_;
-    mojo::internal::Connector connector_;
+    mojo::Connector connector_;
   };
 
   void PumpMessages() { loop_.RunUntilIdle(); }
@@ -375,7 +377,7 @@ TEST_F(ValidationTest, InputParser) {
 TEST_F(ValidationTest, Conformance) {
   DummyMessageReceiver dummy_receiver;
   mojo::internal::FilterChain validators(&dummy_receiver);
-  validators.Append<mojo::internal::MessageHeaderValidator>();
+  validators.Append<mojo::MessageHeaderValidator>();
   validators.Append<ConformanceTestInterface::RequestValidator_>();
 
   RunValidationTests("conformance_", validators.GetHead());
@@ -384,7 +386,7 @@ TEST_F(ValidationTest, Conformance) {
 TEST_F(ValidationTest, AssociatedConformace) {
   DummyMessageReceiver dummy_receiver;
   mojo::internal::FilterChain validators(&dummy_receiver);
-  validators.Append<mojo::internal::MessageHeaderValidator>();
+  validators.Append<mojo::MessageHeaderValidator>();
   validators.Append<AssociatedConformanceTestInterface::RequestValidator_>();
 
   RunValidationTests("associated_conformance_", validators.GetHead());
@@ -396,7 +398,7 @@ TEST_F(ValidationTest, AssociatedConformace) {
 TEST_F(ValidationTest, BoundsCheck) {
   DummyMessageReceiver dummy_receiver;
   mojo::internal::FilterChain validators(&dummy_receiver);
-  validators.Append<mojo::internal::MessageHeaderValidator>();
+  validators.Append<mojo::MessageHeaderValidator>();
   validators.Append<BoundsCheckTestInterface::RequestValidator_>();
 
   RunValidationTests("boundscheck_", validators.GetHead());
@@ -406,7 +408,7 @@ TEST_F(ValidationTest, BoundsCheck) {
 TEST_F(ValidationTest, ResponseConformance) {
   DummyMessageReceiver dummy_receiver;
   mojo::internal::FilterChain validators(&dummy_receiver);
-  validators.Append<mojo::internal::MessageHeaderValidator>();
+  validators.Append<mojo::MessageHeaderValidator>();
   validators.Append<ConformanceTestInterface::ResponseValidator_>();
 
   RunValidationTests("resp_conformance_", validators.GetHead());
@@ -416,7 +418,7 @@ TEST_F(ValidationTest, ResponseConformance) {
 TEST_F(ValidationTest, ResponseBoundsCheck) {
   DummyMessageReceiver dummy_receiver;
   mojo::internal::FilterChain validators(&dummy_receiver);
-  validators.Append<mojo::internal::MessageHeaderValidator>();
+  validators.Append<mojo::MessageHeaderValidator>();
   validators.Append<BoundsCheckTestInterface::ResponseValidator_>();
 
   RunValidationTests("resp_boundscheck_", validators.GetHead());

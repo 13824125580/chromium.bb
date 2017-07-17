@@ -5,7 +5,6 @@
 #include "google_apis/drive/drive_api_requests.h"
 
 #include <stddef.h>
-#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -60,20 +59,20 @@ const char kUMADriveTotalFileSizeInBatchUpload[] =
 // UI thread once parsing is done.
 // This is customized version of ParseJsonAndRun defined above to adapt the
 // remaining response type.
-void ParseFileResourceWithUploadRangeAndRun(const UploadRangeCallback& callback,
-                                            const UploadRangeResponse& response,
-                                            scoped_ptr<base::Value> value) {
+void ParseFileResourceWithUploadRangeAndRun(
+    const UploadRangeCallback& callback,
+    const UploadRangeResponse& response,
+    std::unique_ptr<base::Value> value) {
   DCHECK(!callback.is_null());
 
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
   if (value) {
     file_resource = FileResource::CreateFrom(*value);
     if (!file_resource) {
-      callback.Run(
-          UploadRangeResponse(DRIVE_PARSE_ERROR,
-                              response.start_position_received,
-                              response.end_position_received),
-          scoped_ptr<FileResource>());
+      callback.Run(UploadRangeResponse(DRIVE_PARSE_ERROR,
+                                       response.start_position_received,
+                                       response.end_position_received),
+                   std::unique_ptr<FileResource>());
       return;
     }
   }
@@ -124,9 +123,8 @@ std::string CreateMultipartUploadMetadataJson(
 
   // Fill parent link.
   if (!parent_resource_id.empty()) {
-    scoped_ptr<base::ListValue> parents(new base::ListValue);
-    parents->Append(
-        google_apis::util::CreateParentValue(parent_resource_id).release());
+    std::unique_ptr<base::ListValue> parents(new base::ListValue);
+    parents->Append(google_apis::util::CreateParentValue(parent_resource_id));
     root.Set("parents", parents.release());
   }
 
@@ -175,8 +173,7 @@ base::StringPiece TrimTransportPadding(const base::StringPiece& piece) {
   return piece.substr(0, piece.size() - trim_size);
 }
 
-void EmptyClosure(scoped_ptr<BatchableDelegate>) {
-}
+void EmptyClosure(std::unique_ptr<BatchableDelegate>) {}
 
 }  // namespace
 
@@ -419,9 +416,9 @@ bool FilesInsertRequest::GetContentData(std::string* upload_content_type,
   if (!parents_.empty()) {
     base::ListValue* parents_value = new base::ListValue;
     for (size_t i = 0; i < parents_.size(); ++i) {
-      base::DictionaryValue* parent = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> parent(new base::DictionaryValue);
       parent->SetString("id", parents_[i]);
-      parents_value->Append(parent);
+      parents_value->Append(std::move(parent));
     }
     root.Set("parents", parents_value);
   }
@@ -497,9 +494,9 @@ bool FilesPatchRequest::GetContentData(std::string* upload_content_type,
   if (!parents_.empty()) {
     base::ListValue* parents_value = new base::ListValue;
     for (size_t i = 0; i < parents_.size(); ++i) {
-      base::DictionaryValue* parent = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> parent(new base::DictionaryValue);
       parent->SetString("id", parents_[i]);
-      parents_value->Append(parent);
+      parents_value->Append(std::move(parent));
     }
     root.Set("parents", parents_value);
   }
@@ -551,9 +548,9 @@ bool FilesCopyRequest::GetContentData(std::string* upload_content_type,
   if (!parents_.empty()) {
     base::ListValue* parents_value = new base::ListValue;
     for (size_t i = 0; i < parents_.size(); ++i) {
-      base::DictionaryValue* parent = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> parent(new base::DictionaryValue);
       parent->SetString("id", parents_[i]);
-      parents_value->Append(parent);
+      parents_value->Append(std::move(parent));
     }
     root.Set("parents", parents_value);
   }
@@ -833,8 +830,8 @@ bool InitiateUploadNewFileRequest::GetContentData(
   root.SetString("title", title_);
 
   // Fill parent link.
-  scoped_ptr<base::ListValue> parents(new base::ListValue);
-  parents->Append(util::CreateParentValue(parent_resource_id_).release());
+  std::unique_ptr<base::ListValue> parents(new base::ListValue);
+  parents->Append(util::CreateParentValue(parent_resource_id_));
   root.Set("parents", parents.release());
 
   if (!modified_date_.is_null())
@@ -893,8 +890,8 @@ bool InitiateUploadExistingFileRequest::GetContentData(
     std::string* upload_content) {
   base::DictionaryValue root;
   if (!parent_resource_id_.empty()) {
-    scoped_ptr<base::ListValue> parents(new base::ListValue);
-    parents->Append(util::CreateParentValue(parent_resource_id_).release());
+    std::unique_ptr<base::ListValue> parents(new base::ListValue);
+    parents->Append(util::CreateParentValue(parent_resource_id_));
     root.Set("parents", parents.release());
   }
 
@@ -948,7 +945,7 @@ ResumeUploadRequest::~ResumeUploadRequest() {}
 
 void ResumeUploadRequest::OnRangeRequestComplete(
     const UploadRangeResponse& response,
-    scoped_ptr<base::Value> value) {
+    std::unique_ptr<base::Value> value) {
   DCHECK(CalledOnValidThread());
   ParseFileResourceWithUploadRangeAndRun(callback_, response, std::move(value));
 }
@@ -977,7 +974,7 @@ GetUploadStatusRequest::~GetUploadStatusRequest() {}
 
 void GetUploadStatusRequest::OnRangeRequestComplete(
     const UploadRangeResponse& response,
-    scoped_ptr<base::Value> value) {
+    std::unique_ptr<base::Value> value) {
   DCHECK(CalledOnValidThread());
   ParseFileResourceWithUploadRangeAndRun(callback_, response, std::move(value));
 }
@@ -1398,11 +1395,18 @@ std::vector<std::string> BatchUploadRequest::GetExtraRequestHeaders() const {
 
 void BatchUploadRequest::ProcessURLFetchResults(const net::URLFetcher* source) {
   // Return the detailed raw HTTP code if the error code is abstracted
-  // DRIVE_OTHER_ERROR.
-  UMA_HISTOGRAM_SPARSE_SLOWLY(kUMADriveBatchUploadResponseCode,
-                              GetErrorCode() != DRIVE_OTHER_ERROR
-                                  ? GetErrorCode()
-                                  : source->GetResponseCode());
+  // DRIVE_OTHER_ERROR. If HTTP connection is failed and the status code is -1,
+  // return network status error.
+  int histogram_error = 0;
+  if (GetErrorCode() != DRIVE_OTHER_ERROR) {
+    histogram_error = GetErrorCode();
+  } else if (source->GetResponseCode() != -1) {
+    histogram_error = source->GetResponseCode();
+  } else {
+    histogram_error = source->GetStatus().error();
+  }
+  UMA_HISTOGRAM_SPARSE_SLOWLY(
+      kUMADriveBatchUploadResponseCode, histogram_error);
 
   if (!IsSuccessfulDriveApiErrorCode(GetErrorCode())) {
     RunCallbackOnPrematureFailure(GetErrorCode());

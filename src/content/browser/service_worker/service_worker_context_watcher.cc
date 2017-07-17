@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/containers/scoped_ptr_hash_map.h"
+#include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_version.h"
@@ -20,8 +21,7 @@ namespace content {
 namespace {
 
 bool IsStoppedAndRedundant(const ServiceWorkerVersionInfo& version_info) {
-  return version_info.running_status ==
-             content::ServiceWorkerVersion::STOPPED &&
+  return version_info.running_status == EmbeddedWorkerStatus::STOPPED &&
          version_info.status == content::ServiceWorkerVersion::REDUNDANT;
 }
 
@@ -66,7 +66,8 @@ void ServiceWorkerContextWatcher::OnStoredRegistrationsOnIOThread(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   context_->AddObserver(this);
 
-  base::ScopedPtrHashMap<int64_t, scoped_ptr<ServiceWorkerRegistrationInfo>>
+  base::ScopedPtrHashMap<int64_t,
+                         std::unique_ptr<ServiceWorkerRegistrationInfo>>
       registration_info_map;
   for (const auto& registration : stored_registrations)
     StoreRegistrationInfo(registration, &registration_info_map);
@@ -108,13 +109,14 @@ ServiceWorkerContextWatcher::~ServiceWorkerContextWatcher() {
 
 void ServiceWorkerContextWatcher::StoreRegistrationInfo(
     const ServiceWorkerRegistrationInfo& registration_info,
-    base::ScopedPtrHashMap<int64_t, scoped_ptr<ServiceWorkerRegistrationInfo>>*
+    base::ScopedPtrHashMap<int64_t,
+                           std::unique_ptr<ServiceWorkerRegistrationInfo>>*
         info_map) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (registration_info.registration_id == kInvalidServiceWorkerRegistrationId)
     return;
   info_map->set(registration_info.registration_id,
-                scoped_ptr<ServiceWorkerRegistrationInfo>(
+                std::unique_ptr<ServiceWorkerRegistrationInfo>(
                     new ServiceWorkerRegistrationInfo(registration_info)));
   StoreVersionInfo(registration_info.active_version);
   StoreVersionInfo(registration_info.waiting_version);
@@ -127,7 +129,7 @@ void ServiceWorkerContextWatcher::StoreVersionInfo(
   if (version_info.version_id == kInvalidServiceWorkerVersionId)
     return;
   version_info_map_.set(version_info.version_id,
-                        scoped_ptr<ServiceWorkerVersionInfo>(
+                        std::unique_ptr<ServiceWorkerVersionInfo>(
                             new ServiceWorkerVersionInfo(version_info)));
 }
 
@@ -172,7 +174,8 @@ void ServiceWorkerContextWatcher::OnNewLiveVersion(int64_t version_id,
     return;
   }
 
-  scoped_ptr<ServiceWorkerVersionInfo> version(new ServiceWorkerVersionInfo());
+  std::unique_ptr<ServiceWorkerVersionInfo> version(
+      new ServiceWorkerVersionInfo());
   version->version_id = version_id;
   version->registration_id = registration_id;
   version->script_url = script_url;
@@ -183,7 +186,7 @@ void ServiceWorkerContextWatcher::OnNewLiveVersion(int64_t version_id,
 
 void ServiceWorkerContextWatcher::OnRunningStateChanged(
     int64_t version_id,
-    content::ServiceWorkerVersion::RunningStatus running_status) {
+    content::EmbeddedWorkerStatus running_status) {
   ServiceWorkerVersionInfo* version = version_info_map_.get(version_id);
   DCHECK(version);
   if (version->running_status == running_status)
@@ -279,19 +282,6 @@ void ServiceWorkerContextWatcher::OnRegistrationDeleted(int64_t registration_id,
                                                         const GURL& pattern) {
   SendRegistrationInfo(registration_id, pattern,
                        ServiceWorkerRegistrationInfo::IS_DELETED);
-}
-
-void ServiceWorkerContextWatcher::OnForceUpdateOnPageLoadChanged(
-    int64_t registration_id,
-    bool force_update_on_page_load) {
-  ServiceWorkerRegistration* registration =
-      context_->GetLiveRegistration(registration_id);
-  if (!registration)
-    return;
-  std::vector<ServiceWorkerRegistrationInfo> registrations;
-  registrations.push_back(registration->GetInfo());
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(registration_callback_, registrations));
 }
 
 }  // namespace content

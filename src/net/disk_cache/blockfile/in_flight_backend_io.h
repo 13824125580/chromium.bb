@@ -19,6 +19,10 @@
 #include "net/disk_cache/blockfile/in_flight_io.h"
 #include "net/disk_cache/blockfile/rankings.h"
 
+namespace tracked_objects {
+class Location;
+}
+
 namespace disk_cache {
 
 class BackendImpl;
@@ -61,7 +65,7 @@ class BackendIO : public BackgroundIO {
   void DoomEntriesSince(const base::Time initial_time);
   void CalculateSizeOfAllEntries();
   void OpenNextEntry(Rankings::Iterator* iterator, Entry** next_entry);
-  void EndEnumeration(scoped_ptr<Rankings::Iterator> iterator);
+  void EndEnumeration(std::unique_ptr<Rankings::Iterator> iterator);
   void OnExternalCacheHit(const std::string& key);
   void CloseEntryImpl(EntryImpl* entry);
   void DoomEntryImpl(EntryImpl* entry);
@@ -140,7 +144,7 @@ class BackendIO : public BackgroundIO {
   base::Time initial_time_;
   base::Time end_time_;
   Rankings::Iterator* iterator_;
-  scoped_ptr<Rankings::Iterator> scoped_iterator_;
+  std::unique_ptr<Rankings::Iterator> scoped_iterator_;
   EntryImpl* entry_;
   int index_;
   int offset_;
@@ -180,7 +184,7 @@ class InFlightBackendIO : public InFlightIO {
   void CalculateSizeOfAllEntries(const net::CompletionCallback& callback);
   void OpenNextEntry(Rankings::Iterator* iterator, Entry** next_entry,
                      const net::CompletionCallback& callback);
-  void EndEnumeration(scoped_ptr<Rankings::Iterator> iterator);
+  void EndEnumeration(std::unique_ptr<Rankings::Iterator> iterator);
   void OnExternalCacheHit(const std::string& key);
   void CloseEntryImpl(EntryImpl* entry);
   void DoomEntryImpl(EntryImpl* entry);
@@ -229,7 +233,8 @@ class InFlightBackendIO : public InFlightIO {
   void OnOperationComplete(BackgroundIO* operation, bool cancel) override;
 
  private:
-  void PostOperation(BackendIO* operation);
+  void PostOperation(const tracked_objects::Location& from_here,
+                     BackendIO* operation);
 
   BackendImpl* backend_;
   scoped_refptr<base::SingleThreadTaskRunner> background_thread_;

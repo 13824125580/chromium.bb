@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -14,7 +14,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/api/streams_private.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/download_item.h"
@@ -54,8 +53,8 @@ namespace {
 
 // Test server's request handler.
 // Returns response that should be sent by the test server.
-scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse());
+std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse());
 
   // For relative path "/doc_path.doc", return success response with MIME type
   // "application/msword".
@@ -182,7 +181,7 @@ class StreamsPrivateApiTest : public ExtensionApiTest {
     info.tab_id = 10;
     info.expected_content_size = 20;
 
-    scoped_ptr<Event> event(new Event(
+    std::unique_ptr<Event> event(new Event(
         extensions::events::STREAMS_PRIVATE_ON_EXECUTE_MIME_TYPE_HANDLER,
         streams_private::OnExecuteMimeTypeHandler::kEventName,
         streams_private::OnExecuteMimeTypeHandler::Create(info)));
@@ -237,7 +236,7 @@ class StreamsPrivateApiTest : public ExtensionApiTest {
  protected:
   std::string test_extension_id_;
   // The HTTP server used in the tests.
-  scoped_ptr<net::EmbeddedTestServer> test_server_;
+  std::unique_ptr<net::EmbeddedTestServer> test_server_;
   base::ScopedTempDir downloads_dir_;
 };
 
@@ -245,13 +244,6 @@ class StreamsPrivateApiTest : public ExtensionApiTest {
 // installed, white-listed extension invokes the extension's
 // onExecuteContentHandler event (and does not start a download).
 IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Navigate) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(LoadTestExtension()) << message_;
 
   ResultCatcher catcher;
@@ -260,7 +252,7 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Navigate) {
                                test_server_->GetURL("/doc_path.doc"));
 
   // Wait for the response from the test server.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // There should be no downloads started by the navigation.
   DownloadManager* download_manager = GetDownloadManager();
@@ -276,13 +268,6 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Navigate) {
 // Tests that navigating to a file URL also intercepts despite there being no
 // HTTP headers. This is a regression test for https://crbug.com/416433.
 IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, FileURL) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(LoadTestExtension()) << message_;
 
   ResultCatcher catcher;
@@ -307,13 +292,6 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, FileURL) {
 // onExecuteContentHandler event (and does not start a download).
 // Regression test for http://crbug.com/342999.
 IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, NavigateCrossSite) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(LoadTestExtension()) << message_;
 
   ResultCatcher catcher;
@@ -332,7 +310,7 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, NavigateCrossSite) {
                                test_server_->GetURL("/doc_path.doc"));
 
   // Wait for the response from the test server.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // There should be no downloads started by the navigation.
   DownloadManager* download_manager = GetDownloadManager();
@@ -357,7 +335,7 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, NavigateToAnAttachment) {
 
   // The test should start a download.
   DownloadManager* download_manager = GetDownloadManager();
-  scoped_ptr<content::DownloadTestObserver> download_observer(
+  std::unique_ptr<content::DownloadTestObserver> download_observer(
       new content::DownloadTestObserverInProgress(download_manager, 1));
 
   ui_test_utils::NavigateToURL(browser(),
@@ -394,7 +372,7 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, DirectDownload) {
   ResultCatcher catcher;
 
   DownloadManager* download_manager = GetDownloadManager();
-  scoped_ptr<content::DownloadTestObserver> download_observer(
+  std::unique_ptr<content::DownloadTestObserver> download_observer(
       new content::DownloadTestObserverInProgress(download_manager, 1));
 
   // The resource's URL on the test server.
@@ -408,8 +386,9 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, DirectDownload) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(web_contents);
-  scoped_ptr<DownloadUrlParameters> params(
-      DownloadUrlParameters::FromWebContents(web_contents, url));
+  std::unique_ptr<DownloadUrlParameters> params(
+      DownloadUrlParameters::CreateForWebContentsMainFrame(
+          web_contents, url));
   params->set_file_path(target_path);
 
   // Start download of the URL with a path "/text_path.txt" on the test server.
@@ -438,13 +417,6 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, DirectDownload) {
 // Tests that response headers are correctly passed to the API and that multiple
 // repsonse headers with the same name are merged correctly.
 IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Headers) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(LoadTestExtension()) << message_;
 
   ResultCatcher catcher;
@@ -453,7 +425,7 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Headers) {
                                test_server_->GetURL("/spreadsheet_path.xls"));
 
   // Wait for the response from the test server.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // There should be no downloads started by the navigation.
   DownloadManager* download_manager = GetDownloadManager();
@@ -468,24 +440,17 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Headers) {
 
 // Tests that chrome.streamsPrivate.abort() works correctly.
 IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, Abort) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(LoadTestExtension()) << message_;
 
   ResultCatcher catcher;
   ui_test_utils::NavigateToURL(browser(),
                                test_server_->GetURL("/no_abort.rtf"));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(catcher.GetNextResult());
 
   ui_test_utils::NavigateToURL(browser(),
                                test_server_->GetURL("/abort.rtf"));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(catcher.GetNextResult());
 }
 

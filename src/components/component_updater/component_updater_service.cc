@@ -17,12 +17,14 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/component_updater/component_updater_service_internal.h"
 #include "components/component_updater/timer.h"
@@ -34,6 +36,16 @@
 
 using CrxInstaller = update_client::CrxInstaller;
 using UpdateClient = update_client::UpdateClient;
+
+namespace {
+
+enum UpdateType {
+  UPDATE_TYPE_MANUAL = 0,
+  UPDATE_TYPE_AUTOMATIC,
+  UPDATE_TYPE_COUNT,
+};
+
+}  // namespace
 
 namespace component_updater {
 
@@ -235,24 +247,50 @@ bool CrxUpdateService::OnDemandUpdateWithCooldown(const std::string& id) {
 bool CrxUpdateService::OnDemandUpdateInternal(const std::string& id) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
+  UMA_HISTOGRAM_ENUMERATION("ComponentUpdater.Calls", UPDATE_TYPE_MANUAL,
+                            UPDATE_TYPE_COUNT);
+
   update_client_->Install(
       id, base::Bind(&CrxUpdateService::OnUpdate, base::Unretained(this)),
-      base::Bind(&CrxUpdateService::OnUpdateComplete, base::Unretained(this)));
+      base::Bind(&CrxUpdateService::OnUpdateComplete, base::Unretained(this),
+                 base::TimeTicks::Now()));
 
   return true;
 }
 
 bool CrxUpdateService::CheckForUpdates() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  std::vector<std::string> ids;
+
+  UMA_HISTOGRAM_ENUMERATION("ComponentUpdater.Calls", UPDATE_TYPE_AUTOMATIC,
+                            UPDATE_TYPE_COUNT);
+
+  std::vector<std::string> secure_ids;    // Requires HTTPS for update checks.
+  std::vector<std::string> unsecure_ids;  // Can fallback to HTTP.
   for (const auto id : components_order_) {
     DCHECK(components_.find(id) != components_.end());
-    ids.push_back(id);
+
+    auto component(GetComponent(id));
+    if (!component || component->requires_network_encryption)
+      secure_ids.push_back(id);
+    else
+      unsecure_ids.push_back(id);
   }
 
-  update_client_->Update(
-      ids, base::Bind(&CrxUpdateService::OnUpdate, base::Unretained(this)),
-      base::Bind(&CrxUpdateService::OnUpdateComplete, base::Unretained(this)));
+  if (!unsecure_ids.empty()) {
+    update_client_->Update(
+        unsecure_ids,
+        base::Bind(&CrxUpdateService::OnUpdate, base::Unretained(this)),
+        base::Bind(&CrxUpdateService::OnUpdateComplete, base::Unretained(this),
+                   base::TimeTicks::Now()));
+  }
+
+  if (!secure_ids.empty()) {
+    update_client_->Update(
+        secure_ids,
+        base::Bind(&CrxUpdateService::OnUpdate, base::Unretained(this)),
+        base::Bind(&CrxUpdateService::OnUpdateComplete, base::Unretained(this),
+                   base::TimeTicks::Now()));
+  }
 
   return true;
 }
@@ -296,9 +334,14 @@ void CrxUpdateService::OnUpdate(const std::vector<std::string>& ids,
   }
 }
 
-void CrxUpdateService::OnUpdateComplete(int error) {
+void CrxUpdateService::OnUpdateComplete(const base::TimeTicks& start_time,
+                                        int error) {
   DCHECK(thread_checker_.CalledOnValidThread());
   VLOG(1) << "Update completed with error " << error;
+
+  UMA_HISTOGRAM_BOOLEAN("ComponentUpdater.UpdateCompleteResult", error != 0);
+  UMA_HISTOGRAM_LONG_TIMES_100("ComponentUpdater.UpdateCompleteTime",
+                               base::TimeTicks::Now() - start_time);
 
   for (const auto id : components_pending_unregistration_) {
     if (!update_client_->IsUpdating(id)) {
@@ -346,11 +389,11 @@ void CrxUpdateService::OnEvent(Events event, const std::string& id) {
 // The component update factory. Using the component updater as a singleton
 // is the job of the browser process.
 // TODO(sorin): consider making this a singleton.
-scoped_ptr<ComponentUpdateService> ComponentUpdateServiceFactory(
+std::unique_ptr<ComponentUpdateService> ComponentUpdateServiceFactory(
     const scoped_refptr<Configurator>& config) {
   DCHECK(config);
   auto update_client = update_client::UpdateClientFactory(config);
-  return scoped_ptr<ComponentUpdateService>(
+  return base::WrapUnique(
       new CrxUpdateService(config, std::move(update_client)));
 }
 

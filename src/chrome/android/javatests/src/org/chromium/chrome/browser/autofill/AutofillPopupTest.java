@@ -11,7 +11,6 @@ import android.view.ViewGroup;
 
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
@@ -23,10 +22,12 @@ import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TestInputMethodManagerWrapper;
 import org.chromium.content.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.R;
 import org.chromium.ui.autofill.AutofillPopup;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
@@ -165,7 +166,7 @@ public class AutofillPopupTest extends ChromeActivityTestCaseBase<ChromeActivity
                 ZIP_CODE, SORTING_CODE, COUNTRY, PHONE_NUMBER, EMAIL,
                 LANGUAGE_CODE);
         mHelper.setProfile(profile);
-        assertEquals(1, mHelper.getNumberOfProfiles());
+        assertEquals(1, mHelper.getNumberOfProfilesToSuggest());
 
         // Click the input field for the first name.
         DOMUtils.waitForNonZeroNodeBounds(webContents, "fn");
@@ -304,17 +305,17 @@ public class AutofillPopupTest extends ChromeActivityTestCaseBase<ChromeActivity
 
     private void waitForKeyboardShowRequest(final TestInputMethodManagerWrapper immw,
             final int count) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(
-                new Criteria("Keyboard was never requested to be shown.") {
+        CriteriaHelper.pollUiThread(
+                Criteria.equals(count, new Callable<Integer>() {
                     @Override
-                    public boolean isSatisfied() {
-                        return immw.getShowSoftInputCounter() == count;
+                    public Integer call() {
+                        return immw.getShowSoftInputCounter();
                     }
-                });
+                }));
     }
 
     private void waitForAnchorViewAdd(final ViewGroup view) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria(
+        CriteriaHelper.pollUiThread(new Criteria(
                 "Autofill Popup anchor view was never added.") {
             @Override
             public boolean isSatisfied() {
@@ -324,7 +325,7 @@ public class AutofillPopupTest extends ChromeActivityTestCaseBase<ChromeActivity
     }
 
     private void waitForAutofillPopopShow(final AutofillPopup popup) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Autofill Popup anchor view was never added.") {
                     @Override
                     public boolean isSatisfied() {
@@ -336,19 +337,20 @@ public class AutofillPopupTest extends ChromeActivityTestCaseBase<ChromeActivity
     }
 
     private void waitForInputFieldFill(final WebContents webContents) throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria("First name field was never filled.") {
-            @Override
-            public boolean isSatisfied() {
-                try {
-                    return TextUtils.equals(FIRST_NAME,
-                            DOMUtils.getNodeValue(webContents, "fn"));
-                } catch (InterruptedException e) {
-                    return false;
-                } catch (TimeoutException e) {
-                    return false;
-                }
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                new Criteria("First name field was never filled.") {
+                    @Override
+                    public boolean isSatisfied() {
+                        try {
+                            return TextUtils.equals(FIRST_NAME,
+                                    DOMUtils.getNodeValue(webContents, "fn"));
+                        } catch (InterruptedException e) {
+                            return false;
+                        } catch (TimeoutException e) {
+                            return false;
+                        }
+                    }
+                });
     }
 
     private void assertLogged(String autofilledValue, String profileFullName) {

@@ -14,6 +14,7 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/views/profiles/avatar_button_delegate.h"
 #include "chrome/browser/ui/views/profiles/profile_chooser_view.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -27,10 +28,10 @@
 
 namespace {
 
-scoped_ptr<views::Border> CreateBorder(const int normal_image_set[],
-                                       const int hot_image_set[],
-                                       const int pushed_image_set[]) {
-  scoped_ptr<views::LabelButtonAssetBorder> border(
+std::unique_ptr<views::Border> CreateBorder(const int normal_image_set[],
+                                            const int hot_image_set[],
+                                            const int pushed_image_set[]) {
+  std::unique_ptr<views::LabelButtonAssetBorder> border(
       new views::LabelButtonAssetBorder(views::Button::STYLE_TEXTBUTTON));
   border->SetPainter(false, views::Button::STATE_NORMAL,
       views::Painter::CreateImageGridPainter(normal_image_set));
@@ -61,9 +62,7 @@ NewAvatarButton::NewAvatarButton(AvatarButtonDelegate* delegate,
   set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON);
   set_animate_on_state_change(false);
-  SetTextColor(views::Button::STATE_NORMAL, SK_ColorWHITE);
-  SetTextColor(views::Button::STATE_HOVERED, SK_ColorWHITE);
-  SetTextColor(views::Button::STATE_PRESSED, SK_ColorWHITE);
+  SetEnabledTextColors(SK_ColorWHITE);
   SetTextSubpixelRenderingEnabled(false);
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
 
@@ -215,9 +214,15 @@ void NewAvatarButton::Update() {
   if (use_generic_button) {
     SetImage(views::Button::STATE_NORMAL, generic_avatar_);
   } else if (has_auth_error_) {
-    SetImage(views::Button::STATE_NORMAL,
-             gfx::CreateVectorIcon(gfx::VectorIconId::WARNING, 13,
-                                   gfx::kGoogleYellow700));
+    if (switches::IsMaterialDesignUserMenu()) {
+      SetImage(views::Button::STATE_NORMAL,
+               gfx::CreateVectorIcon(gfx::VectorIconId::SYNC_PROBLEM, 13,
+                                     gfx::kGoogleRed700));
+    } else {
+      SetImage(views::Button::STATE_NORMAL,
+               gfx::CreateVectorIcon(gfx::VectorIconId::WARNING, 13,
+                                     gfx::kGoogleYellow700));
+    }
   } else {
     SetImage(views::Button::STATE_NORMAL, gfx::ImageSkia());
   }

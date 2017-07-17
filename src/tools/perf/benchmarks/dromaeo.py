@@ -9,14 +9,14 @@ from core import perf_benchmark
 
 from telemetry import benchmark
 from telemetry import page as page_module
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry import story
 from telemetry.value import scalar
 
 from metrics import power
 
 
-class _DromaeoMeasurement(page_test.PageTest):
+class _DromaeoMeasurement(legacy_page_test.LegacyPageTest):
 
   def __init__(self):
     super(_DromaeoMeasurement, self).__init__()
@@ -234,11 +234,10 @@ class DromaeoJslibEventPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibeventprototype'
 
 
-# win7: http://crbug.com/479796
+# win: http://crbug.com/479796, http://crbug.com/529330, http://crbug.com/598705
 # android: http://crbug.com/503138
-# win8: http://crbug.com/529330
 # linux: http://crbug.com/583075
-@benchmark.Disabled('win7', 'android', 'win8', 'linux')
+@benchmark.Disabled('win-reference', 'android', 'linux')
 class DromaeoJslibModifyJquery(_DromaeoBenchmark):
   """Dromaeo JSLib modify jquery JavaScript benchmark.
 

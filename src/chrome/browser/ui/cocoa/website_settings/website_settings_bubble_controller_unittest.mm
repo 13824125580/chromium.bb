@@ -131,7 +131,7 @@ class WebsiteSettingsBubbleControllerTest : public CocoaTest {
     [controller_ initWithParentWindow:test_window()
               websiteSettingsUIBridge:bridge_
                           webContents:nil
-                       isInternalPage:NO
+                                  url:GURL("https://www.google.com")
                    isDevToolsDisabled:NO];
     window_ = [controller_ window];
     [controller_ showWindow:nil];
@@ -260,6 +260,7 @@ TEST_F(WebsiteSettingsBubbleControllerTest, ResetDecisionsButton) {
   EXPECT_EQ([controller_ resetDecisionsButton], nil);
 
   // Set identity info, specifying that the button should be shown.
+  info.cert_id = 1;
   info.show_ssl_decision_revoke_button = true;
   bridge_->SetIdentityInfo(const_cast<WebsiteSettingsUI::IdentityInfo&>(info));
   EXPECT_NE([controller_ resetDecisionsButton], nil);

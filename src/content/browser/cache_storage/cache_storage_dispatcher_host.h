@@ -13,6 +13,10 @@
 #include "content/browser/cache_storage/cache_storage.h"
 #include "content/public/browser/browser_message_filter.h"
 
+namespace url {
+class Origin;
+}
+
 namespace content {
 
 class CacheStorageContextImpl;
@@ -37,7 +41,8 @@ class CONTENT_EXPORT CacheStorageDispatcherHost : public BrowserMessageFilter {
   friend class base::DeleteHelper<CacheStorageDispatcherHost>;
 
   typedef int32_t CacheID;  // TODO(jkarlin): Bump to 64 bit.
-  typedef std::map<CacheID, scoped_refptr<CacheStorageCache>> IDToCacheMap;
+  typedef std::map<CacheID, std::unique_ptr<CacheStorageCacheHandle>>
+      IDToCacheMap;
   typedef std::map<std::string, std::list<storage::BlobDataHandle>>
       UUIDToBlobDataHandleList;
 
@@ -49,20 +54,22 @@ class CONTENT_EXPORT CacheStorageDispatcherHost : public BrowserMessageFilter {
   // The message receiver functions for the CacheStorage API:
   void OnCacheStorageHas(int thread_id,
                          int request_id,
-                         const GURL& origin,
+                         const url::Origin& origin,
                          const base::string16& cache_name);
   void OnCacheStorageOpen(int thread_id,
                           int request_id,
-                          const GURL& origin,
+                          const url::Origin& origin,
                           const base::string16& cache_name);
   void OnCacheStorageDelete(int thread_id,
                             int request_id,
-                            const GURL& origin,
+                            const url::Origin& origin,
                             const base::string16& cache_name);
-  void OnCacheStorageKeys(int thread_id, int request_id, const GURL& origin);
+  void OnCacheStorageKeys(int thread_id,
+                          int request_id,
+                          const url::Origin& origin);
   void OnCacheStorageMatch(int thread_id,
                            int request_id,
-                           const GURL& origin,
+                           const url::Origin& origin,
                            const ServiceWorkerFetchRequest& request,
                            const CacheStorageCacheQueryParams& match_params);
 
@@ -89,10 +96,11 @@ class CONTENT_EXPORT CacheStorageDispatcherHost : public BrowserMessageFilter {
                                  int request_id,
                                  bool has_cache,
                                  CacheStorageError error);
-  void OnCacheStorageOpenCallback(int thread_id,
-                                  int request_id,
-                                  const scoped_refptr<CacheStorageCache>& cache,
-                                  CacheStorageError error);
+  void OnCacheStorageOpenCallback(
+      int thread_id,
+      int request_id,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      CacheStorageError error);
   void OnCacheStorageDeleteCallback(int thread_id,
                                     int request_id,
                                     bool deleted,
@@ -105,50 +113,52 @@ class CONTENT_EXPORT CacheStorageDispatcherHost : public BrowserMessageFilter {
       int thread_id,
       int request_id,
       CacheStorageError error,
-      scoped_ptr<ServiceWorkerResponse> response,
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle);
+      std::unique_ptr<ServiceWorkerResponse> response,
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle);
 
   // Cache callbacks.
   void OnCacheMatchCallback(
       int thread_id,
       int request_id,
-      const scoped_refptr<CacheStorageCache>& cache,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
       CacheStorageError error,
-      scoped_ptr<ServiceWorkerResponse> response,
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle);
+      std::unique_ptr<ServiceWorkerResponse> response,
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle);
   void OnCacheMatchAllCallbackAdapter(
       int thread_id,
       int request_id,
-      const scoped_refptr<CacheStorageCache>& cache,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
       CacheStorageError error,
-      scoped_ptr<ServiceWorkerResponse> response,
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle);
+      std::unique_ptr<ServiceWorkerResponse> response,
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle);
   void OnCacheMatchAllCallback(
       int thread_id,
       int request_id,
-      const scoped_refptr<CacheStorageCache>& cache,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
       CacheStorageError error,
-      scoped_ptr<std::vector<ServiceWorkerResponse>> responses,
-      scoped_ptr<CacheStorageCache::BlobDataHandles> blob_data_handles);
+      std::unique_ptr<std::vector<ServiceWorkerResponse>> responses,
+      std::unique_ptr<CacheStorageCache::BlobDataHandles> blob_data_handles);
   void OnCacheMatchAll(int thread_id,
                        int request_id,
                        int cache_id,
                        const ServiceWorkerFetchRequest& request,
                        const CacheStorageCacheQueryParams& match_params);
-  void OnCacheKeysCallback(int thread_id,
-                           int request_id,
-                           const scoped_refptr<CacheStorageCache>& cache,
-                           CacheStorageError error,
-                           scoped_ptr<CacheStorageCache::Requests> requests);
-  void OnCacheBatchCallback(int thread_id,
-                            int request_id,
-                            const scoped_refptr<CacheStorageCache>& cache,
-                            CacheStorageError error);
+  void OnCacheKeysCallback(
+      int thread_id,
+      int request_id,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      CacheStorageError error,
+      std::unique_ptr<CacheStorageCache::Requests> requests);
+  void OnCacheBatchCallback(
+      int thread_id,
+      int request_id,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      CacheStorageError error);
 
-  // Hangs onto a scoped_refptr for the cache if it isn't already doing so.
-  // Returns a unique cache_id. Call DropCacheReference when the client is done
-  // with this cache.
-  CacheID StoreCacheReference(const scoped_refptr<CacheStorageCache>& cache);
+  // Hangs onto a cache handle. Returns a unique cache_id. Call
+  // DropCacheReference when the reference is no longer needed.
+  CacheID StoreCacheReference(
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle);
   void DropCacheReference(CacheID cache_id);
 
   // Stores blob handles while waiting for acknowledgement of receipt from the

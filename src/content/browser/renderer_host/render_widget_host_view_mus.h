@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "build/build_config.h"
+#include "components/mus/public/cpp/input_event_handler.h"
 #include "components/mus/public/cpp/scoped_window_ptr.h"
 #include "components/mus/public/cpp/window.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
@@ -19,6 +20,7 @@ namespace content {
 class RenderWidgetHost;
 class RenderWidgetHostImpl;
 struct NativeWebKeyboardEvent;
+struct TextInputState;
 
 // See comments in render_widget_host_view.h about this class and its members.
 // This version of RenderWidgetHostView is for builds of Chrome that run through
@@ -29,7 +31,9 @@ struct NativeWebKeyboardEvent;
 // such as visibility, and bounds. Some aspects such as input, focus, and cursor
 // are managed by Mus directly. Input event routing will be plumbed directly to
 // the renderer from Mus.
-class CONTENT_EXPORT RenderWidgetHostViewMus : public RenderWidgetHostViewBase {
+class CONTENT_EXPORT RenderWidgetHostViewMus
+    : public RenderWidgetHostViewBase,
+      NON_EXPORTED_BASE(public mus::InputEventHandler) {
  public:
   RenderWidgetHostViewMus(mus::Window* parent_window,
                           RenderWidgetHostImpl* widget);
@@ -53,7 +57,6 @@ class CONTENT_EXPORT RenderWidgetHostViewMus : public RenderWidgetHostViewBase {
   void Hide() override;
   bool IsShowing() override;
   gfx::NativeView GetNativeView() const override;
-  gfx::NativeViewId GetNativeViewId() const override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   gfx::Rect GetViewBounds() const override;
   gfx::Vector2dF GetLastScrollOffset() const override;
@@ -65,11 +68,9 @@ class CONTENT_EXPORT RenderWidgetHostViewMus : public RenderWidgetHostViewBase {
   void InitAsPopup(RenderWidgetHostView* parent_host_view,
                    const gfx::Rect& bounds) override;
   void InitAsFullscreen(RenderWidgetHostView* reference_host_view) override;
-  void MovePluginWindows(const std::vector<WebPluginGeometry>& moves) override;
   void UpdateCursor(const WebCursor& cursor) override;
   void SetIsLoading(bool is_loading) override;
-  void TextInputStateChanged(
-      const ViewHostMsg_TextInputState_Params& params) override;
+  void TextInputStateChanged(const TextInputState& params) override;
   void ImeCancelComposition() override;
 #if defined(OS_MACOSX) || defined(USE_AURA)
   void ImeCompositionRangeChanged(
@@ -100,39 +101,34 @@ class CONTENT_EXPORT RenderWidgetHostViewMus : public RenderWidgetHostViewBase {
   bool LockMouse() override;
   void UnlockMouse() override;
   void GetScreenInfo(blink::WebScreenInfo* results) override;
-  bool GetScreenColorProfile(std::vector<char>* color_profile) override;
   gfx::Rect GetBoundsInRootWindow() override;
 
 #if defined(OS_MACOSX)
   // RenderWidgetHostView implementation.
+  ui::AcceleratedWidgetMac* GetAcceleratedWidgetMac() const override;
   void SetActive(bool active) override;
-  void SetWindowVisibility(bool visible) override;
-  void WindowFrameChanged() override;
   void ShowDefinitionForSelection() override;
   bool SupportsSpeech() const override;
   void SpeakSelection() override;
   bool IsSpeaking() const override;
   void StopSpeaking() override;
-
-  // RenderWidgetHostViewBase implementation.
-  bool PostProcessEventForPluginIme(
-      const NativeWebKeyboardEvent& event) override;
 #endif  // defined(OS_MACOSX)
 
   void LockCompositingSurface() override;
   void UnlockCompositingSurface() override;
 
-#if defined(OS_WIN)
-  void SetParentNativeViewAccessible(
-      gfx::NativeViewAccessible accessible_parent) override;
-  gfx::NativeViewId GetParentForWindowlessPlugin() const override;
-#endif
+  // mus::InputEventHandler:
+  void OnWindowInputEvent(
+      mus::Window* target,
+      const ui::Event& event,
+      std::unique_ptr<base::Callback<void(mus::mojom::EventResult)>>*
+          ack_callback) override;
 
   RenderWidgetHostImpl* host_;
 
   aura::Window* aura_window_;
 
-  scoped_ptr<mus::ScopedWindowPtr> mus_window_;
+  std::unique_ptr<mus::ScopedWindowPtr> mus_window_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewMus);
 };

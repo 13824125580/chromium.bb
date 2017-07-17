@@ -11,6 +11,7 @@
 #ifndef WEBRTC_EXAMPLES_PEERCONNECTION_CLIENT_LINUX_MAIN_WND_H_
 #define WEBRTC_EXAMPLES_PEERCONNECTION_CLIENT_LINUX_MAIN_WND_H_
 
+#include <memory>
 #include <string>
 
 #include "webrtc/examples/peerconnection/client/main_wnd.h"
@@ -71,15 +72,14 @@ class GtkMainWnd : public MainWindow {
   void OnRedraw();
 
  protected:
-  class VideoRenderer : public webrtc::VideoRendererInterface {
+  class VideoRenderer : public rtc::VideoSinkInterface<cricket::VideoFrame> {
    public:
     VideoRenderer(GtkMainWnd* main_wnd,
                   webrtc::VideoTrackInterface* track_to_render);
     virtual ~VideoRenderer();
 
-    // VideoRendererInterface implementation
-    virtual void SetSize(int width, int height);
-    virtual void RenderFrame(const cricket::VideoFrame* frame);
+    // VideoSinkInterface implementation
+    void OnFrame(const cricket::VideoFrame& frame) override;
 
     const uint8_t* image() const { return image_.get(); }
 
@@ -92,7 +92,8 @@ class GtkMainWnd : public MainWindow {
     }
 
    protected:
-    rtc::scoped_ptr<uint8_t[]> image_;
+    void SetSize(int width, int height);
+    std::unique_ptr<uint8_t[]> image_;
     int width_;
     int height_;
     GtkMainWnd* main_wnd_;
@@ -111,9 +112,9 @@ class GtkMainWnd : public MainWindow {
   std::string port_;
   bool autoconnect_;
   bool autocall_;
-  rtc::scoped_ptr<VideoRenderer> local_renderer_;
-  rtc::scoped_ptr<VideoRenderer> remote_renderer_;
-  rtc::scoped_ptr<uint8_t[]> draw_buffer_;
+  std::unique_ptr<VideoRenderer> local_renderer_;
+  std::unique_ptr<VideoRenderer> remote_renderer_;
+  std::unique_ptr<uint8_t[]> draw_buffer_;
   int draw_buffer_size_;
 };
 

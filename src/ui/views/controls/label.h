@@ -106,13 +106,17 @@ class VIEWS_EXPORT Label : public View {
   bool handles_tooltips() const { return handles_tooltips_; }
   void SetHandlesTooltips(bool enabled);
 
-  // Resizes the label so its width is set to the width of the longest line and
-  // its height deduced accordingly.
+  // Resizes the label so its width is set to the fixed width and its height
+  // deduced accordingly. Even if all widths of the lines are shorter than
+  // |fixed_width|, the given value is applied to the element's width.
   // This is only intended for multi-line labels and is useful when the label's
   // text contains several lines separated with \n.
-  // |max_width| is the maximum width that will be used (longer lines will be
-  // wrapped).  If 0, no maximum width is enforced.
-  void SizeToFit(int max_width);
+  // |fixed_width| is the fixed width that will be used (longer lines will be
+  // wrapped).  If 0, no fixed width is enforced.
+  void SizeToFit(int fixed_width);
+
+  // Like SizeToFit, but uses a smaller width if possible.
+  void SetMaximumWidth(int max_width);
 
   // Sets whether the preferred size is empty when the label is not visible.
   void set_collapse_when_hidden(bool value) { collapse_when_hidden_ = value; }
@@ -137,7 +141,7 @@ class VIEWS_EXPORT Label : public View {
 
  protected:
   // Create a single RenderText instance to actually be painted.
-  virtual scoped_ptr<gfx::RenderText> CreateRenderText(
+  virtual std::unique_ptr<gfx::RenderText> CreateRenderText(
       const base::string16& text,
       gfx::HorizontalAlignment alignment,
       gfx::DirectionalityMode directionality,
@@ -176,7 +180,11 @@ class VIEWS_EXPORT Label : public View {
   // Get the text size for the current layout.
   gfx::Size GetTextSize() const;
 
+  // Updates |actual_{enabled,disabled}_color_| from requested colors.
   void RecalculateColors();
+
+  // Applies |actual_{enabled,disabled}_color_| to |lines_|.
+  void ApplyTextColors();
 
   // Updates any colors that have not been explicitly set from the theme.
   void UpdateColorsFromTheme(const ui::NativeTheme* theme);
@@ -184,10 +192,10 @@ class VIEWS_EXPORT Label : public View {
   bool ShouldShowDefaultTooltip() const;
 
   // An un-elided and single-line RenderText object used for preferred sizing.
-  scoped_ptr<gfx::RenderText> render_text_;
+  std::unique_ptr<gfx::RenderText> render_text_;
 
   // The RenderText instances used to display elided and multi-line text.
-  std::vector<scoped_ptr<gfx::RenderText>> lines_;
+  std::vector<std::unique_ptr<gfx::RenderText>> lines_;
 
   SkColor requested_enabled_color_;
   SkColor actual_enabled_color_;
@@ -210,6 +218,7 @@ class VIEWS_EXPORT Label : public View {
   bool handles_tooltips_;
   // Whether to collapse the label when it's not visible.
   bool collapse_when_hidden_;
+  int fixed_width_;
   int max_width_;
 
   // TODO(ckocagil): Remove is_first_paint_text_ before crbug.com/441028 is

@@ -79,8 +79,7 @@ uint128 IncrementalHash(uint128 hash, const char* data, size_t len) {
 }
 
 bool IsInitializedIPEndPoint(const IPEndPoint& address) {
-  return net::GetAddressFamily(address.address().bytes()) !=
-         net::ADDRESS_FAMILY_UNSPECIFIED;
+  return address.address().IsValid();
 }
 
 }  // namespace
@@ -221,6 +220,7 @@ const char* QuicUtils::ErrorToString(QuicErrorCode error) {
     RETURN_STRING_LITERAL(QUIC_MISSING_PAYLOAD);
     RETURN_STRING_LITERAL(QUIC_INVALID_FEC_DATA);
     RETURN_STRING_LITERAL(QUIC_INVALID_STREAM_DATA);
+    RETURN_STRING_LITERAL(QUIC_OVERLAPPING_STREAM_DATA);
     RETURN_STRING_LITERAL(QUIC_UNENCRYPTED_STREAM_DATA);
     RETURN_STRING_LITERAL(QUIC_INVALID_RST_STREAM_DATA);
     RETURN_STRING_LITERAL(QUIC_INVALID_CONNECTION_CLOSE_DATA);
@@ -262,9 +262,10 @@ const char* QuicUtils::ErrorToString(QuicErrorCode error) {
     RETURN_STRING_LITERAL(QUIC_NETWORK_IDLE_TIMEOUT);
     RETURN_STRING_LITERAL(QUIC_HANDSHAKE_TIMEOUT);
     RETURN_STRING_LITERAL(QUIC_ERROR_MIGRATING_ADDRESS);
+    RETURN_STRING_LITERAL(QUIC_ERROR_MIGRATING_PORT);
     RETURN_STRING_LITERAL(QUIC_PACKET_WRITE_ERROR);
     RETURN_STRING_LITERAL(QUIC_PACKET_READ_ERROR);
-    RETURN_STRING_LITERAL(QUIC_INVALID_STREAM_FRAME);
+    RETURN_STRING_LITERAL(QUIC_EMPTY_STREAM_FRAME_NO_FIN);
     RETURN_STRING_LITERAL(QUIC_INVALID_HEADERS_STREAM_DATA);
     RETURN_STRING_LITERAL(QUIC_FLOW_CONTROL_RECEIVED_TOO_MUCH_DATA);
     RETURN_STRING_LITERAL(QUIC_FLOW_CONTROL_SENT_TOO_MUCH_DATA);
@@ -293,6 +294,11 @@ const char* QuicUtils::ErrorToString(QuicErrorCode error) {
     RETURN_STRING_LITERAL(QUIC_CONNECTION_MIGRATION_NO_MIGRATABLE_STREAMS);
     RETURN_STRING_LITERAL(QUIC_CONNECTION_MIGRATION_TOO_MANY_CHANGES);
     RETURN_STRING_LITERAL(QUIC_CONNECTION_MIGRATION_NO_NEW_NETWORK);
+    RETURN_STRING_LITERAL(QUIC_CONNECTION_MIGRATION_NON_MIGRATABLE_STREAM);
+    RETURN_STRING_LITERAL(QUIC_TOO_MANY_RTOS);
+    RETURN_STRING_LITERAL(QUIC_ATTEMPT_TO_SEND_UNENCRYPTED_STREAM_DATA);
+    RETURN_STRING_LITERAL(QUIC_MAYBE_CORRUPTED_MEMORY);
+    RETURN_STRING_LITERAL(QUIC_CRYPTO_CHLO_TOO_LARGE);
     RETURN_STRING_LITERAL(QUIC_LAST_ERROR);
     // Intentionally have no default case, so we'll break the build
     // if we add errors and don't put them here.
@@ -403,6 +409,19 @@ string QuicUtils::StringToHexASCIIDump(StringPiece in_buffer) {
     s += '\n';
   }
   return s;
+}
+
+string QuicUtils::PeerAddressChangeTypeToString(PeerAddressChangeType type) {
+  switch (type) {
+    RETURN_STRING_LITERAL(NO_CHANGE);
+    RETURN_STRING_LITERAL(PORT_CHANGE);
+    RETURN_STRING_LITERAL(IPV4_SUBNET_CHANGE);
+    RETURN_STRING_LITERAL(IPV4_TO_IPV6_CHANGE);
+    RETURN_STRING_LITERAL(IPV6_TO_IPV4_CHANGE);
+    RETURN_STRING_LITERAL(IPV6_TO_IPV6_CHANGE);
+    RETURN_STRING_LITERAL(UNSPECIFIED_CHANGE);
+  }
+  return "INVALID_PEER_ADDRESS_CHANGE_TYPE";
 }
 
 // static
@@ -524,6 +543,44 @@ PeerAddressChangeType QuicUtils::DetermineAddressChangeType(
   }
 
   return UNSPECIFIED_CHANGE;
+}
+
+string QuicUtils::HexEncode(const char* data, size_t length) {
+  return HexEncode(StringPiece(data, length));
+}
+
+string QuicUtils::HexEncode(StringPiece data) {
+  return ::base::HexEncode(data.data(), data.size());
+}
+
+string QuicUtils::HexDecode(const char* data, size_t length) {
+  return HexDecode(StringPiece(data, length));
+}
+
+string QuicUtils::HexDecode(StringPiece data) {
+  if (data.empty())
+    return "";
+  std::vector<uint8_t> v;
+  if (!base::HexStringToBytes(data.as_string(), &v))
+    return "";
+  string out;
+  if (!v.empty())
+    out.assign(reinterpret_cast<const char*>(&v[0]), v.size());
+  return out;
+}
+
+string QuicUtils::BinaryToAscii(StringPiece binary) {
+  string out = "";
+  for (const unsigned char c : binary) {
+    // Leading space.
+    out += " ";
+    if (isprint(c)) {
+      out += c;
+    } else {
+      out += '.';
+    }
+  }
+  return out;
 }
 
 }  // namespace net

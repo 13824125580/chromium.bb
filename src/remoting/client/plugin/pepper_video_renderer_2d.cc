@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #include "ppapi/cpp/completion_callback.h"
@@ -20,7 +21,6 @@
 #include "ppapi/cpp/size.h"
 #include "remoting/base/util.h"
 #include "remoting/client/client_context.h"
-#include "remoting/client/software_video_renderer.h"
 #include "remoting/proto/video.pb.h"
 #include "remoting/protocol/performance_tracker.h"
 #include "third_party/libyuv/include/libyuv/scale_argb.h"
@@ -54,16 +54,15 @@ class PepperDesktopFrame : public webrtc::DesktopFrame {
 }  // namespace
 
 PepperVideoRenderer2D::PepperVideoRenderer2D()
-    : callback_factory_(this),
+    : software_video_renderer_(this),
+      callback_factory_(this),
       weak_factory_(this) {}
 
 PepperVideoRenderer2D::~PepperVideoRenderer2D() {}
 
-bool PepperVideoRenderer2D::Initialize(
+void PepperVideoRenderer2D::SetPepperContext(
     pp::Instance* instance,
-    const ClientContext& context,
-    EventHandler* event_handler,
-    protocol::PerformanceTracker* perf_tracker) {
+    EventHandler* event_handler) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!instance_);
   DCHECK(!event_handler_);
@@ -72,10 +71,6 @@ bool PepperVideoRenderer2D::Initialize(
 
   instance_ = instance;
   event_handler_ = event_handler;
-  software_video_renderer_.reset(new SoftwareVideoRenderer(
-      context.decode_task_runner(), this, perf_tracker));
-
-  return true;
 }
 
 void PepperVideoRenderer2D::OnViewChanged(const pp::View& view) {
@@ -101,36 +96,45 @@ void PepperVideoRenderer2D::EnableDebugDirtyRegion(bool enable) {
   debug_dirty_region_ = enable;
 }
 
+bool PepperVideoRenderer2D::Initialize(
+    const ClientContext& client_context,
+    protocol::PerformanceTracker* perf_tracker) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  return software_video_renderer_.Initialize(client_context, perf_tracker);
+}
+
 void PepperVideoRenderer2D::OnSessionConfig(
     const protocol::SessionConfig& config) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  software_video_renderer_->OnSessionConfig(config);
+  software_video_renderer_.OnSessionConfig(config);
 }
 
 protocol::VideoStub* PepperVideoRenderer2D::GetVideoStub() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  return software_video_renderer_->GetVideoStub();
+  return software_video_renderer_.GetVideoStub();
 }
 
 protocol::FrameConsumer* PepperVideoRenderer2D::GetFrameConsumer() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  return software_video_renderer_->GetFrameConsumer();
+  return software_video_renderer_.GetFrameConsumer();
 }
 
-scoped_ptr<webrtc::DesktopFrame> PepperVideoRenderer2D::AllocateFrame(
+std::unique_ptr<webrtc::DesktopFrame> PepperVideoRenderer2D::AllocateFrame(
     const webrtc::DesktopSize& size) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   pp::ImageData buffer_data(instance_, PP_IMAGEDATAFORMAT_BGRA_PREMUL,
                             pp::Size(size.width(), size.height()), false);
-  return make_scoped_ptr(new PepperDesktopFrame(buffer_data));
+  return base::WrapUnique(new PepperDesktopFrame(buffer_data));
 }
 
-void PepperVideoRenderer2D::DrawFrame(scoped_ptr<webrtc::DesktopFrame> frame,
-                                      const base::Closure& done) {
+void PepperVideoRenderer2D::DrawFrame(
+    std::unique_ptr<webrtc::DesktopFrame> frame,
+    const base::Closure& done) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!frame_received_) {
@@ -149,25 +153,6 @@ void PepperVideoRenderer2D::DrawFrame(scoped_ptr<webrtc::DesktopFrame> frame,
                          source_size_.width());
     bool result = instance_->BindGraphics(graphics2d_);
     DCHECK(result) << "Couldn't bind the device context.";
-  }
-
-
-  if (size_changed || !source_dpi_.equals(frame->dpi())) {
-    source_dpi_ = frame->dpi();
-
-    // Notify JavaScript of the change in source size.
-    event_handler_->OnVideoSize(source_size_, source_dpi_);
-  }
-
-  const webrtc::DesktopRegion* shape = frame->shape();
-  if (shape) {
-    if (!source_shape_ || !source_shape_->Equals(*shape)) {
-      source_shape_ = make_scoped_ptr(new webrtc::DesktopRegion(*shape));
-      event_handler_->OnVideoShape(source_shape_.get());
-    }
-  } else if (source_shape_) {
-    source_shape_ = nullptr;
-    event_handler_->OnVideoShape(nullptr);
   }
 
   // If Debug dirty region is enabled then emit it.

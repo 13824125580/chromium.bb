@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ui/ash/session_state_delegate_chromeos.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
@@ -24,6 +24,8 @@
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/cert/x509_certificate.h"
+#include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -36,7 +38,7 @@ const char* kUser = "user@test.com";
 // we've ensured the profile has been shut down.
 policy::PolicyCertVerifier* g_policy_cert_verifier_for_factory = NULL;
 
-scoped_ptr<KeyedService> CreateTestPolicyCertService(
+std::unique_ptr<KeyedService> CreateTestPolicyCertService(
     content::BrowserContext* context) {
   return policy::PolicyCertService::CreateForTesting(
       kUser, g_policy_cert_verifier_for_factory,
@@ -115,13 +117,13 @@ class SessionStateDelegateChromeOSTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle threads_;
-  scoped_ptr<policy::PolicyCertVerifier> cert_verifier_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<policy::PolicyCertVerifier> cert_verifier_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* user_profile_;
 
  private:
-  scoped_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
-  scoped_ptr<SessionStateDelegateChromeos> session_state_delegate_;
+  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<SessionStateDelegateChromeos> session_state_delegate_;
 
   // Not owned.
   FakeChromeUserManager* user_manager_;
@@ -223,8 +225,8 @@ TEST_F(SessionStateDelegateChromeOSTest,
 
   EXPECT_FALSE(service->has_policy_certificates());
   net::CertificateList certificates;
-  certificates.push_back(new net::X509Certificate(
-      "subject", "issuer", base::Time(), base::Time()));
+  certificates.push_back(
+      net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem"));
   service->OnTrustAnchorsChanged(certificates);
   EXPECT_TRUE(service->has_policy_certificates());
   EXPECT_FALSE(

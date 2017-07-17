@@ -7,8 +7,8 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "components/mus/common/gpu_type_converters.h"
 #include "components/mus/gles2/command_buffer_driver.h"
-#include "components/mus/gles2/command_buffer_type_conversions.h"
 #include "components/mus/gles2/gpu_state.h"
 #include "gpu/command_buffer/service/sync_point_manager.h"
 
@@ -32,23 +32,6 @@ void RunMakeProgressCallback(
 
 }  // namespace
 
-class CommandBufferImpl::CommandBufferDriverClientImpl
-    : public CommandBufferDriver::Client {
- public:
-  explicit CommandBufferDriverClientImpl(CommandBufferImpl* command_buffer)
-      : command_buffer_(command_buffer) {}
-
- private:
-  void DidLoseContext(uint32_t reason) override {
-    command_buffer_->DidLoseContext(reason);
-  }
-  void UpdateVSyncParameters(int64_t timebase, int64_t interval) override {}
-
-  CommandBufferImpl* command_buffer_;
-
-  DISALLOW_COPY_AND_ASSIGN(CommandBufferDriverClientImpl);
-};
-
 CommandBufferImpl::CommandBufferImpl(
     mojo::InterfaceRequest<mus::mojom::CommandBuffer> request,
     scoped_refptr<GpuState> gpu_state)
@@ -64,6 +47,12 @@ void CommandBufferImpl::DidLoseContext(uint32_t reason) {
   driver_->set_client(nullptr);
   client_->Destroyed(reason, gpu::error::kLostContext);
 }
+
+void CommandBufferImpl::UpdateVSyncParameters(const base::TimeTicks& timebase,
+                                              const base::TimeDelta& interval) {
+}
+
+void CommandBufferImpl::OnGpuCompletedSwapBuffers(gfx::SwapResult result) {}
 
 CommandBufferImpl::~CommandBufferImpl() {
 }
@@ -127,14 +116,14 @@ void CommandBufferImpl::DestroyTransferBuffer(int32_t id) {
 void CommandBufferImpl::CreateImage(int32_t id,
                                     mojo::ScopedHandle memory_handle,
                                     int32_t type,
-                                    mojo::SizePtr size,
+                                    const gfx::Size& size,
                                     int32_t format,
                                     int32_t internal_format) {
   gpu_state_->command_buffer_task_runner()->PostTask(
       driver_.get(),
       base::Bind(&CommandBufferImpl::CreateImageOnGpuThread,
                  base::Unretained(this), id, base::Passed(&memory_handle), type,
-                 base::Passed(&size), format, internal_format));
+                 size, format, internal_format));
 }
 
 void CommandBufferImpl::DestroyImage(int32_t id) {
@@ -149,7 +138,12 @@ void CommandBufferImpl::CreateStreamTexture(
   NOTIMPLEMENTED();
 }
 
-void CommandBufferImpl::ProduceFrontBuffer(const gpu::Mailbox& mailbox) {
+void CommandBufferImpl::TakeFrontBuffer(const gpu::Mailbox& mailbox) {
+  NOTIMPLEMENTED();
+}
+
+void CommandBufferImpl::ReturnFrontBuffer(const gpu::Mailbox& mailbox,
+                                          bool is_lost) {
   NOTIMPLEMENTED();
 }
 
@@ -178,7 +172,9 @@ void CommandBufferImpl::BindToRequest(
     mojo::InterfaceRequest<mus::mojom::CommandBuffer> request) {
   binding_.reset(
       new mojo::Binding<mus::mojom::CommandBuffer>(this, std::move(request)));
-  binding_->set_connection_error_handler([this]() { OnConnectionError(); });
+  binding_->set_connection_error_handler(
+      base::Bind(&CommandBufferImpl::OnConnectionError,
+                 base::Unretained(this)));
 }
 
 void CommandBufferImpl::InitializeOnGpuThread(
@@ -192,7 +188,7 @@ void CommandBufferImpl::InitializeOnGpuThread(
       gpu::CommandBufferNamespace::MOJO,
       gpu::CommandBufferId::FromUnsafeValue(++g_next_command_buffer_id),
       gfx::kNullAcceleratedWidget, gpu_state_));
-  driver_->set_client(make_scoped_ptr(new CommandBufferDriverClientImpl(this)));
+  driver_->set_client(this);
   client_ = mojo::MakeProxy(client.PassInterface());
   bool result =
       driver_->Initialize(std::move(shared_state), std::move(attribs));
@@ -257,7 +253,7 @@ bool CommandBufferImpl::DestroyTransferBufferOnGpuThread(int32_t id) {
 bool CommandBufferImpl::CreateImageOnGpuThread(int32_t id,
                                                mojo::ScopedHandle memory_handle,
                                                int32_t type,
-                                               mojo::SizePtr size,
+                                               const gfx::Size& size,
                                                int32_t format,
                                                int32_t internal_format) {
   DCHECK(driver_->IsScheduled());
@@ -280,15 +276,26 @@ void CommandBufferImpl::OnConnectionError() {
   binding_.reset();
 
   // Objects we own (such as CommandBufferDriver) need to be destroyed on the
-  // thread we were created on.
-  gpu_state_->command_buffer_task_runner()->PostTask(
-      driver_.get(), base::Bind(&CommandBufferImpl::DeleteOnGpuThread,
-                                base::Unretained(this)));
+  // thread we were created on. It's entirely possible we haven't or are in the
+  // process of creating |driver_|.
+  if (driver_) {
+    gpu_state_->command_buffer_task_runner()->PostTask(
+        driver_.get(), base::Bind(&CommandBufferImpl::DeleteOnGpuThread,
+                                  base::Unretained(this)));
+  } else {
+    gpu_state_->command_buffer_task_runner()->task_runner()->PostTask(
+        FROM_HERE, base::Bind(&CommandBufferImpl::DeleteOnGpuThread2,
+                              base::Unretained(this)));
+  }
 }
 
 bool CommandBufferImpl::DeleteOnGpuThread() {
   delete this;
   return true;
+}
+
+void CommandBufferImpl::DeleteOnGpuThread2() {
+  delete this;
 }
 
 }  // namespace mus

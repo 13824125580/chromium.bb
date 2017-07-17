@@ -22,17 +22,19 @@ class BookmarkNode;
 // things on behalf of a bookmark button.
 @protocol BookmarkButtonDelegate
 
-// Fill the given pasteboard with appropriate data when the given button is
-// dragged. Since the delegate has no way of providing pasteboard data later,
-// all data must actually be put into the pasteboard and not merely promised.
-- (void)fillPasteboard:(NSPasteboard*)pboard
-       forDragOfButton:(BookmarkButton*)button;
+// Returns a pasteboard item that has all bookmark information.
+- (NSPasteboardItem*)pasteboardItemForDragOfButton:(BookmarkButton*)button;
 
 // Bookmark buttons pass mouseEntered: and mouseExited: events to
 // their delegate.  This allows the delegate to decide (for example)
 // which one, if any, should perform a hover-open.
-- (void)mouseEnteredButton:(id)button event:(NSEvent*)event;
-- (void)mouseExitedButton:(id)button event:(NSEvent*)event;
+//
+// mouseEnteredButton:event: is optimized to act only if the mouse is actually
+// within the button's bounds at the time of the call (with a fast moving mouse,
+// -isMouseReallyInside might return NO). Passing nil for |event| disables this
+// optimization, useful for unit testing.
+- (void)mouseEnteredButton:(BookmarkButton*)button event:(NSEvent*)event;
+- (void)mouseExitedButton:(BookmarkButton*)button event:(NSEvent*)event;
 
 // Returns YES if a drag operation should lock the fullscreen overlay bar
 // visibility before starting.  For example, dragging a bookmark button should
@@ -55,6 +57,10 @@ class BookmarkNode;
 // doing that hover thing.
 - (void)bookmarkDragDidEnd:(BookmarkButton*)button
                  operation:(NSDragOperation)operation;
+
+@optional
+// Called when a pasteboard drag is about to begin.
+- (void)willBeginPasteboardDrag;
 
 @end
 
@@ -190,7 +196,8 @@ class BookmarkNode;
 
 
 // Class for bookmark bar buttons that can be drag sources.
-@interface BookmarkButton : DraggableButton<ThemedWindowDrawing> {
+@interface BookmarkButton
+    : DraggableButton<ThemedWindowDrawing, NSDraggingSource> {
  @private
   IBOutlet NSObject<BookmarkButtonDelegate>* delegate_;  // Weak.
 

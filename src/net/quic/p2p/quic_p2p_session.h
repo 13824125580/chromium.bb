@@ -5,11 +5,14 @@
 #ifndef NET_QUIC_P2P_QUIC_P2P_SESSION_H_
 #define NET_QUIC_P2P_QUIC_P2P_SESSION_H_
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/quic/p2p/quic_p2p_stream.h"
 #include "net/quic/quic_client_session_base.h"
+#include "net/quic/quic_clock.h"
 #include "net/quic/quic_protocol.h"
 
 namespace net {
@@ -42,8 +45,8 @@ class NET_EXPORT QuicP2PSession : public QuicSession {
   // shared with the peer.
   QuicP2PSession(const QuicConfig& config,
                  const QuicP2PCryptoConfig& crypto_config,
-                 scoped_ptr<QuicConnection> connection,
-                 scoped_ptr<Socket> socket);
+                 std::unique_ptr<QuicConnection> connection,
+                 std::unique_ptr<Socket> socket);
   ~QuicP2PSession() override;
 
   // QuicSession overrides.
@@ -53,6 +56,7 @@ class NET_EXPORT QuicP2PSession : public QuicSession {
 
   // QuicConnectionVisitorInterface overrides.
   void OnConnectionClosed(QuicErrorCode error,
+                          const std::string& error_details,
                           ConnectionCloseSource source) override;
 
   void SetDelegate(Delegate* delegate);
@@ -74,13 +78,16 @@ class NET_EXPORT QuicP2PSession : public QuicSession {
   int DoRead();
   int DoReadComplete(int result);
 
-  scoped_ptr<Socket> socket_;
-  scoped_ptr<QuicP2PCryptoStream> crypto_stream_;
+  std::unique_ptr<Socket> socket_;
+  std::unique_ptr<QuicP2PCryptoStream> crypto_stream_;
 
   Delegate* delegate_ = nullptr;
 
   ReadState read_state_ = READ_STATE_DO_READ;
   scoped_refptr<IOBuffer> read_buffer_;
+
+  // For recording receipt time
+  QuicClock clock_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicP2PSession);
 };

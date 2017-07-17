@@ -42,6 +42,7 @@ class LayoutRect;
 class Node;
 
 class MODULES_EXPORT AXNodeObject : public AXObject {
+    WTF_MAKE_NONCOPYABLE(AXNodeObject);
 protected:
     AXNodeObject(Node*, AXObjectCacheImpl&);
 
@@ -62,8 +63,9 @@ protected:
     const AXObject* inheritsPresentationalRoleFrom() const override;
     virtual AccessibilityRole determineAccessibilityRole();
     virtual AccessibilityRole nativeAccessibilityRoleIgnoringAria() const;
-    String accessibilityDescriptionForElements(WillBeHeapVector<RawPtrWillBeMember<Element>> &elements) const;
+    String accessibilityDescriptionForElements(HeapVector<Member<Element>> &elements) const;
     void alterSliderValue(bool increase);
+    AXObject* activeDescendant() override;
     String ariaAccessibilityDescription() const;
     String ariaAutoComplete() const;
     AccessibilityRole determineAriaRoleAttribute() const;
@@ -73,7 +75,6 @@ protected:
     bool isTextControl() const override;
     // This returns true if it's focusable but it's not content editable and it's not a control or ARIA control.
     bool isGenericFocusableElement() const;
-    HTMLLabelElement* labelForElement(const Element*) const;
     AXObject* menuButtonForMenu() const;
     Element* menuItemElementForMenu() const;
     Element* mouseButtonListener() const;
@@ -114,7 +115,7 @@ protected:
     bool isNonNativeTextControl() const final;
     bool isPasswordField() const final;
     bool isProgressIndicator() const override;
-    bool isRichlyEditable() const override { return hasContentEditableAttributeSet(); }
+    bool isRichlyEditable() const override;
     bool isSlider() const override;
     bool isNativeSlider() const override;
 
@@ -130,18 +131,21 @@ protected:
     // Check whether certain properties can be modified.
     bool canSetFocusAttribute() const override;
     bool canSetValueAttribute() const override;
+    bool canSetSelectedAttribute() const override;
 
     // Properties of static elements.
     RGBA32 colorValue() const final;
     bool canvasHasFallbackContent() const final;
     int headingLevel() const final;
     unsigned hierarchicalLevel() const final;
+    void markers(Vector<DocumentMarker::MarkerType>&, Vector<AXRange>&) const override;
     AccessibilityOrientation orientation() const override;
     String text() const override;
 
     // Properties of interactive elements.
     AccessibilityButtonState checkboxOrRadioValue() const final;
-    InvalidState invalidState() const final;
+    AriaCurrentState ariaCurrentState() const final;
+    InvalidState getInvalidState() const final;
     // Only used when invalidState() returns InvalidStateOther.
     String ariaInvalidValue() const final;
     String valueDescription() const override;
@@ -180,8 +184,8 @@ protected:
     // DOM and Render tree access.
     Element* actionElement() const override;
     Element* anchorElement() const override;
-    Document* document() const override;
-    Node* node() const override { return m_node; }
+    Document* getDocument() const override;
+    Node* getNode() const override { return m_node; }
 
     // Modify or take an action on an object.
     void setFocused(bool) final;
@@ -202,7 +206,7 @@ protected:
     void computeAriaOwnsChildren(HeapVector<Member<AXObject>>& ownedChildren) const;
 
 private:
-    RawPtrWillBeMember<Node> m_node;
+    Member<Node> m_node;
 
     bool isNativeCheckboxInMixedState() const;
     String textFromDescendants(AXObjectSet& visited, bool recursive) const override;

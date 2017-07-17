@@ -5,7 +5,6 @@
 #include "core/timing/PerformanceObserver.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/timing/PerformanceBase.h"
 #include "core/timing/PerformanceEntry.h"
@@ -13,7 +12,6 @@
 #include "core/timing/PerformanceObserverEntryList.h"
 #include "core/timing/PerformanceObserverInit.h"
 #include "platform/Timer.h"
-#include "wtf/MainThread.h"
 #include <algorithm>
 
 namespace blink {
@@ -29,10 +27,6 @@ PerformanceObserver::PerformanceObserver(PerformanceBase* performance, Performan
     , m_performance(performance)
     , m_filterOptions(PerformanceEntry::Invalid)
     , m_isRegistered(false)
-{
-}
-
-PerformanceObserver::~PerformanceObserver()
 {
 }
 
@@ -63,9 +57,10 @@ void PerformanceObserver::observe(const PerformanceObserverInit& observerInit, E
 
 void PerformanceObserver::disconnect()
 {
-    m_performanceEntries.clear();
     if (m_performance)
         m_performance->unregisterPerformanceObserver(*this);
+
+    m_performanceEntries.clear();
     m_isRegistered = false;
 }
 
@@ -79,7 +74,7 @@ void PerformanceObserver::enqueuePerformanceEntry(PerformanceEntry& entry)
 
 bool PerformanceObserver::shouldBeSuspended() const
 {
-    return m_callback->executionContext() && m_callback->executionContext()->activeDOMObjectsAreSuspended();
+    return m_callback->getExecutionContext() && m_callback->getExecutionContext()->activeDOMObjectsAreSuspended();
 }
 
 void PerformanceObserver::deliver()

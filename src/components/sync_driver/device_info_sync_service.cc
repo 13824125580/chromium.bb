@@ -5,10 +5,13 @@
 #include "components/sync_driver/device_info_sync_service.h"
 
 #include <stddef.h>
+
+#include <algorithm>
 #include <utility>
 
-#include "base/metrics/histogram_macros.h"
-#include "base/strings/stringprintf.h"
+#include "base/memory/ptr_util.h"
+#include "base/time/time.h"
+#include "components/sync_driver/device_info_util.h"
 #include "components/sync_driver/local_device_info_provider.h"
 #include "sync/api/sync_change.h"
 #include "sync/protocol/sync.pb.h"
@@ -16,6 +19,8 @@
 
 namespace sync_driver {
 
+using base::Time;
+using base::TimeDelta;
 using syncer::ModelType;
 using syncer::SyncChange;
 using syncer::SyncChangeList;
@@ -24,38 +29,6 @@ using syncer::SyncData;
 using syncer::SyncDataList;
 using syncer::SyncErrorFactory;
 using syncer::SyncMergeResult;
-
-namespace {
-
-// TODO(pavely): Remove histogram once device_id mismatch is understood
-// (crbug/481596).
-// When signin_scoped_device_id from pref doesn't match the one in
-// DeviceInfoSpecfics record histogram telling if sync or pref copy was empty.
-// This will indicate how often such mismatch happens and what was the state
-// before.
-enum DeviceIdMismatchForHistogram {
-  DEVICE_ID_MISMATCH_BOTH_NONEMPTY = 0,
-  DEVICE_ID_MISMATCH_SYNC_EMPTY,
-  DEVICE_ID_MISMATCH_PREF_EMPTY,
-  DEVICE_ID_MISMATCH_COUNT,
-};
-
-void RecordDeviceIdChangedHistogram(const std::string& device_id_from_sync,
-                                    const std::string& device_id_from_pref) {
-  DCHECK(device_id_from_sync != device_id_from_pref);
-  DeviceIdMismatchForHistogram device_id_mismatch_for_histogram =
-      DEVICE_ID_MISMATCH_BOTH_NONEMPTY;
-  if (device_id_from_sync.empty()) {
-    device_id_mismatch_for_histogram = DEVICE_ID_MISMATCH_SYNC_EMPTY;
-  } else if (device_id_from_pref.empty()) {
-    device_id_mismatch_for_histogram = DEVICE_ID_MISMATCH_PREF_EMPTY;
-  }
-  UMA_HISTOGRAM_ENUMERATION("Sync.DeviceIdMismatchDetails",
-                            device_id_mismatch_for_histogram,
-                            DEVICE_ID_MISMATCH_COUNT);
-}
-
-}  // namespace
 
 DeviceInfoSyncService::DeviceInfoSyncService(
     LocalDeviceInfoProvider* local_device_info_provider)
@@ -69,8 +42,8 @@ DeviceInfoSyncService::~DeviceInfoSyncService() {
 SyncMergeResult DeviceInfoSyncService::MergeDataAndStartSyncing(
     ModelType type,
     const SyncDataList& initial_sync_data,
-    scoped_ptr<SyncChangeProcessor> sync_processor,
-    scoped_ptr<SyncErrorFactory> error_handler) {
+    std::unique_ptr<SyncChangeProcessor> sync_processor,
+    std::unique_ptr<SyncErrorFactory> error_handler) {
   DCHECK(sync_processor.get());
   DCHECK(error_handler.get());
   DCHECK_EQ(type, syncer::DEVICE_INFO);
@@ -91,6 +64,7 @@ SyncMergeResult DeviceInfoSyncService::MergeDataAndStartSyncing(
   // UPDATE to INVALID down below if the initial data contains
   // data matching the local device ID.
   SyncChange::SyncChangeType change_type = SyncChange::ACTION_ADD;
+  TimeDelta pulse_delay;
   size_t num_items_new = 0;
   size_t num_items_updated = 0;
 
@@ -104,23 +78,17 @@ SyncMergeResult DeviceInfoSyncService::MergeDataAndStartSyncing(
 
     if (id == local_device_info->guid()) {
       // |initial_sync_data| contains data matching the local device.
-      scoped_ptr<DeviceInfo> synced_local_device_info =
-          make_scoped_ptr(CreateDeviceInfo(*iter));
+      std::unique_ptr<DeviceInfo> synced_local_device_info =
+          base::WrapUnique(CreateDeviceInfo(*iter));
 
-      // TODO(pavely): Remove histogram once device_id mismatch is understood
-      // (crbug/481596).
-      if (synced_local_device_info->signin_scoped_device_id() !=
-          local_device_info->signin_scoped_device_id()) {
-        RecordDeviceIdChangedHistogram(
-            synced_local_device_info->signin_scoped_device_id(),
-            local_device_info->signin_scoped_device_id());
-      }
-
+      pulse_delay = DeviceInfoUtil::CalculatePulseDelay(
+          GetLastUpdateTime(*iter), Time::Now());
       // Store the synced device info for the local device only if
       // it is the same as the local info. Otherwise store the local
       // device info and issue a change further below after finishing
       // processing the |initial_sync_data|.
-      if (synced_local_device_info->Equals(*local_device_info)) {
+      if (synced_local_device_info->Equals(*local_device_info) &&
+          !pulse_delay.is_zero()) {
         change_type = SyncChange::ACTION_INVALID;
       } else {
         num_items_updated++;
@@ -137,16 +105,17 @@ SyncMergeResult DeviceInfoSyncService::MergeDataAndStartSyncing(
 
   syncer::SyncMergeResult result(type);
 
-  // Add SyncData for the local device if it is new or different than
-  // the synced one, and also add it to the |change_list|.
-  if (change_type != SyncChange::ACTION_INVALID) {
-    SyncData local_data = CreateLocalData(local_device_info);
-    StoreSyncData(local_device_info->guid(), local_data);
-
-    SyncChangeList change_list;
-    change_list.push_back(SyncChange(FROM_HERE, change_type, local_data));
-    result.set_error(
-        sync_processor_->ProcessSyncChanges(FROM_HERE, change_list));
+  // If the SyncData for the local device is new or different then send it
+  // immediately, otherwise wait until the pulse interval has elapsed from the
+  // previous update. Regardless of the branch here we setup a timer loop with
+  // SendLocalData such that we continue pulsing every interval.
+  if (change_type == SyncChange::ACTION_INVALID) {
+    pulse_timer_.Start(
+        FROM_HERE, pulse_delay,
+        base::Bind(&DeviceInfoSyncService::SendLocalData,
+                   base::Unretained(this), SyncChange::ACTION_UPDATE));
+  } else {
+    SendLocalData(change_type);
   }
 
   result.set_num_items_before_association(1);
@@ -167,6 +136,7 @@ bool DeviceInfoSyncService::IsSyncing() const {
 void DeviceInfoSyncService::StopSyncing(syncer::ModelType type) {
   bool was_syncing = IsSyncing();
 
+  pulse_timer_.Stop();
   all_data_.clear();
   sync_processor_.reset();
   error_handler_.reset();
@@ -234,14 +204,14 @@ syncer::SyncError DeviceInfoSyncService::ProcessSyncChanges(
   return error;
 }
 
-scoped_ptr<DeviceInfo> DeviceInfoSyncService::GetDeviceInfo(
+std::unique_ptr<DeviceInfo> DeviceInfoSyncService::GetDeviceInfo(
     const std::string& client_id) const {
   SyncDataMap::const_iterator iter = all_data_.find(client_id);
   if (iter == all_data_.end()) {
-    return scoped_ptr<DeviceInfo>();
+    return std::unique_ptr<DeviceInfo>();
   }
 
-  return make_scoped_ptr(CreateDeviceInfo(iter->second));
+  return base::WrapUnique(CreateDeviceInfo(iter->second));
 }
 
 ScopedVector<DeviceInfo> DeviceInfoSyncService::GetAllDeviceInfo() const {
@@ -264,6 +234,10 @@ void DeviceInfoSyncService::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
+int DeviceInfoSyncService::CountActiveDevices() const {
+  return CountActiveDevices(Time::Now());
+}
+
 void DeviceInfoSyncService::NotifyObservers() {
   FOR_EACH_OBSERVER(Observer, observers_, OnDeviceInfoChange());
 }
@@ -278,6 +252,7 @@ SyncData DeviceInfoSyncService::CreateLocalData(const DeviceInfo* info) {
   specifics.set_sync_user_agent(info->sync_user_agent());
   specifics.set_device_type(info->device_type());
   specifics.set_signin_scoped_device_id(info->signin_scoped_device_id());
+  specifics.set_last_updated_timestamp(syncer::TimeToProtoTime(Time::Now()));
 
   return CreateLocalData(entity);
 }
@@ -285,12 +260,8 @@ SyncData DeviceInfoSyncService::CreateLocalData(const DeviceInfo* info) {
 SyncData DeviceInfoSyncService::CreateLocalData(
     const sync_pb::EntitySpecifics& entity) {
   const sync_pb::DeviceInfoSpecifics& specifics = entity.device_info();
-
-  std::string local_device_tag =
-      base::StringPrintf("DeviceInfo_%s", specifics.cache_guid().c_str());
-
-  return SyncData::CreateLocalData(
-      local_device_tag, specifics.client_name(), entity);
+  return SyncData::CreateLocalData(DeviceInfoUtil::SpecificsToTag(specifics),
+                                   specifics.client_name(), entity);
 }
 
 DeviceInfo* DeviceInfoSyncService::CreateDeviceInfo(
@@ -321,6 +292,50 @@ void DeviceInfoSyncService::DeleteSyncData(const std::string& client_id) {
              << iter->second.GetSpecifics().device_info().client_name()
              << " with ID " << client_id;
     all_data_.erase(iter);
+  }
+}
+
+void DeviceInfoSyncService::SendLocalData(
+    const SyncChange::SyncChangeType change_type) {
+  DCHECK_NE(change_type, SyncChange::ACTION_INVALID);
+  DCHECK(sync_processor_);
+
+  const DeviceInfo* device_info =
+      local_device_info_provider_->GetLocalDeviceInfo();
+  const SyncData& data = CreateLocalData(device_info);
+  StoreSyncData(device_info->guid(), data);
+
+  SyncChangeList change_list;
+  change_list.push_back(SyncChange(FROM_HERE, change_type, data));
+  sync_processor_->ProcessSyncChanges(FROM_HERE, change_list);
+
+  pulse_timer_.Start(
+      FROM_HERE, DeviceInfoUtil::kPulseInterval,
+      base::Bind(&DeviceInfoSyncService::SendLocalData, base::Unretained(this),
+                 SyncChange::ACTION_UPDATE));
+}
+
+int DeviceInfoSyncService::CountActiveDevices(const Time now) const {
+  return std::count_if(all_data_.begin(), all_data_.end(),
+                       [now](SyncDataMap::const_reference pair) {
+                         return DeviceInfoUtil::IsActive(
+                             GetLastUpdateTime(pair.second), now);
+                       });
+}
+
+// static
+Time DeviceInfoSyncService::GetLastUpdateTime(const SyncData& device_info) {
+  if (device_info.GetSpecifics().device_info().has_last_updated_timestamp()) {
+    return syncer::ProtoTimeToTime(
+        device_info.GetSpecifics().device_info().last_updated_timestamp());
+  } else if (!device_info.IsLocal()) {
+    // If there is no |last_updated_timestamp| present, fallback to mod time.
+    return syncer::SyncDataRemote(device_info).GetModifiedTime();
+  } else {
+    // We shouldn't reach this point for remote data, so this means we're likely
+    // looking at the local device info. Using a long ago time is perfect, since
+    // the desired behavior is to update/pulse our data as soon as possible.
+    return Time();
   }
 }
 

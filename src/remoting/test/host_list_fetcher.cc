@@ -8,7 +8,7 @@
 #include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
@@ -60,7 +60,7 @@ bool HostListFetcher::ProcessResponse(
     return false;
   }
 
-  scoped_ptr<base::Value> response_value(
+  std::unique_ptr<base::Value> response_value(
       base::JSONReader::Read(response_string));
   if (!response_value ||
       !response_value->IsType(base::Value::TYPE_DICTIONARY)) {
@@ -88,7 +88,7 @@ bool HostListFetcher::ProcessResponse(
 
   // Any host_info with malformed data will not be added to the hostlist.
   base::DictionaryValue* host_dict;
-  for (base::Value* host_info : *hosts) {
+  for (const auto& host_info : *hosts) {
     HostInfo host;
     if (host_info->GetAsDictionary(&host_dict) &&
         host.ParseHostInfo(*host_dict)) {

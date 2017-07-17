@@ -36,12 +36,10 @@
 #include "platform/audio/AudioDestinationConsumer.h"
 #include "public/platform/WebMediaConstraints.h"
 #include "wtf/Allocator.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
-#include "wtf/RefCounted.h"
 #include "wtf/ThreadingPrimitives.h"
 #include "wtf/Vector.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -59,7 +57,7 @@ public:
         virtual ~ExtraData() { }
     };
 
-    enum Type {
+    enum StreamType {
         TypeAudio,
         TypeVideo
     };
@@ -70,21 +68,20 @@ public:
         ReadyStateEnded = 2
     };
 
-    static MediaStreamSource* create(const String& id, Type, const String& name, bool remote, bool readonly, ReadyState = ReadyStateLive, bool requiresConsumer = false);
+    static MediaStreamSource* create(const String& id, StreamType, const String& name, bool remote, ReadyState = ReadyStateLive, bool requiresConsumer = false);
 
     const String& id() const { return m_id; }
-    Type type() const { return m_type; }
+    StreamType type() const { return m_type; }
     const String& name() const { return m_name; }
     bool remote() const { return m_remote; }
-    bool readonly() const { return m_readonly; }
 
     void setReadyState(ReadyState);
-    ReadyState readyState() const { return m_readyState; }
+    ReadyState getReadyState() const { return m_readyState; }
 
     void addObserver(Observer*);
 
-    ExtraData* extraData() const { return m_extraData.get(); }
-    void setExtraData(PassOwnPtr<ExtraData> extraData) { m_extraData = std::move(extraData); }
+    ExtraData* getExtraData() const { return m_extraData.get(); }
+    void setExtraData(std::unique_ptr<ExtraData> extraData) { m_extraData = std::move(extraData); }
 
     void setConstraints(WebMediaConstraints constraints) { m_constraints = constraints; }
     WebMediaConstraints constraints() { return m_constraints; }
@@ -103,19 +100,18 @@ public:
     DECLARE_TRACE();
 
 private:
-    MediaStreamSource(const String& id, Type, const String& name, bool remote, bool readonly, ReadyState, bool requiresConsumer);
+    MediaStreamSource(const String& id, StreamType, const String& name, bool remote, ReadyState, bool requiresConsumer);
 
     String m_id;
-    Type m_type;
+    StreamType m_type;
     String m_name;
     bool m_remote;
-    bool m_readonly;
     ReadyState m_readyState;
     bool m_requiresConsumer;
     HeapHashSet<WeakMember<Observer>> m_observers;
     Mutex m_audioConsumersLock;
     HeapHashSet<Member<AudioDestinationConsumer>> m_audioConsumers;
-    OwnPtr<ExtraData> m_extraData;
+    std::unique_ptr<ExtraData> m_extraData;
     WebMediaConstraints m_constraints;
 };
 

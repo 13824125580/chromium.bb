@@ -13,18 +13,15 @@
 
 namespace cc {
 
-scoped_refptr<HeadsUpDisplayLayer> HeadsUpDisplayLayer::Create(
-    const LayerSettings& settings) {
-  return make_scoped_refptr(new HeadsUpDisplayLayer(settings));
+scoped_refptr<HeadsUpDisplayLayer> HeadsUpDisplayLayer::Create() {
+  return make_scoped_refptr(new HeadsUpDisplayLayer());
 }
 
-HeadsUpDisplayLayer::HeadsUpDisplayLayer(const LayerSettings& settings)
-    : Layer(settings),
-      typeface_(skia::AdoptRef(
-          SkTypeface::CreateFromName("times new roman", SkTypeface::kNormal))) {
+HeadsUpDisplayLayer::HeadsUpDisplayLayer()
+    : typeface_(SkTypeface::MakeFromName("times new roman", SkFontStyle())) {
   if (!typeface_) {
-    typeface_ = skia::AdoptRef(
-        SkTypeface::CreateFromName("monospace", SkTypeface::kBold));
+    typeface_ = SkTypeface::MakeFromName(
+        "monospace", SkFontStyle::FromOldStyle(SkTypeface::kBold));
   }
   DCHECK(typeface_.get());
   SetIsDrawable(true);
@@ -64,7 +61,7 @@ bool HeadsUpDisplayLayer::HasDrawableContent() const {
   return true;
 }
 
-scoped_ptr<LayerImpl> HeadsUpDisplayLayer::CreateLayerImpl(
+std::unique_ptr<LayerImpl> HeadsUpDisplayLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return HeadsUpDisplayLayerImpl::Create(tree_impl, layer_id_);
 }

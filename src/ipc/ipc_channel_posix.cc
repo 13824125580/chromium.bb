@@ -13,6 +13,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <memory>
+
+#include "base/memory/ptr_util.h"
+
 #if defined(OS_OPENBSD)
 #include <sys/uio.h>
 #endif
@@ -31,7 +35,6 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/global_descriptors.h"
@@ -338,6 +341,8 @@ bool ChannelPosix::CreatePipe(
 }
 
 bool ChannelPosix::Connect() {
+  WillConnect();
+
   if (!server_listen_pipe_.is_valid() && !pipe_.is_valid()) {
     DLOG(WARNING) << "Channel creation failed: " << pipe_name_;
     return false;
@@ -613,6 +618,10 @@ bool ChannelPosix::IsNamedServerInitialized(
 void ChannelPosix::SetGlobalPid(int pid) {
   global_pid_ = pid;
 }
+// static
+int ChannelPosix::GetGlobalPid() {
+  return global_pid_;
+}
 #endif  // OS_LINUX
 
 // Called by libevent when we can read from the pipe without blocking.
@@ -816,9 +825,8 @@ int ChannelPosix::GetHelloMessageProcId() const {
 
 void ChannelPosix::QueueHelloMessage() {
   // Create the Hello message
-  scoped_ptr<Message> msg(new Message(MSG_ROUTING_NONE,
-                                      HELLO_MESSAGE_TYPE,
-                                      IPC::Message::PRIORITY_NORMAL));
+  std::unique_ptr<Message> msg(new Message(MSG_ROUTING_NONE, HELLO_MESSAGE_TYPE,
+                                           IPC::Message::PRIORITY_NORMAL));
   if (!msg->WriteInt(GetHelloMessageProcId())) {
     NOTREACHED() << "Unable to pickle hello message proc id";
   }
@@ -972,9 +980,9 @@ void ChannelPosix::QueueCloseFDMessage(int fd, int hops) {
     case 1:
     case 2: {
       // Create the message
-      scoped_ptr<Message> msg(new Message(MSG_ROUTING_NONE,
-                                          CLOSE_FD_MESSAGE_TYPE,
-                                          IPC::Message::PRIORITY_NORMAL));
+      std::unique_ptr<Message> msg(new Message(MSG_ROUTING_NONE,
+                                               CLOSE_FD_MESSAGE_TYPE,
+                                               IPC::Message::PRIORITY_NORMAL));
       if (!msg->WriteInt(hops - 1) || !msg->WriteInt(fd)) {
         NOTREACHED() << "Unable to pickle close fd.";
       }
@@ -1009,6 +1017,12 @@ void ChannelPosix::HandleInternalMessage(const Message& msg) {
 
       if (!FlushPrelimQueue())
         ClosePipeOnError();
+
+      if (IsAttachmentBrokerEndpoint() &&
+          AttachmentBroker::GetGlobal() &&
+          AttachmentBroker::GetGlobal()->IsPrivilegedBroker()) {
+        AttachmentBroker::GetGlobal()->ReceivedPeerPid(pid);
+      }
       break;
 
 #if defined(OS_MACOSX)
@@ -1097,10 +1111,11 @@ void ChannelPosix::ResetSafely(base::ScopedFD* fd) {
 // Channel's methods
 
 // static
-scoped_ptr<Channel> Channel::Create(const IPC::ChannelHandle& channel_handle,
-                                    Mode mode,
-                                    Listener* listener) {
-  return make_scoped_ptr(new ChannelPosix(channel_handle, mode, listener));
+std::unique_ptr<Channel> Channel::Create(
+    const IPC::ChannelHandle& channel_handle,
+    Mode mode,
+    Listener* listener) {
+  return base::WrapUnique(new ChannelPosix(channel_handle, mode, listener));
 }
 
 // static
@@ -1124,6 +1139,9 @@ bool Channel::IsNamedServerInitialized(
 // static
 void Channel::SetGlobalPid(int pid) {
   ChannelPosix::SetGlobalPid(pid);
+}
+int Channel::GetGlobalPid() {
+  return ChannelPosix::GetGlobalPid();
 }
 #endif  // OS_LINUX
 

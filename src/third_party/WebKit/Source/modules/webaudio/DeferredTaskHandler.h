@@ -79,6 +79,11 @@ public:
     void addChangedChannelCountMode(AudioHandler*);
     void removeChangedChannelCountMode(AudioHandler*);
 
+    // Keep track of AudioNode's that have their channel interpretation
+    // changed. We process the changes in the post rendering phase.
+    void addChangedChannelInterpretation(AudioHandler*);
+    void removeChangedChannelInterpretation(AudioHandler*);
+
     // Only accessed when the graph lock is held.
     void markSummingJunctionDirty(AudioSummingJunction*);
     // Only accessed when the graph lock is held. Must be called on the main thread.
@@ -99,7 +104,7 @@ public:
     //
     // Thread Safety and Graph Locking:
     //
-    void setAudioThread(ThreadIdentifier thread) { releaseStore(&m_audioThread, thread); } // FIXME: check either not initialized or the same
+    void setAudioThreadToCurrentThread();
     ThreadIdentifier audioThread() const { return acquireLoad(&m_audioThread); }
 
     // TODO(hongchan): Use no-barrier load here. (crbug.com/247328)
@@ -157,6 +162,7 @@ private:
     DeferredTaskHandler();
     void updateAutomaticPullNodes();
     void updateChangedChannelCountMode();
+    void updateChangedChannelInterpretation();
     void handleDirtyAudioSummingJunctions();
     void handleDirtyAudioNodeOutputs();
     void deleteHandlersOnMainThread();
@@ -174,6 +180,8 @@ private:
     // channel count mode to change in the pre- or post-rendering phase so as
     // not to disturb the running audio thread.
     HashSet<AudioHandler*> m_deferredCountModeChange;
+
+    HashSet<AudioHandler*> m_deferredChannelInterpretationChange;
 
     // These two HashSet must be accessed only when the graph lock is held.
     // These raw pointers are safe because their destructors unregister them.

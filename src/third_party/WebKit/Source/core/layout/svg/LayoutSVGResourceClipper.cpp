@@ -50,7 +50,7 @@ void LayoutSVGResourceClipper::removeAllClientsFromCache(bool markForInvalidatio
 {
     m_clipContentPath.clear();
     m_clipContentPicture.clear();
-    m_clipBoundaries = FloatRect();
+    m_localClipBounds = FloatRect();
     markAllClientsForInvalidation(markForInvalidation ? LayoutAndBoundariesInvalidation : ParentOnlyInvalidation);
 }
 
@@ -86,7 +86,7 @@ bool LayoutSVGResourceClipper::calculateClipContentPathIfNeeded()
             continue;
 
         const ComputedStyle* style = childLayoutObject->style();
-        if (!style || style->display() == NONE || style->visibility() != VISIBLE)
+        if (!style || style->display() == NONE || (style->visibility() != VISIBLE && !isSVGUseElement(*childElement)))
             continue;
 
         // Current shape in clip-path gets clipped too. Fallback to masking.
@@ -115,7 +115,7 @@ bool LayoutSVGResourceClipper::calculateClipContentPathIfNeeded()
 
         // Second clip shape => start using the builder.
         if (!usingBuilder) {
-            clipPathBuilder.add(m_clipContentPath.skPath(), kUnion_SkPathOp);
+            clipPathBuilder.add(m_clipContentPath.getSkPath(), kUnion_SkPathOp);
             usingBuilder = true;
         }
 
@@ -125,7 +125,7 @@ bool LayoutSVGResourceClipper::calculateClipContentPathIfNeeded()
         else if (isSVGUseElement(childElement))
             toSVGUseElement(childElement)->toClipPath(subPath);
 
-        clipPathBuilder.add(subPath.skPath(), kUnion_SkPathOp);
+        clipPathBuilder.add(subPath.getSkPath(), kUnion_SkPathOp);
     }
 
     if (usingBuilder) {
@@ -158,27 +158,18 @@ bool LayoutSVGResourceClipper::asPath(const AffineTransform& animatedLocalTransf
     return true;
 }
 
-PassRefPtr<const SkPicture> LayoutSVGResourceClipper::createContentPicture(AffineTransform& contentTransformation, const FloatRect& targetBoundingBox,
-    GraphicsContext& context)
+PassRefPtr<const SkPicture> LayoutSVGResourceClipper::createContentPicture()
 {
     ASSERT(frame());
-
-    if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        contentTransformation.translate(targetBoundingBox.x(), targetBoundingBox.y());
-        contentTransformation.scaleNonUniform(targetBoundingBox.width(), targetBoundingBox.height());
-    }
-
     if (m_clipContentPicture)
         return m_clipContentPicture;
 
-    SubtreeContentTransformScope contentTransformScope(contentTransformation);
-
-    // Using strokeBoundingBox (instead of paintInvalidationRectInLocalCoordinates) to avoid the intersection
+    // Using strokeBoundingBox (instead of paintInvalidationRectInLocalSVGCoordinates) to avoid the intersection
     // with local clips/mask, which may yield incorrect results when mixing objectBoundingBox and
     // userSpaceOnUse units (http://crbug.com/294900).
     FloatRect bounds = strokeBoundingBox();
 
-    SkPictureBuilder pictureBuilder(bounds, nullptr, &context);
+    SkPictureBuilder pictureBuilder(bounds, nullptr, nullptr);
 
     for (SVGElement* childElement = Traversal<SVGElement>::firstChild(*element()); childElement; childElement = Traversal<SVGElement>::nextSibling(*childElement)) {
         LayoutObject* layoutObject = childElement->layoutObject();
@@ -186,12 +177,12 @@ PassRefPtr<const SkPicture> LayoutSVGResourceClipper::createContentPicture(Affin
             continue;
 
         const ComputedStyle* style = layoutObject->style();
-        if (!style || style->display() == NONE || style->visibility() != VISIBLE)
+        if (!style || style->display() == NONE || (style->visibility() != VISIBLE && !isSVGUseElement(*childElement)))
             continue;
 
         bool isUseElement = isSVGUseElement(*childElement);
         if (isUseElement) {
-            const SVGGraphicsElement* clippingElement = toSVGUseElement(*childElement).targetGraphicsElementForClipping();
+            const SVGGraphicsElement* clippingElement = toSVGUseElement(*childElement).visibleTargetGraphicsElementForClipping();
             if (!clippingElement)
                 continue;
 
@@ -220,7 +211,7 @@ PassRefPtr<const SkPicture> LayoutSVGResourceClipper::createContentPicture(Affin
     return m_clipContentPicture;
 }
 
-void LayoutSVGResourceClipper::calculateClipContentPaintInvalidationRect()
+void LayoutSVGResourceClipper::calculateLocalClipBounds()
 {
     // This is a rough heuristic to appraise the clip size and doesn't consider clip on clip.
     for (SVGElement* childElement = Traversal<SVGElement>::firstChild(*element()); childElement; childElement = Traversal<SVGElement>::nextSibling(*childElement)) {
@@ -230,11 +221,13 @@ void LayoutSVGResourceClipper::calculateClipContentPaintInvalidationRect()
         if (!layoutObject->isSVGShape() && !layoutObject->isSVGText() && !isSVGUseElement(*childElement))
             continue;
         const ComputedStyle* style = layoutObject->style();
-        if (!style || style->display() == NONE || style->visibility() != VISIBLE)
+        if (!style || style->display() == NONE || (style->visibility() != VISIBLE && !isSVGUseElement(*childElement)))
             continue;
-        m_clipBoundaries.unite(layoutObject->localToParentTransform().mapRect(layoutObject->paintInvalidationRectInLocalCoordinates()));
+        if (isSVGUseElement(*childElement) && !toSVGUseElement(*childElement).visibleTargetGraphicsElementForClipping())
+            continue;
+
+        m_localClipBounds.unite(layoutObject->localToSVGParentTransform().mapRect(layoutObject->paintInvalidationRectInLocalSVGCoordinates()));
     }
-    m_clipBoundaries = toSVGClipPathElement(element())->calculateAnimatedLocalTransform().mapRect(m_clipBoundaries);
 }
 
 bool LayoutSVGResourceClipper::hitTestClipContent(const FloatRect& objectBoundingBox, const FloatPoint& nodeAtPoint)
@@ -277,18 +270,17 @@ FloatRect LayoutSVGResourceClipper::resourceBoundingBox(const LayoutObject* obje
     if (selfNeedsLayout())
         return object->objectBoundingBox();
 
-    if (m_clipBoundaries.isEmpty())
-        calculateClipContentPaintInvalidationRect();
+    if (m_localClipBounds.isEmpty())
+        calculateLocalClipBounds();
 
+    AffineTransform transform = toSVGClipPathElement(element())->calculateAnimatedLocalTransform();
     if (clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
         FloatRect objectBoundingBox = object->objectBoundingBox();
-        AffineTransform transform;
         transform.translate(objectBoundingBox.x(), objectBoundingBox.y());
         transform.scaleNonUniform(objectBoundingBox.width(), objectBoundingBox.height());
-        return transform.mapRect(m_clipBoundaries);
     }
 
-    return m_clipBoundaries;
+    return transform.mapRect(m_localClipBounds);
 }
 
 } // namespace blink

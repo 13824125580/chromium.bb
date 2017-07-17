@@ -16,7 +16,7 @@ from telemetry.internal.browser import browser_finder
 from telemetry.internal.results import results_options
 from telemetry.internal.util import exception_formatter
 from telemetry import page
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry import story as story_module
 from telemetry.util import wpr_modes
 from telemetry.value import failure
@@ -69,8 +69,9 @@ def ProcessCommandLineArgs(parser, args):
 
 
 def _RunStoryAndProcessErrorIfNeeded(story, results, state, test):
-  def ProcessError():
-    results.AddValue(failure.FailureValue(story, sys.exc_info()))
+  def ProcessError(description=None):
+    state.DumpStateUponFailure(story, results)
+    results.AddValue(failure.FailureValue(story, sys.exc_info(), description))
   try:
     if isinstance(test, story_test.StoryTest):
       test.WillRunStory(state.platform)
@@ -84,7 +85,7 @@ def _RunStoryAndProcessErrorIfNeeded(story, results, state, test):
     state.RunStory(results)
     if isinstance(test, story_test.StoryTest):
       test.Measure(state.platform, results)
-  except (page_test.Failure, exceptions.TimeoutException,
+  except (legacy_page_test.Failure, exceptions.TimeoutException,
           exceptions.LoginException, exceptions.ProfilingException):
     ProcessError()
   except exceptions.Error:
@@ -94,9 +95,7 @@ def _RunStoryAndProcessErrorIfNeeded(story, results, state, test):
     results.AddValue(
         skip.SkipValue(story, 'Unsupported page action: %s' % e))
   except Exception:
-    results.AddValue(
-        failure.FailureValue(
-            story, sys.exc_info(), 'Unhandlable exception raised.'))
+    ProcessError(description='Unhandlable exception raised.')
     raise
   finally:
     has_existing_exception = (sys.exc_info() != (None, None, None))
@@ -110,6 +109,7 @@ def _RunStoryAndProcessErrorIfNeeded(story, results, state, test):
         test.DidRunPage(state.platform)
     except Exception:
       if not has_existing_exception:
+        state.DumpStateUponFailure(story, results)
         raise
       # Print current exception and propagate existing exception.
       exception_formatter.PrintFormattedException(
@@ -171,7 +171,8 @@ def StoriesGroupedByStateClass(story_set, allow_multiple_groups):
   return story_groups
 
 
-def Run(test, story_set, finder_options, results, max_failures=None):
+def Run(test, story_set, finder_options, results, max_failures=None,
+        tear_down_after_story=False, tear_down_after_story_set=False):
   """Runs a given test against a given page_set with the given options.
 
   Stop execution for unexpected exceptions such as KeyboardInterrupt.
@@ -181,13 +182,14 @@ def Run(test, story_set, finder_options, results, max_failures=None):
   # Filter page set based on options.
   stories = filter(story_module.StoryFilter.IsSelected, story_set)
 
-  if (not finder_options.use_live_sites and story_set.bucket and
+  if (not finder_options.use_live_sites and
       finder_options.browser_options.wpr_mode != wpr_modes.WPR_RECORD):
     serving_dirs = story_set.serving_dirs
-    for directory in serving_dirs:
-      cloud_storage.GetFilesInDirectoryIfChanged(directory,
-                                                 story_set.bucket)
-    if not _UpdateAndCheckArchives(
+    if story_set.bucket:
+      for directory in serving_dirs:
+        cloud_storage.GetFilesInDirectoryIfChanged(directory,
+                                                   story_set.bucket)
+    if story_set.archive_data_file and not _UpdateAndCheckArchives(
         story_set.archive_data_file, story_set.wpr_archive_info,
         stories):
       return
@@ -207,13 +209,18 @@ def Run(test, story_set, finder_options, results, max_failures=None):
   for group in story_groups:
     state = None
     try:
-      for _ in xrange(finder_options.pageset_repeat):
+      for storyset_repeat_counter in xrange(finder_options.pageset_repeat):
         for story in group.stories:
-          for _ in xrange(finder_options.page_repeat):
+          for story_repeat_counter in xrange(finder_options.page_repeat):
             if not state:
+              # Construct shared state by using a copy of finder_options. Shared
+              # state may update the finder_options. If we tear down the shared
+              # state after this story run, we want to construct the shared
+              # state for the next story from the original finder_options.
               state = group.shared_state_class(
-                  test, finder_options, story_set)
-            results.WillRunPage(story)
+                  test, finder_options.Copy(), story_set)
+            results.WillRunPage(
+                story, storyset_repeat_counter, story_repeat_counter)
             try:
               _WaitForThermalThrottlingIfNeeded(state.platform)
               _RunStoryAndProcessErrorIfNeeded(story, results, state, test)
@@ -240,10 +247,16 @@ def Run(test, story_set, finder_options, results, max_failures=None):
                 # Print current exception and propagate existing exception.
                 exception_formatter.PrintFormattedException(
                     msg='Exception from result processing:')
+              if state and tear_down_after_story:
+                state.TearDownState()
+                state = None
           if (effective_max_failures is not None and
               len(results.failures) > effective_max_failures):
             logging.error('Too many failures. Aborting.')
             return
+        if state and tear_down_after_story_set:
+          state.TearDownState()
+          state = None
     finally:
       if state:
         has_existing_exception = sys.exc_info() != (None, None, None)
@@ -288,7 +301,7 @@ def RunBenchmark(benchmark, finder_options):
     pt._enabled_strings = benchmark._enabled_strings
 
   stories = benchmark.CreateStorySet(finder_options)
-  if isinstance(pt, page_test.PageTest):
+  if isinstance(pt, legacy_page_test.LegacyPageTest):
     if any(not isinstance(p, page.Page) for p in stories.stories):
       raise Exception(
           'PageTest must be used with StorySet containing only '
@@ -299,7 +312,9 @@ def RunBenchmark(benchmark, finder_options):
       benchmark_metadata, finder_options,
       benchmark.ValueCanBeAddedPredicate) as results:
     try:
-      Run(pt, stories, finder_options, results, benchmark.max_failures)
+      Run(pt, stories, finder_options, results, benchmark.max_failures,
+          benchmark.ShouldTearDownStateAfterEachStoryRun(),
+          benchmark.ShouldTearDownStateAfterEachStorySetRun())
       return_code = min(254, len(results.failures))
     except Exception:
       exception_formatter.PrintFormattedException()

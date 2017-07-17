@@ -23,6 +23,7 @@ import android.widget.TextView;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.widget.DualControlLayout;
 
 /**
  * Lays out a group of controls (e.g. switches, spinners, or additional text) for InfoBars that need
@@ -70,12 +71,12 @@ public final class InfoBarControlLayout extends ViewGroup {
         }
 
         @Override
-        public InfoBarDualControlLayout getView(int position, View convertView, ViewGroup parent) {
-            InfoBarDualControlLayout view;
-            if (convertView instanceof InfoBarDualControlLayout) {
-                view = (InfoBarDualControlLayout) convertView;
+        public DualControlLayout getView(int position, View convertView, ViewGroup parent) {
+            DualControlLayout view;
+            if (convertView instanceof DualControlLayout) {
+                view = (DualControlLayout) convertView;
             } else {
-                view = (InfoBarDualControlLayout) LayoutInflater.from(getContext())
+                view = (DualControlLayout) LayoutInflater.from(getContext())
                         .inflate(R.layout.infobar_control_spinner_view, parent, false);
             }
 
@@ -98,7 +99,7 @@ public final class InfoBarControlLayout extends ViewGroup {
          * causing another layout pass when switching values.
          */
         int computeMinWidthRequiredForValues() {
-            InfoBarDualControlLayout layout = getView(0, null, null);
+            DualControlLayout layout = getView(0, null, null);
             TextView container = (TextView) layout.getChildAt(1);
 
             Paint textPaint = container.getPaint();
@@ -272,17 +273,21 @@ public final class InfoBarControlLayout extends ViewGroup {
      * If an icon is not provided, the ImageView that would normally show it is hidden.
      *
      * @param iconResourceId   ID of the drawable to use for the icon.
+     * @param iconColorId      ID of the tint color for the icon, or 0 for default.
      * @param primaryMessage   Message to display for the toggle.
      * @param secondaryMessage Additional descriptive text for the toggle.  May be null.
      */
-    public View addIcon(
-            int iconResourceId, CharSequence primaryMessage, CharSequence secondaryMessage) {
+    public View addIcon(int iconResourceId, int iconColorId, CharSequence primaryMessage,
+            CharSequence secondaryMessage) {
         LinearLayout layout = (LinearLayout) LayoutInflater.from(getContext()).inflate(
                 R.layout.infobar_control_icon_with_description, this, false);
         addView(layout, new ControlLayoutParams());
 
         ImageView iconView = (ImageView) layout.findViewById(R.id.control_icon);
         iconView.setImageResource(iconResourceId);
+        if (iconColorId != 0) {
+            iconView.setColorFilter(ApiCompatibilityUtils.getColor(getResources(), iconColorId));
+        }
 
         // The primary message text is always displayed.
         TextView primaryView = (TextView) layout.findViewById(R.id.control_message);
@@ -309,12 +314,13 @@ public final class InfoBarControlLayout extends ViewGroup {
      * If an icon is not provided, the ImageView that would normally show it is hidden.
      *
      * @param iconResourceId ID of the drawable to use for the icon, or 0 to hide the ImageView.
+     * @param iconColorId    ID of the tint color for the icon, or 0 for default.
      * @param toggleMessage  Message to display for the toggle.
      * @param toggleId       ID to use for the toggle.
      * @param isChecked      Whether the toggle should start off checked.
      */
-    public View addSwitch(
-            int iconResourceId, CharSequence toggleMessage, int toggleId, boolean isChecked) {
+    public View addSwitch(int iconResourceId, int iconColorId, CharSequence toggleMessage,
+            int toggleId, boolean isChecked) {
         LinearLayout switchLayout = (LinearLayout) LayoutInflater.from(getContext()).inflate(
                 R.layout.infobar_control_toggle, this, false);
         addView(switchLayout, new ControlLayoutParams());
@@ -324,6 +330,10 @@ public final class InfoBarControlLayout extends ViewGroup {
             switchLayout.removeView(iconView);
         } else {
             iconView.setImageResource(iconResourceId);
+            if (iconColorId != 0) {
+                iconView.setColorFilter(
+                        ApiCompatibilityUtils.getColor(getResources(), iconColorId));
+            }
         }
 
         TextView messageView = (TextView) switchLayout.findViewById(R.id.control_message);

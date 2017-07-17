@@ -9,19 +9,20 @@
  * @extends {WebInspector.VBox}
  * @implements {WebInspector.ViewportControl.Provider}
  * @param {!WebInspector.FilteredListWidget.Delegate} delegate
- * @param {boolean} renderAsTwoRows
  */
-WebInspector.FilteredListWidget = function(delegate, renderAsTwoRows)
+WebInspector.FilteredListWidget = function(delegate)
 {
     WebInspector.VBox.call(this, true);
 
-    this._renderAsTwoRows = renderAsTwoRows;
+    this._renderAsTwoRows = delegate.renderAsTwoRows();
 
     this.contentElement.classList.add("filtered-list-widget");
     this.contentElement.addEventListener("keydown", this._onKeyDown.bind(this), false);
+    if (delegate.renderMonospace())
+        this.contentElement.classList.add("monospace");
     this.registerRequiredCSS("ui_lazy/filteredListWidget.css");
 
-    this._promptElement = this.contentElement.createChild("div", "monospace filtered-list-widget-input");
+    this._promptElement = this.contentElement.createChild("div", "filtered-list-widget-input");
     this._promptElement.setAttribute("spellcheck", "false");
     this._promptElement.setAttribute("contenteditable", "plaintext-only");
     this._prompt = new WebInspector.TextPrompt(this._autocomplete.bind(this));
@@ -35,7 +36,6 @@ WebInspector.FilteredListWidget = function(delegate, renderAsTwoRows)
     this._viewportControl = new WebInspector.ViewportControl(this);
     this._itemElementsContainer = this._viewportControl.element;
     this._itemElementsContainer.classList.add("container");
-    this._itemElementsContainer.classList.add("monospace");
     this._itemElementsContainer.addEventListener("click", this._onClick.bind(this), false);
     this.contentElement.appendChild(this._itemElementsContainer);
 
@@ -62,7 +62,7 @@ WebInspector.FilteredListWidget.filterRegex = function(query)
         if (toEscape.indexOf(c) !== -1)
             c = "\\" + c;
         if (i)
-            regexString += "[^" + c + "]*";
+            regexString += "[^\\0" + c + "]*";
         regexString += c;
     }
     return new RegExp(regexString, "i");
@@ -72,7 +72,8 @@ WebInspector.FilteredListWidget.prototype = {
     showAsDialog: function()
     {
         this._dialog = new WebInspector.Dialog();
-        this._dialog.setMaxSize(new Size(504, 600));
+        this._dialog.setMaxSize(new Size(504, 340));
+        this._dialog.setPosition(undefined, 22);
         this.show(this._dialog.element);
         this._dialog.show();
     },
@@ -101,9 +102,11 @@ WebInspector.FilteredListWidget.prototype = {
         if (!this._delegate.itemCount())
             return;
         var selectedIndex = this._shouldShowMatchingItems() && this._selectedIndexInFiltered < this._filteredItems.length ? this._filteredItems[this._selectedIndexInFiltered] : null;
-        this._delegate.selectItemWithQuery(selectedIndex, this._value());
+
+        // Detach dialog before allowing delegate to override focus.
         if (this._dialog)
             this._dialog.detach();
+        this._delegate.selectItemWithQuery(selectedIndex, this._value());
     },
 
     _itemsLoaded: function()
@@ -220,7 +223,7 @@ WebInspector.FilteredListWidget.prototype = {
 
                 // Find its index in the scores array (earlier elements have bigger scores).
                 if (score > minBestScore || bestScores.length < bestItemsToCollect) {
-                    var index = insertionIndexForObjectInListSortedByFunction(score, bestScores, compareIntegers, true);
+                    var index =  bestScores.upperBound(score, compareIntegers);
                     bestScores.splice(index, 0, score);
                     bestItems.splice(index, 0, i);
                     if (bestScores.length > bestItemsToCollect) {
@@ -352,9 +355,11 @@ WebInspector.FilteredListWidget.prototype = {
         var itemElement = event.target.enclosingNodeOrSelfWithClass("filtered-list-widget-item");
         if (!itemElement)
             return;
-        this._delegate.selectItemWithQuery(itemElement._index, this._value());
+
+        // Detach dialog before allowing delegate to override focus.
         if (this._dialog)
             this._dialog.detach();
+        this._delegate.selectItemWithQuery(itemElement._index, this._value());
     },
 
     /**
@@ -502,12 +507,36 @@ WebInspector.FilteredListWidget.Delegate.prototype = {
 
         var text = element.textContent;
         var ranges = rangesForMatch(text, query);
-        if (!ranges)
+        if (!ranges || !this.caseSensitive())
             ranges = rangesForMatch(text.toUpperCase(), query.toUpperCase());
         if (ranges) {
             WebInspector.highlightRangesWithStyleClass(element, ranges, "highlight");
             return true;
         }
+        return false;
+    },
+
+    /**
+     * @return {boolean}
+     */
+    caseSensitive: function()
+    {
+        return true;
+    },
+
+    /**
+     * @return {boolean}
+     */
+    renderMonospace: function()
+    {
+        return true;
+    },
+
+    /**
+     * @return {boolean}
+     */
+    renderAsTwoRows: function()
+    {
         return false;
     },
 

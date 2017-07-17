@@ -6,13 +6,13 @@
 
 #include <Foundation/Foundation.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -33,12 +33,13 @@ namespace {
 // google_apis/gaia/oauth2_access_token_fetcher.cc:
 GoogleServiceAuthError GetGoogleServiceAuthErrorFromNSError(
     ProfileOAuth2TokenServiceIOSProvider* provider,
+    const std::string& gaia_id,
     NSError* error) {
   if (!error)
     return GoogleServiceAuthError::AuthErrorNone();
 
   AuthenticationErrorCategory errorCategory =
-      provider->GetAuthenticationErrorCategory(error);
+      provider->GetAuthenticationErrorCategory(gaia_id, error);
   switch (errorCategory) {
     case kAuthenticationErrorCategoryUnknownErrors:
       // Treat all unknown error as unexpected service response errors.
@@ -129,7 +130,7 @@ void SSOAccessTokenFetcher::OnAccessTokenResponse(NSString* token,
     return;
   }
   GoogleServiceAuthError auth_error =
-      GetGoogleServiceAuthErrorFromNSError(provider_, error);
+      GetGoogleServiceAuthErrorFromNSError(provider_, account_.gaia, error);
   if (auth_error.state() == GoogleServiceAuthError::NONE) {
     base::Time expiration_date =
         base::Time::FromDoubleT([expiration timeIntervalSince1970]);

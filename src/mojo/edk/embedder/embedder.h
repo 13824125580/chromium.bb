@@ -7,12 +7,12 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory_handle.h"
 #include "base/process/process_handle.h"
 #include "base/task_runner.h"
@@ -20,10 +20,16 @@
 #include "mojo/edk/system/system_impl_export.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 
+namespace base {
+class PortProvider;
+}
+
 namespace mojo {
 namespace edk {
 
 class ProcessDelegate;
+
+using ProcessErrorCallback = base::Callback<void(const std::string& error)>;
 
 // Basic configuration/initialization ------------------------------------------
 
@@ -34,19 +40,35 @@ class ProcessDelegate;
 // Allows changing the default max message size. Must be called before Init.
 MOJO_SYSTEM_IMPL_EXPORT void SetMaxMessageSize(size_t bytes);
 
-// Called in the parent process for each child process that is launched. The
-// returned handle must be sent to the child process which then calls
-// SetParentPipeHandle.
-MOJO_SYSTEM_IMPL_EXPORT ScopedPlatformHandle ChildProcessLaunched(
-    base::ProcessHandle child_process);
-// Like above, except used when the embedder establishes the pipe between the
-// parent and child processes itself.
+// Called in the parent process for each child process that is launched.
 MOJO_SYSTEM_IMPL_EXPORT void ChildProcessLaunched(
-    base::ProcessHandle child_process, ScopedPlatformHandle server_pipe);
+    base::ProcessHandle child_process,
+    ScopedPlatformHandle server_pipe,
+    const std::string& child_token);
+
+// Called in the parent process for each child process that is launched.
+// |process_error_callback| is called if the system becomes aware of some
+// internal error related to this process, e.g., if the system is notified of a
+// bad message from this process via the |MojoNotifyBadMessage()| API.
+MOJO_SYSTEM_IMPL_EXPORT void ChildProcessLaunched(
+    base::ProcessHandle child_process,
+    ScopedPlatformHandle server_pipe,
+    const std::string& child_token,
+    const ProcessErrorCallback& error_callback);
+
+// Called in the parent process when a child process fails to launch.
+// Exactly one of ChildProcessLaunched() or ChildProcessLaunchFailed() must be
+// called per child process launch attempt.
+MOJO_SYSTEM_IMPL_EXPORT void ChildProcessLaunchFailed(
+    const std::string& child_token);
 
 // Should be called as early as possible in the child process with the handle
 // that the parent received from ChildProcessLaunched.
 MOJO_SYSTEM_IMPL_EXPORT void SetParentPipeHandle(ScopedPlatformHandle pipe);
+
+// Same as above but extracts the pipe handle from the command line. See
+// PlatformChannelPair for details.
+MOJO_SYSTEM_IMPL_EXPORT void SetParentPipeHandleFromCommandLine();
 
 // Must be called first, or just after setting configuration parameters, to
 // initialize the (global, singleton) system.
@@ -75,8 +97,8 @@ CreatePlatformHandleWrapper(ScopedPlatformHandle platform_handle,
                             MojoHandle* platform_handle_wrapper_handle);
 
 // Retrieves the |PlatformHandle| that was wrapped into a |MojoHandle| (using
-// |CreatePlatformHandleWrapper()| above). Note that the |MojoHandle| must still
-// be closed separately.
+// |CreatePlatformHandleWrapper()| above). Note that the |MojoHandle| is closed
+// on success.
 MOJO_SYSTEM_IMPL_EXPORT MojoResult
 PassWrappedPlatformHandle(MojoHandle platform_handle_wrapper_handle,
                           ScopedPlatformHandle* platform_handle);
@@ -86,8 +108,6 @@ PassWrappedPlatformHandle(MojoHandle platform_handle_wrapper_handle,
 // |read_only| is whether the handle is a read-only handle to shared memory.
 // This |MojoHandle| is a Mojo shared buffer and can be manipulated using the
 // shared buffer functions and transferred over a message pipe.
-// TODO(crbug.com/556587): Support read-only handles. Currently, |read_only|
-// must be false.
 MOJO_SYSTEM_IMPL_EXPORT MojoResult
 CreateSharedBufferWrapper(base::SharedMemoryHandle shared_memory_handle,
                           size_t num_bytes,
@@ -101,8 +121,6 @@ CreateSharedBufferWrapper(base::SharedMemoryHandle shared_memory_handle,
 // Note: The value of |shared_memory_handle| may be
 // base::SharedMemory::NULLHandle(), even if this function returns success.
 // Callers should perform appropriate checks.
-// TODO(crbug.com/556587): Support read-only handles. Currently, |read_only|
-// will always return |false|.
 MOJO_SYSTEM_IMPL_EXPORT MojoResult
 PassSharedMemoryHandle(MojoHandle mojo_handle,
                        base::SharedMemoryHandle* shared_memory_handle,
@@ -134,6 +152,13 @@ MOJO_SYSTEM_IMPL_EXPORT void InitIPCSupport(
 // |OnShutdownComplete()| method is invoked.
 MOJO_SYSTEM_IMPL_EXPORT void ShutdownIPCSupport();
 
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+// Set the |base::PortProvider| for this process. Can be called on any thread,
+// but must be set in the root process before any Mach ports can be transferred.
+MOJO_SYSTEM_IMPL_EXPORT void SetMachPortProvider(
+    base::PortProvider* port_provider);
+#endif
+
 // Creates a message pipe over an arbitrary platform channel. The other end of
 // the channel must also be passed to this function. Either endpoint can be in
 // any process.
@@ -145,9 +170,13 @@ CreateMessagePipe(ScopedPlatformHandle platform_handle);
 
 // Creates a message pipe from a token. A child embedder must also have this
 // token and call CreateChildMessagePipe() with it in order for the pipe to get
-// connected.
+// connected. |child_token| identifies the child process and should be the same
+// as the token passed into ChildProcessLaunched(). If they are different, the
+// returned message pipe will not be signaled of peer closure if the child
+// process dies before establishing connection to the pipe.
 MOJO_SYSTEM_IMPL_EXPORT ScopedMessagePipeHandle
-CreateParentMessagePipe(const std::string& token);
+CreateParentMessagePipe(const std::string& token,
+                        const std::string& child_token);
 
 // Creates a message pipe from a token in a child process. The parent must also
 // have this token and call CreateParentMessagePipe() with it in order for the
@@ -159,6 +188,15 @@ CreateChildMessagePipe(const std::string& token);
 // and CreateChildMessagePipe() above. The generated token is suitably random so
 // as to not have to worry about collisions with other generated tokens.
 MOJO_SYSTEM_IMPL_EXPORT std::string GenerateRandomToken();
+
+// Sets system properties that can be read by the MojoGetProperty() API. See the
+// documentation for MojoPropertyType for supported property types and their
+// corresponding value type.
+//
+// Default property values:
+//   |MOJO_PROPERTY_TYPE_SYNC_CALL_ALLOWED| - true
+MOJO_SYSTEM_IMPL_EXPORT MojoResult SetProperty(MojoPropertyType type,
+                                               const void* value);
 
 }  // namespace edk
 }  // namespace mojo

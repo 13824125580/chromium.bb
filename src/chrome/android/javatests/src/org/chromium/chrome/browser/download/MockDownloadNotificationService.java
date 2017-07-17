@@ -17,6 +17,7 @@ public class MockDownloadNotificationService extends DownloadNotificationService
     private final List<Integer> mNotificationIds = new ArrayList<Integer>();
     private boolean mPaused = false;
     private Context mContext;
+    private int mLastNotificationId;
 
     void setContext(Context context) {
         mContext = context;
@@ -30,7 +31,10 @@ public class MockDownloadNotificationService extends DownloadNotificationService
 
     @Override
     void updateNotification(int id, Notification notification) {
-        mNotificationIds.add(id);
+        if (!mNotificationIds.contains(id)) {
+            mNotificationIds.add(id);
+            mLastNotificationId = id;
+        }
     }
 
     public boolean isPaused() {
@@ -42,14 +46,17 @@ public class MockDownloadNotificationService extends DownloadNotificationService
     }
 
     @Override
-    public void cancelNotification(int downloadId) {
-        mNotificationIds.remove(Integer.valueOf(downloadId));
+    public void cancelNotification(int notificationId, String downloadGuid) {
+        mNotificationIds.remove(Integer.valueOf(notificationId));
+    }
+
+    public int getLastAddedNotificationId() {
+        return mLastNotificationId;
     }
 
     @Override
     public Context getApplicationContext() {
         return mContext == null ? super.getApplicationContext() : mContext;
     }
-
 }
 

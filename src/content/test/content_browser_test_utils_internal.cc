@@ -13,19 +13,23 @@
 
 #include "base/strings/stringprintf.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/surfaces/surface.h"
 #include "cc/surfaces/surface_manager.h"
-#include "content/browser/compositor/delegated_frame_host.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
 #include "content/browser/frame_host/render_widget_host_view_child_frame.h"
+#include "content/browser/renderer_host/delegated_frame_host.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/resource_throttle.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/file_chooser_file_info.h"
+#include "content/public/common/file_chooser_params.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
@@ -73,6 +77,10 @@ void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed) {
       static_cast<ShellJavaScriptDialogManager*>(
           shell->GetJavaScriptDialogManager(shell->web_contents()));
   manager->set_should_proceed_on_beforeunload(proceed);
+}
+
+RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node) {
+  return frame_tree_node->current_frame_host();
 }
 
 FrameTreeVisualizer::FrameTreeVisualizer() {
@@ -242,9 +250,11 @@ std::string FrameTreeVisualizer::DepictFrameTree(FrameTreeNode* root) {
   for (auto& legend_entry : legend) {
     SiteInstanceImpl* site_instance =
         static_cast<SiteInstanceImpl*>(legend_entry.second);
+    std::string description = site_instance->GetSiteURL().spec();
+    if (site_instance->is_default_subframe_site_instance())
+      description = "default subframe process";
     base::StringAppendF(&result, "\n%s%s = %s", prefix,
-                        legend_entry.first.c_str(),
-                        site_instance->GetSiteURL().spec().c_str());
+                        legend_entry.first.c_str(), description.c_str());
     // Highlight some exceptionable conditions.
     if (site_instance->active_frame_count() == 0)
       result.append(" (active_frame_count == 0)");
@@ -313,7 +323,7 @@ void SurfaceHitTestReadyNotifier::WaitForSurfaceReady() {
   root_surface_id_ = target_view_->FrameConnectorForTesting()
                          ->GetRootRenderWidgetHostViewForTesting()
                          ->SurfaceIdForTesting();
-  if (ContainsSurfaceId())
+  if (ContainsSurfaceId(root_surface_id_))
     return;
 
   while (true) {
@@ -326,17 +336,19 @@ void SurfaceHitTestReadyNotifier::WaitForSurfaceReady() {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
     run_loop.Run();
-    if (ContainsSurfaceId())
+    if (ContainsSurfaceId(root_surface_id_))
       break;
   }
 }
 
-bool SurfaceHitTestReadyNotifier::ContainsSurfaceId() {
-  if (root_surface_id_.is_null())
+bool SurfaceHitTestReadyNotifier::ContainsSurfaceId(
+    cc::SurfaceId container_surface_id) {
+  if (container_surface_id.is_null())
     return false;
-  for (cc::SurfaceId id : surface_manager_->GetSurfaceForId(root_surface_id_)
-                              ->referenced_surfaces()) {
-    if (id == target_view_->SurfaceIdForTesting())
+  for (cc::SurfaceId id :
+       surface_manager_->GetSurfaceForId(container_surface_id)
+           ->referenced_surfaces()) {
+    if (id == target_view_->SurfaceIdForTesting() || ContainsSurfaceId(id))
       return true;
   }
   return false;
@@ -393,9 +405,10 @@ void TestNavigationManager::DidStartNavigation(NavigationHandle* handle) {
     return;
 
   handle_ = handle;
-  scoped_ptr<NavigationThrottle> throttle(new TestNavigationManagerThrottle(
-      handle_, base::Bind(&TestNavigationManager::OnWillStartRequest,
-                          weak_factory_.GetWeakPtr())));
+  std::unique_ptr<NavigationThrottle> throttle(
+      new TestNavigationManagerThrottle(
+          handle_, base::Bind(&TestNavigationManager::OnWillStartRequest,
+                              weak_factory_.GetWeakPtr())));
   handle_->RegisterThrottleForTesting(std::move(throttle));
 }
 
@@ -412,6 +425,21 @@ void TestNavigationManager::OnWillStartRequest() {
   navigation_paused_ = true;
   if (loop_runner_)
     loop_runner_->Quit();
+}
+
+FileChooserDelegate::FileChooserDelegate(const base::FilePath& file)
+      : file_(file), file_chosen_(false) {}
+
+void FileChooserDelegate::RunFileChooser(RenderFrameHost* render_frame_host,
+                                         const FileChooserParams& params) {
+  // Send the selected file to the renderer process.
+  FileChooserFileInfo file_info;
+  file_info.file_path = file_;
+  std::vector<FileChooserFileInfo> files;
+  files.push_back(file_info);
+  render_frame_host->FilesSelectedInChooser(files, FileChooserParams::Open);
+
+  file_chosen_ = true;
 }
 
 }  // namespace content

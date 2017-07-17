@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/time/default_tick_clock.h"
@@ -18,7 +19,7 @@
 namespace scheduler {
 namespace {
 const base::Feature kExpensiveTaskBlockingPolicyFeature{
-    "SchedulerExpensiveTaskBlocking", base::FEATURE_DISABLED_BY_DEFAULT};
+    "SchedulerExpensiveTaskBlocking", base::FEATURE_ENABLED_BY_DEFAULT};
 }
 
 RendererScheduler::RendererScheduler() {
@@ -27,8 +28,10 @@ RendererScheduler::RendererScheduler() {
 RendererScheduler::~RendererScheduler() {
 }
 
+RendererScheduler::RAILModeObserver::~RAILModeObserver() = default;
+
 // static
-scoped_ptr<RendererScheduler> RendererScheduler::Create() {
+std::unique_ptr<RendererScheduler> RendererScheduler::Create() {
   // Ensure worker.scheduler, worker.scheduler.debug and
   // renderer.scheduler.debug appear as an option in about://tracing
   base::trace_event::TraceLog::GetCategoryGroupEnabled(
@@ -39,9 +42,9 @@ scoped_ptr<RendererScheduler> RendererScheduler::Create() {
       TRACE_DISABLED_BY_DEFAULT("renderer.scheduler.debug"));
 
   base::MessageLoop* message_loop = base::MessageLoop::current();
-  scoped_ptr<RendererSchedulerImpl> scheduler(
+  std::unique_ptr<RendererSchedulerImpl> scheduler(
       new RendererSchedulerImpl(SchedulerTqmDelegateImpl::Create(
-          message_loop, make_scoped_ptr(new base::DefaultTickClock()))));
+          message_loop, base::WrapUnique(new base::DefaultTickClock()))));
 
   // Runtime features are not currently available in html_viewer.
   if (base::FeatureList::GetInstance()) {
@@ -54,28 +57,7 @@ scoped_ptr<RendererScheduler> RendererScheduler::Create() {
                                          base::CompareCase::INSENSITIVE_ASCII);
     scheduler->SetExpensiveTaskBlockingAllowed(blocking_allowed);
   }
-  return make_scoped_ptr<RendererScheduler>(scheduler.release());
-}
-
-// static
-const char* RendererScheduler::UseCaseToString(UseCase use_case) {
-  switch (use_case) {
-    case UseCase::NONE:
-      return "none";
-    case UseCase::COMPOSITOR_GESTURE:
-      return "compositor_gesture";
-    case UseCase::MAIN_THREAD_GESTURE:
-      return "main_thread_gesture";
-    case UseCase::SYNCHRONIZED_GESTURE:
-      return "synchronized_gesture";
-    case UseCase::TOUCHSTART:
-      return "touchstart";
-    case UseCase::LOADING:
-      return "loading";
-    default:
-      NOTREACHED();
-      return nullptr;
-  }
+  return base::WrapUnique<RendererScheduler>(scheduler.release());
 }
 
 // static

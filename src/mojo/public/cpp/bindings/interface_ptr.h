@@ -8,12 +8,14 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/callback_forward.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/callback.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/lib/interface_ptr_state.h"
-#include "mojo/public/cpp/environment/environment.h"
 
 namespace mojo {
 
@@ -34,11 +36,7 @@ class AssociatedGroup;
 // any thread.
 template <typename Interface>
 class InterfacePtr {
-  DISALLOW_COPY_AND_ASSIGN_WITH_MOVE_FOR_BIND(InterfacePtr)
-
  public:
-  using GenericInterface = typename Interface::GenericInterface;
-
   // Constructs an unbound InterfacePtr.
   InterfacePtr() {}
   InterfacePtr(decltype(nullptr)) {}
@@ -66,20 +64,22 @@ class InterfacePtr {
   // Closes the bound message pipe (if any) on destruction.
   ~InterfacePtr() {}
 
-  // Binds the InterfacePtr to a remote implementation of Interface. The
-  // |waiter| is used for receiving notifications when there is data to read
-  // from the message pipe. For most callers, the default |waiter| will be
-  // sufficient.
+  // Binds the InterfacePtr to a remote implementation of Interface.
   //
   // Calling with an invalid |info| (containing an invalid message pipe handle)
   // has the same effect as reset(). In this case, the InterfacePtr is not
   // considered as bound.
-  void Bind(
-      InterfacePtrInfo<GenericInterface> info,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
+  //
+  // |runner| must belong to the same thread. It will be used to dispatch all
+  // callbacks and connection error notification. It is useful when you attach
+  // multiple task runners to a single thread for the purposes of task
+  // scheduling.
+  void Bind(InterfacePtrInfo<Interface> info,
+            scoped_refptr<base::SingleThreadTaskRunner> runner =
+                base::ThreadTaskRunnerHandle::Get()) {
     reset();
     if (info.is_valid())
-      internal_state_.Bind(std::move(info), waiter);
+      internal_state_.Bind(std::move(info), std::move(runner));
   }
 
   // Returns whether or not this InterfacePtr is bound to a message pipe.
@@ -99,7 +99,7 @@ class InterfacePtr {
   // Queries the max version that the remote side supports. On completion, the
   // result will be returned as the input of |callback|. The version number of
   // this interface pointer will also be updated.
-  void QueryVersion(const Callback<void(uint32_t)>& callback) {
+  void QueryVersion(const base::Callback<void(uint32_t)>& callback) {
     internal_state_.QueryVersion(callback);
   }
 
@@ -147,7 +147,7 @@ class InterfacePtr {
   //
   // This method may only be called after the InterfacePtr has been bound to a
   // message pipe.
-  void set_connection_error_handler(const Closure& error_handler) {
+  void set_connection_error_handler(const base::Closure& error_handler) {
     internal_state_.set_connection_error_handler(error_handler);
   }
 
@@ -164,7 +164,7 @@ class InterfacePtr {
   //     on to associated interface endpoint handles at both sides of the
   //     message pipe in order to call this method. We need a way to forcefully
   //     invalidate associated interface endpoint handles.
-  InterfacePtrInfo<GenericInterface> PassInterface() {
+  InterfacePtrInfo<Interface> PassInterface() {
     CHECK(!HasAssociatedInterfaces());
     CHECK(!internal_state_.has_pending_callbacks());
     State state;
@@ -181,6 +181,15 @@ class InterfacePtr {
     return internal_state_.associated_group();
   }
 
+  bool Equals(const InterfacePtr& other) const {
+    if (this == &other)
+      return true;
+
+    // Now that the two refer to different objects, they are equivalent if
+    // and only if they are both null.
+    return !(*this) && !other;
+  }
+
   // DO NOT USE. Exposed only for internal use and for testing.
   internal::InterfacePtrState<Interface, Interface::PassesAssociatedKinds_>*
   internal_state() {
@@ -190,6 +199,7 @@ class InterfacePtr {
   // Allow InterfacePtr<> to be used in boolean expressions, but not
   // implicitly convertible to a real bool (which is dangerous).
  private:
+  // TODO(dcheng): Use an explicit conversion operator.
   typedef internal::InterfacePtrState<Interface,
                                       Interface::PassesAssociatedKinds_>
       InterfacePtr::*Testable;
@@ -211,18 +221,20 @@ class InterfacePtr {
   typedef internal::InterfacePtrState<Interface,
                                       Interface::PassesAssociatedKinds_> State;
   mutable State internal_state_;
+
+  DISALLOW_COPY_AND_ASSIGN(InterfacePtr);
 };
 
 // If |info| is valid (containing a valid message pipe handle), returns an
-// InterfacePtr bound to it. Otherwise, returns an unbound InterfacePtr. The
-// specified |waiter| will be used as in the InterfacePtr::Bind() method.
+// InterfacePtr bound to it. Otherwise, returns an unbound InterfacePtr.
 template <typename Interface>
 InterfacePtr<Interface> MakeProxy(
     InterfacePtrInfo<Interface> info,
-    const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
+    scoped_refptr<base::SingleThreadTaskRunner> runner =
+        base::ThreadTaskRunnerHandle::Get()) {
   InterfacePtr<Interface> ptr;
   if (info.is_valid())
-    ptr.Bind(std::move(info), waiter);
+    ptr.Bind(std::move(info), std::move(runner));
   return std::move(ptr);
 }
 

@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -14,7 +15,6 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/invalidation/public/invalidation.h"
@@ -73,7 +73,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
       enterprise_management::DeviceRegisterRequest::Type type,
       CloudPolicyCore* core,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-      scoped_ptr<base::Clock> clock,
+      std::unique_ptr<base::Clock> clock,
       int64_t highest_handled_invalidation_version);
   ~CloudPolicyInvalidator() override;
 
@@ -184,7 +184,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // The clock.
-  scoped_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Clock> clock_;
 
   // The invalidation service.
   invalidation::InvalidationService* invalidation_service_;
@@ -213,7 +213,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
 
   // The version of the latest invalidation received. This is compared to
   // the invalidation version of policy stored to determine when the
-  // invalidated policy is up-to-date.
+  // invalidated policy is up to date.
   int64_t invalidation_version_;
 
   // The number of invalidations with unknown version received. Since such
@@ -225,7 +225,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   int64_t highest_handled_invalidation_version_;
 
   // The most up to date invalidation.
-  scoped_ptr<syncer::Invalidation> invalidation_;
+  std::unique_ptr<syncer::Invalidation> invalidation_;
 
   // The maximum random delay, in ms, between receiving an invalidation and
   // fetching the new policy.

@@ -4,29 +4,57 @@
 
 #include "components/password_manager/core/browser/credential_manager_pending_request_task.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/affiliated_match_helper.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace password_manager {
+namespace {
+
+// Send a UMA histogram about if |local_results| has empty or duplicate
+// usernames.
+void ReportAccountChooserMetrics(
+    const ScopedVector<autofill::PasswordForm>& local_results,
+    bool had_empty_username) {
+  std::vector<base::string16> usernames;
+  for (const auto& form : local_results)
+    usernames.push_back(form->username_value);
+  std::sort(usernames.begin(), usernames.end());
+  bool has_duplicates =
+      std::adjacent_find(usernames.begin(), usernames.end()) != usernames.end();
+  metrics_util::AccountChooserUsabilityMetric metric;
+  if (had_empty_username && has_duplicates)
+    metric = metrics_util::ACCOUNT_CHOOSER_EMPTY_USERNAME_AND_DUPLICATES;
+  else if (had_empty_username)
+    metric = metrics_util::ACCOUNT_CHOOSER_EMPTY_USERNAME;
+  else if (has_duplicates)
+    metric = metrics_util::ACCOUNT_CHOOSER_DUPLICATES;
+  else
+    metric = metrics_util::ACCOUNT_CHOOSER_LOOKS_OK;
+  metrics_util::LogAccountChooserUsability(metric);
+}
+
+}  // namespace
 
 CredentialManagerPendingRequestTask::CredentialManagerPendingRequestTask(
     CredentialManagerPendingRequestTaskDelegate* delegate,
-    int request_id,
+    const SendCredentialCallback& callback,
     bool request_zero_click_only,
     const GURL& request_origin,
     bool include_passwords,
     const std::vector<GURL>& request_federations,
     const std::vector<std::string>& affiliated_realms)
     : delegate_(delegate),
-      id_(request_id),
+      send_callback_(callback),
       zero_click_only_(request_zero_click_only),
       origin_(request_origin),
       include_passwords_(include_passwords),
@@ -42,7 +70,7 @@ CredentialManagerPendingRequestTask::~CredentialManagerPendingRequestTask() =
 void CredentialManagerPendingRequestTask::OnGetPasswordStoreResults(
     ScopedVector<autofill::PasswordForm> results) {
   if (delegate_->GetOrigin() != origin_) {
-    delegate_->SendCredential(id_, CredentialInfo());
+    delegate_->SendCredential(send_callback_, CredentialInfo());
     return;
   }
 
@@ -87,8 +115,16 @@ void CredentialManagerPendingRequestTask::OnGetPasswordStoreResults(
     affiliated_results.weak_clear();
   }
 
+  // Remove empty usernames from the list.
+  auto begin_empty = std::partition(local_results.begin(), local_results.end(),
+                                    [](autofill::PasswordForm* form) {
+                                      return !form->username_value.empty();
+                                    });
+  const bool has_empty_username = (begin_empty != local_results.end());
+  local_results.erase(begin_empty, local_results.end());
+
   if ((local_results.empty() && federated_results.empty())) {
-    delegate_->SendCredential(id_, CredentialInfo());
+    delegate_->SendCredential(send_callback_, CredentialInfo());
     return;
   }
 
@@ -107,22 +143,25 @@ void CredentialManagerPendingRequestTask::OnGetPasswordStoreResults(
                         local_results[0]->federation_origin.unique()
                             ? CredentialType::CREDENTIAL_TYPE_PASSWORD
                             : CredentialType::CREDENTIAL_TYPE_FEDERATED);
-    delegate_->client()->NotifyUserAutoSignin(std::move(local_results));
-    delegate_->SendCredential(id_, info);
+    delegate_->client()->NotifyUserAutoSignin(std::move(local_results),
+                                              origin_);
+    delegate_->SendCredential(send_callback_, info);
     return;
   }
 
   // Otherwise, return an empty credential if we're in zero-click-only mode
   // or if the user chooses not to return a credential, and the credential the
   // user chooses if they pick one.
-  scoped_ptr<autofill::PasswordForm> potential_autosignin_form(
+  std::unique_ptr<autofill::PasswordForm> potential_autosignin_form(
       new autofill::PasswordForm(*local_results[0]));
+  if (!zero_click_only_)
+    ReportAccountChooserMetrics(local_results, has_empty_username);
   if (zero_click_only_ ||
       !delegate_->client()->PromptUserToChooseCredentials(
           std::move(local_results), std::move(federated_results), origin_,
           base::Bind(
-              &CredentialManagerPendingRequestTaskDelegate::SendCredential,
-              base::Unretained(delegate_), id_))) {
+              &CredentialManagerPendingRequestTaskDelegate::SendPasswordForm,
+              base::Unretained(delegate_), send_callback_))) {
     if (can_use_autosignin) {
       // The user had credentials, but either chose not to share them with the
       // site, or was prevented from doing so by lack of zero-click (or the
@@ -133,7 +172,7 @@ void CredentialManagerPendingRequestTask::OnGetPasswordStoreResults(
           std::move(potential_autosignin_form));
     }
 
-    delegate_->SendCredential(id_, CredentialInfo());
+    delegate_->SendCredential(send_callback_, CredentialInfo());
   }
 }
 

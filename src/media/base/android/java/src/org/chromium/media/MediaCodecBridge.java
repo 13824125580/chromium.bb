@@ -19,6 +19,7 @@ import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.MainDex;
+import org.chromium.media.MediaCodecUtil.MimeTypes;
 
 import java.nio.ByteBuffer;
 
@@ -42,10 +43,6 @@ class MediaCodecBridge {
     private static final int MEDIA_CODEC_NO_KEY = 7;
     private static final int MEDIA_CODEC_ABORT = 8;
     private static final int MEDIA_CODEC_ERROR = 9;
-
-    // Max adaptive playback size to be supplied to the decoder.
-    private static final int MAX_ADAPTIVE_PLAYBACK_WIDTH = 1920;
-    private static final int MAX_ADAPTIVE_PLAYBACK_HEIGHT = 1080;
 
     // After a flush(), dequeueOutputBuffer() can often produce empty presentation timestamps
     // for several frames. As a result, the player may find that the time does not increase
@@ -186,6 +183,11 @@ class MediaCodecBridge {
         private int sampleRate() {
             return mFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE);
         }
+
+        @CalledByNative("GetOutputFormatResult")
+        private int channelCount() {
+            return mFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+        }
     }
 
     private MediaCodecBridge(
@@ -200,7 +202,8 @@ class MediaCodecBridge {
     }
 
     @CalledByNative
-    private static MediaCodecBridge create(String mime, boolean isSecure, int direction) {
+    private static MediaCodecBridge create(
+            String mime, boolean isSecure, int direction, boolean requireSoftwareCodec) {
         MediaCodecUtil.CodecCreationInfo info = new MediaCodecUtil.CodecCreationInfo();
         try {
             if (direction == MediaCodecUtil.MEDIA_CODEC_ENCODER) {
@@ -208,7 +211,7 @@ class MediaCodecBridge {
                 info.supportsAdaptivePlayback = false;
             } else {
                 // |isSecure| only applies to video decoders.
-                info = MediaCodecUtil.createDecoder(mime, isSecure);
+                info = MediaCodecUtil.createDecoder(mime, isSecure, requireSoftwareCodec);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to create MediaCodec: %s, isSecure: %s, direction: %d",
@@ -223,7 +226,11 @@ class MediaCodecBridge {
     @CalledByNative
     private void release() {
         try {
-            Log.w(TAG, "calling MediaCodec.release()");
+            String codecName = "unknown";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                codecName = mMediaCodec.getName();
+            }
+            Log.w(TAG, "calling MediaCodec.release() on " + codecName);
             mMediaCodec.release();
         } catch (IllegalStateException e) {
             // The MediaCodec is stuck in a wrong state, possibly due to losing
@@ -247,6 +254,9 @@ class MediaCodecBridge {
                 mOutputBuffers = mMediaCodec.getOutputBuffers();
             }
         } catch (IllegalStateException e) {
+            Log.e(TAG, "Cannot start the media codec", e);
+            return false;
+        } catch (IllegalArgumentException e) {
             Log.e(TAG, "Cannot start the media codec", e);
             return false;
         }
@@ -444,6 +454,7 @@ class MediaCodecBridge {
                 assert false;
             }
         } catch (IllegalStateException e) {
+            status = MEDIA_CODEC_ERROR;
             Log.e(TAG, "Failed to dequeue output buffer", e);
         }
 
@@ -455,10 +466,23 @@ class MediaCodecBridge {
     private boolean configureVideo(MediaFormat format, Surface surface, MediaCrypto crypto,
             int flags, boolean allowAdaptivePlayback) {
         try {
-            if (mAdaptivePlaybackSupported && allowAdaptivePlayback) {
-                format.setInteger(MediaFormat.KEY_MAX_WIDTH, MAX_ADAPTIVE_PLAYBACK_WIDTH);
-                format.setInteger(MediaFormat.KEY_MAX_HEIGHT, MAX_ADAPTIVE_PLAYBACK_HEIGHT);
+            // If adaptive playback is turned off by request, then treat it as
+            // not supported.  Note that configureVideo is only called once
+            // during creation, else this would prevent re-enabling adaptive
+            // playback later.
+            if (!allowAdaptivePlayback) mAdaptivePlaybackSupported = false;
+
+            if (mAdaptivePlaybackSupported) {
+                // The max size is a hint to the codec, and causes it to
+                // allocate more memory up front.  It still supports higher
+                // resolutions if they arrive.  So, we try to ask only for
+                // the initial size.
+                format.setInteger(
+                        MediaFormat.KEY_MAX_WIDTH, format.getInteger(MediaFormat.KEY_WIDTH));
+                format.setInteger(
+                        MediaFormat.KEY_MAX_HEIGHT, format.getInteger(MediaFormat.KEY_HEIGHT));
             }
+            maybeSetMaxInputSize(format);
             mMediaCodec.configure(format, surface, crypto, flags);
             return true;
         } catch (IllegalArgumentException e) {
@@ -483,6 +507,54 @@ class MediaCodecBridge {
         return MediaFormat.createVideoFormat(mime, width, height);
     }
 
+    // Use some heuristics to set KEY_MAX_INPUT_SIZE (the size of the input buffers).
+    // Taken from exoplayer:
+    // https://github.com/google/ExoPlayer/blob/8595c65678a181296cdf673eacb93d8135479340/library/src/main/java/com/google/android/exoplayer/MediaCodecVideoTrackRenderer.java
+    private void maybeSetMaxInputSize(MediaFormat format) {
+        if (format.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE)) {
+            // Already set. The source of the format may know better, so do nothing.
+            return;
+        }
+        int maxHeight = format.getInteger(MediaFormat.KEY_HEIGHT);
+        if (mAdaptivePlaybackSupported && format.containsKey(MediaFormat.KEY_MAX_HEIGHT)) {
+            maxHeight = Math.max(maxHeight, format.getInteger(MediaFormat.KEY_MAX_HEIGHT));
+        }
+        int maxWidth = format.getInteger(MediaFormat.KEY_WIDTH);
+        if (mAdaptivePlaybackSupported && format.containsKey(MediaFormat.KEY_MAX_WIDTH)) {
+            maxWidth = Math.max(maxHeight, format.getInteger(MediaFormat.KEY_MAX_WIDTH));
+        }
+        int maxPixels;
+        int minCompressionRatio;
+        switch (format.getString(MediaFormat.KEY_MIME)) {
+            case MimeTypes.VIDEO_H264:
+                if ("BRAVIA 4K 2015".equals(Build.MODEL)) {
+                    // The Sony BRAVIA 4k TV has input buffers that are too small for the calculated
+                    // 4k video maximum input size, so use the default value.
+                    return;
+                }
+                // Round up width/height to an integer number of macroblocks.
+                maxPixels = ((maxWidth + 15) / 16) * ((maxHeight + 15) / 16) * 16 * 16;
+                minCompressionRatio = 2;
+                break;
+            case MimeTypes.VIDEO_VP8:
+                // VPX does not specify a ratio so use the values from the platform's SoftVPX.cpp.
+                maxPixels = maxWidth * maxHeight;
+                minCompressionRatio = 2;
+                break;
+            case MimeTypes.VIDEO_H265:
+            case MimeTypes.VIDEO_VP9:
+                maxPixels = maxWidth * maxHeight;
+                minCompressionRatio = 4;
+                break;
+            default:
+                // Leave the default max input size.
+                return;
+        }
+        // Estimate the maximum input size assuming three channel 4:2:0 subsampled input frames.
+        int maxInputSize = (maxPixels * 3) / (2 * minCompressionRatio);
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, maxInputSize);
+    }
+
     @CalledByNative
     private static MediaFormat createVideoEncoderFormat(String mime, int width, int height,
             int bitRate, int frameRate, int iFrameInterval, int colorFormat) {
@@ -496,8 +568,9 @@ class MediaCodecBridge {
 
     @CalledByNative
     private boolean isAdaptivePlaybackSupported(int width, int height) {
-        if (!mAdaptivePlaybackSupported) return false;
-        return width <= MAX_ADAPTIVE_PLAYBACK_WIDTH && height <= MAX_ADAPTIVE_PLAYBACK_HEIGHT;
+        // If media codec has adaptive playback supported, then the max sizes
+        // used during creation are only hints.
+        return mAdaptivePlaybackSupported;
     }
 
     @CalledByNative
@@ -531,39 +604,14 @@ class MediaCodecBridge {
     }
 
     @CalledByNative
-    private boolean configureAudio(MediaFormat format, MediaCrypto crypto, int flags,
-            boolean playAudio) {
+    private boolean configureAudio(
+            MediaFormat format, MediaCrypto crypto, int flags, boolean playAudio) {
         try {
             mMediaCodec.configure(format, null, crypto, flags);
             if (playAudio) {
                 int sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE);
                 int channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
-                int channelConfig = getAudioFormat(channelCount);
-                // Using 16bit PCM for output. Keep this value in sync with
-                // kBytesPerAudioOutputSample in media_codec_bridge.cc.
-                int minBufferSize = AudioTrack.getMinBufferSize(sampleRate, channelConfig,
-                        AudioFormat.ENCODING_PCM_16BIT);
-
-                // Set buffer size to be at least 1.5 times the minimum buffer size
-                // (see http://crbug.com/589269).
-                // TODO(timav, qinmin): For MediaSourcePlayer, we starts both audio and
-                // video decoder once we got valid presentation timestamp from the decoder
-                // (prerolling_==false). However, this doesn't guarantee that audiotrack
-                // starts outputing samples, especially with a larger buffersize.
-                // The best solution will be having a large buffer size in AudioTrack, and
-                // sync audio/video start when audiotrack starts output samples
-                // (head position starts progressing).
-                int minBufferSizeInFrames = minBufferSize / PCM16_BYTES_PER_SAMPLE / channelCount;
-                int bufferSize =
-                        (int) (1.5 * minBufferSizeInFrames) * PCM16_BYTES_PER_SAMPLE * channelCount;
-
-                mAudioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelConfig,
-                        AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
-                if (mAudioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
-                    Log.e(TAG, "Cannot create AudioTrack");
-                    mAudioTrack = null;
-                    return false;
-                }
+                if (!createAudioTrack(sampleRate, channelCount)) return false;
             }
             return true;
         } catch (IllegalArgumentException e) {
@@ -576,6 +624,42 @@ class MediaCodecBridge {
             Log.e(TAG, "Cannot configure the audio codec", e);
         }
         return false;
+    }
+
+    @CalledByNative
+    private boolean createAudioTrack(int sampleRate, int channelCount) {
+        Log.v(TAG, "createAudioTrack: sampleRate:" + sampleRate + " channelCount:" + channelCount);
+
+        int channelConfig = getAudioFormat(channelCount);
+
+        // Using 16bit PCM for output. Keep this value in sync with
+        // kBytesPerAudioOutputSample in media_codec_bridge.cc.
+        int minBufferSize = AudioTrack.getMinBufferSize(
+                sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
+
+        // Set buffer size to be at least 1.5 times the minimum buffer size
+        // (see http://crbug.com/589269).
+        // TODO(timav, qinmin): For MediaSourcePlayer, we starts both audio and
+        // video decoder once we got valid presentation timestamp from the decoder
+        // (prerolling_==false). However, this doesn't guarantee that audiotrack
+        // starts outputing samples, especially with a larger buffersize.
+        // The best solution will be having a large buffer size in AudioTrack, and
+        // sync audio/video start when audiotrack starts output samples
+        // (head position starts progressing).
+        int minBufferSizeInFrames = minBufferSize / PCM16_BYTES_PER_SAMPLE / channelCount;
+        int bufferSize =
+                (int) (1.5 * minBufferSizeInFrames) * PCM16_BYTES_PER_SAMPLE * channelCount;
+
+        if (mAudioTrack != null) mAudioTrack.release();
+
+        mAudioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelConfig,
+                AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
+        if (mAudioTrack.getState() == AudioTrack.STATE_UNINITIALIZED) {
+            Log.e(TAG, "Cannot create AudioTrack");
+            mAudioTrack = null;
+            return false;
+        }
+        return true;
     }
 
     /**

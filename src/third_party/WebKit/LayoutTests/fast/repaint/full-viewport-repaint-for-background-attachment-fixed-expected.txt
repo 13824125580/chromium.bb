@@ -1,16 +1,25 @@
 {
+  "name": "Content Root Layer",
   "bounds": [785, 5000],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [785, 5000],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [0, 0, 785, 5000]
-      ],
-      "paintInvalidationClients": [
-        "LayoutView #document"
+      "paintInvalidations": [
+        {
+          "object": "LayoutView #document",
+          "rect": [0, 0, 785, 5000],
+          "reason": "full"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutView #document",
+      "reason": "full"
     }
   ]
 }

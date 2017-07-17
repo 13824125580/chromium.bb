@@ -54,8 +54,6 @@
             '../udev_linux/udev.gyp:udev_linux',
           ],
           'sources': [
-            'device_monitor_linux.cc',
-            'device_monitor_linux.h',
             'fake_input_service_linux.cc',
             'fake_input_service_linux.h',
             'hid_service_linux.cc',
@@ -63,6 +61,26 @@
             'input_service_linux.cc',
             'input_service_linux.h',
           ],
+        }],
+        ['OS=="win"', {
+          'all_dependent_settings': {
+            'msvs_settings': {
+              'VCLinkerTool': {
+                'AdditionalDependencies': [
+                  'hid.lib',
+                  'setupapi.lib',
+                ],
+              },
+            },
+          },
+          'msvs_settings': {
+            'VCLinkerTool': {
+              'AdditionalDependencies': [
+                'hid.lib',
+                'setupapi.lib',
+              ],
+            },
+          },
         }],
       ],
     },

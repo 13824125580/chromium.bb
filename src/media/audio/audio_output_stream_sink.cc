@@ -73,8 +73,13 @@ bool AudioOutputStreamSink::SetVolume(double volume) {
   return true;
 }
 
-OutputDevice* AudioOutputStreamSink::GetOutputDevice() {
-  return nullptr;
+OutputDeviceInfo AudioOutputStreamSink::GetOutputDeviceInfo() {
+  return OutputDeviceInfo();
+}
+
+bool AudioOutputStreamSink::CurrentThreadIsRenderingThread() {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 int AudioOutputStreamSink::OnMoreData(AudioBus* dest,

@@ -11,29 +11,31 @@
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/events/Event.h"
+#include "core/inspector/ConsoleMessage.h"
 #include "modules/bluetooth/BluetoothCharacteristicProperties.h"
 #include "modules/bluetooth/BluetoothError.h"
+#include "modules/bluetooth/BluetoothRemoteGATTService.h"
 #include "modules/bluetooth/BluetoothSupplement.h"
 #include "public/platform/modules/bluetooth/WebBluetooth.h"
+#include <memory>
 
 namespace blink {
 
 namespace {
 
-PassRefPtr<DOMDataView> ConvertWebVectorToDataView(
-    const WebVector<uint8_t>& webVector)
+DOMDataView* ConvertWebVectorToDataView(const WebVector<uint8_t>& webVector)
 {
     static_assert(sizeof(*webVector.data()) == 1, "uint8_t should be a single byte");
-    RefPtr<DOMArrayBuffer> domBuffer = DOMArrayBuffer::create(webVector.data(), webVector.size());
-    RefPtr<DOMDataView> domDataView = DOMDataView::create(domBuffer, 0, webVector.size());
-    return domDataView;
+    DOMArrayBuffer* domBuffer = DOMArrayBuffer::create(webVector.data(), webVector.size());
+    return DOMDataView::create(domBuffer, 0, webVector.size());
 }
 
 } // anonymous namespace
 
-BluetoothRemoteGATTCharacteristic::BluetoothRemoteGATTCharacteristic(ExecutionContext* context, PassOwnPtr<WebBluetoothRemoteGATTCharacteristicInit> webCharacteristic)
+BluetoothRemoteGATTCharacteristic::BluetoothRemoteGATTCharacteristic(ExecutionContext* context, std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit> webCharacteristic, BluetoothRemoteGATTService* service)
     : ActiveDOMObject(context)
-    , m_webCharacteristic(webCharacteristic)
+    , m_webCharacteristic(std::move(webCharacteristic))
+    , m_service(service)
     , m_stopped(false)
 {
     m_properties = BluetoothCharacteristicProperties::create(m_webCharacteristic->characteristicProperties);
@@ -41,19 +43,18 @@ BluetoothRemoteGATTCharacteristic::BluetoothRemoteGATTCharacteristic(ExecutionCo
     ThreadState::current()->registerPreFinalizer(this);
 }
 
-BluetoothRemoteGATTCharacteristic* BluetoothRemoteGATTCharacteristic::take(ScriptPromiseResolver* resolver, PassOwnPtr<WebBluetoothRemoteGATTCharacteristicInit> webCharacteristic)
+BluetoothRemoteGATTCharacteristic* BluetoothRemoteGATTCharacteristic::take(ScriptPromiseResolver* resolver, std::unique_ptr<WebBluetoothRemoteGATTCharacteristicInit> webCharacteristic, BluetoothRemoteGATTService* service)
 {
     if (!webCharacteristic) {
         return nullptr;
     }
-    BluetoothRemoteGATTCharacteristic* characteristic = new BluetoothRemoteGATTCharacteristic(resolver->executionContext(), webCharacteristic);
+    BluetoothRemoteGATTCharacteristic* characteristic = new BluetoothRemoteGATTCharacteristic(resolver->getExecutionContext(), std::move(webCharacteristic), service);
     // See note in ActiveDOMObject about suspendIfNeeded.
     characteristic->suspendIfNeeded();
     return characteristic;
 }
 
-void BluetoothRemoteGATTCharacteristic::setValue(
-    const PassRefPtr<DOMDataView>& domDataView)
+void BluetoothRemoteGATTCharacteristic::setValue(DOMDataView* domDataView)
 {
     m_value = domDataView;
 }
@@ -61,8 +62,7 @@ void BluetoothRemoteGATTCharacteristic::setValue(
 void BluetoothRemoteGATTCharacteristic::dispatchCharacteristicValueChanged(
     const WebVector<uint8_t>& value)
 {
-    RefPtr<DOMDataView> domDataView = ConvertWebVectorToDataView(value);
-    this->setValue(domDataView);
+    this->setValue(ConvertWebVectorToDataView(value));
     dispatchEvent(Event::create(EventTypeNames::characteristicvaluechanged));
 }
 
@@ -80,7 +80,7 @@ void BluetoothRemoteGATTCharacteristic::notifyCharacteristicObjectRemoved()
 {
     if (!m_stopped) {
         m_stopped = true;
-        WebBluetooth* webbluetooth = BluetoothSupplement::fromExecutionContext(ActiveDOMObject::executionContext());
+        WebBluetooth* webbluetooth = BluetoothSupplement::fromExecutionContext(ActiveDOMObject::getExecutionContext());
         webbluetooth->characteristicObjectRemoved(m_webCharacteristic->characteristicInstanceID, this);
     }
 }
@@ -90,20 +90,20 @@ const WTF::AtomicString& BluetoothRemoteGATTCharacteristic::interfaceName() cons
     return EventTargetNames::BluetoothRemoteGATTCharacteristic;
 }
 
-ExecutionContext* BluetoothRemoteGATTCharacteristic::executionContext() const
+ExecutionContext* BluetoothRemoteGATTCharacteristic::getExecutionContext() const
 {
-    return ActiveDOMObject::executionContext();
+    return ActiveDOMObject::getExecutionContext();
 }
 
-bool BluetoothRemoteGATTCharacteristic::addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
+void BluetoothRemoteGATTCharacteristic::addedEventListener(const AtomicString& eventType, RegisteredEventListener& registeredListener)
 {
+    EventTargetWithInlineData::addedEventListener(eventType, registeredListener);
     // We will also need to unregister a characteristic once all the event
     // listeners have been removed. See http://crbug.com/541390
     if (eventType == EventTypeNames::characteristicvaluechanged) {
-        WebBluetooth* webbluetooth = BluetoothSupplement::fromExecutionContext(executionContext());
+        WebBluetooth* webbluetooth = BluetoothSupplement::fromExecutionContext(getExecutionContext());
         webbluetooth->registerCharacteristicObject(m_webCharacteristic->characteristicInstanceID, this);
     }
-    return EventTarget::addEventListenerInternal(eventType, listener, options);
 }
 
 class ReadValueCallback : public WebBluetoothReadValueCallbacks {
@@ -112,19 +112,19 @@ public:
 
     void onSuccess(const WebVector<uint8_t>& value) override
     {
-        if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+        if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
             return;
 
-        RefPtr<DOMDataView> domDataView = ConvertWebVectorToDataView(value);
-        if (m_webCharacteristic) {
+        DOMDataView* domDataView = ConvertWebVectorToDataView(value);
+        if (m_webCharacteristic)
             m_webCharacteristic->setValue(domDataView);
-        }
+
         m_resolver->resolve(domDataView);
     }
 
     void onError(const WebBluetoothError& e) override
     {
-        if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+        if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
             return;
         m_resolver->reject(BluetoothError::take(m_resolver, e));
     }
@@ -151,7 +151,7 @@ public:
 
     void onSuccess(const WebVector<uint8_t>& value) override
     {
-        if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+        if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
             return;
 
         if (m_webCharacteristic) {
@@ -162,7 +162,7 @@ public:
 
     void onError(const WebBluetoothError& e) override
     {
-        if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
+        if (!m_resolver->getExecutionContext() || m_resolver->getExecutionContext()->activeDOMObjectsAreStopped())
             return;
         m_resolver->reject(BluetoothError::take(m_resolver, e));
     }
@@ -200,24 +200,34 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(ScriptState*
     WebBluetooth* webbluetooth = BluetoothSupplement::fromScriptState(scriptState);
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     ScriptPromise promise = resolver->promise();
-    webbluetooth->startNotifications(m_webCharacteristic->characteristicInstanceID, this, new CallbackPromiseAdapter<void, BluetoothError>(resolver));
+    webbluetooth->startNotifications(m_webCharacteristic->characteristicInstanceID, new CallbackPromiseAdapter<void, BluetoothError>(resolver));
     return promise;
 }
 
 ScriptPromise BluetoothRemoteGATTCharacteristic::stopNotifications(ScriptState* scriptState)
 {
+#if OS(MACOSX) || OS(ANDROID)
+    // TODO(jlebel): Remove when stopNotifications is implemented.
+    // TODO(scheib): Remove when stopNotifications is implemented.
+    return ScriptPromise::rejectWithDOMException(scriptState,
+        DOMException::create(NotSupportedError,
+            "stopNotifications is not implemented yet. See https://goo.gl/J6ASzs"));
+#endif // OS(MACOSX) || OS(ANDROID)
+
     WebBluetooth* webbluetooth = BluetoothSupplement::fromScriptState(scriptState);
     ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
     ScriptPromise promise = resolver->promise();
-    webbluetooth->stopNotifications(m_webCharacteristic->characteristicInstanceID, this, new CallbackPromiseAdapter<void, BluetoothError>(resolver));
+    webbluetooth->stopNotifications(m_webCharacteristic->characteristicInstanceID, new CallbackPromiseAdapter<void, BluetoothError>(resolver));
     return promise;
 }
 
 DEFINE_TRACE(BluetoothRemoteGATTCharacteristic)
 {
-    RefCountedGarbageCollectedEventTargetWithInlineData<BluetoothRemoteGATTCharacteristic>::trace(visitor);
-    ActiveDOMObject::trace(visitor);
+    visitor->trace(m_service);
     visitor->trace(m_properties);
+    visitor->trace(m_value);
+    EventTargetWithInlineData::trace(visitor);
+    ActiveDOMObject::trace(visitor);
 }
 
 } // namespace blink

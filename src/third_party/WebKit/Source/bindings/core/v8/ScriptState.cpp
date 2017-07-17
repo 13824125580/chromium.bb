@@ -8,7 +8,6 @@
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
-#include "platform/v8_inspector/public/V8Debugger.h"
 
 namespace blink {
 
@@ -66,27 +65,6 @@ void ScriptState::disposePerContextData()
     m_perContextData = nullptr;
 }
 
-bool ScriptState::evalEnabled() const
-{
-    v8::HandleScope handleScope(m_isolate);
-    return context()->IsCodeGenerationFromStringsAllowed();
-}
-
-void ScriptState::setEvalEnabled(bool enabled)
-{
-    v8::HandleScope handleScope(m_isolate);
-    return context()->AllowCodeGenerationFromStrings(enabled);
-}
-
-ScriptValue ScriptState::getFromGlobalObject(const char* name)
-{
-    v8::HandleScope handleScope(m_isolate);
-    v8::Local<v8::Value> v8Value;
-    if (!context()->Global()->Get(context(), v8AtomicString(isolate(), name)).ToLocal(&v8Value))
-        return ScriptValue();
-    return ScriptValue(this, v8Value);
-}
-
 ScriptValue ScriptState::getFromExtrasExports(const char* name)
 {
     v8::HandleScope handleScope(m_isolate);
@@ -96,7 +74,7 @@ ScriptValue ScriptState::getFromExtrasExports(const char* name)
     return ScriptValue(this, v8Value);
 }
 
-ExecutionContext* ScriptState::executionContext() const
+ExecutionContext* ScriptState::getExecutionContext() const
 {
     v8::HandleScope scope(m_isolate);
     return toExecutionContext(context());
@@ -111,12 +89,6 @@ LocalDOMWindow* ScriptState::domWindow() const
 {
     v8::HandleScope scope(m_isolate);
     return toLocalDOMWindow(toDOMWindow(context()));
-}
-
-int ScriptState::contextIdInDebugger()
-{
-    v8::HandleScope scope(m_isolate);
-    return V8Debugger::contextId(m_context.newLocal(m_isolate));
 }
 
 ScriptState* ScriptState::forMainWorld(LocalFrame* frame)

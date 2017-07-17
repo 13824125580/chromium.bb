@@ -10,7 +10,6 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -171,7 +170,7 @@ CollectInfoResult CollectContextGraphicsInfo(GPUInfo* gpu_info) {
   TRACE_EVENT0("gpu", "gpu_info_collector::CollectGraphicsInfo");
 
   gpu_info->can_lose_context =
-      (gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2);
+      (gl::GetGLImplementation() == gl::kGLImplementationEGLGLES2);
   CollectInfoResult result = CollectGraphicsInfoGL(gpu_info);
   gpu_info->context_info_state = result;
   return result;

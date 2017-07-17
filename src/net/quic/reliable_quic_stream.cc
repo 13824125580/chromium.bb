@@ -66,7 +66,6 @@ ReliableQuicStream::ReliableQuicStream(QuicStreamId id, QuicSession* session)
       fin_received_(false),
       rst_sent_(false),
       rst_received_(false),
-      fec_policy_(FEC_PROTECT_OPTIONAL),
       perspective_(session_->perspective()),
       flow_controller_(session_->connection(),
                        id_,
@@ -81,11 +80,7 @@ ReliableQuicStream::ReliableQuicStream(QuicStreamId id, QuicSession* session)
 
 ReliableQuicStream::~ReliableQuicStream() {}
 
-void ReliableQuicStream::SetFromConfig() {
-  if (session_->config()->HasClientSentConnectionOption(kFSTR, perspective_)) {
-    fec_policy_ = FEC_PROTECT_ALWAYS;
-  }
-}
+void ReliableQuicStream::SetFromConfig() {}
 
 void ReliableQuicStream::OnStreamFrame(const QuicStreamFrame& frame) {
   DCHECK_EQ(frame.stream_id, id_);
@@ -106,16 +101,18 @@ void ReliableQuicStream::OnStreamFrame(const QuicStreamFrame& frame) {
   }
 
   // This count includes duplicate data received.
-  size_t frame_payload_size = frame.frame_length;
+  size_t frame_payload_size = frame.data_length;
   stream_bytes_read_ += frame_payload_size;
 
   // Flow control is interested in tracking highest received offset.
-  if (MaybeIncreaseHighestReceivedOffset(frame.offset + frame_payload_size)) {
+  // Only interested in received frames that carry data.
+  if ((!FLAGS_quic_ignore_zero_length_frames || frame_payload_size > 0) &&
+      MaybeIncreaseHighestReceivedOffset(frame.offset + frame_payload_size)) {
     // As the highest received offset has changed, check to see if this is a
     // violation of flow control.
     if (flow_controller_.FlowControlViolation() ||
         connection_flow_controller_->FlowControlViolation()) {
-      session_->connection()->SendConnectionCloseWithDetails(
+      CloseConnectionWithDetails(
           QUIC_FLOW_CONTROL_RECEIVED_TOO_MUCH_DATA,
           "Flow control violation after increasing offset");
       return;
@@ -180,7 +177,8 @@ void ReliableQuicStream::Reset(QuicRstStreamErrorCode error) {
 
 void ReliableQuicStream::CloseConnectionWithDetails(QuicErrorCode error,
                                                     const string& details) {
-  session()->connection()->SendConnectionCloseWithDetails(error, details);
+  session()->connection()->CloseConnection(
+      error, details, ConnectionCloseBehavior::SEND_CONNECTION_CLOSE_PACKET);
 }
 
 void ReliableQuicStream::WriteOrBufferData(
@@ -312,8 +310,8 @@ QuicConsumedData ReliableQuicStream::WritevData(
   }
 
   QuicConsumedData consumed_data = session()->WritevData(
-      id(), QuicIOVector(iov, iov_count, write_length), stream_bytes_written_,
-      fin, GetFecProtection(), ack_listener);
+      this, id(), QuicIOVector(iov, iov_count, write_length),
+      stream_bytes_written_, fin, ack_listener);
   stream_bytes_written_ += consumed_data.bytes_consumed;
 
   AddBytesSent(consumed_data.bytes_consumed);
@@ -341,10 +339,6 @@ QuicConsumedData ReliableQuicStream::WritevData(
     session_->MarkConnectionLevelWriteBlocked(id());
   }
   return consumed_data;
-}
-
-FecProtection ReliableQuicStream::GetFecProtection() {
-  return fec_policy_ == FEC_PROTECT_ALWAYS ? MUST_FEC_PROTECT : MAY_FEC_PROTECT;
 }
 
 void ReliableQuicStream::CloseReadSide() {
@@ -384,6 +378,10 @@ QuicVersion ReliableQuicStream::version() const {
 void ReliableQuicStream::StopReading() {
   DVLOG(1) << ENDPOINT << "Stop reading from stream " << id();
   sequencer_.StopReading();
+}
+
+const IPEndPoint& ReliableQuicStream::PeerAddressOfLatestPacket() const {
+  return session_->connection()->last_packet_source_address();
 }
 
 void ReliableQuicStream::OnClose() {

@@ -18,6 +18,7 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/geolocation_delegate.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
@@ -68,7 +69,7 @@
 #endif
 
 #if defined(ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
-#include "media/mojo/services/mojo_media_application_factory.h"
+#include "media/mojo/services/mojo_media_application_factory.h"  // nogncheck
 #endif
 
 namespace content {
@@ -110,13 +111,6 @@ int GetCrashSignalFD(const base::CommandLine& command_line) {
     return crash_handler->GetDeathSignalSocket();
   }
 
-  if (process_type == switches::kPluginProcess) {
-    static breakpad::CrashHandlerHostLinux* crash_handler = NULL;
-    if (!crash_handler)
-      crash_handler = CreateCrashHandlerHost(process_type);
-    return crash_handler->GetDeathSignalSocket();
-  }
-
   if (process_type == switches::kPpapiPluginProcess) {
     static breakpad::CrashHandlerHostLinux* crash_handler = NULL;
     if (!crash_handler)
@@ -134,6 +128,22 @@ int GetCrashSignalFD(const base::CommandLine& command_line) {
   return -1;
 }
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+
+// A provider of services for Geolocation.
+class ShellGeolocationDelegate : public content::GeolocationDelegate {
+ public:
+  explicit ShellGeolocationDelegate(ShellBrowserContext* context)
+      : context_(context) {}
+
+  AccessTokenStore* CreateAccessTokenStore() final {
+    return new ShellAccessTokenStore(context_);
+  }
+
+ private:
+  ShellBrowserContext* context_;
+
+  DISALLOW_COPY_AND_ASSIGN(ShellGeolocationDelegate);
+};
 
 }  // namespace
 
@@ -174,30 +184,6 @@ bool ShellContentBrowserClient::DoesSiteRequireDedicatedProcess(
   return base::MatchPattern(origin, pattern);
 }
 
-net::URLRequestContextGetter* ShellContentBrowserClient::CreateRequestContext(
-    BrowserContext* content_browser_context,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  ShellBrowserContext* shell_browser_context =
-      ShellBrowserContextForBrowserContext(content_browser_context);
-  return shell_browser_context->CreateRequestContext(
-      protocol_handlers, std::move(request_interceptors));
-}
-
-net::URLRequestContextGetter*
-ShellContentBrowserClient::CreateRequestContextForStoragePartition(
-    BrowserContext* content_browser_context,
-    const base::FilePath& partition_path,
-    bool in_memory,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  ShellBrowserContext* shell_browser_context =
-      ShellBrowserContextForBrowserContext(content_browser_context);
-  return shell_browser_context->CreateRequestContextForStoragePartition(
-      partition_path, in_memory, protocol_handlers,
-      std::move(request_interceptors));
-}
-
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
   if (!url.is_valid())
     return false;
@@ -218,53 +204,25 @@ bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
   return false;
 }
 
-bool ShellContentBrowserClient::IsNPAPIEnabled() {
-#if defined(OS_WIN) || defined(OS_MACOSX)
-  return true;
-#else
-  return false;
-#endif
-}
-
 void ShellContentBrowserClient::RegisterInProcessMojoApplications(
     StaticMojoApplicationMap* apps) {
 #if (ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
-  apps->insert(std::make_pair(GURL("mojo:media"),
-                              base::Bind(&media::CreateMojoMediaApplication)));
+  content::MojoApplicationInfo app_info;
+  app_info.application_factory = base::Bind(&media::CreateMojoMediaApplication);
+  apps->insert(std::make_pair("mojo:media", app_info));
 #endif
 }
 
 void ShellContentBrowserClient::RegisterOutOfProcessMojoApplications(
       OutOfProcessMojoApplicationMap* apps) {
-    // SHEZ: Remove test-only code.
-#if 0
-  apps->insert(std::make_pair(GURL(kTestMojoAppUrl),
-                              base::UTF8ToUTF16("Test Mojo App")));
-#endif
 }
 
 void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
     base::CommandLine* command_line,
     int child_process_id) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDumpLineBoxTrees)) {
-    command_line->AppendSwitch(switches::kDumpLineBoxTrees);
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableFontAntialiasing)) {
-    command_line->AppendSwitch(switches::kEnableFontAntialiasing);
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAlwaysUseComplexText)) {
-    command_line->AppendSwitch(switches::kAlwaysUseComplexText);
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kExposeInternalsForTesting)) {
     command_line->AppendSwitch(switches::kExposeInternalsForTesting);
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kStableReleaseMode)) {
-    command_line->AppendSwitch(switches::kStableReleaseMode);
   }
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableCrashReporter)) {
@@ -276,13 +234,6 @@ void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
         switches::kCrashDumpsDir,
         base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
             switches::kCrashDumpsDir));
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableLeakDetection)) {
-    command_line->AppendSwitchASCII(
-        switches::kEnableLeakDetection,
-        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-            switches::kEnableLeakDetection));
   }
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kIsolateSitesForTesting)) {
@@ -367,7 +318,7 @@ ShellContentBrowserClient::CreateQuotaPermissionContext() {
 void ShellContentBrowserClient::SelectClientCertificate(
     WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<ClientCertificateDelegate> delegate) {
+    std::unique_ptr<ClientCertificateDelegate> delegate) {
   if (!select_client_certificate_callback_.is_null())
     select_client_certificate_callback_.Run();
 }
@@ -471,17 +422,8 @@ ShellBrowserContext*
   return shell_browser_main_parts_->off_the_record_browser_context();
 }
 
-AccessTokenStore* ShellContentBrowserClient::CreateAccessTokenStore() {
-  return new ShellAccessTokenStore(browser_context());
-}
-
-ShellBrowserContext*
-ShellContentBrowserClient::ShellBrowserContextForBrowserContext(
-    BrowserContext* content_browser_context) {
-  if (content_browser_context == browser_context())
-    return browser_context();
-  DCHECK_EQ(content_browser_context, off_the_record_browser_context());
-  return off_the_record_browser_context();
+GeolocationDelegate* ShellContentBrowserClient::CreateGeolocationDelegate() {
+  return new ShellGeolocationDelegate(browser_context());
 }
 
 }  // namespace content

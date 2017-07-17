@@ -39,9 +39,8 @@ class Extension;
 namespace content {
 
 class InProcessChildThreadParams;
-class RenderProcessObserver;
+class RenderThreadObserver;
 class ResourceDispatcherDelegate;
-class ServiceRegistry;
 
 class CONTENT_EXPORT RenderThread : virtual public ChildThread {
  public:
@@ -77,20 +76,16 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void RemoveFilter(IPC::MessageFilter* filter) = 0;
 
   // Add/remove observers for the process.
-  virtual void AddObserver(RenderProcessObserver* observer) = 0;
-  virtual void RemoveObserver(RenderProcessObserver* observer) = 0;
+  virtual void AddObserver(RenderThreadObserver* observer) = 0;
+  virtual void RemoveObserver(RenderThreadObserver* observer) = 0;
 
   // Set the ResourceDispatcher delegate object for this process.
   virtual void SetResourceDispatcherDelegate(
       ResourceDispatcherDelegate* delegate) = 0;
 
-  // We initialize WebKit as late as possible. Call this to force
-  // initialization.
-  virtual void EnsureWebKitInitialized() = 0;
-
   // Asks the host to create a block of shared memory for the renderer.
   // The shared memory allocated by the host is returned back.
-  virtual scoped_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
+  virtual std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
       size_t buffer_size) = 0;
 
   virtual cc::SharedBitmapManager* GetSharedBitmapManager() = 0;
@@ -121,9 +116,6 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
 
   // Gets the shutdown event for the process.
   virtual base::WaitableEvent* GetShutdownEvent() = 0;
-
-  // Returns the ServiceRegistry for this thread.
-  virtual ServiceRegistry* GetServiceRegistry() = 0;
 };
 
 }  // namespace content

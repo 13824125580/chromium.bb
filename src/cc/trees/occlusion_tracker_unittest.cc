@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "cc/animation/layer_animation_controller.h"
 #include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_impl.h"
@@ -101,14 +100,14 @@ class OcclusionTrackerTest : public testing::Test {
                                    const gfx::Size& bounds) {
     LayerTreeImpl* tree = host_->host_impl()->active_tree();
     int id = next_layer_impl_id_++;
-    scoped_ptr<TestContentLayerImpl> layer(new TestContentLayerImpl(tree, id));
+    std::unique_ptr<TestContentLayerImpl> layer(
+        new TestContentLayerImpl(tree, id));
     TestContentLayerImpl* layer_ptr = layer.get();
     SetProperties(layer_ptr, transform, position, bounds);
 
-    DCHECK(!root_.get());
-    root_ = std::move(layer);
+    host_->host_impl()->active_tree()->SetRootLayerForTesting(std::move(layer));
 
-    layer_ptr->SetForceRenderSurface(true);
+    layer_ptr->test_properties()->force_render_surface = true;
     SetRootLayerOnMainThread(layer_ptr);
 
     return layer_ptr;
@@ -120,10 +119,10 @@ class OcclusionTrackerTest : public testing::Test {
                          const gfx::Size& bounds) {
     LayerTreeImpl* tree = host_->host_impl()->active_tree();
     int id = next_layer_impl_id_++;
-    scoped_ptr<LayerImpl> layer = LayerImpl::Create(tree, id);
+    std::unique_ptr<LayerImpl> layer = LayerImpl::Create(tree, id);
     LayerImpl* layer_ptr = layer.get();
     SetProperties(layer_ptr, transform, position, bounds);
-    parent->AddChild(std::move(layer));
+    parent->test_properties()->AddChild(std::move(layer));
     return layer_ptr;
   }
 
@@ -132,7 +131,7 @@ class OcclusionTrackerTest : public testing::Test {
                            const gfx::PointF& position,
                            const gfx::Size& bounds) {
     LayerImpl* layer = CreateLayer(parent, transform, position, bounds);
-    layer->SetForceRenderSurface(true);
+    layer->test_properties()->force_render_surface = true;
     return layer;
   }
 
@@ -143,7 +142,8 @@ class OcclusionTrackerTest : public testing::Test {
                                            bool opaque) {
     LayerTreeImpl* tree = host_->host_impl()->active_tree();
     int id = next_layer_impl_id_++;
-    scoped_ptr<TestContentLayerImpl> layer(new TestContentLayerImpl(tree, id));
+    std::unique_ptr<TestContentLayerImpl> layer(
+        new TestContentLayerImpl(tree, id));
     TestContentLayerImpl* layer_ptr = layer.get();
     SetProperties(layer_ptr, transform, position, bounds);
 
@@ -157,7 +157,7 @@ class OcclusionTrackerTest : public testing::Test {
         layer_ptr->SetOpaqueContentsRect(gfx::Rect());
     }
 
-    parent->AddChild(std::move(layer));
+    parent->test_properties()->AddChild(std::move(layer));
     return layer_ptr;
   }
 
@@ -167,7 +167,8 @@ class OcclusionTrackerTest : public testing::Test {
                                 const gfx::Size& bounds) {
     LayerTreeImpl* tree = host_->host_impl()->active_tree();
     int id = next_layer_impl_id_++;
-    scoped_ptr<TestContentLayerImpl> layer(new TestContentLayerImpl(tree, id));
+    std::unique_ptr<TestContentLayerImpl> layer(
+        new TestContentLayerImpl(tree, id));
     TestContentLayerImpl* layer_ptr = layer.get();
     SetProperties(layer_ptr, transform, position, bounds);
     SetReplica(owning_layer, std::move(layer));
@@ -177,7 +178,8 @@ class OcclusionTrackerTest : public testing::Test {
   LayerImpl* CreateMaskLayer(LayerImpl* owning_layer, const gfx::Size& bounds) {
     LayerTreeImpl* tree = host_->host_impl()->active_tree();
     int id = next_layer_impl_id_++;
-    scoped_ptr<TestContentLayerImpl> layer(new TestContentLayerImpl(tree, id));
+    std::unique_ptr<TestContentLayerImpl> layer(
+        new TestContentLayerImpl(tree, id));
     TestContentLayerImpl* layer_ptr = layer.get();
     SetProperties(layer_ptr, identity_matrix, gfx::PointF(), bounds);
     SetMask(owning_layer, std::move(layer));
@@ -191,19 +193,19 @@ class OcclusionTrackerTest : public testing::Test {
                                              bool opaque) {
     TestContentLayerImpl* layer =
         CreateDrawingLayer(parent, transform, position, bounds, opaque);
-    layer->SetForceRenderSurface(true);
+    layer->test_properties()->force_render_surface = true;
     return layer;
   }
 
   void DestroyLayers() {
-    root_ = nullptr;
+    host_->host_impl()->active_tree()->SetRootLayerForTesting(nullptr);
     render_surface_layer_list_impl_.clear();
     replica_layers_.clear();
     mask_layers_.clear();
     ResetLayerIterator();
   }
 
-  void CopyOutputCallback(scoped_ptr<CopyOutputResult> result) {}
+  void CopyOutputCallback(std::unique_ptr<CopyOutputResult> result) {}
 
   void AddCopyRequest(Layer* layer) {
     layer->RequestCopyOfOutput(CopyOutputRequest::CreateBitmapRequest(
@@ -212,14 +214,15 @@ class OcclusionTrackerTest : public testing::Test {
   }
 
   void AddCopyRequest(LayerImpl* layer) {
-    std::vector<scoped_ptr<CopyOutputRequest>> requests;
-    requests.push_back(CopyOutputRequest::CreateBitmapRequest(base::Bind(
-        &OcclusionTrackerTest::CopyOutputCallback, base::Unretained(this))));
-    layer->PassCopyRequests(&requests);
+    layer->test_properties()->copy_requests.push_back(
+        CopyOutputRequest::CreateBitmapRequest(
+            base::Bind(&OcclusionTrackerTest::CopyOutputCallback,
+                       base::Unretained(this))));
   }
 
   void CalcDrawEtc(TestContentLayerImpl* root) {
-    DCHECK(root == root_.get());
+    root->layer_tree_impl()->BuildLayerListForTesting();
+    DCHECK(root == root->layer_tree_impl()->root_layer_for_testing());
 
     // These occlusion tests attach and detach layers in multiple
     // iterations, so rebuild property trees every time.
@@ -227,12 +230,10 @@ class OcclusionTrackerTest : public testing::Test {
 
     FakeLayerTreeHostImpl::RecursiveUpdateNumChildren(root);
 
-    root->layer_tree_impl()->IncrementRenderSurfaceListIdForTesting();
     LayerTreeHostCommon::CalcDrawPropsImplInputsForTesting inputs(
-        root, root->bounds(), &render_surface_layer_list_impl_,
-        root->layer_tree_impl()->current_render_surface_list_id());
+        root, root->bounds(), &render_surface_layer_list_impl_);
     inputs.can_adjust_raster_scales = true;
-    LayerTreeHostCommon::CalculateDrawProperties(&inputs);
+    LayerTreeHostCommon::CalculateDrawPropertiesForTesting(&inputs);
 
     layer_iterator_ = layer_iterator_begin_ =
         LayerIterator::Begin(&render_surface_layer_list_impl_);
@@ -298,20 +299,21 @@ class OcclusionTrackerTest : public testing::Test {
     layer->SetBounds(bounds);
   }
 
-  void SetReplica(LayerImpl* owning_layer, scoped_ptr<LayerImpl> layer) {
-    owning_layer->SetReplicaLayer(std::move(layer));
+  void SetReplica(LayerImpl* owning_layer, std::unique_ptr<LayerImpl> layer) {
+    // We need to set parent on replica layer for property tree building.
+    layer->test_properties()->parent = owning_layer;
+    owning_layer->test_properties()->SetReplicaLayer(std::move(layer));
   }
 
-  void SetMask(LayerImpl* owning_layer, scoped_ptr<LayerImpl> layer) {
-    owning_layer->SetMaskLayer(std::move(layer));
+  void SetMask(LayerImpl* owning_layer, std::unique_ptr<LayerImpl> layer) {
+    owning_layer->test_properties()->SetMaskLayer(std::move(layer));
   }
 
   bool opaque_layers_;
   FakeLayerTreeHostClient client_;
   TestTaskGraphRunner task_graph_runner_;
-  scoped_ptr<FakeLayerTreeHost> host_;
+  std::unique_ptr<FakeLayerTreeHost> host_;
   // These hold ownership of the layers for the duration of the test.
-  scoped_ptr<LayerImpl> root_;
   LayerImplList render_surface_layer_list_impl_;
   LayerIterator layer_iterator_begin_;
   LayerIterator layer_iterator_;
@@ -537,7 +539,7 @@ class OcclusionTrackerTestScaledRenderSurface : public OcclusionTrackerTest {
     layer1_matrix.Scale(2.0, 2.0);
     TestContentLayerImpl* layer1 = this->CreateDrawingLayer(
         parent, layer1_matrix, gfx::PointF(), gfx::Size(100, 100), true);
-    layer1->SetForceRenderSurface(true);
+    layer1->test_properties()->force_render_surface = true;
 
     gfx::Transform layer2_matrix;
     layer2_matrix.Translate(25.0, 25.0);
@@ -918,17 +920,17 @@ class OcclusionTrackerTestFilters : public OcclusionTrackerTest {
         parent, layer_transform, gfx::PointF(30.f, 30.f), gfx::Size(500, 500),
         true);
 
-    blur_layer->SetForceRenderSurface(true);
+    blur_layer->test_properties()->force_render_surface = true;
     FilterOperations filters;
     filters.Append(FilterOperation::CreateBlurFilter(10.f));
     blur_layer->SetFilters(filters);
 
-    opaque_layer->SetForceRenderSurface(true);
+    opaque_layer->test_properties()->force_render_surface = true;
     filters.Clear();
     filters.Append(FilterOperation::CreateGrayscaleFilter(0.5f));
     opaque_layer->SetFilters(filters);
 
-    opacity_layer->SetForceRenderSurface(true);
+    opacity_layer->test_properties()->force_render_surface = true;
     filters.Clear();
     filters.Append(FilterOperation::CreateOpacityFilter(0.5f));
     opacity_layer->SetFilters(filters);
@@ -1185,9 +1187,9 @@ class OcclusionTrackerTestLayerBehindCameraDoesNotOcclude
         this->identity_matrix, gfx::PointF(), gfx::Size(100, 100));
     TestContentLayerImpl* layer = this->CreateDrawingLayer(
         parent, transform, gfx::PointF(), gfx::Size(100, 100), true);
-    parent->SetShouldFlattenTransform(false);
+    parent->test_properties()->should_flatten_transform = false;
     parent->Set3dSortingContextId(1);
-    layer->SetShouldFlattenTransform(false);
+    layer->test_properties()->should_flatten_transform = false;
     layer->Set3dSortingContextId(1);
     this->CalcDrawEtc(parent);
 
@@ -1460,7 +1462,7 @@ class OcclusionTrackerTestDontOccludePixelsNeededForBackgroundFilter
       LayerImpl* filtered_surface = this->CreateDrawingLayer(
           parent, scale_by_half, gfx::PointF(50.f, 50.f), gfx::Size(100, 100),
           false);
-      filtered_surface->SetBackgroundFilters(filters);
+      filtered_surface->test_properties()->background_filters = filters;
       gfx::Rect occlusion_rect;
       switch (i) {
         case LEFT:
@@ -1480,7 +1482,7 @@ class OcclusionTrackerTestDontOccludePixelsNeededForBackgroundFilter
       LayerImpl* occluding_layer = this->CreateDrawingLayer(
           parent, this->identity_matrix, gfx::PointF(occlusion_rect.origin()),
           occlusion_rect.size(), true);
-      occluding_layer->SetForceRenderSurface(false);
+      occluding_layer->test_properties()->force_render_surface = false;
       this->CalcDrawEtc(parent);
 
       TestOcclusionTrackerWithClip occlusion(gfx::Rect(0, 0, 200, 200));
@@ -1564,12 +1566,12 @@ class OcclusionTrackerTestTwoBackgroundFiltersReduceOcclusionTwice
         gfx::Size(50, 50), true);
 
     // Filters make the layers own surfaces.
-    filtered_surface1->SetForceRenderSurface(true);
-    filtered_surface2->SetForceRenderSurface(true);
+    filtered_surface1->test_properties()->force_render_surface = true;
+    filtered_surface2->test_properties()->force_render_surface = true;
     FilterOperations filters;
     filters.Append(FilterOperation::CreateBlurFilter(1.f));
-    filtered_surface1->SetBackgroundFilters(filters);
-    filtered_surface2->SetBackgroundFilters(filters);
+    filtered_surface1->test_properties()->background_filters = filters;
+    filtered_surface2->test_properties()->background_filters = filters;
 
     // Save the distance of influence for the blur effect.
     int outset_top, outset_right, outset_bottom, outset_left;
@@ -1641,10 +1643,10 @@ class OcclusionTrackerTestDontReduceOcclusionBelowBackgroundFilter
                              gfx::Size());
 
     // Filters make the layer own a surface.
-    filtered_surface->SetForceRenderSurface(true);
+    filtered_surface->test_properties()->force_render_surface = true;
     FilterOperations filters;
     filters.Append(FilterOperation::CreateBlurFilter(3.f));
-    filtered_surface->SetBackgroundFilters(filters);
+    filtered_surface->test_properties()->background_filters = filters;
 
     this->CalcDrawEtc(parent);
 
@@ -1708,10 +1710,10 @@ class OcclusionTrackerTestDontReduceOcclusionIfBackgroundFilterIsOccluded
         gfx::Size(50, 50), true);
 
     // Filters make the layer own a surface.
-    filtered_surface->SetForceRenderSurface(true);
+    filtered_surface->test_properties()->force_render_surface = true;
     FilterOperations filters;
     filters.Append(FilterOperation::CreateBlurFilter(3.f));
-    filtered_surface->SetBackgroundFilters(filters);
+    filtered_surface->test_properties()->background_filters = filters;
 
     this->CalcDrawEtc(parent);
 
@@ -1787,10 +1789,10 @@ class OcclusionTrackerTestReduceOcclusionWhenBkgdFilterIsPartiallyOccluded
         gfx::Size(10, 10), true);
 
     // Filters make the layer own a surface.
-    filtered_surface->SetForceRenderSurface(true);
+    filtered_surface->test_properties()->force_render_surface = true;
     FilterOperations filters;
     filters.Append(FilterOperation::CreateBlurFilter(3.f));
-    filtered_surface->SetBackgroundFilters(filters);
+    filtered_surface->test_properties()->background_filters = filters;
 
     // Save the distance of influence for the blur effect.
     int outset_top, outset_right, outset_bottom, outset_left;
@@ -1862,7 +1864,7 @@ class OcclusionTrackerTestBlendModeDoesNotOcclude
         gfx::Size(20, 22), true);
 
     // Blend mode makes the layer own a surface.
-    blend_mode_layer->SetForceRenderSurface(true);
+    blend_mode_layer->test_properties()->force_render_surface = true;
     blend_mode_layer->SetBlendMode(SkXfermode::kMultiply_Mode);
 
     this->CalcDrawEtc(parent);
@@ -2072,7 +2074,7 @@ class OcclusionTrackerTestHiddenCopyRequestDoesNotOcclude
 
     // The |copy| layer is hidden but since it is being copied, it will be
     // drawn.
-    hide->SetHideLayerAndSubtree(true);
+    hide->test_properties()->hide_layer_and_subtree = true;
 
     this->CalcDrawEtc(root);
 

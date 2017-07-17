@@ -5,6 +5,7 @@
 #include "device/usb/usb_device_handle_impl.h"
 
 #include <algorithm>
+#include <memory>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -16,7 +17,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/usb/usb_context.h"
 #include "device/usb/usb_descriptors.h"
@@ -200,7 +201,7 @@ UsbDeviceHandleImpl::InterfaceClaimer::~InterfaceClaimer() {
 // the UsbDeviceHandle that created it.
 class UsbDeviceHandleImpl::Transfer {
  public:
-  static scoped_ptr<Transfer> CreateControlTransfer(
+  static std::unique_ptr<Transfer> CreateControlTransfer(
       scoped_refptr<UsbDeviceHandleImpl> device_handle,
       uint8_t type,
       uint8_t request,
@@ -211,7 +212,7 @@ class UsbDeviceHandleImpl::Transfer {
       unsigned int timeout,
       scoped_refptr<base::TaskRunner> callback_task_runner,
       const TransferCallback& callback);
-  static scoped_ptr<Transfer> CreateBulkTransfer(
+  static std::unique_ptr<Transfer> CreateBulkTransfer(
       scoped_refptr<UsbDeviceHandleImpl> device_handle,
       uint8_t endpoint,
       scoped_refptr<net::IOBuffer> buffer,
@@ -219,7 +220,7 @@ class UsbDeviceHandleImpl::Transfer {
       unsigned int timeout,
       scoped_refptr<base::TaskRunner> callback_task_runner,
       const TransferCallback& callback);
-  static scoped_ptr<Transfer> CreateInterruptTransfer(
+  static std::unique_ptr<Transfer> CreateInterruptTransfer(
       scoped_refptr<UsbDeviceHandleImpl> device_handle,
       uint8_t endpoint,
       scoped_refptr<net::IOBuffer> buffer,
@@ -227,7 +228,7 @@ class UsbDeviceHandleImpl::Transfer {
       unsigned int timeout,
       scoped_refptr<base::TaskRunner> callback_task_runner,
       const TransferCallback& callback);
-  static scoped_ptr<Transfer> CreateIsochronousTransfer(
+  static std::unique_ptr<Transfer> CreateIsochronousTransfer(
       scoped_refptr<UsbDeviceHandleImpl> device_handle,
       uint8_t endpoint,
       scoped_refptr<net::IOBuffer> buffer,
@@ -284,7 +285,7 @@ class UsbDeviceHandleImpl::Transfer {
 };
 
 // static
-scoped_ptr<UsbDeviceHandleImpl::Transfer>
+std::unique_ptr<UsbDeviceHandleImpl::Transfer>
 UsbDeviceHandleImpl::Transfer::CreateControlTransfer(
     scoped_refptr<UsbDeviceHandleImpl> device_handle,
     uint8_t type,
@@ -296,7 +297,7 @@ UsbDeviceHandleImpl::Transfer::CreateControlTransfer(
     unsigned int timeout,
     scoped_refptr<base::TaskRunner> callback_task_runner,
     const TransferCallback& callback) {
-  scoped_ptr<Transfer> transfer(new Transfer(
+  std::unique_ptr<Transfer> transfer(new Transfer(
       device_handle, nullptr, USB_TRANSFER_CONTROL, buffer,
       length + LIBUSB_CONTROL_SETUP_SIZE, callback_task_runner, callback));
 
@@ -318,7 +319,7 @@ UsbDeviceHandleImpl::Transfer::CreateControlTransfer(
 }
 
 // static
-scoped_ptr<UsbDeviceHandleImpl::Transfer>
+std::unique_ptr<UsbDeviceHandleImpl::Transfer>
 UsbDeviceHandleImpl::Transfer::CreateBulkTransfer(
     scoped_refptr<UsbDeviceHandleImpl> device_handle,
     uint8_t endpoint,
@@ -327,7 +328,7 @@ UsbDeviceHandleImpl::Transfer::CreateBulkTransfer(
     unsigned int timeout,
     scoped_refptr<base::TaskRunner> callback_task_runner,
     const TransferCallback& callback) {
-  scoped_ptr<Transfer> transfer(new Transfer(
+  std::unique_ptr<Transfer> transfer(new Transfer(
       device_handle, device_handle->GetClaimedInterfaceForEndpoint(endpoint),
       USB_TRANSFER_BULK, buffer, length, callback_task_runner, callback));
 
@@ -347,7 +348,7 @@ UsbDeviceHandleImpl::Transfer::CreateBulkTransfer(
 }
 
 // static
-scoped_ptr<UsbDeviceHandleImpl::Transfer>
+std::unique_ptr<UsbDeviceHandleImpl::Transfer>
 UsbDeviceHandleImpl::Transfer::CreateInterruptTransfer(
     scoped_refptr<UsbDeviceHandleImpl> device_handle,
     uint8_t endpoint,
@@ -356,7 +357,7 @@ UsbDeviceHandleImpl::Transfer::CreateInterruptTransfer(
     unsigned int timeout,
     scoped_refptr<base::TaskRunner> callback_task_runner,
     const TransferCallback& callback) {
-  scoped_ptr<Transfer> transfer(new Transfer(
+  std::unique_ptr<Transfer> transfer(new Transfer(
       device_handle, device_handle->GetClaimedInterfaceForEndpoint(endpoint),
       USB_TRANSFER_INTERRUPT, buffer, length, callback_task_runner, callback));
 
@@ -376,7 +377,7 @@ UsbDeviceHandleImpl::Transfer::CreateInterruptTransfer(
 }
 
 // static
-scoped_ptr<UsbDeviceHandleImpl::Transfer>
+std::unique_ptr<UsbDeviceHandleImpl::Transfer>
 UsbDeviceHandleImpl::Transfer::CreateIsochronousTransfer(
     scoped_refptr<UsbDeviceHandleImpl> device_handle,
     uint8_t endpoint,
@@ -386,7 +387,7 @@ UsbDeviceHandleImpl::Transfer::CreateIsochronousTransfer(
     unsigned int timeout,
     scoped_refptr<base::TaskRunner> callback_task_runner,
     const IsochronousTransferCallback& callback) {
-  scoped_ptr<Transfer> transfer(new Transfer(
+  std::unique_ptr<Transfer> transfer(new Transfer(
       device_handle, device_handle->GetClaimedInterfaceForEndpoint(endpoint),
       buffer, callback_task_runner, callback));
 
@@ -560,8 +561,29 @@ scoped_refptr<UsbDevice> UsbDeviceHandleImpl::GetDevice() const {
 
 void UsbDeviceHandleImpl::Close() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (device_)
-    device_->Close(this);
+  if (!device_)
+    return;
+
+  // Cancel all the transfers, their callbacks will be called some time later.
+  for (Transfer* transfer : transfers_)
+    transfer->Cancel();
+
+  // Release all remaining interfaces once their transfers have completed.
+  // This loop must ensure that what may be the final reference is released on
+  // the right thread.
+  for (auto& map_entry : claimed_interfaces_) {
+    InterfaceClaimer* interface_claimer = map_entry.second.get();
+    interface_claimer->AddRef();
+    map_entry.second = nullptr;
+    blocking_task_runner_->ReleaseSoon(FROM_HERE, interface_claimer);
+  }
+
+  device_->HandleClosed(this);
+  device_ = nullptr;
+
+  // The device handle cannot be closed here. When libusb_cancel_transfer is
+  // finished the last references to this device will be released and the
+  // destructor will close the handle.
 }
 
 void UsbDeviceHandleImpl::SetConfiguration(int configuration_value,
@@ -756,15 +778,13 @@ void UsbDeviceHandleImpl::GenericTransfer(UsbEndpointDirection direction,
   }
 }
 
-bool UsbDeviceHandleImpl::FindInterfaceByEndpoint(uint8_t endpoint_address,
-                                                  uint8_t* interface_number) {
+const UsbInterfaceDescriptor* UsbDeviceHandleImpl::FindInterfaceByEndpoint(
+    uint8_t endpoint_address) {
   DCHECK(thread_checker_.CalledOnValidThread());
   const auto endpoint_it = endpoint_map_.find(endpoint_address);
-  if (endpoint_it != endpoint_map_.end()) {
-    *interface_number = endpoint_it->second.interface_number;
-    return true;
-  }
-  return false;
+  if (endpoint_it != endpoint_map_.end())
+    return endpoint_it->second.interface;
+  return nullptr;
 }
 
 UsbDeviceHandleImpl::UsbDeviceHandleImpl(
@@ -781,6 +801,8 @@ UsbDeviceHandleImpl::UsbDeviceHandleImpl(
 }
 
 UsbDeviceHandleImpl::~UsbDeviceHandleImpl() {
+  DCHECK(!device_) << "UsbDeviceHandle must be closed before it is destroyed.";
+
   // This class is RefCountedThreadSafe and so the destructor may be called on
   // any thread. libusb is not safe to reentrancy so be sure not to try to close
   // the device from inside a transfer completion callback.
@@ -840,7 +862,7 @@ void UsbDeviceHandleImpl::ClaimInterfaceComplete(
         interface_claimer;
     RefreshEndpointMap();
   }
-  callback.Run(interface_claimer);
+  callback.Run(static_cast<bool>(interface_claimer));
 }
 
 void UsbDeviceHandleImpl::SetInterfaceAlternateSettingOnBlockingThread(
@@ -898,7 +920,7 @@ void UsbDeviceHandleImpl::ClearHaltOnBlockingThread(
 void UsbDeviceHandleImpl::RefreshEndpointMap() {
   DCHECK(thread_checker_.CalledOnValidThread());
   endpoint_map_.clear();
-  const UsbConfigDescriptor* config = device_->GetActiveConfiguration();
+  const UsbConfigDescriptor* config = device_->active_configuration();
   if (config) {
     for (const auto& map_entry : claimed_interfaces_) {
       int interface_number = map_entry.first;
@@ -908,8 +930,7 @@ void UsbDeviceHandleImpl::RefreshEndpointMap() {
         if (iface.interface_number == interface_number &&
             iface.alternate_setting == claimed_iface->alternate_setting()) {
           for (const UsbEndpointDescriptor& endpoint : iface.endpoints) {
-            endpoint_map_[endpoint.address] = {interface_number,
-                                               endpoint.transfer_type};
+            endpoint_map_[endpoint.address] = {&iface, &endpoint};
           }
           break;
         }
@@ -922,7 +943,7 @@ scoped_refptr<UsbDeviceHandleImpl::InterfaceClaimer>
 UsbDeviceHandleImpl::GetClaimedInterfaceForEndpoint(uint8_t endpoint) {
   const auto endpoint_it = endpoint_map_.find(endpoint);
   if (endpoint_it != endpoint_map_.end())
-    return claimed_interfaces_[endpoint_it->second.interface_number];
+    return claimed_interfaces_[endpoint_it->second.interface->interface_number];
   return nullptr;
 }
 
@@ -964,7 +985,7 @@ void UsbDeviceHandleImpl::ControlTransferInternal(
   memcpy(resized_buffer->data() + LIBUSB_CONTROL_SETUP_SIZE, buffer->data(),
          length);
 
-  scoped_ptr<Transfer> transfer = Transfer::CreateControlTransfer(
+  std::unique_ptr<Transfer> transfer = Transfer::CreateControlTransfer(
       this, CreateRequestType(direction, request_type, recipient), request,
       value, index, static_cast<uint16_t>(length), resized_buffer, timeout,
       callback_task_runner, callback);
@@ -994,7 +1015,7 @@ void UsbDeviceHandleImpl::IsochronousTransferInInternal(
   size_t length =
       std::accumulate(packet_lengths.begin(), packet_lengths.end(), 0u);
   scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(length));
-  scoped_ptr<Transfer> transfer = Transfer::CreateIsochronousTransfer(
+  std::unique_ptr<Transfer> transfer = Transfer::CreateIsochronousTransfer(
       this, endpoint_address, buffer, length, packet_lengths, timeout,
       callback_task_runner, callback);
 
@@ -1018,7 +1039,7 @@ void UsbDeviceHandleImpl::IsochronousTransferOutInternal(
 
   size_t length =
       std::accumulate(packet_lengths.begin(), packet_lengths.end(), 0u);
-  scoped_ptr<Transfer> transfer = Transfer::CreateIsochronousTransfer(
+  std::unique_ptr<Transfer> transfer = Transfer::CreateIsochronousTransfer(
       this, endpoint_address, buffer, length, packet_lengths, timeout,
       callback_task_runner, callback);
 
@@ -1057,8 +1078,8 @@ void UsbDeviceHandleImpl::GenericTransferInternal(
     return;
   }
 
-  scoped_ptr<Transfer> transfer;
-  UsbTransferType transfer_type = endpoint_it->second.transfer_type;
+  std::unique_ptr<Transfer> transfer;
+  UsbTransferType transfer_type = endpoint_it->second.endpoint->transfer_type;
   if (transfer_type == USB_TRANSFER_BULK) {
     transfer = Transfer::CreateBulkTransfer(this, endpoint_address, buffer,
                                             static_cast<int>(length), timeout,
@@ -1078,7 +1099,7 @@ void UsbDeviceHandleImpl::GenericTransferInternal(
   SubmitTransfer(std::move(transfer));
 }
 
-void UsbDeviceHandleImpl::SubmitTransfer(scoped_ptr<Transfer> transfer) {
+void UsbDeviceHandleImpl::SubmitTransfer(std::unique_ptr<Transfer> transfer) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Transfer is owned by libusb until its completion callback is run. This
@@ -1104,32 +1125,6 @@ void UsbDeviceHandleImpl::TransferComplete(Transfer* transfer,
   // libusb_free_transfer races with libusb_submit_transfer and only work-
   // around is to make sure to call them on the same thread.
   blocking_task_runner_->DeleteSoon(FROM_HERE, transfer);
-}
-
-void UsbDeviceHandleImpl::InternalClose() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!device_)
-    return;
-
-  // Cancel all the transfers.
-  for (Transfer* transfer : transfers_) {
-    // The callback will be called some time later.
-    transfer->Cancel();
-  }
-
-  // Release all remaining interfaces once their transfers have completed.
-  // This loop must ensure that what may be the final reference is released on
-  // the right thread.
-  for (auto& map_entry : claimed_interfaces_) {
-    InterfaceClaimer* interface_claimer = map_entry.second.get();
-    interface_claimer->AddRef();
-    map_entry.second = nullptr;
-    blocking_task_runner_->ReleaseSoon(FROM_HERE, interface_claimer);
-  }
-
-  // Cannot close device handle here. Need to wait for libusb_cancel_transfer to
-  // finish.
-  device_ = nullptr;
 }
 
 }  // namespace device

@@ -76,6 +76,12 @@ Press any key to continue exploring.
   <message name="IDS_FLAGS_FILE_MANAGER_MTP_DESCRIPTION" desc="Description of the about:flag option for MTP support in file manager.">
     Show MTP devices as a file storage in the file manager.
   </message>
+  <message name="IDS_FLAGS_FILES_QUICK_VIEW_NAME" desc="Name of the feature flag for files app quick view.">
+    Files app quick view
+  </message>
+  <message name="IDS_FLAGS_FILES_QUICK_VIEW_DESCRIPTION" desc="Description for the feature flag for files app quick view.">
+    Flag for files app quick view, which shows quick preview of a file.
+  </message>
   <message name="IDS_FLAGS_VIDEO_PLAYER_CHROMECAST_SUPPORT_NAME" desc="Name of the about:flag option to enable the chromecast support for video app.">
     Experimental Chromecast support for Video Player
   </message>
@@ -162,9 +168,27 @@ Press any key to continue exploring.
   <message name="IDS_FILE_BROWSER_SHORTCUT_ENTER" desc="[Enter] key name to use in shortcuts descriptions. Shouldn't be translated in many languages actually.">
     Enter
   </message>
+  <message name="IDS_FILE_BROWSER_SHORTCUT_BACKSPACE" desc="[Backspace] key name to use in shortcuts descriptions. Shouldn't be translated in many languages actually.">
+    Backspace
+  </message>
 
   <message name="IDS_FILE_BROWSER_STATUS_COLUMN_LABEL" desc="Status column label.  This column reflects the cloud import status of files.  The status is an icon depicting whether a file has been imported, and if so, where to - for example, a Drive icon if a file has been imported to Google Drive.  For unimported files, this column is blank. ">
     Status
+  </message>
+  <message name="IDS_FILE_BROWSER_TOTAL_FILE_COUNT_LABEL" desc="Total count of files that user selects in Files app">
+    Total file count
+  </message>
+  <message name="IDS_FILE_BROWSER_TOTAL_FILE_SIZE_LABEL" desc="Total size of files that user selects in Files app">
+    Total file size
+  </message>
+  <message name="IDS_FILE_BROWSER_IMAGE_RESOLUTION_COLUMN_LABEL" desc="Image resolution of a file that user selects in Files app">
+    Image resolution
+  </message>
+  <message name="IDS_FILE_BROWSER_MEDIA_TITLE_COLUMN_LABEL" desc="Artist of a music file that user selects in Files app">
+    Title
+  </message>
+  <message name="IDS_FILE_BROWSER_MEDIA_ARTIST_COLUMN_LABEL" desc="Title of a music file that user selects in Files app">
+    Artist
   </message>
   <message name="IDS_FILE_BROWSER_TYPE_COLUMN_LABEL" desc="Type column label.">
     Type
@@ -207,6 +231,12 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_FILE_BROWSER_PREPARING_LABEL" desc="Label informing about preparing the file.">
     Preparing
+  </message>
+  <message name="IDS_FILE_BROWSER_QUICK_VIEW_OPEN_IN_NEW_BUTTON_LABEL" desc="Label for button to open a file with external app.">
+    Open
+  </message>
+  <message name="IDS_FILE_BROWSER_QUICK_VIEW_TOGGLE_METADATA_BOX_BUTTON_LABEL" desc="Label for button to toggle show/hide status of metadata box.">
+    File info
   </message>
   <message name="IDS_FILE_BROWSER_DRAGGING_MULTIPLE_ITEMS" desc="Tooltip message for dragging multiple files.">
     $1 items
@@ -427,11 +457,26 @@ Press any key to continue exploring.
   <message name="IDS_FILE_BROWSER_CUT_BUTTON_LABEL" desc="Button Label.">
     Cut
   </message>
-  <message name="IDS_FILE_BROWSER_OPEN_WITH_BUTTON_LABEL" desc="Menu item label, showing dialog to choose application to open selected files.">
-    Open with...
+  <message name="IDS_FILE_BROWSER_MORE_ACTIONS_BUTTON_LABEL" desc="Menu item label, showing dialog to choose extension to open selected files or directories.">
+    More actions...
+  </message>
+  <message name="IDS_FILE_BROWSER_OPEN_WITH_VERB_BUTTON_LABEL" desc="Verb that describe the action of opening one or more files or directories with the given extension.">
+    Open with <ph name="EXTENSION_NAME">$1<ex>Gallery</ex></ph>
+  </message>
+  <message name="IDS_FILE_BROWSER_ADD_TO_VERB_BUTTON_LABEL" desc="Verb that describes the uploading or addition of one or multiple files or directories to the given extension.">
+    Add to <ph name="EXTENSION_NAME">$1<ex>Evernote</ex></ph>
+  </message>
+  <message name="IDS_FILE_BROWSER_PACK_WITH_VERB_BUTTON_LABEL" desc="Verb that describes the packing or archiving of one or multiple files or directories with the given extension.">
+    Pack with <ph name="EXTENSION_NAME">$1<ex>ZIP</ex></ph>
+  </message>
+  <message name="IDS_FILE_BROWSER_SHARE_WITH_VERB_BUTTON_LABEL" desc="Verb that describes the action of sharing/attaching/sending files with the given application.">
+    Share with <ph name="EXTENSION_NAME">$1<ex>GMail</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_ZIP_SELECTION_BUTTON_LABEL" desc="Menu item label, showing dialog to create zip file for selected files.">
     Zip selection
+  </message>
+  <message name="IDS_FILE_BROWSER_SET_WALLPAPER_BUTTON_LABEL" desc="The context menu item to set wallpaper.">
+    Set wallpaper
   </message>
   <message name="IDS_FILE_BROWSER_CREATE_FOLDER_SHORTCUT_BUTTON_LABEL" desc="Menu item label, creating a shortcut of the selected folder to the left nav.">
     Create shortcut
@@ -701,6 +746,12 @@ Press any key to continue exploring.
     Save file as
   </message>
 
+  <message name="IDS_FILE_BROWSER_ONE_FILE_SELECTED" desc="One file selected.">
+    1 file selected
+  </message>
+  <message name="IDS_FILE_BROWSER_ONE_DIRECTORY_SELECTED" desc="One directory selected.">
+    1 folder selected
+  </message>
   <message name="IDS_FILE_BROWSER_MANY_FILES_SELECTED" desc="Many files selected.">
     <ph name="SELCTED_FILE_COUNT">$1<ex>13</ex></ph> files selected
   </message>
@@ -709,6 +760,15 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_FILE_BROWSER_MANY_ENTRIES_SELECTED" desc="Many items (both files and directories) selected.">
     <ph name="SELCTED_FILES_COUNT">$1<ex>21</ex></ph> items selected
+  </message>
+  <message name="IDS_FILE_BROWSER_METADATA_BOX_FILE_SIZE" desc="Label fo file size.">
+    Size
+  </message>
+  <message name="IDS_FILE_BROWSER_METADATA_BOX_GENERAL_INFO" desc="Category label for general file info.">
+    General Info
+  </message>
+  <message name="IDS_FILE_BROWSER_METADATA_BOX_MODIFICATION_TIME" desc="Label for file modification time.">
+    Modified Time
   </message>
   <message name="IDS_FILE_BROWSER_CALCULATING_SIZE" desc="Message informing the user that total items size is being calculated.">
     Calculating size
@@ -721,6 +781,12 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_FILE_BROWSER_OFFLINE_MESSAGE_PLURAL" desc="Message informing the user how to make multiple selected files available offline.">
     To save these files for offline use, get back online, right-click the files, and select the <ph name="OFFLINE_CHECKBOX_NAME">'$1'<ex>'Available offline'</ex></ph> option.
+  </message>
+  <message name="IDS_FILE_BROWSER_QUICK_VIEW_NO_PLAYBACK_AVAILABLE" desc="Massage for user to notify no playback is available.">
+    No playback available.
+  </message>
+  <message name="IDS_FILE_BROWSER_QUICK_VIEW_NO_PREVIEW_AVAILABLE" desc="Massage for user to notify no preview is available.">
+    No preview available.
   </message>
   <message name="IDS_FILE_BROWSER_HOSTED_OFFLINE_MESSAGE" desc="Message informing the user that the selected file is only available online.">
     You must be online to access this file.
@@ -819,7 +885,7 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_FILE_BROWSER_DRIVE_WELCOME_TEXT_LONG" desc="In the Welcome to Google Drive banner, text of the welcome message, long version.">
     <ph name="MARKUP_1">&lt;p&gt;&lt;strong&gt;<ex>&lt;strong&gt;</ex></ph>Access files from everywhere, even offline.<ph name="MARKUP_2">&lt;/strong&gt;<ex>&lt;/strong&gt;</ex></ph>
-    Files in Google Drive are up-to-date and available from any device.<ph name="MARKUP_3">&lt;/p&gt;<ex>&lt;/p&gt;</ex></ph>
+    Files in Google Drive are up to date and available from any device.<ph name="MARKUP_3">&lt;/p&gt;<ex>&lt;/p&gt;</ex></ph>
     <ph name="MARKUP_4">&lt;p&gt;&lt;strong&gt;<ex>&lt;strong&gt;</ex></ph>Keep your files safe.<ph name="MARKUP_5">&lt;/strong&gt;<ex>&lt;/strong&gt;</ex></ph>
     No matter what happens to your device, your files are safely stored in Google Drive.<ph name="MARKUP_6">&lt;/p&gt;<ex>&lt;/p&gt;</ex></ph>
     <ph name="MARKUP_7">&lt;p&gt;&lt;strong&gt;<ex>&lt;strong&gt;</ex></ph>Share, create and collaborate<ph name="MARKUP_8">&lt;/strong&gt;<ex>&lt;/strong&gt;</ex></ph>
@@ -921,6 +987,9 @@ Press any key to continue exploring.
   <message name="IDS_FILE_BROWSER_GMAP_DOCUMENT_FILE_TYPE" desc="Google map file type">
     Google map
   </message>
+  <message name="IDS_FILE_BROWSER_GSITE_DOCUMENT_FILE_TYPE" desc="Google site file type">
+    Google site
+  </message>
   <message name="IDS_FILE_BROWSER_GLINK_DOCUMENT_FILE_TYPE" desc="Google Drive link file type">
     Google Drive link
   </message>
@@ -997,6 +1066,9 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_FILE_BROWSER_SORT_BUTTON_TOOLTIP" desc="Tooltip for the button which provides sort options in Files.app.">
     Sort options
+  </message>
+  <message name="IDS_FILE_BROWSER_DETAIL_BUTTON_TOOLTIP" desc="Tooltip for the detals button to show the details panel which provides information of selected files in Files.app.">
+    View details
   </message>
   <message name="IDS_FILE_BROWSER_GEAR_BUTTON_TOOLTIP" desc="Tooltip for the gear button in Files.app.">
     Settings
@@ -1087,6 +1159,12 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_VIDEO_PLAYER_EXIT_FULL_SCREEN_BUTTON_LABEL" desc="Label for a button which is used to exit full screen mode in video player.">
     Exit full screen
+  </message>
+  <message name="IDS_VIDEO_PLAYER_ENABLE_SUBTITLES_BUTTON_LABEL" desc="Label for a button which is used to enable subtitles in video player.">
+    Enable subtitles
+  </message>
+  <message name="IDS_VIDEO_PLAYER_DISABLE_SUBTITLES_BUTTON_LABEL" desc="Label for a button which is used to disable subtitles in video player.">
+    Disable subtitles
   </message>
 
 <!-- Imageburn Strings -->
@@ -1251,6 +1329,12 @@ Press any key to continue exploring.
   <message name="IDS_FLAGS_FULLSCREEN_APP_LIST_DESCRIPTION" desc="Description for the flag to enable experimental fullscreen app list.">
     The app-list will appear as fullscreen mode when it's in touch view mode. This flag does nothing outside of the mode.
   </message>
+  <message name="IDS_FLAGS_STORAGE_MANAGER_NAME" desc="Description for the flag to enable experimental storage manager.">
+    Storage manager
+  </message>
+  <message name="IDS_FLAGS_STORAGE_MANAGER_DESCRIPTION" desc="Description for the flag to enable experimental storage manager.">
+    Enables storage manager to manage local storage.
+  </message>
   <message name="IDS_OFFERS_CONSENT_INFOBAR_LABEL_LEARN_MORE" desc="Text of the Learn More link in the echo dialog.">
     Learn More
   </message>
@@ -1340,6 +1424,15 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_EULA_SCREEN_TITLE" desc="Title of the OOBE EULA screen">
     The small print
+  </message>
+  <message name="IDS_PROXY_SETTINGS_MENU_NAME" desc="OOBE 'Available Networks' list menu entry that opens proxy settings dialog">
+    Proxy settings
+  </message>
+  <message name="IDS_ADD_WI_FI_NETWORK_MENU_NAME" desc="OOBE 'Available Networks' list menu entry that opens 'Add New WiFi Network' dialog">
+    Add other WiFi network
+  </message>
+  <message name="IDS_ADD_MOBILE_NETWORK_MENU_NAME" desc="OOBE 'Available Networks' list menu entry that opens 'Add New Mobile Network' dialog">
+    Add other mobile network
   </message>
   <message name="IDS_AUTOSTART_WARNING_TITLE" desc="Title of the kiosk autostart screen">
     Auto-launch permission requested
@@ -1476,6 +1569,12 @@ Press any key to continue exploring.
   <message name="IDS_NETWORK_ENABLE_DEV_FEATURES_LINK" desc="Text shown on continue button" meaning="Link shown on OOBE screens that opens enable debugging features dialog">
     Enable debugging features
   </message>
+  <message name="IDS_NETWORK_SECTION_TITE" desc="Tile of newtork selection screen" meaning="A title of the dialog where user should select network to connect to Internet">
+    Connect to network
+  </message>
+  <message name="IDS_NETWORK_SECTION_HINT" desc="Under-title line on the network selection screen" meaning="A hint to the user why device should be connected to the network">
+    To restore your data, you need an Internet connection.
+  </message>
   <message name="IDS_NETWORK_SELECTION_ERROR" desc="Error shown when connection to network failed or timed out.">
     <ph name="PRODUCT_NAME">$1<ex>Chrome OS</ex></ph> was unable to connect to <ph name="NETWORK_ID">$2<ex>Public Wifi</ex></ph>. Please select another network or try again.
   </message>
@@ -1579,17 +1678,27 @@ Press any key to continue exploring.
   <message name="IDS_LOGIN_PREVIOUS_PASSWORD" desc="Password field text on the password changed dialog">
     Previous password
   </message>
-  <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_MESSAGE" desc="Message text for the fatal cryptohome error dialog box">
-    We're very sorry, but a serious error has occurred and your profile will need to be recreated to continue. Don't worry, your account is safe, but unfortunately, your local data and files on this device may have been lost.
+  <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_TITLE" desc="Title for the fatal cryptohome error dialog box">
+    Can't sign in
+  </message>
+  <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_MESSAGE" desc="Message for the fatal cryptohome error dialog box">
+    We're sorry. We can't access your profile. Files and data stored on this device may have been lost.<ph name="BR">&lt;br&gt;</ph>
+    <ph name="BR">&lt;br&gt;</ph>
+    You'll have to set up your profile again.<ph name="BR">&lt;br&gt;</ph>
+    <ph name="BR">&lt;br&gt;</ph>
+    On the next screen, please send feedback to help us fix the issue.
   </message>
   <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_CONTINUE" desc="Label of the button to continue with re-creating cryptohome for the fatal cryptohome error dialog box">
     Continue
   </message>
-  <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_SEND_FEEDBACK" desc="Label of the checkbox to send feedback for the fatal cryptohome error dialog box">
-    Send anonymized system information to help us fix this issue
+  <message name="IDS_LOGIN_UNRECOVERABLE_CRYPTOHOME_ERROR_WAIT_MESSAGE" desc="Message to show when the fatal cryptohome error dialog box is waiting for user profile re-creation to be closed.">
+    Re-creating profile, please wait...
   </message>
   <message name="IDS_LOGIN_SAML_NOTICE" desc="Text message displayed above SAML portal to early indicate that the user is being redirected to another sign-in provider. This is the version of the string used in the GAIA flow.">
     This sign-in service is hosted by <ph name="SAML_DOMAIN">$1<ex>saml.com</ex></ph>
+  </message>
+  <message name="IDS_LOGIN_SAML_NOTICE_WITH_VIDEO" desc="Text message displayed above SAML portal to early indicate that the user is being redirected to another sign-in provider which has requested video media access.">
+    This sign-in service, hosted by <ph name="SAML_DOMAIN">$1<ex>saml.com</ex></ph>, is accessing your camera.
   </message>
   <message name="IDS_LOGIN_CONFIRM_PASSWORD_TITLE" desc="Title for the confirm password dialog.">
     Please re-enter your password to update your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph> profile.
@@ -1609,11 +1718,14 @@ Press any key to continue exploring.
   <message name="IDS_LOGIN_ACCOUNT_SETUP_CANCEL_DIALOG_YES" desc="Text to show on button to accept cancelation.">
     Yes
   </message>
+  <message name="IDS_LOGIN_DEVICE_MANAGED_BY_NOTICE" desc="Text for notifications showing that this is managed device.">
+    Managed by <ph name="DOMAIN">$1<ex>acmecorp.com</ex></ph>
+  </message>
   <message name="IDS_LOGIN_FATAL_ERROR_NO_ACCOUNT_DETAILS" desc="Message to show when the authentication could not be completed because the user's account details could not be retrieved.">
     Sign-in failed because your account details could not be retrieved. Please contact your administrator or try again.
   </message>
   <message name="IDS_LOGIN_FATAL_ERROR_NO_PASSWORD" desc="Message to show when the authentication could not be completed because the user's password could not be retrieved.">
-    Sing-in failed. Please contact your administrator or try again.
+    Sign-in failed. Please contact your administrator or try again.
   </message>
   <message name="IDS_LOGIN_FATAL_ERROR_PASSWORD_VERIFICATION" desc="Message to show when the authentication could not be completed because two attempts to verify the user's password failed.">
     Sign-in failed because your password could not be verified. Please contact your administrator or try again.
@@ -1624,11 +1736,19 @@ Press any key to continue exploring.
   <message name="IDS_LOGIN_FATAL_ERROR_TRY_AGAIN_BUTTON" desc="Label for a button which starts sign-in from the beginning after fatal error.">
     Try again
   </message>
-  <message name="IDS_OFFLINE_LOGIN_WELCOME" desc="Message shown during the GAIA flow in the beginning of the offline login.">
-    Sign in to your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>
+  <message name="IDS_LOGIN_SAML_INTERSTITIAL_MESSAGE" desc="Message to show on the SAML interstitial page to tell the user to continue signing in using their enterprise account.">
+    This device is managed by <ph name="BEGIN_BOLD">&lt;strong&gt;</ph><ph name="DOMAIN">$1<ex>acmecorp.com</ex></ph><ph name="END_BOLD">&lt;/strong&gt;</ph>.
+    <ph name="LINE_BREAK">&lt;br/&gt;</ph>
+    Please click "Next" to continue signing in to your <ph name="BEGIN_BOLD">&lt;strong&gt;</ph><ph name="DOMAIN">$1<ex>acmecorp.com</ex></ph><ph name="END_BOLD">&lt;/strong&gt;</ph> account.
   </message>
-  <message name="IDS_OFFLINE_LOGIN_DEVICE_MANAGED_BY_NOTICE" desc="Text for notifications showing that this is managed device.">
-    Managed by <ph name="DOMAIN">$1<ex>acmecorp.com</ex></ph>
+  <message name="IDS_LOGIN_SAML_INTERSTITIAL_CHANGE_ACCOUNT_LINK_TEXT" desc="Text of the link that allows the user to change the login account.">
+    Sign in with a different account
+  </message>
+  <message name="IDS_LOGIN_SAML_INTERSTITIAL_NEXT_BUTTON_TEXT" desc="Text shown on the Next button.">
+    Next
+  </message>
+  <message name="IDS_LOGIN_WELCOME_MESSAGE" desc="Message shown at the header of the login screens.">
+    Sign in to your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>
   </message>
   <message name="IDS_OFFLINE_LOGIN_EMAIL" desc="Email field text on the offline login screen. Note: should be the same as the one used on the Gaia sign-in page.">
     Enter your email
@@ -1990,6 +2110,9 @@ Press any key to continue exploring.
   <message name="IDS_OPTIONS_DEVICE_GROUP_KEYBOARD_SETTINGS_BUTTON_TITLE">
     Keyboard settings
   </message>
+  <message name="IDS_OPTIONS_DEVICE_GROUP_STORAGE_MANAGER_BUTTON_TITLE">
+    Storage management
+  </message>
   <message name="IDS_OPTIONS_DEVICE_GROUP_POINTER_SECTION">
     Pointer speed:
   </message>
@@ -2269,6 +2392,9 @@ Press any key to continue exploring.
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_VIRTUAL_KEYBOARD_DESCRIPTION" desc="In the settings tab, the text next to the checkbox for virtual keyboard.">
     Enable on-screen keyboard
   </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_MONO_AUDIO_DESCRIPTION" desc="In the settings tab, the text next to the checkbox for mono audio output.">
+    Play the same audio through all speakers (mono audio)
+  </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SHOULD_ALWAYS_SHOW_MENU" desc="In the settings tab, the text next to the checkbox to show the accessibility tray menu regardless of the state of a11y features.">
     Show accessibility options in the system menu
   </message>
@@ -2282,19 +2408,46 @@ Press any key to continue exploring.
     Delay before click:
   </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_AUTOCLICK_DELAY_EXTREMELY_SHORT" desc="Label for an extremely short autoclick delay option in the settings.">
-    extremely short
+    extremely short (600 ms)
   </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_AUTOCLICK_DELAY_VERY_SHORT" desc="Label for a very short autoclick delay option in the settings.">
-    very short
+    very short (800 ms)
   </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_AUTOCLICK_DELAY_SHORT" desc="Label for a short autoclick delay option in the settings.">
-    short
+    short (1000 ms)
   </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_AUTOCLICK_DELAY_LONG" desc="Label for a long autoclick delay option in the settings.">
-    long
+    long (2000 ms)
   </message>
   <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_AUTOCLICK_DELAY_VERY_LONG" desc="Label for a very long autoclick delay option in the settings.">
-    very long
+    very long (4000 ms)
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_CARET_HIGHLIGHT_DESCRIPTION" desc="In the settings tab, the text next to the checkbox to highlight the caret (the text insertion point) to make it easier to see.">
+    Highlight the text caret when it appears or moves
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_CURSOR_HIGHLIGHT_DESCRIPTION" desc="In the settings tab, the text next to the checkbox to highlight the mouse cursor when it's moving to make it easier to see.">
+    Highlight the mouse cursor when it's moving
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_FOCUS_HIGHLIGHT_DESCRIPTION" desc="In the settings tab, the text next to the checkbox to highlight the focused object to make it easier to see.">
+    Highlight the object with keyboard focus when it changes
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SELECT_TO_SPEAK_DESCRIPTION" desc="In the settings tab, the text next to the checkbox to enable an option to hold a key and click to speak any on-screen text out loud.">
+    Select-to-speak: Hold down Search and click or drag to speak anything
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SWITCH_ACCESS_DESCRIPTION" desc="In the settings tab, the text next to the checkbox to enable switch access (for users with limited motor control).">
+    Switch access (control the computer with just one or two switches)
+  </message>
+  <message name="IDS_FLAGS_EXPERIMENTAL_ACCESSIBILITY_FEATURES_NAME" desc="Name of the about:flag option for experimental accessibility features.">
+    Experimental acecssibility features
+  </message>
+  <message name="IDS_FLAGS_EXPERIMENTAL_ACCESSIBILITY_FEATURES_DESCRIPTION" desc="Description of the about:flag option for experimental accessibility features.">
+    Enable additional accessibility features in the Settings page.
+  </message>
+  <message name="IDS_FLAGS_DISABLE_SYSTEM_TIMEZONE_AUTOMATIC_DETECTION_NAME" desc="Name of the about:flag option for disabling EnableSystemTimezoneAutomaticDetection policy.">
+    SystemTimezoneAutomaticDetection policy support
+  </message>
+  <message name="IDS_FLAGS_DISABLE_SYSTEM_TIMEZONE_AUTOMATIC_DETECTION_DESCRIPTION" desc="Description of the about:flag option for disabling EnableSystemTimezoneAutomaticDetection policy.">
+    Disable system timezone automatic detection device policy.
   </message>
   <message name="IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_BUTTON_LABEL" desc="Label for the button opening display settings tab.">
     Display settings
@@ -2428,11 +2581,89 @@ Press any key to continue exploring.
   <message name="IDS_OPTIONS_SETTINGS_ENABLE_DATA_ROAMING" desc="Appears in the Mobile Data drop-down menu in the Internet Connections section of the Settings tab.">
     Allow mobile data roaming
   </message>
-<message name="IDS_OPTIONS_SETTINGS_TOGGLE_DATA_ROAMING_RESTRICTION" desc="Tooltip for the 'enable data roaming' entry in the Mobile Data drop-down menu indicating why the command is disabled.">
+  <message name="IDS_OPTIONS_SETTINGS_TOGGLE_DATA_ROAMING_RESTRICTION" desc="Tooltip for the 'enable data roaming' entry in the Mobile Data drop-down menu indicating why the command is disabled.">
     This setting may only be modified by the owner.
   </message>
   <message name="IDS_OPTIONS_SETTINGS_DISABLE_DATA_ROAMING" desc="Appears in the Mobile Data drop-down menu in the Internet Connections section of the Settings tab.">
     Disable mobile data roaming
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_MANAGER_TAB_TITLE" desc="Title for the storage manager tab.">
+    Storage management
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_LOW_MESSAGE_TITLE" desc="Title of a warning message indicating device's available disk space is low.">
+    Device is low on space
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_LOW_MESSAGE_LINE_1" desc="The first paragraph of a warning message indicating device's available disk space is low.">
+    To free up space, delete files from device storage.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_LOW_MESSAGE_LINE_2" desc="The second paragraph of a warning message indicating device's available disk space is low.">
+    If space isn’t made available, users and data may be automatically removed.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_CRITICALLY_LOW_MESSAGE_TITLE" desc="Title of a warning message indicating device's available disk space is critically low.">
+    Device space critically low
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_CRITICALLY_LOW_MESSAGE_LINE_1" desc="The first paragraph of a warning message indicating device's available disk space is critically low.">
+    Free up at least 512 MB of space or your device will become unresponsive. To free up space, delete files from device storage.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SPACE_CRITICALLY_LOW_MESSAGE_LINE_2" desc="The second paragraph of a warning message indicating device's available disk space is critically low.">
+    If you don’t free up space, users and data may be automatically removed.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_CLEAR_DRIVE_CACHE_TAB_TITLE" desc="Tab title for the storage manager confirmation dialog tab to remove Google Drive offline files.">
+    Offline files
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_CLEAR_DRIVE_CACHE_DIALOG_TITLE" desc="Title for the storage manager confirmation dialog tab to remove Google Drive offline files.">
+    Delete offline files?
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_CLEAR_DRIVE_CACHE_DESCRIPTION" desc="Description in the storage manager confirmation dialog to remove Google Drive offline files.">
+    Temporary Google Drive offline files will be deleted. Files that you’ve set as available offline won’t be deleted from this device.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_USER_LIST_TITLE" desc="Title for the storage manager's user list dialog.">
+    Users
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_REMOVE_USER_DIALOG_TITLE" desc="Title for the storage manager confirmation dialog to remove a user from the device.">
+    Remove User
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_REMOVE_USER_DIALOG_DESCRIPTION" desc="Description in the storage manager confirmation dialog to remove a user from the device.">
+    This action will permanently delete this user’s downloads, offline files, browsing data, and Android storage. This cannot be undone.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_REMOVE_USER_DIALOG_DESCRIPTION_WITHOUT_ANDROID" desc="Description in the storage manager confirmation dialog to remove a user from the device. This description doesn't mention Android.">
+    This action will permanently delete this user’s downloads, offline files, and browsing data. This cannot be undone.
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_REMOVE_USER_DIALOG_REMOVE_BUTTON_LABEL" desc="In storage manager confirmation dialog, label for the button to delete offline files.">
+    Remove
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SIZE_CALCULATING" desc="In storage manager overlay, label for storage item's size indicating the size is being calculated.">
+    Calculating...
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SIZE_UNKNOWN" desc="In storage manager overlay, label for storage item's size indicating the size is unknown">
+    Unknown
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_ITEM_LABEL_CAPACITY" desc="In storage manager overlay, label for the total size of Chrome OS internal storage.">
+    Capacity
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_ITEM_LABEL_IN_USE" desc="In storage manager overlay, label for the used storage size of Chrome OS internal storage.">
+    In use
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_ITEM_LABEL_AVAILABLE" desc="In storage manager overlay, label for the available storage size of Chrome OS internal storage.">
+    Available
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SUBITEM_LABEL_DOWNLOADS" desc="In storage manager overlay, label for the size of Downloads directory.">
+    Downloads
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SUBITEM_LABEL_DRIVE_CACHE" desc="In storage manager overlay, label for the size of Google Drive's offline files.">
+    Offline files
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SUBITEM_LABEL_BROWSING_DATA" desc="In storage manager overlay, label for the size of browsing data.">
+    Browsing data
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SUBITEM_LABEL_OTHER_USERS" desc="In storage manager overlay, label for the total size of other users' data directories.">
+    Other users
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_SUBITEM_LABEL_ARC" desc="In storage manager overlay, label for the total size size of Android apps and cache.">
+    Android storage
+  </message>
+  <message name="IDS_OPTIONS_SETTINGS_STORAGE_DELETE_ALL_BUTTON_TITLE" desc="In storage manager confirmation dialog, label for the button to delete offline files.">
+    Delete files
   </message>
   <message name="IDS_OPTIONS_ACCOUNTS_ALLOW_BWSI_DESCRIPTION" desc="In the Accounts settings tab, the text on the checkbox to allow browse without signing in.">
     Enable Guest browsing
@@ -2485,7 +2716,7 @@ Press any key to continue exploring.
   <message name="IDS_OPTIONS_CHANGE_PICTURE_CAPTION" desc="Caption on the user picture that user must click to change it, must be short.">
     Change
   </message>
-  <message name="IDS_OPTIONS_CHANGE_PICTURE_DIALOG_TITLE" desc="Title of the dialog shown when user wants to change his/her picture.">
+  <message name="IDS_OPTIONS_CHANGE_PICTURE_DIALOG_TITLE" desc="Title of the dialog shown when user wants to change their picture.">
     Change picture
   </message>
   <message name="IDS_OPTIONS_CHANGE_PICTURE_DIALOG_TEXT" desc="Text with description of what to do on Change picture dialog.">
@@ -2494,7 +2725,7 @@ Press any key to continue exploring.
   <message name="IDS_OPTIONS_CHANGE_PICTURE_CHOOSE_FILE" desc="Text on a button that shows file dialog to choose a picture from file.">
     Choose a file
   </message>
-  <message name="IDS_OPTIONS_CROP_IMAGE_DIALOG_TITLE" desc="Title of the dialog shown when user wants to crop his/her picture.">
+  <message name="IDS_OPTIONS_CROP_IMAGE_DIALOG_TITLE" desc="Title of the dialog shown when user wants to crop their picture.">
     Crop image
   </message>
   <message name="IDS_OPTIONS_CROP_IMAGE_DIALOG_TEXT" desc="Text with description of what to do on Crop image dialog.">
@@ -3581,12 +3812,8 @@ Press any key to continue exploring.
     This language doesn't have any input methods
   </message>
   <message name="IDS_OPTIONS_SETTINGS_LANGUAGES_ACTIVATE_IME_MENU"
-           desc="The label for activating IME menu on the shelf.">
-    Show the input method menu on the shelf.
-  </message>
-  <message name="IDS_OPTIONS_SETTINGS_LANGUAGES_ACTIVATE_IME_MENU_DESCRIPTION"
-           desc="The label for the description of showing input method menu.">
-    For easier switching of input methods and access to more input features: voice input, handwriting and emoji.
+           desc="The label for showing expanded IME menu in the shelf.">
+    Show input options in the shelf
   </message>
   <message name="IDS_OPTIONS_SETTINGS_LANGUAGES_THIRD_PARTY_WARNING_TITLE"
            desc="The title showing in the warning dialog when enabling a 3rd party Input Method">
@@ -3610,7 +3837,7 @@ Press any key to continue exploring.
   </message>
   <message name="IDS_OPTIONS_SETTINGS_LANGUAGES_SWITCH_INPUT_METHODS_HINT"
            desc="Explanatory message about how to switch input methods">
-    Press Alt+Shift to switch between input methods.
+    Press Ctrl+Shift+Space to switch between input methods.
   </message>
   <message name="IDS_OPTIONS_SETTINGS_LANGUAGES_SELECT_PREVIOUS_INPUT_METHOD_HINT"
            desc="Explanatory message about how to select the previous input method">
@@ -4448,6 +4675,9 @@ Battery full
   <message name="IDS_KEYBOARD_OVERLAY_CLOSE_WINDOW" desc="The text in the keyboard overlay to explain the shortcut.">
     Close window
   </message>
+  <message name="IDS_KEYBOARD_OVERLAY_CONTEXT_MENU" desc="The text in the keyboard overlay to explain the shortcut.">
+    Context menu
+  </message>
   <message name="IDS_KEYBOARD_OVERLAY_COPY" desc="The text in the keyboard overlay to explain the shortcut.">
     Copy
   </message>
@@ -4628,9 +4858,6 @@ Battery full
   <message name="IDS_KEYBOARD_OVERLAY_OPEN_FILE_MANAGER" desc="The text in the keyboard overlay to explain the shortcut (Open the file manager).">
     File manager
   </message>
-  <message name="IDS_KEYBOARD_OVERLAY_OPEN_GOOGLE_CLOUD_PRINT" desc="The text in the keyboard overlay to explain the shortcut (Opens the 'Google Cloud Print' dialog).">
-    Google Cloud Print
-  </message>
   <message name="IDS_KEYBOARD_OVERLAY_PAGE_DOWN" desc="The text in the keyboard overlay to explain the shortcut (Page down).">
     Page down
   </message>
@@ -4658,8 +4885,8 @@ Battery full
   <message name="IDS_KEYBOARD_OVERLAY_RELOAD_CURRENT_PAGE" desc="The text in the keyboard overlay to explain the shortcut.">
     Reload
   </message>
-  <message name="IDS_KEYBOARD_OVERLAY_RELOAD_IGNORING_CACHE" desc="The text in the keyboard overlay to explain the shortcut.">
-    Reload ignoring cache
+  <message name="IDS_KEYBOARD_OVERLAY_RELOAD_BYPASSING_CACHE" desc="The text in the keyboard overlay to explain the shortcut.">
+    Reload bypassing cache
   </message>
   <message name="IDS_KEYBOARD_OVERLAY_REOPEN_LAST_CLOSED_TAB" desc="The text in the keyboard overlay to explain the shortcut.">
     Reopen last-closed tab
@@ -4682,6 +4909,9 @@ Battery full
   <message name="IDS_KEYBOARD_OVERLAY_SCREENSHOT_REGION" desc="The text in the keyboard overlay to explain the shortcut (take a screenshot of the selected region).">
     Screenshot region
   </message>
+  <message name="IDS_KEYBOARD_OVERLAY_SCREENSHOT_WINDOW" desc="The text in the keyboard overlay to explain the shortcut.">
+    Screenshot window
+  </message>
   <message name="IDS_KEYBOARD_OVERLAY_SCROLL_UP_ONE_PAGE" desc="The text in the keyboard overlay to explain the shortcut.">
     Scroll up one page
   </message>
@@ -4702,6 +4932,9 @@ Battery full
   </message>
   <message name="IDS_KEYBOARD_OVERLAY_SIGN_OUT" desc="The text in the keyboard overlay to explain the shortcut.">
     Sign out
+  </message>
+  <message name="IDS_KEYBOARD_OVERLAY_SUSPEND" desc="The text in the keyboard overlay to explain the shortcut.">
+    Suspend
   </message>
   <message name="IDS_KEYBOARD_OVERLAY_SWAP_PRIMARY_MONITOR" desc="The text in the keyboard overlay to explain the shortcut (swap primary monitor).">
     Swap primary monitor
@@ -5430,7 +5663,7 @@ Battery full
     Can't access network library
   </message>
   <message name="IDS_LOGIN_ERROR_KEYBOARD_SWITCH_HINT" desc="A hint text for the login and lock screens about layout switching">
-    Hit Shift-Alt to switch keyboard layout.
+    Hit Control-Shift-Space to switch keyboard layout.
   </message>
   <message name="IDS_LOGIN_ERROR_CAPS_LOCK_HINT" desc="A hint text for the login and lock screens that Caps Lock is on">
     Caps Lock is on.
@@ -5638,6 +5871,38 @@ Battery full
     To check for updates, please use Ethernet or Wi-Fi.
   </message>
 
+  <!-- EOL Notification Strings -->
+  <message name="IDS_ABOUT_PAGE_EOL_SECURITY_ONLY" desc="The message in the about page to inform the user that software updates for this device are no longer available.">
+    Software updates for this device are no longer available.
+  </message>
+  <message name="IDS_ABOUT_PAGE_EOL_EOL" desc="The message in the about page to inform the user that security updates for this device are no longer available.">
+    Security updates for this device are no longer available.
+  </message>
+  <message name="IDS_ABOUT_PAGE_EOL_LEARN_MORE" desc="The message in the about page to provide more information of device end of life, containing the URLs.">
+     Please consider upgrading. <ph name="BEGIN_LINK_EOL">&lt;a target="_blank" href="$1"&gt;</ph>Learn more<ph name="END_LINK_EOL">&lt;/a&gt;</ph>
+  </message>
+  <message name="IDS_EOL_NOTIFICATION_TITLE" desc="Notification title shown to inform the user that this device is no longer supported.">
+    This device is no longer supported
+  </message>
+  <message name="IDS_EOL_NOTIFICATION_SECURITY_ONLY" desc="Notification shown to inform the user that this device will no longer receive software updates.">
+    Software updates for this device are no longer available. Please consider upgrading.
+  </message>
+  <message name="IDS_EOL_NOTIFICATION_EOL" desc="Notification shown to inform the user that this device will no longer receive regular security updates.">
+    Security updates for this device are no longer available. Please consider upgrading.
+  </message>
+  <message name="IDS_EOL_MORE_INFO_BUTTON" desc="A button label shown in the notification for eol status change to get more information.">
+    Learn more
+  </message>
+  <message name="IDS_EOL_DISMISS_BUTTON" desc="A button label shown in the notification for eol status change to dismiss the notification.">
+    Don't remind me again
+  </message>
+  <message name="IDS_FLAGS_EOL_NOTIFICATION_NAME" desc="Name of the about:flag option to disable eol notification.">
+    Disable Device End of Life notification.
+  </message>
+  <message name="IDS_FLAGS_EOL_NOTIFICATION_DESCRIPTION" desc="Description of the about:flag option to disable eol notification.">
+    Disable Notifcation when Device is End of Life.
+  </message>
+
   <!-- Genius App -->
   <message name="IDS_GENIUS_APP_NAME" desc="Name of the genius app in the app shelf">
     Get Help
@@ -5654,13 +5919,7 @@ Battery full
 
   <!-- Platform verification UI -->
   <message name="IDS_PLATFORM_VERIFICATION_DIALOG_HEADLINE" desc="The label to describe what the dialog wants to confirm.">
-    <ph name="DOMAIN">$1<ex>example.com</ex></ph> requires your device's identity to be verified, by Google, to determine eligibility for enhanced playback of protected media. <ph name="LEARN_MORE">$2<ex>Learn more</ex></ph>.
-  </message>
-  <message name="IDS_PLATFORM_VERIFICATION_DIALOG_ALLOW" desc="The button label to allow access of HD playback.">
-    OK, I got it
-  </message>
-  <message name="IDS_PLATFORM_VERIFICATION_DIALOG_DENY" desc="The button label to deny access of HD playback.">
-    Disable on <ph name="DOMAIN">$1<ex>example.com</ex></ph>
+    <ph name="DOMAIN">$1<ex>example.com</ex></ph> wants your device's identity to be verified, by Google, to determine eligibility for enhanced playback of protected media. <ph name="LEARN_MORE">$2<ex>Learn more</ex></ph>.
   </message>
 
   <!-- Multi-profiles mode -->
@@ -5707,7 +5966,7 @@ All users must sign out to continue.
     Play, edit, share, get stuff done.
   </message>
   <message name="IDS_FIRST_RUN_APP_LIST_STEP_TEXT_1" desc="First part of message on the first-run tutorial bubble pointing to application list button.">
-    Access all your apps from this handy launcher. Play games, video chat, listen to music, edit documents, or get more apps from the Chrome Web Store.
+    Access all your apps from this handy launcher. Play games, video chat, listen to music, edit documents, or get more apps.
   </message>
   <message name="IDS_FIRST_RUN_APP_LIST_STEP_TEXT_2" desc="Second part of message on the first-run tutorial bubble pointing to application list button. Part of the phrase &quot;Access all your apps from this handy launcher. Play games, video chat, listen to music, edit documents, or get more apps from the Chrome Web Store. It's all here.&quot;">
     It's all here.
@@ -5934,10 +6193,10 @@ All users must sign out to continue.
   <message name="IDS_PAIRING_CONTROLLER_CONFIRMATION_QUESTION" desc="Text that is shown near 6-digit confirmation code on a controller's screen during the 'Chromebox for meeting' setup process.">
     Does this code appear on your Chromebox screen?
   </message>
-  <message name="IDS_PAIRING_CONTROLLER_REJECT_CODE" desc="Text on button, pressing which user reports that he doesn't see confirmation code on host screen.">
+  <message name="IDS_PAIRING_CONTROLLER_REJECT_CODE" desc="Text on a button which the user presses to report that they don't see a confirmation code.">
     No, I don't see it
   </message>
-  <message name="IDS_PAIRING_CONTROLLER_ACCEPT_CODE" desc="Text on button, pressing which user reports that he sees confirmation code on host screen and code is correct.">
+  <message name="IDS_PAIRING_CONTROLLER_ACCEPT_CODE" desc="Text on a button which the user presses to report that they see a correct confirmation code.">
     Yes, I see it
   </message>
   <message name="IDS_PAIRING_CONTROLLER_UPDATE_TITLE" desc="Title of the controller's update page of the 'Chromebox for meeting' setup process.">
@@ -6360,7 +6619,7 @@ All users must sign out to continue.
   <message name="IDS_OPTIONS_RESOLVE_TIMEZONE_BY_GEOLOCATION_DESCRIPTION" desc="Label for checkbox to allow automatic timezone update by user geolocation.">
     Set time zone automatically using your location
   </message>
-  <message name="IDS_FILE_SYSTEM_REQUEST_FILE_SYSTEM_DIALOG_TITLE" desc="Title of a prompt dialog for granting permissions to a volume (eg. USB drive, SD card, MTP device) with the specified name.">
+  <message name="IDS_FILE_SYSTEM_REQUEST_FILE_SYSTEM_DIALOG_TITLE" desc="Title of a prompt dialog for granting permissions to a volume (eg. USB drive, SD card, MTP device) with the specified name. Only used for screen readers (a11y); not visible.">
     Permission requested
   </message>
   <message name="IDS_FILE_SYSTEM_REQUEST_FILE_SYSTEM_DIALOG_MESSAGE" desc="Message in a prompt dialog for granting read-only permissions to a volume (eg. USB drive, SD card, MTP device) with the specified name to the extension.">
@@ -6430,11 +6689,146 @@ All users must sign out to continue.
   </message>
 
   <!-- Android Apps -->
-  <message name="IDS_OPTIONS_ARC_TITLE" desc="The title of Android Apps section.">
-    Android Apps
+  <message name="IDS_OPTIONS_ARC_TITLE" desc="The title of Google Play Store section.">
+    Google Play Store
   </message>
-  <message name="IDS_OPTIONS_ARC_ENABLE" desc="Label for the checkbox that enables Android apps.">
-    Enable Android Apps to run on your Chromebook.
+  <message name="IDS_OPTIONS_ARC_ENABLE" desc="Label for the checkbox that enables Google Play Store apps.">
+    Enable Google Play Store on your Chromebook.
   </message>
+  <message name="IDS_OPTIONS_ARC_MANAGE_APPS" desc="Label for launching  Android apps settings.">
+    Manage your Android <ph name="BEGIN_LINK">&lt;a is="action-link" id="android-apps-settings-link" role="link"&gt;</ph>preferences<ph name="END_LINK">&lt;/a&gt;</ph>.
+  </message>
+  <message name="IDS_ARC_NOTIFICATION_TITLE" desc="Title of the first-run notification that enables Android apps.">
+    Google Play Store
+  </message>
+  <message name="IDS_ARC_NOTIFICATION_MESSAGE" desc="Description message of the first-run notification that enables Android apps.">
+    Over a million apps and games now available on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>.
+  </message>
+  <message name="IDS_ARC_OPEN_PLAY_STORE_NOTIFICATION_BUTTON" desc="Label for the button in the first-run notification that enables Android apps.">
+    Open Play Store
+  </message>
+  <message name="IDS_ARC_CANCEL_NOTIFICATION_BUTTON" desc="Label for the button in the first-run notification that cancel running Android apps.">
+    Cancel
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_HEADER" desc="Title of the opt-in dialog for Android apps.">
+    Google Play store now on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_DESCRIPTION" desc="Description of the opt-in dialog for Android apps.">
+    Choose from over a million apps and games on Google Play to install and use on your <ph name="DEVICE_TYPE">$1<ex>Chromebook</ex></ph>.
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_AGREE" desc="Agree button of the opt-in dialog for Android apps.">
+    Agree
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_CANCEL" desc="Cancel button of the opt-in dialog for Android apps.">
+    Cancel
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_RETRY" desc="Retry button of the opt-in dialog for Android apps.">
+    Try again
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_BUTTON_SEND_FEEDBACK" desc="Send feedback button of the opt-in dialog for Android apps.">
+    Send feedback
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_PROGRESS_LSO" desc="Name of LSO loading progress of the opt-in dialog for Android apps.">
+    Just a sec...
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_PROGRESS_ANDROID" desc="Name of Android loading progress of the opt-in dialog for Android apps.">
+    This may take up to a minute or so...
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_AUTHORIZATION_FAILED" desc="Error message shown when an auth code is not returned by server.">
+    Authorization failed
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_TERMS_OF_SERVICE" desc="Terms of service caption in the opt-in dialog for Android apps.">
+    Terms of Service
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_MANAGED_ENABLED" desc="Message in the opt-in dialog for Android apps in case metrics are managed on the device and on.">
+    This device currently sends diagnostic and usage data to Google. This <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>setting<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> is enforced by the owner. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_MANAGED_DISABLED" desc="Message in the opt-in dialog for Android apps in case metrics are enabled on the device and off.">
+    The owner may choose to send diagnostic and usage data for this device to Google. You may view this <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>setting<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> here. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_ENABLED" desc="Message in the opt-in dialog for Android apps in case metrics are already enabled on the device. User has no way to deactivate them using opt-in dialog.">
+    This device currently sends diagnostic and usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_METRICS_DISABLED" desc="Message in the opt-in dialog for Android apps in case metrics are disabled on the device. User has an option to active them using opt-in dialog">
+    Automatically send diagnostic and usage data to Google. You can change this at any time in your device <ph name="BEGIN_LINK1">&lt;a href="#" id="settings-link"&gt;</ph>settings<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>. <ph name="BEGIN_LINK2">&lt;a href="#" id="learn-more-link-metrics"&gt;</ph>Learn More<ph name="END_LINK2">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_DIALOG_BACKUP_RESTORE" desc="Message in the opt-in dialog for users to enable Backup and Restore for Android apps.">
+    Automatically back up and restore Play app data to Google Drive. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-backup-restore"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_LOCATION_SETTING" desc="Message in the opt-in dialog for Android apps for the user to turn on Google location services">
+    Let Google’s location service help apps find your location quickly and accurately, which can reduce battery consumption. Anonymous location data will be sent to Google, even when no apps are running. <ph name="BEGIN_LINK1">&lt;a href="#" id="learn-more-link-location-service"&gt;</ph>Learn More<ph name="END_LINK1">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  </message>
+  <message name="IDS_ARC_OPT_IN_SCANNING_SETTING" desc="Message in the opt-in dialog for Android apps for the user to enable wifi and bluetooth scanning to improve location">
+    Improve location accuracy by allowing apps and services to scan for Wi-Fi networks and Bluetooth devices.
+  </message>
+  <message name="IDS_ARC_OPT_OUT_TAB_TITLE" desc="Tab title when viewing opt-out setting dialog for android apps.">
+    Settings - Remove Android apps
+  </message>
+  <message name="IDS_ARC_OPT_OUT_DIALOG_HEADER" desc="Title of the opt-out dialog for android apps.">
+    Remove Android apps?
+  </message>
+  <message name="IDS_ARC_OPT_OUT_DIALOG_DESCRIPTION" desc="Describes what will happen if the user opts out of android apps.  Note that newlines are preserved when this is rendered in the UI.">
+    Apps you’ve downloaded from Google Play will be deleted from this Chromebook.
 
+    Content you’ve purchased such as movies, TV shows, music, books, or other in-app purchases may also be deleted.
+
+    This doesn’t affect apps or content on other devices.
+  </message>
+  <message name="IDS_ARC_OPT_OUT_DIALOG_BUTTON_CONFIRM_DISABLE" desc="Button to confirm that play store should be removed from this device">
+    Remove Android apps
+  </message>
+  <message name="IDS_ARC_OPT_OUT_DIALOG_BUTTON_CANCEL" desc="Button to cancel the removal of the play store from this device">
+    Cancel
+  </message>
+  <message name="IDS_ARC_SIGN_IN_NETWORK_ERROR" desc="Android sign-in error because of network error">
+    Network error
+  </message>
+  <message name="IDS_ARC_SIGN_IN_SERVICE_UNAVAILABLE_ERROR" desc="Android sign-in error because of service is unavailable">
+    Couldn't reach Google Play. Try again now.
+  </message>
+  <message name="IDS_ARC_SIGN_IN_BAD_AUTHENTICATION_ERROR" desc="Android sign-in error because of bad authentification">
+    Bad authentication
+  </message>
+  <message name="IDS_ARC_SIGN_IN_GMS_NOT_AVAILABLE_ERROR" desc="Android sign-in error because of GMS services are unavailable">
+    GMS services are unavailable
+  </message>
+  <message name="IDS_ARC_SIGN_IN_CLOUD_PROVISION_FLOW_FAIL_ERROR" desc="Android sign-in error because of cloud provision flow failed">
+    Cloud provision flow failed
+  </message>
+  <message name="IDS_ARC_SIGN_IN_UNKNOWN_ERROR" desc="Android sign-in error because of unknown error">
+    Unknown error
+  </message>
+  <message name="IDS_ARC_SERVER_COMMUNICATION_ERROR" desc="Android sign-in error because of server communication error">
+    Server communication error
+  </message>
+  <message name="IDS_ARC_ANDROID_MANAGEMENT_REQUIRED_ERROR" desc="Error message shown when Android management is required for an unmanaged Chrome OS user.">
+    Your organization has not enabled Google Play Store for your account. Contact your administrator for more information.
+  </message>
+  <message name="IDS_ARC_CRITICALLY_LOW_DISK_NOTIFICATION_TITLE" desc="Title of the notification warning users that they are critically low on disk space and Android apps can not be launched.">
+    Device disk space critically low
+  </message>
+  <message name="IDS_ARC_CRITICALLY_LOW_DISK_NOTIFICATION_MESSAGE" desc="Notification text warning users that they are critically low on disk space and Android apps can not be launched.">
+    Free up disk space to launch Android apps.
+  </message>
+  <message name="IDS_FLAGS_ENABLE_IME_MENU_NAME" desc="Name of the about: flag for enabling opt-in IME menu.">
+    Enable opt-in IME menu
+    </message>
+  <message name="IDS_FLAGS_ENABLE_IME_MENU_DESCRIPTION" desc="Description of the about: flag for enabling opt-in IME menu.">
+    Enable access to the new IME menu in the Language Settings page.
+  </message>
+  <message name="IDS_LOW_DISK_NOTIFICATION_TITLE" desc="Title of the notification warning users that they are low on disk space.">
+    Device is low on disk space
+  </message>
+  <message name="IDS_LOW_DISK_NOTIFICATION_MESSAGE" desc="Notification text warning users that they are low on disk space.">
+    Free up disk space or select data may be automatically deleted
+  </message>
+  <message name="IDS_CRITICALLY_LOW_DISK_NOTIFICATION_TITLE" desc="Title of the notification warning users that they are critically low on disk space.">
+    Device disk space critically low
+  </message>
+  <message name="IDS_CRITICALLY_LOW_DISK_NOTIFICATION_MESSAGE" desc="Notification text warning users that they are critically low on disk space.">
+    Free up disk space or device will become unresponsive.
+  </message>
+  <message name="IDS_LOW_DISK_NOTIFICATION_BUTTON" desc="Button on the low disk notification to open storage management.">
+    Manage storage
+  </message>
 </grit-part>

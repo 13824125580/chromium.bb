@@ -9,6 +9,8 @@
 // require special server configurations.
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
@@ -16,17 +18,17 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_piece.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/auth.h"
 #include "net/base/proxy_delegate.h"
-#include "net/base/test_data_directory.h"
 #include "net/proxy/proxy_service.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "net/url_request/url_request_test_util.h"
 #include "net/websockets/websocket_channel.h"
 #include "net/websockets/websocket_event_interface.h"
@@ -82,13 +84,13 @@ class ConnectTestingEventInterface : public WebSocketEventInterface {
   ChannelState OnFailChannel(const std::string& message) override;
 
   ChannelState OnStartOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeRequestInfo> request) override;
+      std::unique_ptr<WebSocketHandshakeRequestInfo> request) override;
 
   ChannelState OnFinishOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeResponseInfo> response) override;
+      std::unique_ptr<WebSocketHandshakeResponseInfo> response) override;
 
   ChannelState OnSSLCertificateError(
-      scoped_ptr<SSLErrorCallbacks> ssl_error_callbacks,
+      std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
       const GURL& url,
       const SSLInfo& ssl_info,
       bool fatal) override;
@@ -168,17 +170,17 @@ ChannelState ConnectTestingEventInterface::OnFailChannel(
 }
 
 ChannelState ConnectTestingEventInterface::OnStartOpeningHandshake(
-    scoped_ptr<WebSocketHandshakeRequestInfo> request) {
+    std::unique_ptr<WebSocketHandshakeRequestInfo> request) {
   return CHANNEL_ALIVE;
 }
 
 ChannelState ConnectTestingEventInterface::OnFinishOpeningHandshake(
-    scoped_ptr<WebSocketHandshakeResponseInfo> response) {
+    std::unique_ptr<WebSocketHandshakeResponseInfo> response) {
   return CHANNEL_ALIVE;
 }
 
 ChannelState ConnectTestingEventInterface::OnSSLCertificateError(
-    scoped_ptr<SSLErrorCallbacks> ssl_error_callbacks,
+    std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
     const GURL& url,
     const SSLInfo& ssl_info,
     bool fatal) {
@@ -210,6 +212,7 @@ class TestProxyDelegateWithProxyInfo : public ProxyDelegate {
 
  protected:
   void OnResolveProxy(const GURL& url,
+                      const std::string& method,
                       int load_flags,
                       const ProxyService& proxy_service,
                       ProxyInfo* result) override {
@@ -221,9 +224,6 @@ class TestProxyDelegateWithProxyInfo : public ProxyDelegate {
                                 const HostPortPair& proxy_server,
                                 int net_error) override {}
   void OnFallback(const ProxyServer& bad_proxy, int net_error) override {}
-  void OnBeforeSendHeaders(URLRequest* request,
-                           const ProxyInfo& proxy_info,
-                           HttpRequestHeaders* headers) override {}
   void OnBeforeTunnelRequest(const HostPortPair& proxy_server,
                              HttpRequestHeaders* extra_headers) override {}
   void OnTunnelHeadersReceived(
@@ -265,18 +265,20 @@ class WebSocketEndToEndTest : public ::testing::Test {
       InitialiseContext();
     }
     url::Origin origin(GURL("http://localhost"));
+    GURL first_party_for_cookies("http://localhost/");
     event_interface_ = new ConnectTestingEventInterface;
     channel_.reset(
-        new WebSocketChannel(make_scoped_ptr(event_interface_), &context_));
-    channel_->SendAddChannelRequest(GURL(socket_url), sub_protocols_, origin);
+        new WebSocketChannel(base::WrapUnique(event_interface_), &context_));
+    channel_->SendAddChannelRequest(GURL(socket_url), sub_protocols_, origin,
+                                    first_party_for_cookies, "");
     event_interface_->WaitForResponse();
     return !event_interface_->failed();
   }
 
   ConnectTestingEventInterface* event_interface_;  // owned by channel_
-  scoped_ptr<TestProxyDelegateWithProxyInfo> proxy_delegate_;
+  std::unique_ptr<TestProxyDelegateWithProxyInfo> proxy_delegate_;
   TestURLRequestContext context_;
-  scoped_ptr<WebSocketChannel> channel_;
+  std::unique_ptr<WebSocketChannel> channel_;
   std::vector<std::string> sub_protocols_;
   bool initialised_context_;
 };
@@ -315,7 +317,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_HttpsProxyUnauthedFails) {
   ASSERT_TRUE(ws_server.BlockUntilStarted());
   std::string proxy_config =
       "https=" + proxy_server.host_port_pair().ToString();
-  scoped_ptr<ProxyService> proxy_service(
+  std::unique_ptr<ProxyService> proxy_service(
       ProxyService::CreateFixed(proxy_config));
   ASSERT_TRUE(proxy_service);
   context_.set_proxy_service(proxy_service.get());
@@ -336,7 +338,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsWssProxyUnauthedFails)) {
   ASSERT_TRUE(wss_server.BlockUntilStarted());
   std::string proxy_config =
       "https=" + proxy_server.host_port_pair().ToString();
-  scoped_ptr<ProxyService> proxy_service(
+  std::unique_ptr<ProxyService> proxy_service(
       ProxyService::CreateFixed(proxy_config));
   ASSERT_TRUE(proxy_service);
   context_.set_proxy_service(proxy_service.get());
@@ -360,7 +362,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsProxyUsed)) {
   std::string proxy_config = "https=" +
                              proxy_server.host_port_pair().ToString() + ";" +
                              "http=" + proxy_server.host_port_pair().ToString();
-  scoped_ptr<ProxyService> proxy_service(
+  std::unique_ptr<ProxyService> proxy_service(
       ProxyService::CreateFixed(proxy_config));
   context_.set_proxy_service(proxy_service.get());
   InitialiseContext();
@@ -375,7 +377,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsProxyUsed)) {
   delegate.set_credentials(
       AuthCredentials(base::ASCIIToUTF16("foo"), base::ASCIIToUTF16("bar")));
   {
-    scoped_ptr<URLRequest> request(
+    std::unique_ptr<URLRequest> request(
         context_.CreateRequest(http_page, DEFAULT_PRIORITY, &delegate));
     request->Start();
     // TestDelegate exits the message loop when the request completes by
@@ -423,7 +425,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsHttpsToWebSocket)) {
   // Set HSTS via https:
   TestDelegate delegate;
   GURL https_page = https_server.GetURL("/hsts-headers.html");
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       context_.CreateRequest(https_page, DEFAULT_PRIORITY, &delegate));
   request->Start();
   // TestDelegate exits the message loop when the request completes.
@@ -457,7 +459,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToHttps)) {
   TestDelegate delegate;
   GURL http_page =
       ReplaceUrlScheme(https_server.GetURL("/simple.html"), "http");
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       context_.CreateRequest(http_page, DEFAULT_PRIORITY, &delegate));
   request->Start();
   // TestDelegate exits the message loop when the request completes.

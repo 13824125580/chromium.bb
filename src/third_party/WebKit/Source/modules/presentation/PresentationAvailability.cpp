@@ -33,14 +33,15 @@ WebPresentationClient* presentationClient(ExecutionContext* executionContext)
 // static
 PresentationAvailability* PresentationAvailability::take(ScriptPromiseResolver* resolver, const KURL& url, bool value)
 {
-    PresentationAvailability* presentationAvailability = new PresentationAvailability(resolver->executionContext(), url, value);
+    PresentationAvailability* presentationAvailability = new PresentationAvailability(resolver->getExecutionContext(), url, value);
     presentationAvailability->suspendIfNeeded();
     presentationAvailability->updateListening();
     return presentationAvailability;
 }
 
 PresentationAvailability::PresentationAvailability(ExecutionContext* executionContext, const KURL& url, bool value)
-    : ActiveDOMObject(executionContext)
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(executionContext)
     , PageLifecycleObserver(toDocument(executionContext)->page())
     , m_url(url)
     , m_value(value)
@@ -58,17 +59,16 @@ const AtomicString& PresentationAvailability::interfaceName() const
     return EventTargetNames::PresentationAvailability;
 }
 
-ExecutionContext* PresentationAvailability::executionContext() const
+ExecutionContext* PresentationAvailability::getExecutionContext() const
 {
-    return ActiveDOMObject::executionContext();
+    return ActiveDOMObject::getExecutionContext();
 }
 
-bool PresentationAvailability::addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
+void PresentationAvailability::addedEventListener(const AtomicString& eventType, RegisteredEventListener& registeredListener)
 {
+    EventTargetWithInlineData::addedEventListener(eventType, registeredListener);
     if (eventType == EventTypeNames::change)
-        UseCounter::count(executionContext(), UseCounter::PresentationAvailabilityChangeEventListener);
-
-    return EventTarget::addEventListenerInternal(eventType, listener, options);
+        UseCounter::count(getExecutionContext(), UseCounter::PresentationAvailabilityChangeEventListener);
 }
 
 void PresentationAvailability::availabilityChanged(bool value)
@@ -115,11 +115,11 @@ void PresentationAvailability::setState(State state)
 
 void PresentationAvailability::updateListening()
 {
-    WebPresentationClient* client = presentationClient(executionContext());
+    WebPresentationClient* client = presentationClient(getExecutionContext());
     if (!client)
         return;
 
-    if (m_state == State::Active && (toDocument(executionContext())->pageVisibilityState() == PageVisibilityStateVisible))
+    if (m_state == State::Active && (toDocument(getExecutionContext())->pageVisibilityState() == PageVisibilityStateVisible))
         client->startListening(this);
     else
         client->stopListening(this);
@@ -137,7 +137,7 @@ bool PresentationAvailability::value() const
 
 DEFINE_TRACE(PresentationAvailability)
 {
-    RefCountedGarbageCollectedEventTargetWithInlineData<PresentationAvailability>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     PageLifecycleObserver::trace(visitor);
     ActiveDOMObject::trace(visitor);
 }

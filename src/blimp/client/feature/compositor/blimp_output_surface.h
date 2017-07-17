@@ -5,23 +5,26 @@
 #ifndef BLIMP_CLIENT_FEATURE_COMPOSITOR_BLIMP_OUTPUT_SURFACE_H_
 #define BLIMP_CLIENT_FEATURE_COMPOSITOR_BLIMP_OUTPUT_SURFACE_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/output/output_surface.h"
 
 namespace blimp {
 namespace client {
+class BlimpContextProvider;
 
 // Minimal implementation of cc::OutputSurface.
 class BlimpOutputSurface : public cc::OutputSurface {
  public:
   explicit BlimpOutputSurface(
-      const scoped_refptr<cc::ContextProvider>& context_provider);
+      scoped_refptr<BlimpContextProvider> context_provider);
   ~BlimpOutputSurface() override;
 
   // OutputSurface implementation.
-  void SwapBuffers(cc::CompositorFrame* frame) override;
+  void SwapBuffers(cc::CompositorFrame frame) override;
+  uint32_t GetFramebufferCopyTextureFormat() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BlimpOutputSurface);

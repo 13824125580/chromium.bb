@@ -113,19 +113,19 @@ static bool IsWhiteSpaceOrPunctuation(UChar c)
 static String selectMisspellingAsync(LocalFrame* selectedFrame, String& description, uint32_t& hash)
 {
     VisibleSelection selection = selectedFrame->selection().selection();
-    if (!selection.isCaretOrRange())
+    if (selection.isNone())
         return String();
 
     // Caret and range selections always return valid normalized ranges.
-    RefPtrWillBeRawPtr<Range> selectionRange = createRange(selection.toNormalizedEphemeralRange());
-    DocumentMarkerVector markers = selectedFrame->document()->markers().markersInRange(EphemeralRange(selectionRange.get()), DocumentMarker::MisspellingMarkers());
+    Range* selectionRange = createRange(selection.toNormalizedEphemeralRange());
+    DocumentMarkerVector markers = selectedFrame->document()->markers().markersInRange(EphemeralRange(selectionRange), DocumentMarker::MisspellingMarkers());
     if (markers.size() != 1)
         return String();
     description = markers[0]->description();
     hash = markers[0]->hash();
 
     // Cloning a range fails only for invalid ranges.
-    RefPtrWillBeRawPtr<Range> markerRange = selectionRange->cloneRange();
+    Range* markerRange = selectionRange->cloneRange();
     markerRange->setStart(markerRange->startContainer(), markers[0]->startOffset());
     markerRange->setEnd(markerRange->endContainer(), markers[0]->endOffset());
 
@@ -138,7 +138,16 @@ static String selectMisspellingAsync(LocalFrame* selectedFrame, String& descript
 // Forward declare this, it is implemented at the end of this file.
 static bool fireBbContextMenuEvent(LocalFrame*, WebContextMenuData&, bool);
 
-void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool fromContextMenuKey)
+bool ContextMenuClientImpl::shouldShowContextMenuFromTouch(const WebContextMenuData& data)
+{
+    return m_webView->page()->settings().alwaysShowContextMenuOnTouch()
+        || !data.linkURL.isEmpty()
+        || data.mediaType == WebContextMenuData::MediaTypeImage
+        || data.mediaType == WebContextMenuData::MediaTypeVideo
+        || data.isEditable;
+}
+
+bool ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool fromTouch, bool fromContextMenuKey)
 {
     // Displaying the context menu in this function is a big hack as we don't
     // have context, i.e. whether this is being invoked via a script or in
@@ -146,7 +155,7 @@ void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool
     // Keyboard events KeyVK_APPS, Shift+F10). Check if this is being invoked
     // in response to the above input events before popping up the context menu.
     if (!ContextMenuAllowedScope::isContextMenuAllowed())
-        return;
+        return false;
 
     HitTestResult r = m_webView->page()->contextMenuController().hitTestResult();
 
@@ -231,7 +240,7 @@ void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool
         // controls for audio then the player disappears, and there is no way to
         // return it back. Don't set this bit for fullscreen video, since
         // toggling is ignored in that case.
-        if (mediaElement->hasVideo() && !mediaElement->isFullscreen())
+        if (mediaElement->isHTMLVideoElement() && mediaElement->hasVideo() && !mediaElement->isFullscreen())
             data.mediaFlags |= WebContextMenuData::MediaCanToggleControls;
         if (mediaElement->shouldShowControls())
             data.mediaFlags |= WebContextMenuData::MediaControls;
@@ -275,7 +284,7 @@ void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool
         // It mostly works to convert the security origin to a URL, but
         // extensions accessing that property will not get the correct value
         // in that case. See https://crbug.com/534561
-        WebSecurityOrigin origin = m_webView->mainFrame()->securityOrigin();
+        WebSecurityOrigin origin = m_webView->mainFrame()->getSecurityOrigin();
         if (!origin.isNull())
             data.pageURL = KURL(ParsedURLString, origin.toString());
     } else {
@@ -284,7 +293,7 @@ void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool
 
     if (selectedFrame != m_webView->page()->mainFrame()) {
         data.frameURL = urlFromFrame(selectedFrame);
-        RefPtrWillBeRawPtr<HistoryItem> historyItem = selectedFrame->loader().currentItem();
+        HistoryItem* historyItem = selectedFrame->loader().currentItem();
         if (historyItem)
             data.frameHistoryItem = WebHistoryItem(historyItem);
     }
@@ -365,12 +374,20 @@ void ContextMenuClientImpl::showContextMenu(const ContextMenu* defaultMenu, bool
         data.inputFieldType = WebContextMenuData::InputFieldTypeNone;
     }
 
-    data.node = r.innerNodeOrImageMapImage();
+    if (fromTouch && !shouldShowContextMenuFromTouch(data))
+        return false;
+
+    WebLocalFrameImpl* selectedWebFrame = WebLocalFrameImpl::fromFrame(selectedFrame);
+
+    selectedWebFrame->setContextMenuNode(r.innerNodeOrImageMapImage());
+    if (!selectedWebFrame->client())
+        return false;
 
     if (!fireBbContextMenuEvent(selectedFrame, data, fromContextMenuKey) && m_webView->client()) {
-        WebLocalFrameImpl* selectedWebFrame = WebLocalFrameImpl::fromFrame(selectedFrame);
         selectedWebFrame->client()->showContextMenu(data);
     }
+
+    return true;
 }
 
 void ContextMenuClientImpl::clearContextMenu()
@@ -381,8 +398,7 @@ void ContextMenuClientImpl::clearContextMenu()
         return;
 
     WebLocalFrameImpl* selectedWebFrame = WebLocalFrameImpl::fromFrame(selectedFrame);
-    if (selectedWebFrame->client())
-        selectedWebFrame->client()->clearContextMenu();
+    selectedWebFrame->clearContextMenuNode();
 }
 
 static void populateSubMenuItems(const Vector<ContextMenuItem>& inputMenu, WebVector<WebMenuItemInfo>& subMenuItems)

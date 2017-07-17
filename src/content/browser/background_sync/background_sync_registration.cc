@@ -8,7 +8,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace content {
 
@@ -17,9 +17,6 @@ const BackgroundSyncRegistration::RegistrationId
 
 const BackgroundSyncRegistration::RegistrationId
     BackgroundSyncRegistration::kInitialId = 0;
-
-BackgroundSyncRegistration::BackgroundSyncRegistration() = default;
-BackgroundSyncRegistration::~BackgroundSyncRegistration() = default;
 
 bool BackgroundSyncRegistration::Equals(
     const BackgroundSyncRegistration& other) const {
@@ -32,10 +29,10 @@ bool BackgroundSyncRegistration::IsValid() const {
 
 bool BackgroundSyncRegistration::IsFiring() const {
   switch (sync_state_) {
-    case BackgroundSyncState::FIRING:
-    case BackgroundSyncState::REREGISTERED_WHILE_FIRING:
+    case blink::mojom::BackgroundSyncState::FIRING:
+    case blink::mojom::BackgroundSyncState::REREGISTERED_WHILE_FIRING:
       return true;
-    case BackgroundSyncState::PENDING:
+    case blink::mojom::BackgroundSyncState::PENDING:
       return false;
   }
   NOTREACHED();

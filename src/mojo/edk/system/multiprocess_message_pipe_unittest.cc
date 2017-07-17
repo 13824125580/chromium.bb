@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -115,14 +116,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(EchoEcho, MultiprocessMessagePipeTest, h) {
   return rv;
 }
 
-// Sends "hello" to child, and expects "hellohello" back.
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_Basic DISABLED_Basic
-#else
-#define MAYBE_Basic Basic
-#endif  // defined(OS_ANDROID)
-TEST_F(MultiprocessMessagePipeTest, MAYBE_Basic) {
+TEST_F(MultiprocessMessagePipeTest, Basic) {
   RUN_CHILD_ON_PIPE(EchoEcho, h)
     std::string hello("hello");
     ASSERT_EQ(MOJO_RESULT_OK,
@@ -158,15 +152,7 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_Basic) {
   END_CHILD_AND_EXPECT_EXIT_CODE(1 % 100);
 }
 
-// Sends a bunch of messages to the child. Expects them "repeated" back. Waits
-// for the child to close its end before quitting.
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_QueueMessages DISABLED_QueueMessages
-#else
-#define MAYBE_QueueMessages QueueMessages
-#endif  // defined(OS_ANDROID)
-TEST_F(MultiprocessMessagePipeTest, MAYBE_QueueMessages) {
+TEST_F(MultiprocessMessagePipeTest, QueueMessages) {
   static const size_t kNumMessages = 1001;
   RUN_CHILD_ON_PIPE(EchoEcho, h)
     for (size_t i = 0; i < kNumMessages; i++) {
@@ -235,7 +221,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckSharedBuffer, MultiprocessMessagePipeTest,
   std::string read_buffer(100, '\0');
   uint32_t num_bytes = static_cast<uint32_t>(read_buffer.size());
   MojoHandle handles[10];
-  uint32_t num_handlers = MOJO_ARRAYSIZE(handles);  // Maximum number to receive
+  uint32_t num_handlers = arraysize(handles);  // Maximum number to receive
   CHECK_EQ(MojoReadMessage(h, &read_buffer[0],
                            &num_bytes, &handles[0],
                            &num_handlers, MOJO_READ_MESSAGE_FLAG_NONE),
@@ -292,13 +278,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckSharedBuffer, MultiprocessMessagePipeTest,
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_SharedBufferPassing DISABLED_SharedBufferPassing
-#else
-#define MAYBE_SharedBufferPassing SharedBufferPassing
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_SharedBufferPassing) {
+TEST_F(MultiprocessMessagePipeTest, SharedBufferPassing) {
   RUN_CHILD_ON_PIPE(CheckSharedBuffer, h)
     // Make a shared buffer.
     MojoCreateSharedBufferOptions options;
@@ -323,7 +303,7 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_SharedBufferPassing) {
     ASSERT_EQ(MOJO_RESULT_OK,
               MojoWriteMessage(h, &go1[0],
                                static_cast<uint32_t>(go1.size()), &handles[0],
-                               MOJO_ARRAYSIZE(handles),
+                               arraysize(handles),
                                MOJO_WRITE_MESSAGE_FLAG_NONE));
 
     // Wait for a message from the child.
@@ -388,7 +368,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckPlatformHandleFile,
   std::string read_buffer(100, '\0');
   uint32_t num_bytes = static_cast<uint32_t>(read_buffer.size());
   MojoHandle handles[255];  // Maximum number to receive.
-  uint32_t num_handlers = MOJO_ARRAYSIZE(handles);
+  uint32_t num_handlers = arraysize(handles);
 
   CHECK_EQ(MojoReadMessage(h, &read_buffer[0],
                            &num_bytes, &handles[0],
@@ -493,7 +473,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckMessagePipe, MultiprocessMessagePipeTest, h) {
 
   // It should have a message pipe.
   MojoHandle handles[10];
-  uint32_t num_handlers = MOJO_ARRAYSIZE(handles);
+  uint32_t num_handlers = arraysize(handles);
   CHECK_EQ(MojoReadMessage(h, nullptr,
                            nullptr, &handles[0],
                            &num_handlers, MOJO_READ_MESSAGE_FLAG_NONE),
@@ -529,13 +509,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckMessagePipe, MultiprocessMessagePipeTest, h) {
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_MessagePipePassing DISABLED_MessagePipePassing
-#else
-#define MAYBE_MessagePipePassing MessagePipePassing
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_MessagePipePassing) {
+TEST_F(MultiprocessMessagePipeTest, MessagePipePassing) {
   RUN_CHILD_ON_PIPE(CheckMessagePipe, h)
     MojoCreateSharedBufferOptions options;
     options.struct_size = sizeof(options);
@@ -577,14 +551,7 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_MessagePipePassing) {
   END_CHILD()
 }
 
-// Like above test, but verifies passing the other MP handle works as well.
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_MessagePipeTwoPassing DISABLED_MessagePipeTwoPassing
-#else
-#define MAYBE_MessagePipeTwoPassing MessagePipeTwoPassing
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_MessagePipeTwoPassing) {
+TEST_F(MultiprocessMessagePipeTest, MessagePipeTwoPassing) {
   RUN_CHILD_ON_PIPE(CheckMessagePipe, h)
     MojoHandle mp1, mp2;
     ASSERT_EQ(MOJO_RESULT_OK,
@@ -636,7 +603,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(DataPipeConsumer, MultiprocessMessagePipeTest, h) {
 
   // It should have a message pipe.
   MojoHandle handles[10];
-  uint32_t num_handlers = MOJO_ARRAYSIZE(handles);
+  uint32_t num_handlers = arraysize(handles);
   CHECK_EQ(MojoReadMessage(h, nullptr,
                            nullptr, &handles[0],
                            &num_handlers, MOJO_READ_MESSAGE_FLAG_NONE),
@@ -672,13 +639,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(DataPipeConsumer, MultiprocessMessagePipeTest, h) {
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_DataPipeConsumer DISABLED_DataPipeConsumer
-#else
-#define MAYBE_DataPipeConsumer DataPipeConsumer
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_DataPipeConsumer) {
+TEST_F(MultiprocessMessagePipeTest, DataPipeConsumer) {
   RUN_CHILD_ON_PIPE(DataPipeConsumer, h)
     MojoCreateSharedBufferOptions options;
     options.struct_size = sizeof(options);
@@ -772,13 +733,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(ChannelEchoClient, MultiprocessMessagePipeTest,
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_MultiprocessChannelPipe DISABLED_MultiprocessChannelPipe
-#else
-#define MAYBE_MultiprocessChannelPipe MultiprocessChannelPipe
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_MultiprocessChannelPipe) {
+TEST_F(MultiprocessMessagePipeTest, MultiprocessChannelPipe) {
   RUN_CHILD_ON_PIPE(ChannelEchoClient, h)
     VerifyEcho(h, "in an interstellar burst");
     VerifyEcho(h, "i am back to save the universe");
@@ -803,13 +758,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(EchoServiceClient, MultiprocessMessagePipeTest,
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PassMessagePipeCrossProcess DISABLED_PassMessagePipeCrossProcess
-#else
-#define MAYBE_PassMessagePipeCrossProcess PassMessagePipeCrossProcess
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_PassMessagePipeCrossProcess) {
+TEST_F(MultiprocessMessagePipeTest, PassMessagePipeCrossProcess) {
   MojoHandle p0, p1;
   CreateMessagePipe(&p0, &p1);
   RUN_CHILD_ON_PIPE(EchoServiceClient, h)
@@ -866,14 +815,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(EchoServiceFactoryClient,
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PassMoarMessagePipesCrossProcess \
-    DISABLED_PassMoarMessagePipesCrossProcess
-#else
-#define MAYBE_PassMoarMessagePipesCrossProcess PassMoarMessagePipesCrossProcess
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_PassMoarMessagePipesCrossProcess) {
+TEST_F(MultiprocessMessagePipeTest, PassMoarMessagePipesCrossProcess) {
   MojoHandle echo_factory_proxy, echo_factory_request;
   CreateMessagePipe(&echo_factory_proxy, &echo_factory_request);
 
@@ -918,14 +860,7 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_PassMoarMessagePipesCrossProcess) {
   CloseHandle(echo_proxy_c);
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_ChannelPipesWithMultipleChildren \
-    DISABLED_ChannelPipesWithMultipleChildren
-#else
-#define MAYBE_ChannelPipesWithMultipleChildren ChannelPipesWithMultipleChildren
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_ChannelPipesWithMultipleChildren) {
+TEST_F(MultiprocessMessagePipeTest, ChannelPipesWithMultipleChildren) {
   RUN_CHILD_ON_PIPE(ChannelEchoClient, a)
     RUN_CHILD_ON_PIPE(ChannelEchoClient, b)
       VerifyEcho(a, "hello child 0");
@@ -955,13 +890,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(PingPongPipeClient,
   EXPECT_EQ("quit", ReadMessage(h));
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_PingPongPipe DISABLED_PingPongPipe
-#else
-#define MAYBE_PingPongPipe PingPongPipe
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_PingPongPipe) {
+TEST_F(MultiprocessMessagePipeTest, PingPongPipe) {
   MojoHandle p0, p1;
   CreateMessagePipe(&p0, &p1);
 
@@ -1060,13 +989,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CommandDrivenClient, MultiprocessMessagePipeTest,
   return 0;
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_ChildToChildPipes DISABLED_ChildToChildPipes
-#else
-#define MAYBE_ChildToChildPipes ChildToChildPipes
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_ChildToChildPipes) {
+TEST_F(MultiprocessMessagePipeTest, ChildToChildPipes) {
   RUN_CHILD_ON_PIPE(CommandDrivenClient, h0)
     RUN_CHILD_ON_PIPE(CommandDrivenClient, h1)
       CommandDrivenClientController a(h0);
@@ -1091,13 +1014,7 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_ChildToChildPipes) {
   END_CHILD()
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_MoreChildToChildPipes DISABLED_MoreChildToChildPipes
-#else
-#define MAYBE_MoreChildToChildPipes MoreChildToChildPipes
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_MoreChildToChildPipes) {
+TEST_F(MultiprocessMessagePipeTest, MoreChildToChildPipes) {
   RUN_CHILD_ON_PIPE(CommandDrivenClient, h0)
     RUN_CHILD_ON_PIPE(CommandDrivenClient, h1)
       RUN_CHILD_ON_PIPE(CommandDrivenClient, h2)
@@ -1183,13 +1100,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceivePipeWithClosedPeer,
                                      MOJO_DEADLINE_INDEFINITE, nullptr));
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_SendPipeThenClosePeer DISABLED_SendPipeThenClosePeer
-#else
-#define MAYBE_SendPipeThenClosePeer SendPipeThenClosePeer
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_SendPipeThenClosePeer) {
+TEST_F(MultiprocessMessagePipeTest, SendPipeThenClosePeer) {
   RUN_CHILD_ON_PIPE(ReceivePipeWithClosedPeer, h)
     MojoHandle a, b;
     CreateMessagePipe(&a, &b);
@@ -1266,13 +1177,7 @@ TEST_F(MultiprocessMessagePipeTest,
 }
 
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_SendClosePeerSend DISABLED_SendClosePeerSend
-#else
-#define MAYBE_SendClosePeerSend SendClosePeerSend
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_SendClosePeerSend) {
+TEST_F(MultiprocessMessagePipeTest, SendClosePeerSend) {
   MojoHandle a, b;
   CreateMessagePipe(&a, &b);
 
@@ -1315,13 +1220,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(WriteCloseSendPeerClient,
   EXPECT_EQ("quit", ReadMessage(h));
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_WriteCloseSendPeer DISABLED_WriteCloseSendPeer
-#else
-#define MAYBE_WriteCloseSendPeer WriteCloseSendPeer
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_WriteCloseSendPeer) {
+TEST_F(MultiprocessMessagePipeTest, WriteCloseSendPeer) {
   MojoHandle pipe[2];
   CreateMessagePipe(&pipe[0], &pipe[1]);
 
@@ -1361,13 +1260,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(BootstrapMessagePipeAsyncClient,
   VerifyEcho(pipe.get().value(), "goodbye");
 }
 
-#if defined(OS_ANDROID)
-// Android multi-process tests are not executing the new process. This is flaky.
-#define MAYBE_BootstrapMessagePipeAsync DISABLED_BootstrapMessagePipeAsync
-#else
-#define MAYBE_BootstrapMessagePipeAsync BootstrapMessagePipeAsync
-#endif
-TEST_F(MultiprocessMessagePipeTest, MAYBE_BootstrapMessagePipeAsync) {
+TEST_F(MultiprocessMessagePipeTest, BootstrapMessagePipeAsync) {
   // Tests that new cross-process message pipes can be created synchronously
   // using asynchronous negotiation over an arbitrary platform channel.
   RUN_CHILD_ON_PIPE(BootstrapMessagePipeAsyncClient, child)
@@ -1386,6 +1279,71 @@ TEST_F(MultiprocessMessagePipeTest, MAYBE_BootstrapMessagePipeAsync) {
     // Ensure that we can read and write on the new pipe.
     VerifyEcho(pipe.get().value(), "goodbye");
   END_CHILD()
+}
+
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(BadMessageClient, MultiprocessMessagePipeTest,
+                                  parent) {
+  MojoHandle pipe;
+  EXPECT_EQ("hi", ReadMessageWithHandles(parent, &pipe, 1));
+  WriteMessage(pipe, "derp");
+  EXPECT_EQ("bye", ReadMessage(parent));
+}
+
+void OnProcessError(std::string* out_error, const std::string& error) {
+  *out_error = error;
+}
+
+TEST_F(MultiprocessMessagePipeTest, NotifyBadMessage) {
+  const std::string kFirstErrorMessage = "everything is terrible!";
+  const std::string kSecondErrorMessage = "not the bits you're looking for";
+
+  std::string first_process_error;
+  std::string second_process_error;
+
+  set_process_error_callback(base::Bind(&OnProcessError, &first_process_error));
+  RUN_CHILD_ON_PIPE(BadMessageClient, child1)
+    set_process_error_callback(base::Bind(&OnProcessError,
+                                          &second_process_error));
+    RUN_CHILD_ON_PIPE(BadMessageClient, child2)
+      MojoHandle a, b, c, d;
+      CreateMessagePipe(&a, &b);
+      CreateMessagePipe(&c, &d);
+      WriteMessageWithHandles(child1, "hi", &b, 1);
+      WriteMessageWithHandles(child2, "hi", &d, 1);
+
+      // Read a message from the pipe we sent to child1 and flag it as bad.
+      ASSERT_EQ(MOJO_RESULT_OK, MojoWait(a, MOJO_HANDLE_SIGNAL_READABLE,
+                                         MOJO_DEADLINE_INDEFINITE, nullptr));
+      uint32_t num_bytes = 0;
+      MojoMessageHandle message;
+      ASSERT_EQ(MOJO_RESULT_OK,
+                MojoReadMessageNew(a, &message, &num_bytes, nullptr, 0,
+                                   MOJO_READ_MESSAGE_FLAG_NONE));
+      EXPECT_EQ(MOJO_RESULT_OK,
+                MojoNotifyBadMessage(message, kFirstErrorMessage.data(),
+                                     kFirstErrorMessage.size()));
+      EXPECT_EQ(MOJO_RESULT_OK, MojoFreeMessage(message));
+
+      // Read a message from the pipe we sent to child2 and flag it as bad.
+      ASSERT_EQ(MOJO_RESULT_OK, MojoWait(c, MOJO_HANDLE_SIGNAL_READABLE,
+                                         MOJO_DEADLINE_INDEFINITE, nullptr));
+      ASSERT_EQ(MOJO_RESULT_OK,
+                MojoReadMessageNew(c, &message, &num_bytes, nullptr, 0,
+                                   MOJO_READ_MESSAGE_FLAG_NONE));
+      EXPECT_EQ(MOJO_RESULT_OK,
+                MojoNotifyBadMessage(message, kSecondErrorMessage.data(),
+                                     kSecondErrorMessage.size()));
+      EXPECT_EQ(MOJO_RESULT_OK, MojoFreeMessage(message));
+
+      WriteMessage(child2, "bye");
+    END_CHILD();
+
+    WriteMessage(child1, "bye");
+  END_CHILD()
+
+  // The error messages should match the processes which triggered them.
+  EXPECT_NE(std::string::npos, first_process_error.find(kFirstErrorMessage));
+  EXPECT_NE(std::string::npos, second_process_error.find(kSecondErrorMessage));
 }
 
 }  // namespace

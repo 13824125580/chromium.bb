@@ -32,7 +32,7 @@ class BlobStorageContext;
 
 namespace content {
 
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerContextCore;
 class ServiceWorkerDispatcherHost;
 class ServiceWorkerRequestHandler;
@@ -58,8 +58,10 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Used to pre-create a ServiceWorkerProviderHost for a navigation. The
   // ServiceWorkerNetworkProvider will later be created in the renderer, should
   // the navigation succeed.
-  static scoped_ptr<ServiceWorkerProviderHost> PreCreateNavigationHost(
+  static std::unique_ptr<ServiceWorkerProviderHost> PreCreateNavigationHost(
       base::WeakPtr<ServiceWorkerContextCore> context);
+
+  enum class FrameSecurityLevel { UNINITIALIZED, INSECURE, SECURE };
 
   // When this provider host is for a Service Worker context, |route_id| is
   // MSG_ROUTING_NONE. When this provider host is for a Document,
@@ -72,6 +74,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
                             int route_id,
                             int provider_id,
                             ServiceWorkerProviderType provider_type,
+                            FrameSecurityLevel parent_frame_security_level,
                             base::WeakPtr<ServiceWorkerContextCore> context,
                             ServiceWorkerDispatcherHost* dispatcher_host);
   virtual ~ServiceWorkerProviderHost();
@@ -81,6 +84,26 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   int provider_id() const { return provider_id_; }
   int frame_id() const;
   int route_id() const { return route_id_; }
+
+  bool is_parent_frame_secure() const {
+    return parent_frame_security_level_ == FrameSecurityLevel::SECURE;
+  }
+  void set_parent_frame_secure(bool is_parent_frame_secure) {
+    CHECK_EQ(parent_frame_security_level_, FrameSecurityLevel::UNINITIALIZED);
+    parent_frame_security_level_ = is_parent_frame_secure
+                                       ? FrameSecurityLevel::SECURE
+                                       : FrameSecurityLevel::INSECURE;
+  }
+
+  // Returns whether this provider host is secure enough to have a service
+  // worker controller.
+  // Analogous to Blink's Document::isSecureContext. Because of how service
+  // worker intercepts main resource requests, this check must be done
+  // browser-side once the URL is known (see comments in
+  // ServiceWorkerNetworkProvider::CreateForNavigation). This function uses
+  // |document_url_| and |is_parent_frame_secure_| to determine context
+  // security, so they must be set properly before calling this function.
+  bool IsContextSecureForServiceWorker() const;
 
   bool IsHostToRunningServiceWorker() {
     return running_hosted_version_.get() != NULL;
@@ -112,6 +135,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
     return running_hosted_version_.get();
   }
 
+  // Sets the |document_url_|.  When this object is for a client,
+  // |matching_registrations_| gets also updated to ensure that |document_url_|
+  // is in scope of all |matching_registrations_|.
   void SetDocumentUrl(const GURL& url);
   const GURL& document_url() const { return document_url_; }
 
@@ -131,13 +157,11 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Clears the associated registration and stop listening to it.
   void DisassociateRegistration();
 
-  // Returns false if the version is not in the expected STARTING in our
-  // process state. That would be indicative of a bad IPC message.
-  bool SetHostedVersionId(int64_t versions_id);
+  void SetHostedVersion(ServiceWorkerVersion* version);
 
   // Returns a handler for a request, the handler may return NULL if
   // the request doesn't require special handling.
-  scoped_ptr<ServiceWorkerRequestHandler> CreateRequestHandler(
+  std::unique_ptr<ServiceWorkerRequestHandler> CreateRequestHandler(
       FetchRequestMode request_mode,
       FetchCredentialsMode credentials_mode,
       FetchRedirectMode redirect_mode,
@@ -145,7 +169,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body);
 
   // Used to get a ServiceWorkerObjectInfo to send to the renderer. Finds an
   // existing ServiceWorkerHandle, and increments its reference count, or else
@@ -168,10 +192,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   bool IsContextAlive();
 
   // Dispatches message event to the document.
-  void PostMessageToClient(
-      ServiceWorkerVersion* version,
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports);
+  void PostMessageToClient(ServiceWorkerVersion* version,
+                           const base::string16& message,
+                           const std::vector<int>& sent_message_ports);
 
   // Adds reference of this host's process to the |pattern|, the reference will
   // be removed in destructor.
@@ -224,9 +247,6 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   void AddMatchingRegistration(ServiceWorkerRegistration* registration);
   void RemoveMatchingRegistration(ServiceWorkerRegistration* registration);
 
-  // Add matched registrations for document generated by shift-reload.
-  void AddAllMatchingRegistrations();
-
   // An optimized implementation of [[Match Service Worker Registration]]
   // for current document.
   ServiceWorkerRegistration* MatchRegistration() const;
@@ -248,6 +268,10 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
                            Update_ElongatedScript);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerWriteToCacheJobTest,
                            Update_EmptyScript);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDispatcherHostTest,
+                           DispatchExtendableMessageEvent);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDispatcherHostTest,
+                           DispatchExtendableMessageEvent_Fail);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
                            UpdateBefore24Hours);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
@@ -256,6 +280,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
                            UpdateForceBypassCache);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
                            ServiceWorkerDataRequestAnnotation);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProviderHostTest, ContextSecurity);
 
   struct OneShotGetReadyCallback {
     GetRegistrationForReadyCallback callback;
@@ -284,6 +309,12 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
 
   void SendAssociateRegistrationMessage();
 
+  // Syncs matching registrations with live registrations.
+  void SyncMatchingRegistrations();
+
+  // Discards all references to matching registrations.
+  void RemoveAllMatchingRegistrations();
+
   // Increase/decrease this host's process reference for |pattern|.
   void IncreaseProcessReference(const GURL& pattern);
   void DecreaseProcessReference(const GURL& pattern);
@@ -304,6 +335,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   int render_thread_id_;
   int provider_id_;
   ServiceWorkerProviderType provider_type_;
+  FrameSecurityLevel parent_frame_security_level_;
   GURL document_url_;
   GURL topmost_frame_url_;
 
@@ -313,11 +345,12 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Keyed by registration scope URL length.
   typedef std::map<size_t, scoped_refptr<ServiceWorkerRegistration>>
       ServiceWorkerRegistrationMap;
-  // Contains all living registrations which has pattern this document's
-  // URL starts with.
+  // Contains all living registrations whose pattern this document's URL
+  // starts with. It is empty if IsContextSecureForServiceWorker() is
+  // false.
   ServiceWorkerRegistrationMap matching_registrations_;
 
-  scoped_ptr<OneShotGetReadyCallback> get_ready_callback_;
+  std::unique_ptr<OneShotGetReadyCallback> get_ready_callback_;
   scoped_refptr<ServiceWorkerVersion> controlling_version_;
   scoped_refptr<ServiceWorkerVersion> running_hosted_version_;
   base::WeakPtr<ServiceWorkerContextCore> context_;

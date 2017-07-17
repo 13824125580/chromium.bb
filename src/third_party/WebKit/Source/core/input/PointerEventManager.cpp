@@ -4,15 +4,24 @@
 
 #include "core/input/PointerEventManager.h"
 
+#include "core/dom/ElementTraversal.h"
 #include "core/dom/shadow/FlatTreeTraversal.h"
 #include "core/events/MouseEvent.h"
+#include "core/frame/FrameView.h"
+#include "core/html/HTMLCanvasElement.h"
 #include "core/input/EventHandler.h"
+#include "core/input/TouchActionUtil.h"
+#include "core/page/ChromeClient.h"
+#include "core/page/Page.h"
+#include "platform/PlatformTouchEvent.h"
 
 namespace blink {
 
 namespace {
 
-const AtomicString& pointerEventNameForTouchPointState(PlatformTouchPoint::State state)
+size_t toPointerTypeIndex(WebPointerProperties::PointerType t) { return static_cast<size_t>(t); }
+
+const AtomicString& pointerEventNameForTouchPointState(PlatformTouchPoint::TouchState state)
 {
     switch (state) {
     case PlatformTouchPoint::TouchReleased:
@@ -31,41 +40,23 @@ const AtomicString& pointerEventNameForTouchPointState(PlatformTouchPoint::State
     }
 }
 
-bool isInDocument(PassRefPtrWillBeRawPtr<EventTarget> n)
+bool isInDocument(EventTarget* n)
 {
-    return n && n->toNode() && n->toNode()->inDocument();
-}
-
-WebInputEventResult dispatchPointerEvent(
-    PassRefPtrWillBeRawPtr<EventTarget> prpTarget,
-    PassRefPtrWillBeRawPtr<PointerEvent> prpPointerEvent,
-    bool checkForListener = false)
-{
-    RefPtrWillBeRawPtr<EventTarget> target = prpTarget;
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent = prpPointerEvent;
-    if (!RuntimeEnabledFeatures::pointerEventEnabled())
-        return WebInputEventResult::NotHandled;
-    if (!checkForListener || target->hasEventListeners(pointerEvent->type())) {
-        DispatchEventResult dispatchResult = target->dispatchEvent(pointerEvent);
-        return EventHandler::toWebInputEventResult(dispatchResult);
-    }
-    return WebInputEventResult::NotHandled;
+    return n && n->toNode() && n->toNode()->inShadowIncludingDocument();
 }
 
 WebInputEventResult dispatchMouseEvent(
-    PassRefPtrWillBeRawPtr<EventTarget> prpTarget,
+    EventTarget* target,
     const AtomicString& mouseEventType,
     const PlatformMouseEvent& mouseEvent,
-    PassRefPtrWillBeRawPtr<EventTarget> prpRelatedTarget,
+    EventTarget* relatedTarget,
     int detail = 0,
     bool checkForListener = false)
 {
-    RefPtrWillBeRawPtr<EventTarget> target = prpTarget;
-    RefPtrWillBeRawPtr<EventTarget> relatedTarget = prpRelatedTarget;
-    if (target->toNode()
+    if (target && target->toNode()
         && (!checkForListener || target->hasEventListeners(mouseEventType))) {
-        RefPtrWillBeRawPtr<Node> targetNode = target->toNode();
-        RefPtrWillBeRawPtr<MouseEvent> event = MouseEvent::create(mouseEventType,
+        Node* targetNode = target->toNode();
+        MouseEvent* event = MouseEvent::create(mouseEventType,
             targetNode->document().domWindow(), mouseEvent, detail,
             relatedTarget ? relatedTarget->toNode() : nullptr);
         DispatchEventResult dispatchResult = target->dispatchEvent(event);
@@ -74,68 +65,175 @@ WebInputEventResult dispatchMouseEvent(
     return WebInputEventResult::NotHandled;
 }
 
+PlatformMouseEvent mouseEventWithRegion(Node* node, const PlatformMouseEvent& mouseEvent)
+{
+    if (!node->isElementNode())
+        return mouseEvent;
+
+    Element* element = toElement(node);
+    if (!element->isInCanvasSubtree())
+        return mouseEvent;
+
+    HTMLCanvasElement* canvas = Traversal<HTMLCanvasElement>::firstAncestorOrSelf(*element);
+    // In this case, the event target is canvas and mouse rerouting doesn't happen.
+    if (canvas == element)
+        return mouseEvent;
+    String region = canvas->getIdFromControl(element);
+    PlatformMouseEvent newMouseEvent = mouseEvent;
+    newMouseEvent.setRegion(region);
+    return newMouseEvent;
+}
+
+void buildAncestorChain(
+    EventTarget* target,
+    HeapVector<Member<Node>, 20>* ancestors)
+{
+    if (!isInDocument(target))
+        return;
+    Node* targetNode = target->toNode();
+    DCHECK(targetNode);
+    targetNode->updateDistribution();
+    // Index 0 element in the ancestors arrays will be the corresponding
+    // target. So the root of their document will be their last element.
+    for (Node* node = targetNode; node; node = FlatTreeTraversal::parent(*node))
+        ancestors->append(node);
+}
+
+void buildAncestorChainsAndFindCommonAncestors(
+    EventTarget* exitedTarget, EventTarget* enteredTarget,
+    HeapVector<Member<Node>, 20>* exitedAncestorsOut,
+    HeapVector<Member<Node>, 20>* enteredAncestorsOut,
+    size_t* exitedAncestorsCommonParentIndexOut,
+    size_t* enteredAncestorsCommonParentIndexOut)
+{
+    DCHECK(exitedAncestorsOut);
+    DCHECK(enteredAncestorsOut);
+    DCHECK(exitedAncestorsCommonParentIndexOut);
+    DCHECK(enteredAncestorsCommonParentIndexOut);
+
+    buildAncestorChain(exitedTarget, exitedAncestorsOut);
+    buildAncestorChain(enteredTarget, enteredAncestorsOut);
+
+    *exitedAncestorsCommonParentIndexOut = exitedAncestorsOut->size();
+    *enteredAncestorsCommonParentIndexOut = enteredAncestorsOut->size();
+    while (*exitedAncestorsCommonParentIndexOut > 0
+        && *enteredAncestorsCommonParentIndexOut > 0) {
+        if ((*exitedAncestorsOut)[(*exitedAncestorsCommonParentIndexOut)-1]
+            != (*enteredAncestorsOut)[(*enteredAncestorsCommonParentIndexOut)-1])
+            break;
+        (*exitedAncestorsCommonParentIndexOut)--;
+        (*enteredAncestorsCommonParentIndexOut)--;
+    }
+}
+
 } // namespace
 
-PassRefPtrWillBeRawPtr<Node> PointerEventManager::getEffectiveTargetForPointerEvent(
-    PassRefPtrWillBeRawPtr<Node> target,
-    PassRefPtrWillBeRawPtr<PointerEvent> pointerEvent)
+WebInputEventResult PointerEventManager::dispatchPointerEvent(
+    EventTarget* target,
+    PointerEvent* pointerEvent,
+    bool checkForListener)
 {
-    // TODO(nzolghadr): Add APIs to set the capturing nodes and return the correct node here
-    (void) pointerEvent;
+    if (!target)
+        return WebInputEventResult::NotHandled;
+
+    // Set whether node under pointer has received pointerover or not.
+    const int pointerId = pointerEvent->pointerId();
+    const AtomicString& eventType = pointerEvent->type();
+    if ((eventType == EventTypeNames::pointerout
+        || eventType == EventTypeNames::pointerover)
+        && m_nodeUnderPointer.contains(pointerId)) {
+        EventTarget* targetUnderPointer =
+            m_nodeUnderPointer.get(pointerId).target;
+        if (targetUnderPointer == target) {
+            m_nodeUnderPointer.set(pointerId, EventTargetAttributes
+                (targetUnderPointer,
+                eventType == EventTypeNames::pointerover));
+        }
+    }
+
+    if (!RuntimeEnabledFeatures::pointerEventEnabled())
+        return WebInputEventResult::NotHandled;
+    if (!checkForListener || target->hasEventListeners(eventType)) {
+        DispatchEventResult dispatchResult = target->dispatchEvent(pointerEvent);
+        return EventHandler::toWebInputEventResult(dispatchResult);
+    }
+    return WebInputEventResult::NotHandled;
+}
+
+EventTarget* PointerEventManager::getEffectiveTargetForPointerEvent(
+    EventTarget* target, int pointerId)
+{
+    if (EventTarget* capturingTarget = getCapturingNode(pointerId))
+        return capturingTarget;
     return target;
 }
 
-// Sends node transition events (pointer|mouse)(out|leave|over|enter) to the corresponding targets
-void PointerEventManager::sendNodeTransitionEvents(
-    PassRefPtrWillBeRawPtr<Node> exitedNode,
-    PassRefPtrWillBeRawPtr<Node> enteredNode,
+void PointerEventManager::sendMouseAndPossiblyPointerBoundaryEvents(
+    Node* exitedNode,
+    Node* enteredNode,
     const PlatformMouseEvent& mouseEvent,
-    PassRefPtrWillBeRawPtr<AbstractView> view)
+    bool isFrameBoundaryTransition)
 {
-    // Pointer event type does not matter as it will be overridden in the sendNodeTransitionEvents
-    sendNodeTransitionEvents(exitedNode, enteredNode,
-        m_pointerEventFactory.create(EventTypeNames::mouseout, mouseEvent, nullptr, view),
-        mouseEvent, true);
+    // Mouse event type does not matter as this pointerevent will only be used
+    // to create boundary pointer events and its type will be overridden in
+    // |sendBoundaryEvents| function.
+    PointerEvent* dummyPointerEvent =
+        m_pointerEventFactory.create(EventTypeNames::mousedown, mouseEvent,
+        nullptr, m_frame->document()->domWindow());
+
+    // TODO(crbug/545647): This state should reset with pointercancel too.
+    // This function also gets called for compat mouse events of touch at this
+    // stage. So if the event is not frame boundary transition it is only a
+    // compatibility mouse event and we do not need to change pointer event
+    // behavior regarding preventMouseEvent state in that case.
+    if (isFrameBoundaryTransition && dummyPointerEvent->buttons() == 0
+        && dummyPointerEvent->isPrimary()) {
+        m_preventMouseEventForPointerType[toPointerTypeIndex(
+            mouseEvent.pointerProperties().pointerType)] = false;
+    }
+
+    processCaptureAndPositionOfPointerEvent(dummyPointerEvent, enteredNode,
+        exitedNode, mouseEvent, true, isFrameBoundaryTransition);
 }
 
-void PointerEventManager::sendNodeTransitionEvents(
-    PassRefPtrWillBeRawPtr<EventTarget> prpExitedTarget,
-    PassRefPtrWillBeRawPtr<EventTarget> prpEnteredTarget,
-    PassRefPtrWillBeRawPtr<PointerEvent> prpPointerEvent,
+void PointerEventManager::sendBoundaryEvents(
+    EventTarget* exitedTarget,
+    EventTarget* enteredTarget,
+    PointerEvent* pointerEvent,
     const PlatformMouseEvent& mouseEvent, bool sendMouseEvent)
 {
-    RefPtrWillBeRawPtr<EventTarget> exitedTarget = prpExitedTarget;
-    RefPtrWillBeRawPtr<EventTarget> enteredTarget = prpEnteredTarget;
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent = prpPointerEvent;
     if (exitedTarget == enteredTarget)
         return;
 
+    if (EventTarget* capturingTarget = getCapturingNode(pointerEvent->pointerId())) {
+        if (capturingTarget == exitedTarget)
+            enteredTarget = nullptr;
+        else if (capturingTarget == enteredTarget)
+            exitedTarget = nullptr;
+        else
+            return;
+    }
+
     // Dispatch pointerout/mouseout events
     if (isInDocument(exitedTarget)) {
-        dispatchPointerEvent(exitedTarget, m_pointerEventFactory.create(
-            pointerEvent, EventTypeNames::pointerout, enteredTarget));
-        if (sendMouseEvent) {
+        if (!sendMouseEvent) {
+            dispatchPointerEvent(exitedTarget, m_pointerEventFactory.createPointerBoundaryEvent(
+                pointerEvent, EventTypeNames::pointerout, enteredTarget));
+        } else {
             dispatchMouseEvent(exitedTarget,
-                EventTypeNames::mouseout, mouseEvent, enteredTarget);
+                EventTypeNames::mouseout,
+                mouseEventWithRegion(exitedTarget->toNode(), mouseEvent),
+                enteredTarget);
         }
     }
 
     // Create lists of all exited/entered ancestors, locate the common ancestor
-    WillBeHeapVector<RefPtrWillBeMember<Node>, 32> exitedAncestors;
-    WillBeHeapVector<RefPtrWillBeMember<Node>, 32> enteredAncestors;
-    if (isInDocument(exitedTarget)) {
-        RefPtrWillBeRawPtr<Node> exitedNode = exitedTarget->toNode();
-        exitedNode->updateDistribution();
-        for (RefPtrWillBeRawPtr<Node> node = exitedNode; node; node = FlatTreeTraversal::parent(*node))
-            exitedAncestors.append(node);
-    }
-
-    if (isInDocument(enteredTarget)) {
-        RefPtrWillBeRawPtr<Node> enteredNode = enteredTarget->toNode();
-        enteredNode->updateDistribution();
-        for (RefPtrWillBeRawPtr<Node> node = enteredNode; node; node = FlatTreeTraversal::parent(*node))
-            enteredAncestors.append(node);
-    }
+    // Based on httparchive, in more than 97% cases the depth of DOM is less
+    // than 20.
+    HeapVector<Member<Node>, 20> exitedAncestors;
+    HeapVector<Member<Node>, 20> enteredAncestors;
+    size_t exitedAncestorsCommonParentIndex = 0;
+    size_t enteredAncestorsCommonParentIndex = 0;
 
     // A note on mouseenter and mouseleave: These are non-bubbling events, and they are dispatched if there
     // is a capturing event handler on an ancestor or a normal event handler on the element itself. This special
@@ -151,22 +249,10 @@ void PointerEventManager::sendNodeTransitionEvents(
     //
     // TODO(mustaq): Confirm spec conformance, double-check with other browsers.
 
-    size_t numExitedAncestors = exitedAncestors.size();
-    size_t numEnteredAncestors = enteredAncestors.size();
-
-    size_t exitedAncestorIndex = numExitedAncestors;
-    size_t enteredAncestorIndex = numEnteredAncestors;
-    for (size_t i = 0; i < numExitedAncestors; i++) {
-        for (size_t j = 0; j < numEnteredAncestors; j++) {
-            if (exitedAncestors[i] == enteredAncestors[j]) {
-                exitedAncestorIndex = i;
-                enteredAncestorIndex = j;
-                break;
-            }
-        }
-        if (exitedAncestorIndex <  exitedAncestors.size())
-            break;
-    }
+    buildAncestorChainsAndFindCommonAncestors(
+        exitedTarget, enteredTarget,
+        &exitedAncestors, &enteredAncestors,
+        &exitedAncestorsCommonParentIndex, &enteredAncestorsCommonParentIndex);
 
     bool exitedNodeHasCapturingAncestor = false;
     for (size_t j = 0; j < exitedAncestors.size(); j++) {
@@ -177,23 +263,26 @@ void PointerEventManager::sendNodeTransitionEvents(
     }
 
     // Dispatch pointerleave/mouseleave events, in child-to-parent order.
-    for (size_t j = 0; j < exitedAncestorIndex; j++) {
-        dispatchPointerEvent(exitedAncestors[j].get(),
-            m_pointerEventFactory.create(
-                pointerEvent, EventTypeNames::pointerleave, enteredTarget),
-            !exitedNodeHasCapturingAncestor);
-        if (sendMouseEvent) {
+    for (size_t j = 0; j < exitedAncestorsCommonParentIndex; j++) {
+        if (!sendMouseEvent) {
+            dispatchPointerEvent(exitedAncestors[j].get(),
+                m_pointerEventFactory.createPointerBoundaryEvent(
+                    pointerEvent, EventTypeNames::pointerleave, enteredTarget),
+                !exitedNodeHasCapturingAncestor);
+        } else {
             dispatchMouseEvent(exitedAncestors[j].get(),
-                EventTypeNames::mouseleave, mouseEvent, enteredTarget,
-                0, !exitedNodeHasCapturingAncestor);
+                EventTypeNames::mouseleave,
+                mouseEventWithRegion(exitedTarget->toNode(), mouseEvent),
+                enteredTarget, 0, !exitedNodeHasCapturingAncestor);
         }
     }
 
     // Dispatch pointerover/mouseover.
     if (isInDocument(enteredTarget)) {
-        dispatchPointerEvent(enteredTarget, m_pointerEventFactory.create(
-            pointerEvent, EventTypeNames::pointerover, exitedTarget));
-        if (sendMouseEvent) {
+        if (!sendMouseEvent) {
+            dispatchPointerEvent(enteredTarget, m_pointerEventFactory.createPointerBoundaryEvent(
+                pointerEvent, EventTypeNames::pointerover, exitedTarget));
+        } else {
             dispatchMouseEvent(enteredTarget,
                 EventTypeNames::mouseover, mouseEvent, exitedTarget);
         }
@@ -210,12 +299,13 @@ void PointerEventManager::sendNodeTransitionEvents(
     }
 
     // Dispatch pointerenter/mouseenter events, in parent-to-child order.
-    for (size_t i = enteredAncestorIndex; i > 0; i--) {
-        dispatchPointerEvent(enteredAncestors[i-1].get(),
-            m_pointerEventFactory.create(
-                pointerEvent, EventTypeNames::pointerenter, exitedTarget),
-            !enteredNodeHasCapturingAncestor);
-        if (sendMouseEvent) {
+    for (size_t i = enteredAncestorsCommonParentIndex; i > 0; i--) {
+        if (!sendMouseEvent) {
+            dispatchPointerEvent(enteredAncestors[i-1].get(),
+                m_pointerEventFactory.createPointerBoundaryEvent(
+                    pointerEvent, EventTypeNames::pointerenter, exitedTarget),
+                !enteredNodeHasCapturingAncestor);
+        } else {
             dispatchMouseEvent(enteredAncestors[i-1].get(),
                 EventTypeNames::mouseenter, mouseEvent, exitedTarget,
                 0, !enteredNodeHasCapturingAncestor);
@@ -224,93 +314,281 @@ void PointerEventManager::sendNodeTransitionEvents(
 }
 
 void PointerEventManager::setNodeUnderPointer(
-    PassRefPtrWillBeRawPtr<PointerEvent> prpPointerEvent,
-    PassRefPtrWillBeRawPtr<EventTarget> prpTarget)
+    PointerEvent* pointerEvent,
+    EventTarget* target,
+    bool sendEvent)
 {
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent = prpPointerEvent;
-    RefPtrWillBeRawPtr<EventTarget> target = prpTarget;
     if (m_nodeUnderPointer.contains(pointerEvent->pointerId())) {
-        sendNodeTransitionEvents(m_nodeUnderPointer.get(
-            pointerEvent->pointerId()), target, pointerEvent);
-        if (!target)
+        EventTargetAttributes node = m_nodeUnderPointer.get(
+            pointerEvent->pointerId());
+        if (!target) {
             m_nodeUnderPointer.remove(pointerEvent->pointerId());
-        else
-            m_nodeUnderPointer.set(pointerEvent->pointerId(), target);
+        } else if (target
+            != m_nodeUnderPointer.get(pointerEvent->pointerId()).target) {
+            m_nodeUnderPointer.set(pointerEvent->pointerId(),
+                EventTargetAttributes(target, false));
+        }
+        if (sendEvent)
+            sendBoundaryEvents(node.target, target, pointerEvent);
     } else if (target) {
-        sendNodeTransitionEvents(nullptr, target, pointerEvent);
-        m_nodeUnderPointer.add(pointerEvent->pointerId(), target);
+        m_nodeUnderPointer.add(pointerEvent->pointerId(),
+            EventTargetAttributes(target, false));
+        if (sendEvent)
+            sendBoundaryEvents(nullptr, target, pointerEvent);
     }
 }
 
-void PointerEventManager::sendTouchCancelPointerEvent(PassRefPtrWillBeRawPtr<EventTarget> target,
-    const PlatformTouchPoint& point)
+void PointerEventManager::blockTouchPointers()
 {
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent =
-        m_pointerEventFactory.createPointerCancel(point);
+    if (m_inCanceledStateForPointerTypeTouch)
+        return;
+    m_inCanceledStateForPointerTypeTouch = true;
 
-    // TODO(nzolghadr): crbug.com/579553 dealing with implicit touch capturing vs pointer event capturing
-    target->dispatchEvent(pointerEvent.get());
+    Vector<int> touchPointerIds
+        = m_pointerEventFactory.getPointerIdsOfType(WebPointerProperties::PointerType::Touch);
 
-    m_pointerEventFactory.remove(pointerEvent);
-    setNodeUnderPointer(pointerEvent, nullptr);
+    for (int pointerId : touchPointerIds) {
+        PointerEvent* pointerEvent
+            = m_pointerEventFactory.createPointerCancelEvent(
+                pointerId, WebPointerProperties::PointerType::Touch);
+
+        ASSERT(m_nodeUnderPointer.contains(pointerId));
+        EventTarget* target = m_nodeUnderPointer.get(pointerId).target;
+
+        processCaptureAndPositionOfPointerEvent(pointerEvent, target);
+
+        // TODO(nzolghadr): This event follows implicit TE capture. The actual target
+        // would depend on PE capturing. Perhaps need to split TE/PE event path upstream?
+        // crbug.com/579553.
+        dispatchPointerEvent(
+            getEffectiveTargetForPointerEvent(target, pointerEvent->pointerId()),
+            pointerEvent);
+
+        releasePointerCapture(pointerEvent->pointerId());
+
+        // Sending the leave/out events and lostpointercapture
+        // because the next touch event will have a different id. So delayed
+        // sending of lostpointercapture won't work here.
+        processCaptureAndPositionOfPointerEvent(pointerEvent, nullptr);
+
+        removePointer(pointerEvent);
+    }
+}
+
+void PointerEventManager::unblockTouchPointers()
+{
+    m_inCanceledStateForPointerTypeTouch = false;
+}
+
+WebInputEventResult PointerEventManager::handleTouchEvents(
+    const PlatformTouchEvent& event)
+{
+
+    if (event.type() == PlatformEvent::TouchScrollStarted) {
+        blockTouchPointers();
+        m_touchEventManager.setTouchScrollStarted();
+        return WebInputEventResult::HandledSystem;
+    }
+
+    bool newTouchSequence = true;
+    for (const auto &touchPoint : event.touchPoints()) {
+        if (touchPoint.state() != PlatformTouchPoint::TouchPressed) {
+            newTouchSequence = false;
+            break;
+        }
+    }
+    if (newTouchSequence)
+        unblockTouchPointers();
+    HeapVector<TouchEventManager::TouchInfo> touchInfos;
+
+    dispatchTouchPointerEvents(event, touchInfos);
+
+    return m_touchEventManager.handleTouchEvent(event, touchInfos);
+}
+
+void PointerEventManager::dispatchTouchPointerEvents(
+    const PlatformTouchEvent& event,
+    HeapVector<TouchEventManager::TouchInfo>& touchInfos)
+{
+    // Iterate through the touch points, sending PointerEvents to the targets as required.
+    for (const auto& touchPoint : event.touchPoints()) {
+        TouchEventManager::TouchInfo touchInfo;
+        touchInfo.point = touchPoint;
+
+        int pointerId = m_pointerEventFactory.getPointerEventId(
+            touchPoint.pointerProperties());
+        // Do the hit test either when the touch first starts or when the touch
+        // is not captured. |m_pendingPointerCaptureTarget| indicates the target
+        // that will be capturing this event. |m_pointerCaptureTarget| may not
+        // have this target yet since the processing of that will be done right
+        // before firing the event.
+        if (touchInfo.point.state() == PlatformTouchPoint::TouchPressed
+            || !m_pendingPointerCaptureTarget.contains(pointerId)) {
+            HitTestRequest::HitTestRequestType hitType = HitTestRequest::TouchEvent | HitTestRequest::ReadOnly | HitTestRequest::Active;
+            LayoutPoint pagePoint = roundedLayoutPoint(m_frame->view()->rootFrameToContents(touchInfo.point.pos()));
+            HitTestResult hitTestTesult = m_frame->eventHandler().hitTestResultAtPoint(pagePoint, hitType);
+            Node* node = hitTestTesult.innerNode();
+            if (node) {
+                touchInfo.targetFrame = node->document().frame();
+                if (isHTMLCanvasElement(node)) {
+                    std::pair<Element*, String> regionInfo = toHTMLCanvasElement(node)->getControlAndIdIfHitRegionExists(hitTestTesult.pointInInnerNodeFrame());
+                    if (regionInfo.first)
+                        node = regionInfo.first;
+                    touchInfo.region = regionInfo.second;
+                }
+                // TODO(crbug.com/612456): We need to investigate whether pointer
+                // events should go to text nodes or not. If so we need to
+                // update the mouse code as well. Also this logic looks similar
+                // to the one in TouchEventManager. We should be able to
+                // refactor it better after this investigation.
+                if (node->isTextNode())
+                    node = FlatTreeTraversal::parent(*node);
+                touchInfo.touchNode = node;
+
+            }
+        } else {
+            // Set the target of pointer event to the captured node as this
+            // pointer is captured otherwise it would have gone to the if block
+            // and perform a hit-test.
+            touchInfo.touchNode = m_pendingPointerCaptureTarget
+                .get(pointerId)->toNode();
+            touchInfo.targetFrame = touchInfo.touchNode->document().frame();
+        }
+
+        // Do not send pointer events for stationary touches or null targetFrame
+        if (touchInfo.touchNode && touchInfo.targetFrame
+            && touchPoint.state() != PlatformTouchPoint::TouchStationary
+            && !m_inCanceledStateForPointerTypeTouch) {
+            FloatPoint pagePoint = touchInfo.targetFrame->view()
+                ->rootFrameToContents(touchInfo.point.pos());
+            float scaleFactor = 1.0f / touchInfo.targetFrame->pageZoomFactor();
+            FloatPoint scrollPosition = touchInfo.targetFrame->view()->scrollPosition();
+            FloatPoint framePoint = pagePoint.scaledBy(scaleFactor);
+            framePoint.moveBy(scrollPosition.scaledBy(-scaleFactor));
+            PointerEvent* pointerEvent = m_pointerEventFactory.create(
+                pointerEventNameForTouchPointState(touchPoint.state()),
+                touchPoint, event.getModifiers(),
+                touchPoint.radius().scaledBy(scaleFactor),
+                framePoint,
+                touchInfo.touchNode ?
+                    touchInfo.touchNode->document().domWindow() : nullptr);
+
+            WebInputEventResult result = sendTouchPointerEvent(touchInfo.touchNode, pointerEvent);
+
+            // If a pointerdown has been canceled, queue the unique id to allow
+            // suppressing mouse events from gesture events. For mouse events
+            // fired from GestureTap & GestureLongPress (which are triggered by
+            // single touches only), it is enough to queue the ids only for
+            // primary pointers.
+            // TODO(mustaq): What about other cases (e.g. GestureTwoFingerTap)?
+            if (result != WebInputEventResult::NotHandled
+                && pointerEvent->type() == EventTypeNames::pointerdown
+                && pointerEvent->isPrimary()) {
+                m_touchIdsForCanceledPointerdowns.append(event.uniqueTouchEventId());
+            }
+        }
+
+        touchInfos.append(touchInfo);
+    }
 }
 
 WebInputEventResult PointerEventManager::sendTouchPointerEvent(
-    PassRefPtrWillBeRawPtr<EventTarget> prpTarget,
-    const PlatformTouchPoint& touchPoint, PlatformEvent::Modifiers modifiers,
-    const double width, const double height,
-    const double clientX, const double clientY)
+    EventTarget* target, PointerEvent* pointerEvent)
 {
-    RefPtrWillBeRawPtr<EventTarget> target = prpTarget;
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent =
-        m_pointerEventFactory.create(
-        pointerEventNameForTouchPointState(touchPoint.state()),
-        touchPoint, modifiers, width, height, clientX, clientY);
+    if (m_inCanceledStateForPointerTypeTouch)
+        return WebInputEventResult::NotHandled;
 
-    setNodeUnderPointer(pointerEvent, target);
+    processCaptureAndPositionOfPointerEvent(pointerEvent, target);
 
-    // TODO(nzolghadr): crbug.com/579553 dealing with implicit touch capturing vs pointer event capturing
-    WebInputEventResult result = dispatchPointerEvent(target, pointerEvent.get());
+    // Setting the implicit capture for touch
+    if (pointerEvent->type() == EventTypeNames::pointerdown)
+        setPointerCapture(pointerEvent->pointerId(), target);
 
-    if (touchPoint.state() == PlatformTouchPoint::TouchReleased
-        || touchPoint.state() == PlatformTouchPoint::TouchCancelled) {
-        m_pointerEventFactory.remove(pointerEvent);
-        setNodeUnderPointer(pointerEvent, nullptr);
+    WebInputEventResult result = dispatchPointerEvent(
+        getEffectiveTargetForPointerEvent(target, pointerEvent->pointerId()),
+        pointerEvent);
+
+    if (pointerEvent->type() == EventTypeNames::pointerup
+        || pointerEvent->type() == EventTypeNames::pointercancel) {
+        releasePointerCapture(pointerEvent->pointerId());
+
+        // Sending the leave/out events and lostpointercapture
+        // because the next touch event will have a different id. So delayed
+        // sending of lostpointercapture won't work here.
+        processCaptureAndPositionOfPointerEvent(pointerEvent, nullptr);
+
+        removePointer(pointerEvent);
     }
 
     return result;
 }
 
 WebInputEventResult PointerEventManager::sendMousePointerEvent(
-    PassRefPtrWillBeRawPtr<Node> target, const AtomicString& mouseEventType,
+    Node* target, const AtomicString& mouseEventType,
     int clickCount, const PlatformMouseEvent& mouseEvent,
-    PassRefPtrWillBeRawPtr<Node> relatedTarget,
-    PassRefPtrWillBeRawPtr<AbstractView> view)
+    Node* relatedTarget,
+    Node* lastNodeUnderMouse)
 {
-    RefPtrWillBeRawPtr<PointerEvent> pointerEvent =
+    PointerEvent* pointerEvent =
         m_pointerEventFactory.create(mouseEventType, mouseEvent,
-        relatedTarget, view);
+        relatedTarget, m_frame->document()->domWindow());
 
-    RefPtrWillBeRawPtr<Node> effectiveTarget =
-        getEffectiveTargetForPointerEvent(target, pointerEvent);
+    // This is for when the mouse is released outside of the page.
+    if (pointerEvent->type() == EventTypeNames::pointermove
+        && !pointerEvent->buttons()
+        && pointerEvent->isPrimary()) {
+        m_preventMouseEventForPointerType[toPointerTypeIndex(
+            mouseEvent.pointerProperties().pointerType)] = false;
+    }
+
+    processCaptureAndPositionOfPointerEvent(pointerEvent, target,
+        lastNodeUnderMouse, mouseEvent, true, true);
+
+    EventTarget* effectiveTarget =
+        getEffectiveTargetForPointerEvent(target, pointerEvent->pointerId());
 
     WebInputEventResult result =
         dispatchPointerEvent(effectiveTarget, pointerEvent);
 
     if (result != WebInputEventResult::NotHandled
-        && pointerEvent->type() == EventTypeNames::pointerdown)
-        m_preventMouseEventForPointerTypeMouse = true;
+        && pointerEvent->type() == EventTypeNames::pointerdown
+        && pointerEvent->isPrimary()) {
+        m_preventMouseEventForPointerType[toPointerTypeIndex(
+            mouseEvent.pointerProperties().pointerType)] = true;
+    }
 
-    if (!m_preventMouseEventForPointerTypeMouse) {
+    if (pointerEvent->isPrimary() && !m_preventMouseEventForPointerType[toPointerTypeIndex(
+        mouseEvent.pointerProperties().pointerType)]) {
+        EventTarget* mouseTarget = effectiveTarget;
+        // Event path could be null if pointer event is not dispatched and
+        // that happens for example when pointer event feature is not enabled.
+        if (!isInDocument(mouseTarget) && pointerEvent->hasEventPath()) {
+            for (size_t i = 0; i < pointerEvent->eventPath().size(); i++) {
+                if (isInDocument(pointerEvent->eventPath()[i].node())) {
+                    mouseTarget = pointerEvent->eventPath()[i].node();
+                    break;
+                }
+            }
+        }
         result = EventHandler::mergeEventResult(result,
-            dispatchMouseEvent(effectiveTarget, mouseEventType, mouseEvent,
+            dispatchMouseEvent(mouseTarget, mouseEventType, mouseEvent,
             nullptr, clickCount));
+    }
+
+    if (pointerEvent->buttons() == 0) {
+        releasePointerCapture(pointerEvent->pointerId());
+        if (pointerEvent->isPrimary()) {
+            m_preventMouseEventForPointerType[toPointerTypeIndex(
+                mouseEvent.pointerProperties().pointerType)] = false;
+        }
     }
 
     return result;
 }
 
-PointerEventManager::PointerEventManager()
+PointerEventManager::PointerEventManager(LocalFrame* frame)
+: m_frame(frame)
+, m_touchEventManager(frame)
 {
     clear();
 }
@@ -321,25 +599,210 @@ PointerEventManager::~PointerEventManager()
 
 void PointerEventManager::clear()
 {
-    m_preventMouseEventForPointerTypeMouse = false;
+    for (auto& entry : m_preventMouseEventForPointerType)
+        entry = false;
+    m_touchEventManager.clear();
+    m_inCanceledStateForPointerTypeTouch = false;
     m_pointerEventFactory.clear();
+    m_touchIdsForCanceledPointerdowns.clear();
     m_nodeUnderPointer.clear();
+    m_pointerCaptureTarget.clear();
+    m_pendingPointerCaptureTarget.clear();
 }
 
-void PointerEventManager::conditionallyEnableMouseEventForPointerTypeMouse(
-    unsigned modifiers)
+void PointerEventManager::processCaptureAndPositionOfPointerEvent(
+    PointerEvent* pointerEvent,
+    EventTarget* hitTestTarget,
+    EventTarget* lastNodeUnderMouse,
+    const PlatformMouseEvent& mouseEvent,
+    bool sendMouseEvent, bool setPointerPosition)
 {
+    bool isCaptureChanged = false;
 
-    if (MouseEvent::platformModifiersToButtons(modifiers) ==
-        static_cast<unsigned short>(MouseEvent::Buttons::None))
-        m_preventMouseEventForPointerTypeMouse = false;
+    if (setPointerPosition) {
+        isCaptureChanged = processPendingPointerCapture(pointerEvent,
+            hitTestTarget, mouseEvent, sendMouseEvent);
+        // If there was a change in capturing processPendingPointerCapture has
+        // already taken care of transition events. So we don't need to send the
+        // transition events here.
+        setNodeUnderPointer(pointerEvent, hitTestTarget, !isCaptureChanged);
+    }
+    if (sendMouseEvent && !isCaptureChanged) {
+        // lastNodeUnderMouse is needed here because it is still stored in EventHandler.
+        sendBoundaryEvents(lastNodeUnderMouse, hitTestTarget,
+            pointerEvent, mouseEvent, true);
+    }
+}
+
+bool PointerEventManager::processPendingPointerCapture(
+    PointerEvent* pointerEvent,
+    EventTarget* hitTestTarget,
+    const PlatformMouseEvent& mouseEvent, bool sendMouseEvent)
+{
+    int pointerId = pointerEvent->pointerId();
+    EventTarget* pointerCaptureTarget =
+        m_pointerCaptureTarget.contains(pointerId)
+        ? m_pointerCaptureTarget.get(pointerId) : nullptr;
+    EventTarget* pendingPointerCaptureTarget =
+        m_pendingPointerCaptureTarget.contains(pointerId)
+        ? m_pendingPointerCaptureTarget.get(pointerId) : nullptr;
+    const EventTargetAttributes &nodeUnderPointerAtt =
+        m_nodeUnderPointer.contains(pointerId)
+        ? m_nodeUnderPointer.get(pointerId) : EventTargetAttributes();
+    const bool isCaptureChanged =
+        pointerCaptureTarget != pendingPointerCaptureTarget;
+
+    if (isCaptureChanged) {
+        if ((hitTestTarget != nodeUnderPointerAtt.target
+            || (pendingPointerCaptureTarget
+            && pendingPointerCaptureTarget != nodeUnderPointerAtt.target))
+            && nodeUnderPointerAtt.hasRecievedOverEvent) {
+            if (sendMouseEvent) {
+                // Send pointer event transitions as the line after this if
+                // block sends the mouse events
+                sendBoundaryEvents(nodeUnderPointerAtt.target, nullptr,
+                    pointerEvent);
+            }
+            sendBoundaryEvents(nodeUnderPointerAtt.target, nullptr,
+                pointerEvent, mouseEvent, sendMouseEvent);
+        }
+        if (pointerCaptureTarget) {
+            // Re-target lostpointercapture to the document when the element is
+            // no longer participating in the tree.
+            EventTarget* target = pointerCaptureTarget;
+            if (target->toNode()
+                && !target->toNode()->inShadowIncludingDocument()) {
+                target = target->toNode()->ownerDocument();
+            }
+            dispatchPointerEvent(target,
+                m_pointerEventFactory.createPointerCaptureEvent(
+                pointerEvent, EventTypeNames::lostpointercapture));
+        }
+    }
+
+    // Set pointerCaptureTarget from pendingPointerCaptureTarget. This does
+    // affect the behavior of sendBoundaryEvents function. So the
+    // ordering of the surrounding blocks of code for sending transition events
+    // are important.
+    if (pendingPointerCaptureTarget)
+        m_pointerCaptureTarget.set(pointerId, pendingPointerCaptureTarget);
+    else
+        m_pointerCaptureTarget.remove(pointerId);
+
+    if (isCaptureChanged) {
+        dispatchPointerEvent(pendingPointerCaptureTarget,
+            m_pointerEventFactory.createPointerCaptureEvent(
+            pointerEvent, EventTypeNames::gotpointercapture));
+        if ((pendingPointerCaptureTarget == hitTestTarget
+            || !pendingPointerCaptureTarget)
+            && (nodeUnderPointerAtt.target != hitTestTarget
+            || !nodeUnderPointerAtt.hasRecievedOverEvent)) {
+            if (sendMouseEvent) {
+                // Send pointer event transitions as the line after this if
+                // block sends the mouse events
+                sendBoundaryEvents(nullptr, hitTestTarget, pointerEvent);
+            }
+            sendBoundaryEvents(nullptr, hitTestTarget, pointerEvent,
+                mouseEvent, sendMouseEvent);
+        }
+    }
+    return isCaptureChanged;
+}
+
+void PointerEventManager::removeTargetFromPointerCapturingMapping(
+    PointerCapturingMap& map, const EventTarget* target)
+{
+    // We could have kept a reverse mapping to make this deletion possibly
+    // faster but it adds some code complication which might not be worth of
+    // the performance improvement considering there might not be a lot of
+    // active pointer or pointer captures at the same time.
+    PointerCapturingMap tmp = map;
+    for (PointerCapturingMap::iterator it = tmp.begin(); it != tmp.end(); ++it) {
+        if (it->value == target)
+            map.remove(it->key);
+    }
+}
+
+EventTarget* PointerEventManager::getCapturingNode(int pointerId)
+{
+    if (m_pointerCaptureTarget.contains(pointerId))
+        return m_pointerCaptureTarget.get(pointerId);
+    return nullptr;
+}
+
+void PointerEventManager::removePointer(
+    PointerEvent* pointerEvent)
+{
+    int pointerId = pointerEvent->pointerId();
+    if (m_pointerEventFactory.remove(pointerId)) {
+        m_pendingPointerCaptureTarget.remove(pointerId);
+        m_pointerCaptureTarget.remove(pointerId);
+        m_nodeUnderPointer.remove(pointerId);
+    }
+}
+
+void PointerEventManager::elementRemoved(EventTarget* target)
+{
+    removeTargetFromPointerCapturingMapping(m_pendingPointerCaptureTarget, target);
+}
+
+void PointerEventManager::setPointerCapture(int pointerId, EventTarget* target)
+{
+    if (m_pointerEventFactory.isActiveButtonsState(pointerId))
+        m_pendingPointerCaptureTarget.set(pointerId, target);
+}
+
+void PointerEventManager::releasePointerCapture(int pointerId, EventTarget* target)
+{
+    // Only the element that is going to get the next pointer event can release
+    // the capture. Note that this might be different from
+    // |m_pointercaptureTarget|. |m_pointercaptureTarget| holds the element
+    // that had the capture until now and has been receiving the pointerevents
+    // but |m_pendingPointerCaptureTarget| indicated the element that gets the
+    // very next pointer event. They will be the same if there was no change in
+    // capturing of a particular |pointerId|. See crbug.com/614481.
+    if (m_pendingPointerCaptureTarget.get(pointerId) == target)
+        releasePointerCapture(pointerId);
+}
+
+void PointerEventManager::releasePointerCapture(int pointerId)
+{
+    m_pendingPointerCaptureTarget.remove(pointerId);
+}
+
+bool PointerEventManager::isActive(const int pointerId) const
+{
+    return m_pointerEventFactory.isActive(pointerId);
+}
+
+bool PointerEventManager::isAnyTouchActive() const
+{
+    return m_touchEventManager.isAnyTouchActive();
+}
+
+bool PointerEventManager::primaryPointerdownCanceled(uint32_t uniqueTouchEventId)
+{
+    // It's safe to assume that uniqueTouchEventIds won't wrap back to 0 from
+    // 2^32-1 (>4.2 billion): even with a generous 100 unique ids per touch
+    // sequence & one sequence per 10 second, it takes 13+ years to wrap back.
+    while (!m_touchIdsForCanceledPointerdowns.isEmpty()) {
+        uint32_t firstId = m_touchIdsForCanceledPointerdowns.first();
+        if (firstId > uniqueTouchEventId)
+            return false;
+        m_touchIdsForCanceledPointerdowns.takeFirst();
+        if (firstId == uniqueTouchEventId)
+            return true;
+    }
+    return false;
 }
 
 DEFINE_TRACE(PointerEventManager)
 {
-#if ENABLE(OILPAN)
+    visitor->trace(m_frame);
     visitor->trace(m_nodeUnderPointer);
-#endif
+    visitor->trace(m_pointerCaptureTarget);
+    visitor->trace(m_pendingPointerCaptureTarget);
+    visitor->trace(m_touchEventManager);
 }
 
 

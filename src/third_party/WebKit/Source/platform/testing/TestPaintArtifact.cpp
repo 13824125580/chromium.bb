@@ -4,13 +4,18 @@
 
 #include "platform/testing/TestPaintArtifact.h"
 
+#include "cc/layers/layer.h"
 #include "platform/graphics/paint/DisplayItemClient.h"
 #include "platform/graphics/paint/DrawingDisplayItem.h"
+#include "platform/graphics/paint/ForeignLayerDisplayItem.h"
 #include "platform/graphics/paint/PaintArtifact.h"
+#include "platform/graphics/skia/SkiaUtils.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
 #include "wtf/Assertions.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -33,7 +38,7 @@ PassRefPtr<SkPicture> TestPaintArtifact::DummyRectClient::makePicture() const
     SkPaint paint;
     paint.setColor(m_color.rgb());
     canvas->drawRect(m_rect, paint);
-    return adoptRef(recorder.endRecordingAsPicture());
+    return fromSkSp(recorder.finishRecordingAsPicture());
 }
 
 TestPaintArtifact::TestPaintArtifact()
@@ -70,10 +75,20 @@ TestPaintArtifact& TestPaintArtifact::chunk(const PaintChunkProperties& properti
 
 TestPaintArtifact& TestPaintArtifact::rectDrawing(const FloatRect& bounds, Color color)
 {
-    OwnPtr<DummyRectClient> client = adoptPtr(new DummyRectClient(bounds, color));
+    std::unique_ptr<DummyRectClient> client = wrapUnique(new DummyRectClient(bounds, color));
     m_displayItemList.allocateAndConstruct<DrawingDisplayItem>(
         *client, DisplayItem::DrawingFirst, client->makePicture());
-    m_dummyClients.append(client.release());
+    m_dummyClients.append(std::move(client));
+    return *this;
+}
+
+TestPaintArtifact& TestPaintArtifact::foreignLayer(const FloatPoint& location, const IntSize& size, scoped_refptr<cc::Layer> layer)
+{
+    FloatRect floatBounds(location, FloatSize(size));
+    std::unique_ptr<DummyRectClient> client = wrapUnique(new DummyRectClient(floatBounds, Color::transparent));
+    m_displayItemList.allocateAndConstruct<ForeignLayerDisplayItem>(
+        *client, DisplayItem::ForeignLayerFirst, std::move(layer), location, size);
+    m_dummyClients.append(std::move(client));
     return *this;
 }
 
@@ -84,7 +99,7 @@ const PaintArtifact& TestPaintArtifact::build()
 
     if (!m_paintChunks.isEmpty())
         m_paintChunks.last().endIndex = m_displayItemList.size();
-    m_paintArtifact = PaintArtifact(std::move(m_displayItemList), std::move(m_paintChunks));
+    m_paintArtifact = PaintArtifact(std::move(m_displayItemList), std::move(m_paintChunks), true);
     m_built = true;
     return m_paintArtifact;
 }

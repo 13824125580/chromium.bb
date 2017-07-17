@@ -101,7 +101,7 @@ void KioskAppMenuHandler::SendKioskApps() {
   for (size_t i = 0; i < apps.size(); ++i) {
     const KioskAppManager::App& app_data = apps[i];
 
-    scoped_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
     app_info->SetBoolean("isApp", true);
     app_info->SetString("id", app_data.app_id);
     app_info->SetString("label", app_data.name);
@@ -120,8 +120,8 @@ void KioskAppMenuHandler::SendKioskApps() {
     apps_list.Append(app_info.release());
   }
 
-  web_ui()->CallJavascriptFunction(EnableNewKioskUI() ?
-      kKioskSetAppsNewAPI : kKioskSetAppsOldAPI,
+  web_ui()->CallJavascriptFunctionUnsafe(
+      EnableNewKioskUI() ? kKioskSetAppsNewAPI : kKioskSetAppsOldAPI,
       apps_list);
 }
 
@@ -149,8 +149,8 @@ void KioskAppMenuHandler::HandleCheckKioskAppLaunchError(
 
   const std::string error_message = KioskAppLaunchError::GetErrorMessage(error);
   bool new_kiosk_ui = EnableNewKioskUI();
-  web_ui()->CallJavascriptFunction(new_kiosk_ui ?
-      kKioskShowErrorNewAPI : kKioskShowErrorOldAPI,
+  web_ui()->CallJavascriptFunctionUnsafe(
+      new_kiosk_ui ? kKioskShowErrorNewAPI : kKioskShowErrorOldAPI,
       base::StringValue(error_message));
 }
 

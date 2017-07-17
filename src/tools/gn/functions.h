@@ -80,6 +80,24 @@ Value RunAssert(Scope* scope,
                 const std::vector<Value>& args,
                 Err* err);
 
+extern const char kBundleData[];
+extern const char kBundleData_HelpShort[];
+extern const char kBundleData_Help[];
+Value RunBundleData(Scope* scope,
+                    const FunctionCallNode* function,
+                    const std::vector<Value>& args,
+                    BlockNode* block,
+                    Err* err);
+
+extern const char kCreateBundle[];
+extern const char kCreateBundle_HelpShort[];
+extern const char kCreateBundle_Help[];
+Value RunCreateBundle(Scope* scope,
+                      const FunctionCallNode* function,
+                      const std::vector<Value>& args,
+                      BlockNode* block,
+                      Err* err);
+
 extern const char kConfig[];
 extern const char kConfig_HelpShort[];
 extern const char kConfig_Help[];
@@ -204,6 +222,14 @@ Value RunLoadableModule(Scope* scope,
                         BlockNode* block,
                         Err* err);
 
+extern const char kPool[];
+extern const char kPool_HelpShort[];
+extern const char kPool_Help[];
+Value RunPool(const FunctionCallNode* function,
+              const std::vector<Value>& args,
+              Scope* block_scope,
+              Err* err);
+
 extern const char kPrint[];
 extern const char kPrint_HelpShort[];
 extern const char kPrint_Help[];
@@ -277,6 +303,14 @@ Value RunSourceSet(Scope* scope,
                    const FunctionCallNode* function,
                    const std::vector<Value>& args,
                    BlockNode* block,
+                   Err* err);
+
+extern const char kSplitList[];
+extern const char kSplitList_HelpShort[];
+extern const char kSplitList_Help[];
+Value RunSplitList(Scope* scope,
+                   const FunctionCallNode* function,
+                   const ListNode* args_list,
                    Err* err);
 
 extern const char kStaticLibrary[];

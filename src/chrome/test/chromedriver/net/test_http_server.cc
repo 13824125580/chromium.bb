@@ -23,10 +23,10 @@ const int kBufferSize = 100 * 1024 * 1024;  // 100 MB
 
 TestHttpServer::TestHttpServer()
     : thread_("ServerThread"),
-      all_closed_event_(false, true),
+      all_closed_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                        base::WaitableEvent::InitialState::SIGNALED),
       request_action_(kAccept),
-      message_action_(kEchoMessage) {
-}
+      message_action_(kEchoMessage) {}
 
 TestHttpServer::~TestHttpServer() {
 }
@@ -38,7 +38,8 @@ bool TestHttpServer::Start() {
   if (!thread_started)
     return false;
   bool success;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&TestHttpServer::StartOnServerThread,
                             base::Unretained(this), &success, &event));
@@ -49,7 +50,8 @@ bool TestHttpServer::Start() {
 void TestHttpServer::Stop() {
   if (!thread_.IsRunning())
     return;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&TestHttpServer::StopOnServerThread,
                             base::Unretained(this), &event));
@@ -139,7 +141,7 @@ void TestHttpServer::OnClose(int connection_id) {
 
 void TestHttpServer::StartOnServerThread(bool* success,
                                          base::WaitableEvent* event) {
-  scoped_ptr<net::ServerSocket> server_socket(
+  std::unique_ptr<net::ServerSocket> server_socket(
       new net::TCPServerSocket(NULL, net::NetLog::Source()));
   server_socket->ListenWithAddressAndPort("127.0.0.1", 0, 1);
   server_.reset(new net::HttpServer(std::move(server_socket), this));

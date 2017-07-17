@@ -29,39 +29,14 @@
 
 #include "core/layout/LayoutListBox.h"
 
-#include "core/HTMLNames.h"
-#include "core/css/CSSFontSelector.h"
-#include "core/css/resolver/StyleResolver.h"
-#include "core/dom/AXObjectCache.h"
-#include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/dom/NodeComputedStyle.h"
-#include "core/dom/StyleEngine.h"
-#include "core/editing/FrameSelection.h"
-#include "core/frame/FrameView.h"
-#include "core/frame/LocalFrame.h"
 #include "core/html/HTMLDivElement.h"
 #include "core/html/HTMLOptGroupElement.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/HTMLSelectElement.h"
-#include "core/input/EventHandler.h"
-#include "core/layout/HitTestResult.h"
-#include "core/layout/LayoutText.h"
-#include "core/layout/LayoutTheme.h"
-#include "core/layout/LayoutView.h"
-#include "core/layout/TextRunConstructor.h"
-#include "core/page/FocusController.h"
-#include "core/page/Page.h"
-#include "core/page/SpatialNavigation.h"
 #include "core/paint/PaintLayer.h"
-#include "platform/fonts/FontCache.h"
-#include "platform/graphics/GraphicsContext.h"
-#include "platform/text/BidiTextRun.h"
-#include <math.h>
 
 namespace blink {
-
-using namespace HTMLNames;
 
 // Default size when the multiple attribute is present but size attribute is absent.
 const int defaultSize = 4;
@@ -96,7 +71,7 @@ unsigned LayoutListBox::size() const
 
 LayoutUnit LayoutListBox::defaultItemHeight() const
 {
-    return LayoutUnit(style()->fontMetrics().height() + defaultPaddingBottom);
+    return LayoutUnit(style()->getFontMetrics().height() + defaultPaddingBottom);
 }
 
 LayoutUnit LayoutListBox::itemHeight() const
@@ -104,17 +79,24 @@ LayoutUnit LayoutListBox::itemHeight() const
     HTMLSelectElement* select = selectElement();
     if (!select)
         return LayoutUnit();
-    Element* baseItem = ElementTraversal::firstChild(*select);
-    if (!baseItem)
+
+    const auto& items = select->listItems();
+    if (items.isEmpty())
         return defaultItemHeight();
-    if (isHTMLOptGroupElement(baseItem))
-        baseItem = &toHTMLOptGroupElement(baseItem)->optGroupLabelElement();
-    else if (!isHTMLOptionElement(baseItem))
-        return defaultItemHeight();
-    LayoutObject* baseItemLayoutObject = baseItem->layoutObject();
-    if (!baseItemLayoutObject || !baseItemLayoutObject->isBox())
-        return defaultItemHeight();
-    return toLayoutBox(baseItemLayoutObject)->size().height();
+
+    LayoutUnit maxHeight;
+    for (Element* element : items) {
+        if (isHTMLOptGroupElement(element))
+            element = &toHTMLOptGroupElement(element)->optGroupLabelElement();
+        LayoutObject* layoutObject = element->layoutObject();
+        LayoutUnit itemHeight;
+        if (layoutObject && layoutObject->isBox())
+            itemHeight = toLayoutBox(layoutObject)->size().height();
+        else
+            itemHeight = defaultItemHeight();
+        maxHeight = std::max(maxHeight, itemHeight);
+    }
+    return maxHeight;
 }
 
 void LayoutListBox::computeLogicalHeight(LayoutUnit, LayoutUnit logicalTop, LogicalExtentComputedValues& computedValues) const
@@ -147,8 +129,8 @@ void LayoutListBox::scrollToRect(const LayoutRect& rect)
 {
     if (hasOverflowClip()) {
         ASSERT(layer());
-        ASSERT(layer()->scrollableArea());
-        layer()->scrollableArea()->scrollIntoView(rect, ScrollAlignment::alignToEdgeIfNeeded, ScrollAlignment::alignToEdgeIfNeeded);
+        ASSERT(layer()->getScrollableArea());
+        layer()->getScrollableArea()->scrollIntoView(rect, ScrollAlignment::alignToEdgeIfNeeded, ScrollAlignment::alignToEdgeIfNeeded);
     }
 }
 

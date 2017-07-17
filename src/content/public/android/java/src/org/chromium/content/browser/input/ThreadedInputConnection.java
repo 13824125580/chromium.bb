@@ -9,9 +9,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
+import android.view.View;
+import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.CompletionInfo;
 import android.view.inputmethod.CorrectionInfo;
-import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.ExtractedText;
 import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
@@ -28,8 +29,14 @@ import java.util.concurrent.LinkedBlockingQueue;
  * apps. Note that it is running on IME thread (except for constructor and calls from ImeAdapter)
  * such that it does not block UI thread and returns text values immediately after any change
  * to them.
+ * Note that extending {@link BaseInputConnection} is a workaround for some OEM's email client
+ * which tries to downcast the {@link InputConnection} from {@link View#onCreateInputConnection}
+ * into {@link BaseInputConnection}. We are implementing every function of {@link InputConnection},
+ * so 'extends' here should have no functional effect at all. See crbug.com/616334 for more
+ * details.
  */
-public class ThreadedInputConnection implements ChromiumBaseInputConnection {
+public class ThreadedInputConnection extends BaseInputConnection
+        implements ChromiumBaseInputConnection {
     private static final String TAG = "cr_Ime";
     private static final boolean DEBUG_LOGS = false;
 
@@ -90,22 +97,18 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
     private final BlockingQueue<TextInputState> mQueue = new LinkedBlockingQueue<>();
     private int mPendingAccent;
 
-    ThreadedInputConnection(ImeAdapter imeAdapter, Handler handler) {
+    ThreadedInputConnection(View view, ImeAdapter imeAdapter, Handler handler) {
+        super(view, true);
         if (DEBUG_LOGS) Log.w(TAG, "constructor");
         ImeUtils.checkOnUiThread();
         mImeAdapter = imeAdapter;
         mHandler = handler;
     }
 
-    void initializeOutAttrsOnUiThread(int inputType, int inputFlags, int selectionStart,
-            int selectionEnd, EditorInfo outAttrs) {
+    void resetOnUiThread() {
         ImeUtils.checkOnUiThread();
         mNumNestedBatchEdits = 0;
         mPendingAccent = 0;
-        ImeUtils.computeEditorInfo(inputType, inputFlags, selectionStart, selectionEnd, outAttrs);
-        if (DEBUG_LOGS) {
-            Log.w(TAG, "initializeOutAttrs: " + ImeUtils.getEditorInfoDebugString(outAttrs));
-        }
     }
 
     @Override
@@ -187,7 +190,6 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
                 continue;
             }
             if (DEBUG_LOGS) Log.w(TAG, "checkQueue: " + state);
-            ImeUtils.checkCondition(!state.fromIme());
             updateSelection(state);
         }
     }
@@ -272,12 +274,23 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
     @Override
     public boolean setComposingText(final CharSequence text, final int newCursorPosition) {
         if (DEBUG_LOGS) Log.w(TAG, "setComposingText [%s] [%d]", text, newCursorPosition);
+        return updateComposingText(text, newCursorPosition, false);
+    }
+
+    /**
+     * Sends composing update to the InputMethodManager.
+     */
+    @VisibleForTesting
+    public boolean updateComposingText(
+            final CharSequence text, final int newCursorPosition, final boolean isPendingAccent) {
+        final int accentToSend =
+                isPendingAccent ? (mPendingAccent | KeyCharacterMap.COMBINING_ACCENT) : 0;
         assertOnImeThread();
         cancelCombiningAccent();
         ThreadUtils.postOnUiThread(new Runnable() {
             @Override
             public void run() {
-                mImeAdapter.sendCompositionToNative(text, newCursorPosition, false);
+                mImeAdapter.sendCompositionToNative(text, newCursorPosition, false, accentToSend);
             }
         });
         notifyUserAction();
@@ -295,7 +308,7 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
         ThreadUtils.postOnUiThread(new Runnable() {
             @Override
             public void run() {
-                mImeAdapter.sendCompositionToNative(text, newCursorPosition, text.length() > 0);
+                mImeAdapter.sendCompositionToNative(text, newCursorPosition, text.length() > 0, 0);
             }
         });
         notifyUserAction();
@@ -398,6 +411,14 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
     }
 
     /**
+     * @see InputConnection#deleteSurroundingTextInCodePoints(int, int)
+     */
+    public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
+        // TODO(changwan): Implement this. http://crbug.com/595525
+        return false;
+    }
+
+    /**
      * @see InputConnection#sendKeyEvent(android.view.KeyEvent)
      */
     @Override
@@ -428,8 +449,8 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
             int pendingAccent = unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK;
             StringBuilder builder = new StringBuilder();
             builder.appendCodePoint(pendingAccent);
-            setComposingText(builder.toString(), 1);
-            mPendingAccent = pendingAccent;
+            updateComposingText(builder.toString(), 1, true);
+            setCombiningAccent(pendingAccent);
             return true;
         } else if (mPendingAccent != 0 && unicodeChar != 0) {
             int combined = KeyEvent.getDeadChar(mPendingAccent, unicodeChar);
@@ -444,6 +465,11 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
             finishComposingText();
         }
         return false;
+    }
+
+    @VisibleForTesting
+    public void setCombiningAccent(int pendingAccent) {
+        mPendingAccent = pendingAccent;
     }
 
     private void cancelCombiningAccent() {
@@ -601,9 +627,22 @@ public class ThreadedInputConnection implements ChromiumBaseInputConnection {
      * @see InputConnection#requestCursorUpdates(int)
      */
     @Override
-    public boolean requestCursorUpdates(int cursorUpdateMode) {
+    public boolean requestCursorUpdates(final int cursorUpdateMode) {
         if (DEBUG_LOGS) Log.w(TAG, "requestCursorUpdates [%x]", cursorUpdateMode);
         assertOnImeThread();
-        return false;
+        ThreadUtils.postOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mImeAdapter.onRequestCursorUpdates(cursorUpdateMode);
+            }
+        });
+        return true;
+    }
+
+    /**
+     * @see InputConnection#closeConnection()
+     */
+    public void closeConnection() {
+        // TODO(changwan): Implement this. http://crbug.com/595525
     }
 }

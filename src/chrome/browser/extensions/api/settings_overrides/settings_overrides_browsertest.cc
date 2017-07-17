@@ -10,10 +10,12 @@
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/version_info/version_info.h"
 
 namespace {
 
@@ -35,7 +37,7 @@ class TemplateURLServiceObserver {
     runner_->Quit();
   }
   base::RunLoop* runner_;
-  scoped_ptr<TemplateURLService::Subscription> template_url_sub_;
+  std::unique_ptr<TemplateURLService::Subscription> template_url_sub_;
 
   DISALLOW_COPY_AND_ASSIGN(TemplateURLServiceObserver);
 };
@@ -69,7 +71,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverrideSettings) {
   ASSERT_TRUE(default_provider);
   EXPECT_EQ(TemplateURL::NORMAL, default_provider->GetType());
 
-#if defined(OS_WIN)
+#if defined(OS_MACOSX)
+  // On Mac, this API is limited to trunk.
+  extensions::ScopedCurrentChannel scoped_channel(
+      version_info::Channel::UNKNOWN);
+#endif  // OS_MACOSX
+
+#if defined(OS_WIN) || defined(OS_MACOSX)
   const extensions::Extension* extension = LoadExtensionWithInstallParam(
       test_data_dir_.AppendASCII("settings_override"),
       kFlagEnableFileAccess,

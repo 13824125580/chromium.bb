@@ -36,7 +36,7 @@ and concurrency.futures.ProcessPoolExecutor, with the following differences:
   may receive events as tasks are processed.
 
 If you don't need these features, use multiprocessing.Pool or concurrency.futures
-intead.
+instead.
 
 """
 
@@ -45,7 +45,6 @@ import logging
 import multiprocessing
 import Queue
 import sys
-import time
 import traceback
 
 
@@ -62,6 +61,7 @@ def get(caller, worker_factory, num_workers, host=None):
 
 
 class _MessagePool(object):
+
     def __init__(self, caller, worker_factory, num_workers, host=None):
         self._caller = caller
         self._worker_factory = worker_factory
@@ -103,7 +103,8 @@ class _MessagePool(object):
             host = self._host
 
         for worker_number in xrange(self._num_workers):
-            worker = _Worker(host, self._messages_to_manager, self._messages_to_worker, self._worker_factory, worker_number, self._running_inline, self if self._running_inline else None, self._worker_log_level())
+            worker = _Worker(host, self._messages_to_manager, self._messages_to_worker, self._worker_factory,
+                             worker_number, self._running_inline, self if self._running_inline else None, self._worker_log_level())
             self._workers.append(worker)
             worker.start()
 
@@ -187,6 +188,7 @@ class WorkerException(BaseException):
 
 
 class _Message(object):
+
     def __init__(self, src, message_name, message_args, from_user, logs):
         self.src = src
         self.name = message_name
@@ -195,11 +197,14 @@ class _Message(object):
         self.logs = logs
 
     def __repr__(self):
-        return '_Message(src=%s, name=%s, args=%s, from_user=%s, logs=%s)' % (self.src, self.name, self.args, self.from_user, self.logs)
+        return '_Message(src=%s, name=%s, args=%s, from_user=%s, logs=%s)' % (
+            self.src, self.name, self.args, self.from_user, self.logs)
 
 
 class _Worker(multiprocessing.Process):
-    def __init__(self, host, messages_to_manager, messages_to_worker, worker_factory, worker_number, running_inline, manager, log_level):
+
+    def __init__(self, host, messages_to_manager, messages_to_worker,
+                 worker_factory, worker_number, running_inline, manager, log_level):
         super(_Worker, self).__init__()
         self.host = host
         self.worker_number = worker_number
@@ -260,9 +265,9 @@ class _Worker(multiprocessing.Process):
             _log.debug("%s exiting" % self.name)
         except Queue.Empty:
             assert False, '%s: ran out of messages in worker queue.' % self.name
-        except KeyboardInterrupt, e:
+        except KeyboardInterrupt as e:
             self._raise(sys.exc_info())
-        except Exception, e:
+        except Exception as e:
             self._raise(sys.exc_info())
         finally:
             try:
@@ -317,6 +322,7 @@ class _Worker(multiprocessing.Process):
 
 
 class _WorkerLogHandler(logging.Handler):
+
     def __init__(self, worker):
         logging.Handler.__init__(self)
         self._worker = worker

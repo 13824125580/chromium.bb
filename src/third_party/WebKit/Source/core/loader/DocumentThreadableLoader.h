@@ -35,15 +35,15 @@
 #include "core/CoreExport.h"
 #include "core/fetch/RawResource.h"
 #include "core/fetch/ResourceOwner.h"
-#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/loader/ThreadableLoader.h"
 #include "platform/Timer.h"
+#include "platform/heap/Handle.h"
 #include "platform/network/HTTPHeaderMap.h"
 #include "platform/network/ResourceError.h"
 #include "wtf/Forward.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassRefPtr.h"
+#include "wtf/WeakPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -57,7 +57,7 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
     USING_FAST_MALLOC(DocumentThreadableLoader);
     public:
         static void loadResourceSynchronously(Document&, const ResourceRequest&, ThreadableLoaderClient&, const ThreadableLoaderOptions&, const ResourceLoaderOptions&);
-        static PassRefPtr<DocumentThreadableLoader> create(Document&, ThreadableLoaderClient*, const ThreadableLoaderOptions&, const ResourceLoaderOptions&);
+        static std::unique_ptr<DocumentThreadableLoader> create(Document&, ThreadableLoaderClient*, const ThreadableLoaderOptions&, const ResourceLoaderOptions&);
         ~DocumentThreadableLoader() override;
 
         void start(const ResourceRequest&) override;
@@ -89,10 +89,11 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
         //
         // |this| may be dead after calling these methods.
         void dataSent(Resource*, unsigned long long bytesSent, unsigned long long totalBytesToBeSent) override;
-        void responseReceived(Resource*, const ResourceResponse&, PassOwnPtr<WebDataConsumerHandle>) override;
+        void responseReceived(Resource*, const ResourceResponse&, std::unique_ptr<WebDataConsumerHandle>) override;
         void setSerializedCachedMetadata(Resource*, const char*, size_t) override;
         void dataReceived(Resource*, const char* data, size_t dataLength) override;
         void redirectReceived(Resource*, ResourceRequest&, const ResourceResponse&) override;
+        void redirectBlocked() override;
         void dataDownloaded(Resource*, int) override;
         void didReceiveResourceTiming(Resource*, const ResourceTimingInfo&) override;
 
@@ -107,7 +108,7 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
         // common to both sync and async mode.
         //
         // |this| may be dead after calling these method in async mode.
-        void handleResponse(unsigned long identifier, const ResourceResponse&, PassOwnPtr<WebDataConsumerHandle>);
+        void handleResponse(unsigned long identifier, const ResourceResponse&, std::unique_ptr<WebDataConsumerHandle>);
         void handleReceivedData(const char* data, size_t dataLength);
         void handleSuccessfulFinish(unsigned long identifier, double finishTime);
 
@@ -142,7 +143,6 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
 
         void loadRequest(const ResourceRequest&, ResourceLoaderOptions);
         bool isAllowedRedirect(const KURL&) const;
-        bool isAllowedByContentSecurityPolicy(const KURL&, ContentSecurityPolicy::RedirectStatus) const;
         // Returns DoNotAllowStoredCredentials
         // if m_forceDoNotAllowStoredCredentials is set. Otherwise, just
         // returns allowCredentials value of m_resourceLoaderOptions.
@@ -155,12 +155,12 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
         // this re-implementation of ResourceOwner.
         RawResource* resource() const { return m_resource.get(); }
         void clearResource() { setResource(nullptr); }
-        void setResource(const PassRefPtrWillBeRawPtr<RawResource>& newResource)
+        void setResource(RawResource* newResource)
         {
             if (newResource == m_resource)
                 return;
 
-            if (PassRefPtrWillBeRawPtr<RawResource> oldResource = m_resource.release())
+            if (RawResource* oldResource = m_resource.release())
                 oldResource->removeClient(this);
 
             if (newResource) {
@@ -168,14 +168,14 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
                 m_resource->addClient(this);
             }
         }
-        RefPtrWillBePersistent<RawResource> m_resource;
+        Persistent<RawResource> m_resource;
         // End of ResourceOwner re-implementation, see above.
 
-        SecurityOrigin* securityOrigin() const;
+        SecurityOrigin* getSecurityOrigin() const;
         Document& document() const;
 
         ThreadableLoaderClient* m_client;
-        RawPtrWillBeWeakPersistent<Document> m_document;
+        WeakPersistent<Document> m_document;
 
         const ThreadableLoaderOptions m_options;
         // Some items may be overridden by m_forceDoNotAllowStoredCredentials
@@ -188,7 +188,7 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
 
         // True while the initial URL and all the URLs of the redirects
         // this object has followed, if any, are same-origin to
-        // securityOrigin().
+        // getSecurityOrigin().
         bool m_sameOriginRequest;
         // Set to true if the current request is cross-origin and not simple.
         bool m_crossOriginNonSimpleRequest;
@@ -223,6 +223,8 @@ class CORE_EXPORT DocumentThreadableLoader final : public ThreadableLoader, priv
         int m_corsRedirectLimit;
 
         WebURLRequest::FetchRedirectMode m_redirectMode;
+
+        WeakPtrFactory<DocumentThreadableLoader> m_weakFactory;
     };
 
 } // namespace blink

@@ -4,9 +4,11 @@
 
 #include "ui/gl/gl_context_stub.h"
 
-namespace gfx {
+namespace gl {
 
 GLContextStub::GLContextStub() : GLContextReal(nullptr) {}
+GLContextStub::GLContextStub(GLShareGroup* share_group)
+    : GLContextReal(share_group) {}
 
 bool GLContextStub::Initialize(
     GLSurface* compatible_surface, GpuPreference gpu_preference) {
@@ -24,7 +26,7 @@ void GLContextStub::ReleaseCurrent(GLSurface* surface) {
 }
 
 bool GLContextStub::IsCurrent(GLSurface* surface) {
-  return true;
+  return GetRealCurrent() == this;
 }
 
 void* GLContextStub::GetHandle() {
@@ -34,14 +36,10 @@ void* GLContextStub::GetHandle() {
 void GLContextStub::OnSetSwapInterval(int interval) {
 }
 
-std::string GLContextStub::GetExtensions() {
-  return std::string();
-}
-
 std::string GLContextStub::GetGLRenderer() {
   return std::string("CHROMIUM");
 }
 
 GLContextStub::~GLContextStub() {}
 
-}  // namespace gfx
+}  // namespace gl

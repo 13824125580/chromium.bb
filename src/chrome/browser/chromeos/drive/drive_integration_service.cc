@@ -26,15 +26,15 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/drive/chromeos/file_cache.h"
+#include "components/drive/chromeos/file_system.h"
+#include "components/drive/chromeos/resource_metadata.h"
 #include "components/drive/drive_api_util.h"
 #include "components/drive/drive_app_registry.h"
 #include "components/drive/drive_notification_manager.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/event_logger.h"
-#include "components/drive/file_cache.h"
-#include "components/drive/file_system.h"
 #include "components/drive/job_scheduler.h"
-#include "components/drive/resource_metadata.h"
 #include "components/drive/resource_metadata_storage.h"
 #include "components/drive/service/drive_api_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -238,7 +238,6 @@ DriveIntegrationService::DriveIntegrationService(
         oauth_service, g_browser_process->system_request_context(),
         blocking_task_runner_.get(),
         GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction),
-        GURL(google_apis::DriveApiUrlGenerator::kBaseDownloadUrlForProduction),
         GURL(google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction),
         GetDriveUserAgent()));
   }
@@ -566,13 +565,12 @@ void DriveIntegrationService::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_PROFILE_CREATED) {
-    Profile* created_profile = content::Source<Profile>(source).ptr();
-    if (created_profile->IsOffTheRecord() &&
-        created_profile->IsSameProfile(profile_)) {
-      download_handler_->ObserveIncognitoDownloadManager(
-          BrowserContext::GetDownloadManager(created_profile));
-    }
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_CREATED, type);
+  Profile* created_profile = content::Source<Profile>(source).ptr();
+  if (created_profile->IsOffTheRecord() &&
+      created_profile->IsSameProfile(profile_)) {
+    download_handler_->ObserveIncognitoDownloadManager(
+        BrowserContext::GetDownloadManager(created_profile));
   }
 }
 

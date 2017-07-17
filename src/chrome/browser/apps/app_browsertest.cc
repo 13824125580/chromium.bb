@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "apps/launcher.h"
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -39,6 +41,7 @@
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host_view.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
@@ -57,7 +60,6 @@
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -271,7 +273,7 @@ const char kTestFilePath[] = "platform_apps/launch_files/test.txt";
 // ash, so we test that it works here.
 IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, CreateAndCloseAppWindow) {
   const Extension* extension = LoadAndLaunchPlatformApp("minimal", "Launched");
-  AppWindow* window = CreateAppWindow(extension);
+  AppWindow* window = CreateAppWindow(browser()->profile(), extension);
   CloseAppWindow(window);
 }
 
@@ -295,7 +297,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, EmptyContextMenu) {
   WebContents* web_contents = GetFirstAppWindowWebContents();
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   ASSERT_TRUE(menu->HasCommandWithId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
@@ -314,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, AppWithContextMenu) {
   WebContents* web_contents = GetFirstAppWindowWebContents();
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   int first_extensions_command_id =
@@ -343,7 +345,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, InstalledAppWithContextMenu) {
   WebContents* web_contents = GetFirstAppWindowWebContents();
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   int extensions_custom_id =
@@ -368,7 +370,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, AppWithContextMenuTextField) {
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
   params.is_editable = true;
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   int extensions_custom_id =
@@ -393,7 +395,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, AppWithContextMenuSelection) {
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
   params.selection_text = base::ASCIIToUTF16("Hello World");
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   int extensions_custom_id =
@@ -417,7 +419,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, AppWithContextMenuClicked) {
   ASSERT_TRUE(web_contents);
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.bar");
-  scoped_ptr<PlatformAppContextMenu> menu;
+  std::unique_ptr<PlatformAppContextMenu> menu;
   menu.reset(new PlatformAppContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   int extensions_custom_id =
@@ -457,8 +459,10 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
       message_;
   observer.Wait();
   ASSERT_EQ(kExpectedNumberOfTabs, observer.tabs().size());
+  content::WaitForLoadStop(observer.tabs()[kExpectedNumberOfTabs - 1]);
   EXPECT_EQ(GURL(kChromiumURL),
             observer.tabs()[kExpectedNumberOfTabs - 1]->GetURL());
+  content::WaitForLoadStop(observer.tabs()[kExpectedNumberOfTabs - 2]);
   EXPECT_EQ(GURL(kChromiumURL),
             observer.tabs()[kExpectedNumberOfTabs - 2]->GetURL());
 }
@@ -778,7 +782,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
                        AppWindowAdjustBoundsToBeVisibleOnScreen) {
   const Extension* extension = LoadAndLaunchPlatformApp("minimal", "Launched");
 
-  AppWindow* window = CreateAppWindow(extension);
+  AppWindow* window = CreateAppWindow(browser()->profile(), extension);
 
   // The screen bounds didn't change, the cached bounds didn't need to adjust.
   gfx::Rect cached_bounds(80, 100, 400, 400);
@@ -1246,9 +1250,9 @@ IN_PROC_BROWSER_TEST_F(PlatformAppIncognitoBrowserTest, IncognitoComponentApp) {
   ASSERT_TRUE(registry != NULL);
   registry->AddObserver(this);
 
-  OpenApplication(AppLaunchParams(incognito_profile, file_manager, CURRENT_TAB,
-                                  chrome::HOST_DESKTOP_TYPE_NATIVE,
-                                  extensions::SOURCE_TEST));
+  OpenApplication(CreateAppLaunchParamsUserContainer(
+      incognito_profile, file_manager, NEW_FOREGROUND_TAB,
+      extensions::SOURCE_TEST));
 
   while (!ContainsKey(opener_app_ids_, file_manager->id())) {
     content::RunAllPendingInMessageLoop();
@@ -1268,7 +1272,7 @@ class RestartDeviceTest : public PlatformAppBrowserTest {
 
     power_manager_client_ = new chromeos::FakePowerManagerClient;
     chromeos::DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        scoped_ptr<chromeos::PowerManagerClient>(power_manager_client_));
+        std::unique_ptr<chromeos::PowerManagerClient>(power_manager_client_));
   }
 
   void SetUpOnMainThread() override {
@@ -1303,7 +1307,7 @@ class RestartDeviceTest : public PlatformAppBrowserTest {
  private:
   chromeos::FakePowerManagerClient* power_manager_client_;
   chromeos::MockUserManager* mock_user_manager_;
-  scoped_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
 
   DISALLOW_COPY_AND_ASSIGN(RestartDeviceTest);
 };
@@ -1382,6 +1386,16 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, AppsIgnoreDefaultZoom) {
       web_contents->GetSiteInstance());
   EXPECT_EQ(0, app_host_zoom_map->GetDefaultZoomLevel());
   EXPECT_EQ(0, app_host_zoom_map->GetZoomLevel(web_contents));
+}
+
+// This test will flake until we fix the underlying issue:
+// https://crbug.com/620194.
+#define MAYBE_AppWindowIframe DISABLED_AppWindowIframe
+// Sends chrome.test.sendMessage from chrome.app.window.create's callback.
+// The app window also adds an <iframe> to the page during window.onload.
+IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, MAYBE_AppWindowIframe) {
+  LoadAndLaunchPlatformApp("app_window_send_message",
+                           "APP_WINDOW_CREATE_CALLBACK");
 }
 
 }  // namespace extensions

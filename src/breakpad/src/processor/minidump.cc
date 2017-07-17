@@ -57,7 +57,7 @@
 #include "processor/range_map-inl.h"
 
 #include "common/scoped_ptr.h"
-#include "common/stdio.h"
+#include "common/stdio_wrapper.h"
 #include "google_breakpad/processor/dump_context.h"
 #include "processor/basic_code_module.h"
 #include "processor/basic_code_modules.h"
@@ -1180,7 +1180,7 @@ bool MinidumpContext::CheckAgainstSystemInfo(uint32_t context_cpu_type) {
 //
 
 
-uint32_t MinidumpMemoryRegion::max_bytes_ = 1024 * 1024;  // 1MB
+uint32_t MinidumpMemoryRegion::max_bytes_ = 2 * 1024 * 1024;  // 2MB
 
 
 MinidumpMemoryRegion::MinidumpMemoryRegion(Minidump* minidump)
@@ -1930,9 +1930,8 @@ string MinidumpModule::debug_file() const {
       file = reinterpret_cast<const char*>(cv_record_20->pdb_file_name);
     } else if (cv_record_signature_ == MD_CVINFOELF_SIGNATURE) {
       // It's actually an MDCVInfoELF structure.
-      const MDCVInfoELF* cv_record_elf =
-          reinterpret_cast<const MDCVInfoELF*>(&(*cv_record_)[0]);
-      assert(cv_record_elf->cv_signature == MD_CVINFOELF_SIGNATURE);
+      assert(reinterpret_cast<const MDCVInfoELF*>(&(*cv_record_)[0])->
+          cv_signature == MD_CVINFOELF_SIGNATURE);
 
       // For MDCVInfoELF, the debug file is the code file.
       file = *name_;
@@ -2673,7 +2672,8 @@ const MinidumpModule* MinidumpModuleList::GetModuleForAddress(
   }
 
   unsigned int module_index;
-  if (!range_map_->RetrieveRange(address, &module_index, NULL, NULL)) {
+  if (!range_map_->RetrieveRange(address, &module_index, NULL /* base */,
+                                 NULL /* delta */, NULL /* size */)) {
     BPLOG(INFO) << "MinidumpModuleList has no module at " <<
                    HexString(address);
     return NULL;
@@ -2709,7 +2709,9 @@ const MinidumpModule* MinidumpModuleList::GetModuleAtSequence(
   }
 
   unsigned int module_index;
-  if (!range_map_->RetrieveRangeAtIndex(sequence, &module_index, NULL, NULL)) {
+  if (!range_map_->RetrieveRangeAtIndex(sequence, &module_index, 
+                                        NULL /* base */, NULL /* delta */,
+                                        NULL /* size */)) {
     BPLOG(ERROR) << "MinidumpModuleList has no module at sequence " << sequence;
     return NULL;
   }
@@ -2924,7 +2926,8 @@ MinidumpMemoryRegion* MinidumpMemoryList::GetMemoryRegionForAddress(
   }
 
   unsigned int region_index;
-  if (!range_map_->RetrieveRange(address, &region_index, NULL, NULL)) {
+  if (!range_map_->RetrieveRange(address, &region_index, NULL /* base */,
+                                 NULL /* delta */, NULL /* size */)) {
     BPLOG(INFO) << "MinidumpMemoryList has no memory region at " <<
                    HexString(address);
     return NULL;
@@ -4028,7 +4031,8 @@ const MinidumpMemoryInfo* MinidumpMemoryInfoList::GetMemoryInfoForAddress(
   }
 
   unsigned int info_index;
-  if (!range_map_->RetrieveRange(address, &info_index, NULL, NULL)) {
+  if (!range_map_->RetrieveRange(address, &info_index, NULL /* base */,
+                                 NULL /* delta */, NULL /* size */)) {
     BPLOG(INFO) << "MinidumpMemoryInfoList has no memory info at " <<
                    HexString(address);
     return NULL;
@@ -4568,6 +4572,14 @@ static const char* get_stream_name(uint32_t stream_type) {
     return "MD_THREAD_INFO_LIST_STREAM";
   case MD_HANDLE_OPERATION_LIST_STREAM:
     return "MD_HANDLE_OPERATION_LIST_STREAM";
+  case MD_TOKEN_STREAM:
+    return "MD_TOKEN_STREAM";
+  case MD_JAVASCRIPT_DATA_STREAM:
+    return "MD_JAVASCRIPT_DATA_STREAM";
+  case MD_SYSTEM_MEMORY_INFO_STREAM:
+    return "MD_SYSTEM_MEMORY_INFO_STREAM";
+  case MD_PROCESS_VM_COUNTERS_STREAM:
+    return "MD_PROCESS_VM_COUNTERS_STREAM";
   case MD_LAST_RESERVED_STREAM:
     return "MD_LAST_RESERVED_STREAM";
   case MD_BREAKPAD_INFO_STREAM:

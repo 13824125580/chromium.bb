@@ -19,9 +19,9 @@
 #include "ppapi/cpp/view.h"
 #include "ppapi/utility/completion_callback_factory.h"
 #include "remoting/client/plugin/pepper_video_renderer.h"
+#include "remoting/client/software_video_renderer.h"
 #include "remoting/protocol/frame_consumer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
-#include "third_party/webrtc/modules/desktop_capture/desktop_region.h"
 
 namespace base {
 class ScopedClosureRunner;
@@ -45,23 +45,23 @@ class PepperVideoRenderer2D : public PepperVideoRenderer,
   ~PepperVideoRenderer2D() override;
 
   // PepperVideoRenderer interface.
-  bool Initialize(pp::Instance* instance,
-                  const ClientContext& context,
-                  EventHandler* event_handler,
-                  protocol::PerformanceTracker* perf_tracker) override;
+  void SetPepperContext(pp::Instance* instance,
+                        EventHandler* event_handler) override;
   void OnViewChanged(const pp::View& view) override;
   void EnableDebugDirtyRegion(bool enable) override;
 
   // VideoRenderer interface.
+  bool Initialize(const ClientContext& client_context,
+                  protocol::PerformanceTracker* perf_tracker) override;
   void OnSessionConfig(const protocol::SessionConfig& config) override;
   protocol::VideoStub* GetVideoStub() override;
   protocol::FrameConsumer* GetFrameConsumer() override;
 
  private:
   // protocol::FrameConsumer implementation.
-  scoped_ptr<webrtc::DesktopFrame> AllocateFrame(
+  std::unique_ptr<webrtc::DesktopFrame> AllocateFrame(
       const webrtc::DesktopSize& size) override;
-  void DrawFrame(scoped_ptr<webrtc::DesktopFrame> frame,
+  void DrawFrame(std::unique_ptr<webrtc::DesktopFrame> frame,
                  const base::Closure& done) override;
   PixelFormat GetPixelFormat() override;
 
@@ -75,19 +75,13 @@ class PepperVideoRenderer2D : public PepperVideoRenderer,
 
   pp::Graphics2D graphics2d_;
 
-  scoped_ptr<SoftwareVideoRenderer> software_video_renderer_;
+  SoftwareVideoRenderer software_video_renderer_;
 
   // View size in output pixels.
   webrtc::DesktopSize view_size_;
 
   // Size of the most recent source frame in pixels.
   webrtc::DesktopSize source_size_;
-
-  // Resolution of the most recent source frame dots-per-inch.
-  webrtc::DesktopVector source_dpi_;
-
-  // Shape of the most recent source frame.
-  scoped_ptr<webrtc::DesktopRegion> source_shape_;
 
   // Done callbacks for the frames that have been painted but not flushed.
   ScopedVector<base::ScopedClosureRunner> pending_frames_done_callbacks_;

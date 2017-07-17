@@ -11,12 +11,14 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/debug/alias.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
@@ -27,11 +29,9 @@
 
 namespace content {
 namespace {
-#if defined(OS_CHROMEOS)
+#if defined(USE_X11)
 const base::FilePath::CharType
     kTtyFilePath[] = FILE_PATH_LITERAL("/sys/class/tty/tty0/active");
-#endif
-#if defined(USE_X11)
 const unsigned char text[20] = "check";
 #endif
 }  // namespace
@@ -42,6 +42,8 @@ GpuWatchdogThread::GpuWatchdogThread(int timeout)
       timeout_(base::TimeDelta::FromMilliseconds(timeout)),
       armed_(false),
       task_observer_(this),
+      use_thread_cpu_time_(true),
+      responsive_acknowledge_count_(0),
 #if defined(OS_WIN)
       watched_thread_handle_(0),
       arm_cpu_time_(),
@@ -51,6 +53,7 @@ GpuWatchdogThread::GpuWatchdogThread(int timeout)
       display_(NULL),
       window_(0),
       atom_(None),
+      host_tty_(-1),
 #endif
       weak_factory_(this) {
   DCHECK(timeout >= 0);
@@ -69,10 +72,8 @@ GpuWatchdogThread::GpuWatchdogThread(int timeout)
   DCHECK(result);
 #endif
 
-#if defined(OS_CHROMEOS)
-  tty_file_ = base::OpenFile(base::FilePath(kTtyFilePath), "r");
-#endif
 #if defined(USE_X11)
+  tty_file_ = base::OpenFile(base::FilePath(kTtyFilePath), "r");
   SetupXServer();
 #endif
   watched_message_loop_->AddTaskObserver(&task_observer_);
@@ -132,12 +133,9 @@ GpuWatchdogThread::~GpuWatchdogThread() {
   if (power_monitor)
     power_monitor->RemoveObserver(this);
 
-#if defined(OS_CHROMEOS)
+#if defined(USE_X11)
   if (tty_file_)
     fclose(tty_file_);
-#endif
-
-#if defined(USE_X11)
   XDestroyWindow(display_, window_);
   XCloseDisplay(display_);
 #endif
@@ -159,12 +157,30 @@ void GpuWatchdogThread::OnAcknowledge() {
   weak_factory_.InvalidateWeakPtrs();
   armed_ = false;
 
-  if (suspended_)
+  if (suspended_) {
+    responsive_acknowledge_count_ = 0;
     return;
+  }
+
+  base::Time current_time = base::Time::Now();
+
+  // The watchdog waits until at least 6 consecutive checks have returned in
+  // less than 50 ms before it will start ignoring the CPU time in determining
+  // whether to timeout. This is a compromise to allow startups that are slow
+  // due to disk contention to avoid timing out, but once the GPU process is
+  // running smoothly the watchdog will be able to detect hangs that don't use
+  // the CPU.
+  if ((current_time - check_time_) < base::TimeDelta::FromMilliseconds(50))
+    responsive_acknowledge_count_++;
+  else
+    responsive_acknowledge_count_ = 0;
+
+  if (responsive_acknowledge_count_ >= 6)
+    use_thread_cpu_time_ = false;
 
   // If it took a long time for the acknowledgement, assume the computer was
   // recently suspended.
-  bool was_suspended = (base::Time::Now() > suspension_timeout_);
+  bool was_suspended = (current_time > suspension_timeout_);
 
   // The monitored thread has responded. Post a task to check it again.
   task_runner()->PostDelayedTask(
@@ -188,12 +204,16 @@ void GpuWatchdogThread::OnCheck(bool after_suspend) {
 
 #if defined(OS_WIN)
   arm_cpu_time_ = GetWatchedThreadTime();
+
+  QueryUnbiasedInterruptTime(&arm_interrupt_time_);
 #endif
 
+  check_time_ = base::Time::Now();
+  check_timeticks_ = base::TimeTicks::Now();
   // Immediately after the computer is woken up from being suspended it might
   // be pretty sluggish, so allow some extra time before the next timeout.
   base::TimeDelta timeout = timeout_ * (after_suspend ? 3 : 1);
-  suspension_timeout_ = base::Time::Now() + timeout * 2;
+  suspension_timeout_ = check_time_ + timeout * 2;
 
   // Post a task to the monitored thread that does nothing but wake up the
   // TaskObserver. Any other tasks that are pending on the watched thread will
@@ -218,8 +238,9 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
 #if defined(OS_WIN)
   // Defer termination until a certain amount of CPU time has elapsed on the
   // watched thread.
-  base::TimeDelta time_since_arm = GetWatchedThreadTime() - arm_cpu_time_;
-  if (time_since_arm < timeout_) {
+  base::ThreadTicks current_cpu_time = GetWatchedThreadTime();
+  base::TimeDelta time_since_arm = current_cpu_time - arm_cpu_time_;
+  if (use_thread_cpu_time_ && (time_since_arm < timeout_)) {
     message_loop()->PostDelayedTask(
         FROM_HERE,
         base::Bind(
@@ -298,19 +319,43 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
     return;
 #endif
 
-#if defined(OS_CHROMEOS)
-  // Don't crash if we're not on tty1. This avoids noise in the GPU process
-  // crashes caused by people who use VT2 but still enable crash reporting.
-  char tty_string[8] = {0};
-  if (tty_file_ &&
-      !fseek(tty_file_, 0, SEEK_SET) &&
-      fread(tty_string, 1, 7, tty_file_)) {
-    int tty_number = -1;
-    int num_res = sscanf(tty_string, "tty%d", &tty_number);
-    if (num_res == 1 && tty_number != 1)
-      return;
+#if defined(USE_X11)
+  // Don't crash if we're not on the TTY of our host X11 server.
+  int active_tty = GetActiveTTY();
+  if(host_tty_ != -1 && active_tty != -1 && host_tty_ != active_tty) {
+    return;
   }
 #endif
+
+// Store variables so they're available in crash dumps to help determine the
+// cause of any hang.
+#if defined(OS_WIN)
+  ULONGLONG fire_interrupt_time;
+  QueryUnbiasedInterruptTime(&fire_interrupt_time);
+
+  // This is the time since the watchdog was armed, in 100ns intervals,
+  // ignoring time where the computer is suspended.
+  ULONGLONG interrupt_delay = fire_interrupt_time - arm_interrupt_time_;
+
+  base::debug::Alias(&interrupt_delay);
+  base::debug::Alias(&current_cpu_time);
+  base::debug::Alias(&time_since_arm);
+
+  bool using_thread_ticks = base::ThreadTicks::IsSupported();
+  base::debug::Alias(&using_thread_ticks);
+
+  bool using_high_res_timer = base::Time::IsHighResolutionTimerInUse();
+  base::debug::Alias(&using_high_res_timer);
+
+  bool message_pump_is_signaled =
+      watched_message_loop_->MessagePumpWasSignaled();
+  base::debug::Alias(&message_pump_is_signaled);
+#endif
+
+  base::Time current_time = base::Time::Now();
+  base::TimeTicks current_timeticks = base::TimeTicks::Now();
+  base::debug::Alias(&current_time);
+  base::debug::Alias(&current_timeticks);
 
   LOG(ERROR) << "The GPU process hung. Terminating after "
              << timeout_.InMilliseconds() << " ms.";
@@ -327,6 +372,7 @@ void GpuWatchdogThread::SetupXServer() {
   window_ = XCreateWindow(display_, DefaultRootWindow(display_), 0, 0, 1, 1, 0,
                           CopyFromParent, InputOutput, CopyFromParent, 0, NULL);
   atom_ = XInternAtom(display_, "CHECK", False);
+  host_tty_ = GetActiveTTY();
 }
 
 void GpuWatchdogThread::SetupXChangeProp() {
@@ -356,6 +402,7 @@ void GpuWatchdogThread::OnAddPowerObserver() {
 
 void GpuWatchdogThread::OnSuspend() {
   suspended_ = true;
+  suspend_time_ = base::Time::Now();
 
   // When suspending force an acknowledgement to cancel any pending termination
   // tasks.
@@ -364,6 +411,7 @@ void GpuWatchdogThread::OnSuspend() {
 
 void GpuWatchdogThread::OnResume() {
   suspended_ = false;
+  resume_time_ = base::Time::Now();
 
   // After resuming jump-start the watchdog again.
   armed_ = false;
@@ -371,35 +419,54 @@ void GpuWatchdogThread::OnResume() {
 }
 
 #if defined(OS_WIN)
-base::TimeDelta GpuWatchdogThread::GetWatchedThreadTime() {
-  FILETIME creation_time;
-  FILETIME exit_time;
-  FILETIME user_time;
-  FILETIME kernel_time;
-  BOOL result = GetThreadTimes(watched_thread_handle_,
-                               &creation_time,
-                               &exit_time,
-                               &kernel_time,
-                               &user_time);
-  DCHECK(result);
+base::ThreadTicks GpuWatchdogThread::GetWatchedThreadTime() {
+  if (base::ThreadTicks::IsSupported()) {
+    // Convert ThreadTicks::Now() to TimeDelta.
+    return base::ThreadTicks::GetForThread(
+        base::PlatformThreadHandle(watched_thread_handle_));
+  } else {
+    // Use GetThreadTimes as a backup mechanism.
+    FILETIME creation_time;
+    FILETIME exit_time;
+    FILETIME user_time;
+    FILETIME kernel_time;
+    BOOL result = GetThreadTimes(watched_thread_handle_, &creation_time,
+                                 &exit_time, &kernel_time, &user_time);
+    DCHECK(result);
 
-  ULARGE_INTEGER user_time64;
-  user_time64.HighPart = user_time.dwHighDateTime;
-  user_time64.LowPart = user_time.dwLowDateTime;
+    ULARGE_INTEGER user_time64;
+    user_time64.HighPart = user_time.dwHighDateTime;
+    user_time64.LowPart = user_time.dwLowDateTime;
 
-  ULARGE_INTEGER kernel_time64;
-  kernel_time64.HighPart = kernel_time.dwHighDateTime;
-  kernel_time64.LowPart = kernel_time.dwLowDateTime;
+    ULARGE_INTEGER kernel_time64;
+    kernel_time64.HighPart = kernel_time.dwHighDateTime;
+    kernel_time64.LowPart = kernel_time.dwLowDateTime;
 
-  // Time is reported in units of 100 nanoseconds. Kernel and user time are
-  // summed to deal with to kinds of hangs. One is where the GPU process is
-  // stuck in user level, never calling into the kernel and kernel time is
-  // not increasing. The other is where either the kernel hangs and never
-  // returns to user level or where user level code
-  // calls into kernel level repeatedly, giving up its quanta before it is
-  // tracked, for example a loop that repeatedly Sleeps.
-  return base::TimeDelta::FromMilliseconds(static_cast<int64_t>(
-      (user_time64.QuadPart + kernel_time64.QuadPart) / 10000));
+    // Time is reported in units of 100 nanoseconds. Kernel and user time are
+    // summed to deal with to kinds of hangs. One is where the GPU process is
+    // stuck in user level, never calling into the kernel and kernel time is
+    // not increasing. The other is where either the kernel hangs and never
+    // returns to user level or where user level code
+    // calls into kernel level repeatedly, giving up its quanta before it is
+    // tracked, for example a loop that repeatedly Sleeps.
+    return base::ThreadTicks() +
+           base::TimeDelta::FromMilliseconds(static_cast<int64_t>(
+               (user_time64.QuadPart + kernel_time64.QuadPart) / 10000));
+  }
+}
+#endif
+
+#if defined(USE_X11)
+int GpuWatchdogThread::GetActiveTTY() const {
+  char tty_string[8] = {0};
+  if (tty_file_ && !fseek(tty_file_, 0, SEEK_SET) &&
+      fread(tty_string, 1, 7, tty_file_)) {
+    int tty_number;
+    size_t num_res = sscanf(tty_string, "tty%d\n", &tty_number);
+    if (num_res == 1)
+      return tty_number;
+  }
+  return -1;
 }
 #endif
 

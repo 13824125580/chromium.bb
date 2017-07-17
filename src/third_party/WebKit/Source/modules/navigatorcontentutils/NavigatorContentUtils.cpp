@@ -31,6 +31,7 @@
 #include "core/dom/ExceptionCode.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
+#include "core/frame/UseCounter.h"
 #include "wtf/HashSet.h"
 #include "wtf/text/StringBuilder.h"
 
@@ -86,13 +87,13 @@ static bool verifyCustomHandlerURL(const Document& document, const String& url, 
     KURL kurl = document.completeURL(url);
 
     if (kurl.isEmpty() || !kurl.isValid()) {
-        exceptionState.throwDOMException(SyntaxError, "The custom handler URL created by removing '%s' and prepending '" + document.baseURL().string() + "' is invalid.");
+        exceptionState.throwDOMException(SyntaxError, "The custom handler URL created by removing '%s' and prepending '" + document.baseURL().getString() + "' is invalid.");
         return false;
     }
 
     // The specification says that the API throws SecurityError exception if the
     // URL's origin differs from the document's origin.
-    if (!document.securityOrigin()->canRequest(kurl)) {
+    if (!document.getSecurityOrigin()->canRequest(kurl)) {
         exceptionState.throwSecurityError("Can only register custom handler in the document's origin.");
         return false;
     }
@@ -106,9 +107,7 @@ static bool isSchemeWhitelisted(const String& scheme)
         initCustomSchemeHandlerWhitelist();
 
     StringBuilder builder;
-    unsigned length = scheme.length();
-    for (unsigned i = 0; i < length; ++i)
-        builder.append(toASCIILower(scheme[i]));
+    builder.append(scheme.lower().ascii().data());
 
     return schemeWhitelist->contains(builder.toString());
 }
@@ -138,16 +137,16 @@ static bool verifyCustomHandlerScheme(const String& scheme, ExceptionState& exce
 
 NavigatorContentUtils* NavigatorContentUtils::from(LocalFrame& frame)
 {
-    return static_cast<NavigatorContentUtils*>(WillBeHeapSupplement<LocalFrame>::from(frame, supplementName()));
+    return static_cast<NavigatorContentUtils*>(Supplement<LocalFrame>::from(frame, supplementName()));
 }
 
 NavigatorContentUtils::~NavigatorContentUtils()
 {
 }
 
-PassOwnPtrWillBeRawPtr<NavigatorContentUtils> NavigatorContentUtils::create(PassOwnPtrWillBeRawPtr<NavigatorContentUtilsClient> client)
+NavigatorContentUtils* NavigatorContentUtils::create(NavigatorContentUtilsClient* client)
 {
-    return adoptPtrWillBeNoop(new NavigatorContentUtils(client));
+    return new NavigatorContentUtils(client);
 }
 
 void NavigatorContentUtils::registerProtocolHandler(Navigator& navigator, const String& scheme, const String& url, const String& title, ExceptionState& exceptionState)
@@ -163,6 +162,9 @@ void NavigatorContentUtils::registerProtocolHandler(Navigator& navigator, const 
 
     if (!verifyCustomHandlerScheme(scheme, exceptionState))
         return;
+
+    // Count usage; perhaps we can lock this to secure contexts.
+    UseCounter::count(*document, document->isSecureContext() ? UseCounter::RegisterProtocolHandlerSecureOrigin : UseCounter::RegisterProtocolHandlerInsecureOrigin);
 
     NavigatorContentUtils::from(*navigator.frame())->client()->registerProtocolHandler(scheme, document->completeURL(url), title);
 }
@@ -229,7 +231,7 @@ const char* NavigatorContentUtils::supplementName()
     return "NavigatorContentUtils";
 }
 
-void provideNavigatorContentUtilsTo(LocalFrame& frame, PassOwnPtrWillBeRawPtr<NavigatorContentUtilsClient> client)
+void provideNavigatorContentUtilsTo(LocalFrame& frame, NavigatorContentUtilsClient* client)
 {
     NavigatorContentUtils::provideTo(frame, NavigatorContentUtils::supplementName(), NavigatorContentUtils::create(client));
 }

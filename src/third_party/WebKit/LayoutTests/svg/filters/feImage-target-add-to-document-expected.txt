@@ -1,18 +1,33 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [0, 0, 110, 110]
-      ],
-      "paintInvalidationClients": [
-        "LayoutSVGResourceFilter filter id='filter'",
-        "LayoutSVGResourceFilterPrimitive feImage",
-        "LayoutSVGRect rect"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 0, 110, 110],
+          "reason": "style change"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGResourceFilter filter id='filter'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGResourceFilterPrimitive feImage",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutSVGRect rect",
+      "reason": "style change"
     }
   ]
 }

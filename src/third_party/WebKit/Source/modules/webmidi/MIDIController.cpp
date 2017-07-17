@@ -32,6 +32,7 @@
 
 #include "modules/webmidi/MIDIAccessInitializer.h"
 #include "modules/webmidi/MIDIClient.h"
+#include <memory>
 
 namespace blink {
 
@@ -40,19 +41,19 @@ const char* MIDIController::supplementName()
     return "MIDIController";
 }
 
-MIDIController::MIDIController(PassOwnPtr<MIDIClient> client)
-    : m_client(client)
+MIDIController::MIDIController(std::unique_ptr<MIDIClient> client)
+    : m_client(std::move(client))
 {
-    ASSERT(m_client);
+    DCHECK(m_client);
 }
 
 MIDIController::~MIDIController()
 {
 }
 
-PassOwnPtrWillBeRawPtr<MIDIController> MIDIController::create(PassOwnPtr<MIDIClient> client)
+MIDIController* MIDIController::create(std::unique_ptr<MIDIClient> client)
 {
-    return adoptPtrWillBeNoop(new MIDIController(client));
+    return new MIDIController(std::move(client));
 }
 
 void MIDIController::requestPermission(MIDIAccessInitializer* initializer, const MIDIOptions& options)
@@ -65,9 +66,9 @@ void MIDIController::cancelPermissionRequest(MIDIAccessInitializer* initializer)
     m_client->cancelPermissionRequest(initializer);
 }
 
-void provideMIDITo(LocalFrame& frame, PassOwnPtr<MIDIClient> client)
+void provideMIDITo(LocalFrame& frame, std::unique_ptr<MIDIClient> client)
 {
-    MIDIController::provideTo(frame, MIDIController::supplementName(), MIDIController::create(client));
+    MIDIController::provideTo(frame, MIDIController::supplementName(), MIDIController::create(std::move(client)));
 }
 
 } // namespace blink

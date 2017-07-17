@@ -6,21 +6,24 @@
 
 #include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/stl_util.h"
 #include "courgette/base_test_unittest.h"
 
 class DisassemblerWin32X64Test : public BaseTest {
  public:
   void TestExe() const;
-  void TestExe32() const;
+  void TestExe32ShouldFail() const;
   void TestResourceDll() const;
 };
 
 void DisassemblerWin32X64Test::TestExe() const {
   std::string file1 = FileContents("chrome64_1.exe");
 
-  scoped_ptr<courgette::DisassemblerWin32X64> disassembler(
+  std::unique_ptr<courgette::DisassemblerWin32X64> disassembler(
       new courgette::DisassemblerWin32X64(file1.c_str(), file1.length()));
 
   bool can_parse_header = disassembler->ParseHeader();
@@ -32,21 +35,20 @@ void DisassemblerWin32X64Test::TestExe() const {
   EXPECT_TRUE(disassembler->ok());
   EXPECT_TRUE(disassembler->has_text_section());
   EXPECT_EQ(488448U, disassembler->size_of_code());
-  EXPECT_FALSE(disassembler->is_32bit());
   EXPECT_EQ(courgette::DisassemblerWin32X64::SectionName(
       disassembler->RVAToSection(0x00401234 - 0x00400000)),
       std::string(".text"));
 
-  EXPECT_EQ(0, disassembler->RVAToFileOffset(0));
-  EXPECT_EQ(1024, disassembler->RVAToFileOffset(4096));
-  EXPECT_EQ(46928, disassembler->RVAToFileOffset(50000));
+  EXPECT_EQ(0U, disassembler->RVAToFileOffset(0));
+  EXPECT_EQ(1024U, disassembler->RVAToFileOffset(4096));
+  EXPECT_EQ(46928U, disassembler->RVAToFileOffset(50000));
 
   std::vector<courgette::RVA> relocs;
   bool can_parse_relocs = disassembler->ParseRelocs(&relocs);
   EXPECT_TRUE(can_parse_relocs);
   EXPECT_TRUE(base::STLIsSorted(relocs));
 
-  const uint8_t* offset_p = disassembler->OffsetToPointer(0);
+  const uint8_t* offset_p = disassembler->FileOffsetToPointer(0);
   EXPECT_EQ(reinterpret_cast<const void*>(file1.c_str()),
             reinterpret_cast<const void*>(offset_p));
   EXPECT_EQ('M', offset_p[0]);
@@ -59,10 +61,10 @@ void DisassemblerWin32X64Test::TestExe() const {
   EXPECT_EQ('Z', rva_p[1]);
 }
 
-void DisassemblerWin32X64Test::TestExe32() const {
+void DisassemblerWin32X64Test::TestExe32ShouldFail() const {
   std::string file1 = FileContents("setup1.exe");
 
-  scoped_ptr<courgette::DisassemblerWin32X64> disassembler(
+  std::unique_ptr<courgette::DisassemblerWin32X64> disassembler(
       new courgette::DisassemblerWin32X64(file1.c_str(), file1.length()));
 
   bool can_parse_header = disassembler->ParseHeader();
@@ -72,15 +74,12 @@ void DisassemblerWin32X64Test::TestExe32() const {
   EXPECT_EQ(file1.length(), disassembler->length());
 
   EXPECT_FALSE(disassembler->ok());
-  EXPECT_TRUE(disassembler->has_text_section());
-  EXPECT_EQ(449536U, disassembler->size_of_code());
-  EXPECT_TRUE(disassembler->is_32bit());
 }
 
 void DisassemblerWin32X64Test::TestResourceDll() const {
   std::string file1 = FileContents("en-US-64.dll");
 
-  scoped_ptr<courgette::DisassemblerWin32X64> disassembler(
+  std::unique_ptr<courgette::DisassemblerWin32X64> disassembler(
       new courgette::DisassemblerWin32X64(file1.c_str(), file1.length()));
 
   bool can_parse_header = disassembler->ParseHeader();
@@ -90,13 +89,10 @@ void DisassemblerWin32X64Test::TestResourceDll() const {
   EXPECT_EQ(file1.length(), disassembler->length());
 
   EXPECT_FALSE(disassembler->ok());
-  EXPECT_FALSE(disassembler->has_text_section());
-  EXPECT_EQ(0U, disassembler->size_of_code());
-  EXPECT_FALSE(disassembler->is_32bit());
 }
 
 TEST_F(DisassemblerWin32X64Test, All) {
   TestExe();
-  TestExe32();
+  TestExe32ShouldFail();
   TestResourceDll();
 }

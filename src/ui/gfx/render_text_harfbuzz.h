@@ -8,9 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "third_party/harfbuzz-ng/src/hb.h"
 #include "third_party/icu/source/common/unicode/ubidi.h"
@@ -31,7 +32,9 @@ class RangeF;
 namespace internal {
 
 struct GFX_EXPORT TextRunHarfBuzz {
-  TextRunHarfBuzz();
+  // Construct the run with |template_font| since determining the details of a
+  // default-constructed gfx::Font is expensive, but it will always be replaced.
+  explicit TextRunHarfBuzz(const Font& template_font);
   ~TextRunHarfBuzz();
 
   // Returns the index of the first glyph that corresponds to the character at
@@ -67,18 +70,19 @@ struct GFX_EXPORT TextRunHarfBuzz {
   UBiDiLevel level;
   UScriptCode script;
 
-  scoped_ptr<uint16_t[]> glyphs;
-  scoped_ptr<SkPoint[]> positions;
+  std::unique_ptr<uint16_t[]> glyphs;
+  std::unique_ptr<SkPoint[]> positions;
   std::vector<uint32_t> glyph_to_char;
   size_t glyph_count;
 
   Font font;
-  skia::RefPtr<SkTypeface> skia_face;
+  sk_sp<SkTypeface> skia_face;
   FontRenderParams render_params;
   int font_size;
   int baseline_offset;
   int baseline_type;
-  int font_style;
+  bool italic;
+  Font::Weight weight;
   bool strike;
   bool diagonal_strike;
   bool underline;
@@ -145,7 +149,7 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   ~RenderTextHarfBuzz() override;
 
   // RenderText:
-  scoped_ptr<RenderText> CreateInstanceOfSameType() const override;
+  std::unique_ptr<RenderText> CreateInstanceOfSameType() const override;
   bool MultilineSupported() const override;
   const base::string16& GetDisplayText() override;
   Size GetStringSize() override;
@@ -173,6 +177,8 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   void DrawVisualText(internal::SkiaTextRenderer* renderer) override;
 
  private:
+  friend class test::RenderTextTestApi;
+
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_HorizontalAlignment);
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_NormalWidth);
   FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_WordWrapBehavior);
@@ -225,10 +231,10 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   // has fewer than |best_missing_glyphs| missing glyphs.
   bool CompareFamily(const base::string16& text,
                      const Font& font,
-                     const gfx::FontRenderParams& render_params,
+                     const FontRenderParams& render_params,
                      internal::TextRunHarfBuzz* run,
                      Font* best_font,
-                     gfx::FontRenderParams* best_render_params,
+                     FontRenderParams* best_render_params,
                      size_t* best_missing_glyphs);
 
   // Shape the glyphs of all runs in |run_list| using |text|.
@@ -257,7 +263,7 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   // Text run list for |layout_text_| and |display_text_|.
   // |display_run_list_| is created only when the text is elided.
   internal::TextRunList layout_run_list_;
-  scoped_ptr<internal::TextRunList> display_run_list_;
+  std::unique_ptr<internal::TextRunList> display_run_list_;
 
   bool update_layout_run_list_ : 1;
   bool update_display_run_list_ : 1;
@@ -266,7 +272,7 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
 
   // ICU grapheme iterator for the layout text. Use GetGraphemeIterator()
   // to access the iterator.
-  scoped_ptr<base::i18n::BreakIterator> grapheme_iterator_;
+  std::unique_ptr<base::i18n::BreakIterator> grapheme_iterator_;
 
   // The total size of the layouted text.
   SizeF total_size_;

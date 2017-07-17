@@ -11,16 +11,17 @@ source_set("browser") {
 
   deps = [
     "//base:i18n",
+    "//components/cast_certificate",
     "//components/guest_view/browser",
     "//components/keyed_service/content",
     "//components/keyed_service/core",
     "//components/pref_registry",
     "//components/sessions",
-    "//components/ui/zoom",
     "//components/update_client",
     "//components/version_info",
     "//components/web_cache/browser",
     "//components/web_modal",
+    "//components/zoom",
     "//content/public/browser",
     "//crypto:platform",
     "//extensions/common",
@@ -31,6 +32,7 @@ source_set("browser") {
     "//skia",
     "//third_party/leveldatabase",
     "//third_party/re2",
+    "//ui/display",
   ]
 
   configs += [
@@ -60,6 +62,7 @@ source_set("browser") {
       "//device/bluetooth",
       "//device/core",
       "//device/hid",
+      "//device/power_save_blocker",
       "//device/serial",
       "//device/usb",
       "//extensions/common/api/cast_channel:cast_channel_proto",
@@ -83,8 +86,9 @@ source_set("browser") {
       sources += nonchromeos_sources
 
       if (is_linux) {
-        configs += [ "//build/config/linux:dbus" ]
-        deps += [ "//dbus" ]
+        if (use_dbus) {
+          deps += [ "//dbus" ]
+        }
         linux_sources = rebase_path(
                 extensions_gypi_values.extensions_browser_sources_linux_nonchromeos,
                 ".",
@@ -100,6 +104,13 @@ source_set("browser") {
                   "//extensions")
           sources += win_or_mac_sources
         }
+      }
+      if (proprietary_codecs && enable_wifi_display) {
+        wifi_display_sources = rebase_path(
+                extensions_gypi_values.extensions_browser_sources_wifi_display,
+                ".",
+                "//extensions")
+        sources += wifi_display_sources
       }
     }
   }

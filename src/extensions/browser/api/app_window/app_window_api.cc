@@ -4,6 +4,9 @@
 
 #include "extensions/browser/api/app_window/app_window_api.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -80,8 +83,8 @@ namespace {
 
 // If the same property is specified for the inner and outer bounds, raise an
 // error.
-bool CheckBoundsConflict(const scoped_ptr<int>& inner_property,
-                         const scoped_ptr<int>& outer_property,
+bool CheckBoundsConflict(const std::unique_ptr<int>& inner_property,
+                         const std::unique_ptr<int>& outer_property,
                          const std::string& property_name,
                          std::string* error) {
   if (inner_property.get() && outer_property.get()) {
@@ -129,7 +132,7 @@ bool AppWindowCreateFunction::RunAsync() {
   if (ExtensionsBrowserClient::Get()->IsShuttingDown())
     return false;
 
-  scoped_ptr<Create::Params> params(Create::Params::Create(*args_));
+  std::unique_ptr<Create::Params> params(Create::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   GURL url = extension()->GetResourceURL(params->url);
@@ -191,11 +194,12 @@ bool AppWindowCreateFunction::RunAsync() {
               existing_window->Show(AppWindow::SHOW_ACTIVE);
           }
 
-          base::DictionaryValue* result = new base::DictionaryValue;
+          std::unique_ptr<base::DictionaryValue> result(
+              new base::DictionaryValue);
           result->Set("frameId", new base::FundamentalValue(frame_id));
-          existing_window->GetSerializedState(result);
+          existing_window->GetSerializedState(result.get());
           result->SetBoolean("existingWindow", true);
-          SetResult(result);
+          SetResult(std::move(result));
           SendResponse(true);
           return true;
         }
@@ -340,7 +344,8 @@ bool AppWindowCreateFunction::RunAsync() {
 
   AppWindow* app_window =
       AppWindowClient::Get()->CreateAppWindow(browser_context(), extension());
-  app_window->Init(url, new AppWindowContentsImpl(app_window), create_params);
+  app_window->Init(url, new AppWindowContentsImpl(app_window),
+                   render_frame_host(), create_params);
 
   if (ExtensionsBrowserClient::Get()->IsRunningInForcedAppMode() &&
       !app_window->is_ime_window()) {
@@ -353,11 +358,11 @@ bool AppWindowCreateFunction::RunAsync() {
   if (create_params.creator_process_id == created_frame->GetProcess()->GetID())
     frame_id = created_frame->GetRoutingID();
 
-  base::DictionaryValue* result = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
   result->Set("frameId", new base::FundamentalValue(frame_id));
   result->Set("id", new base::StringValue(app_window->window_key()));
-  app_window->GetSerializedState(result);
-  SetResult(result);
+  app_window->GetSerializedState(result.get());
+  SetResult(std::move(result));
 
   if (AppWindowRegistry::Get(browser_context())
           ->HadDevToolsAttached(app_window->web_contents())) {

@@ -34,6 +34,7 @@
 #include "platform/blob/BlobURL.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityPolicy.h"
+#include "platform/weborigin/Suborigin.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
@@ -80,7 +81,7 @@ TEST_F(SecurityOriginTest, LocalAccess)
     // Block |file1|'s access to local origins. It should now be same-origin
     // with itself, but shouldn't have access to |file2|.
     file1->blockLocalAccessFromLocalOrigin();
-    EXPECT_FALSE(file1->isSameSchemeHostPort(file1.get()));
+    EXPECT_TRUE(file1->isSameSchemeHostPort(file1.get()));
     EXPECT_FALSE(file1->isSameSchemeHostPort(file2.get()));
     EXPECT_FALSE(file2->isSameSchemeHostPort(file1.get()));
 
@@ -163,6 +164,11 @@ TEST_F(SecurityOriginTest, IsPotentiallyTrustworthy)
     // Unique origins are not considered secure.
     RefPtr<SecurityOrigin> uniqueOrigin = SecurityOrigin::createUnique();
     EXPECT_FALSE(uniqueOrigin->isPotentiallyTrustworthy());
+    // ... unless they are specially marked as such.
+    uniqueOrigin->setUniqueOriginIsPotentiallyTrustworthy(true);
+    EXPECT_TRUE(uniqueOrigin->isPotentiallyTrustworthy());
+    uniqueOrigin->setUniqueOriginIsPotentiallyTrustworthy(false);
+    EXPECT_FALSE(uniqueOrigin->isPotentiallyTrustworthy());
 }
 
 TEST_F(SecurityOriginTest, IsSecure)
@@ -215,19 +221,21 @@ TEST_F(SecurityOriginTest, Suborigins)
     RuntimeEnabledFeatures::setSuboriginsEnabled(true);
 
     RefPtr<SecurityOrigin> origin = SecurityOrigin::createFromString("https://test.com");
+    Suborigin suborigin;
+    suborigin.setName("foobar");
     EXPECT_FALSE(origin->hasSuborigin());
-    origin->addSuborigin("foobar");
+    origin->addSuborigin(suborigin);
     EXPECT_TRUE(origin->hasSuborigin());
-    EXPECT_EQ("foobar", origin->suboriginName());
+    EXPECT_EQ("foobar", origin->suborigin()->name());
 
     origin = SecurityOrigin::createFromString("https://foobar_test.com");
     EXPECT_EQ("https", origin->protocol());
     EXPECT_EQ("test.com", origin->host());
-    EXPECT_EQ("foobar", origin->suboriginName());
+    EXPECT_EQ("foobar", origin->suborigin()->name());
 
     origin = SecurityOrigin::createFromString("https://foobar_test.com");
     EXPECT_TRUE(origin->hasSuborigin());
-    EXPECT_EQ("foobar", origin->suboriginName());
+    EXPECT_EQ("foobar", origin->suborigin()->name());
 
     origin = SecurityOrigin::createFromString("https://foobar+test.com");
     EXPECT_FALSE(origin->hasSuborigin());
@@ -239,7 +247,8 @@ TEST_F(SecurityOriginTest, Suborigins)
     EXPECT_FALSE(origin->hasSuborigin());
 
     origin = SecurityOrigin::createFromString("https://foobar_test.com");
-    EXPECT_DEATH(origin->addSuborigin("shouldhitassert"), "");
+    Suborigin emptySuborigin;
+    EXPECT_DEATH(origin->addSuborigin(emptySuborigin), "");
 }
 
 TEST_F(SecurityOriginTest, SuboriginsParsing)
@@ -258,14 +267,26 @@ TEST_F(SecurityOriginTest, SuboriginsParsing)
     StringBuilder builder;
 
     origin = SecurityOrigin::createFromString("https://foobar_test.com");
-    origin->buildRawString(builder);
+    origin->buildRawString(builder, true);
     EXPECT_EQ("https://foobar_test.com", builder.toString());
+    EXPECT_EQ("https://foobar_test.com", origin->toString());
+    builder.clear();
+    origin->buildRawString(builder, false);
+    EXPECT_EQ("https://test.com", builder.toString());
+    EXPECT_EQ("https://test.com", origin->toPhysicalOriginString());
 
+    Suborigin suboriginObj;
+    suboriginObj.setName("foobar");
     builder.clear();
     origin = SecurityOrigin::createFromString("https://test.com");
-    origin->addSuborigin("foobar");
-    origin->buildRawString(builder);
+    origin->addSuborigin(suboriginObj);
+    origin->buildRawString(builder, true);
     EXPECT_EQ("https://foobar_test.com", builder.toString());
+    EXPECT_EQ("https://foobar_test.com", origin->toString());
+    builder.clear();
+    origin->buildRawString(builder, false);
+    EXPECT_EQ("https://test.com", builder.toString());
+    EXPECT_EQ("https://test.com", origin->toPhysicalOriginString());
 }
 
 TEST_F(SecurityOriginTest, SuboriginsIsSameSchemeHostPortAndSuborigin)
@@ -412,6 +433,17 @@ TEST_F(SecurityOriginTest, UniquenessPropagatesToBlobUrls)
         EXPECT_EQ(blobUrlOrigin->toString(), origin->toString());
         EXPECT_EQ(blobUrlOrigin->toRawString(), origin->toRawString());
     }
+}
+
+TEST_F(SecurityOriginTest, UniqueOriginIsSameSchemeHostPort)
+{
+    RefPtr<SecurityOrigin> uniqueOrigin = SecurityOrigin::createUnique();
+    RefPtr<SecurityOrigin> tupleOrigin = SecurityOrigin::createFromString("http://example.com");
+
+    EXPECT_TRUE(uniqueOrigin->isSameSchemeHostPort(uniqueOrigin.get()));
+    EXPECT_FALSE(SecurityOrigin::createUnique()->isSameSchemeHostPort(uniqueOrigin.get()));
+    EXPECT_FALSE(tupleOrigin->isSameSchemeHostPort(uniqueOrigin.get()));
+    EXPECT_FALSE(uniqueOrigin->isSameSchemeHostPort(tupleOrigin.get()));
 }
 
 } // namespace blink

@@ -29,7 +29,6 @@
 #include "wtf/Allocator.h"
 #include "wtf/Forward.h"
 #include "wtf/ListHashSet.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
@@ -62,10 +61,6 @@ public:
     IntRect boundingBox() const { return m_boundingBox; }
 
     static IntRect rectForPoint(const LayoutPoint&, unsigned topPadding, unsigned rightPadding, unsigned bottomPadding, unsigned leftPadding);
-    int topPadding() const { return roundedPoint().y() - m_boundingBox.y(); }
-    int rightPadding() const { return m_boundingBox.maxX() - roundedPoint().x() - 1; }
-    int bottomPadding() const { return m_boundingBox.maxY() - roundedPoint().y() - 1; }
-    int leftPadding() const { return roundedPoint().x() - m_boundingBox.x(); }
 
     bool intersects(const LayoutRect&) const;
     bool intersects(const FloatRect&) const;

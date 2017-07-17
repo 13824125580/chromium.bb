@@ -32,7 +32,7 @@ TestStorageMonitor::~TestStorageMonitor() {}
 // static
 TestStorageMonitor* TestStorageMonitor::CreateAndInstall() {
   TestStorageMonitor* monitor = new TestStorageMonitor();
-  scoped_ptr<StorageMonitor> pass_monitor(monitor);
+  std::unique_ptr<StorageMonitor> pass_monitor(monitor);
   monitor->Init();
   monitor->MarkInitialized();
 
@@ -50,7 +50,7 @@ TestStorageMonitor* TestStorageMonitor::CreateForBrowserTests() {
   monitor->Init();
   monitor->MarkInitialized();
 
-  scoped_ptr<StorageMonitor> pass_monitor(monitor);
+  std::unique_ptr<StorageMonitor> pass_monitor(monitor);
   StorageMonitor::SetStorageMonitorForTesting(std::move(pass_monitor));
 
   return monitor;
@@ -62,7 +62,8 @@ void TestStorageMonitor::SyncInitialize() {
   if (monitor->IsInitialized())
     return;
 
-  base::WaitableEvent event(true, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   monitor->EnsureInitialized(base::Bind(&base::WaitableEvent::Signal,
                              base::Unretained(&event)));
   while (!event.IsSignaled()) {

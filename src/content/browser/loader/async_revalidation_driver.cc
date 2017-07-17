@@ -13,7 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/url_request_status.h"
@@ -37,8 +37,8 @@ const int kReadTimeoutInSeconds = 30;
 }  // namespace
 
 AsyncRevalidationDriver::AsyncRevalidationDriver(
-    scoped_ptr<net::URLRequest> request,
-    scoped_ptr<ResourceThrottle> throttle,
+    std::unique_ptr<net::URLRequest> request,
+    std::unique_ptr<ResourceThrottle> throttle,
     const base::Closure& completion_callback)
     : request_(std::move(request)),
       throttle_(std::move(throttle)),

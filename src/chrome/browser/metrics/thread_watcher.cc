@@ -16,9 +16,9 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/metrics/thread_watcher_report_hang.h"
@@ -151,7 +151,7 @@ void ThreadWatcher::PostPingMessage() {
           base::Bind(&ThreadWatcher::OnPingMessage, thread_id_,
                      callback))) {
       // Post a task to check the responsiveness of watched thread.
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
           base::Bind(&ThreadWatcher::OnCheckResponsiveness,
                      weak_ptr_factory_.GetWeakPtr(), ping_sequence_number_),
@@ -749,7 +749,7 @@ WatchDogThread::~WatchDogThread() {
 bool WatchDogThread::CurrentlyOnWatchDogThread() {
   base::AutoLock lock(g_watchdog_lock.Get());
   return g_watchdog_thread &&
-      g_watchdog_thread->message_loop() == base::MessageLoop::current();
+         g_watchdog_thread->task_runner()->BelongsToCurrentThread();
 }
 
 // static

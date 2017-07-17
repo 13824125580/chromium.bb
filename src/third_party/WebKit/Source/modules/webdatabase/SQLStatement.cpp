@@ -53,14 +53,11 @@ SQLStatement::SQLStatement(Database* database, SQLStatementCallback* callback,
     SQLStatementErrorCallback* errorCallback)
     : m_statementCallback(callback)
     , m_statementErrorCallback(errorCallback)
-    , m_asyncOperationId(0)
 {
-    if (hasCallback() || hasErrorCallback())
-        m_asyncOperationId = InspectorInstrumentation::traceAsyncOperationStarting(database->executionContext(), "SQLStatement");
-}
+    DCHECK(isMainThread());
 
-SQLStatement::~SQLStatement()
-{
+    if (hasCallback() || hasErrorCallback())
+        InspectorInstrumentation::asyncTaskScheduled(database->getExecutionContext(), "SQLStatement", this);
 }
 
 DEFINE_TRACE(SQLStatement)
@@ -96,7 +93,7 @@ bool SQLStatement::performCallback(SQLTransaction* transaction)
     SQLStatementErrorCallback* errorCallback = m_statementErrorCallback.release();
     SQLErrorData* error = m_backend->sqlError();
 
-    InspectorInstrumentationCookie cookie = InspectorInstrumentation::traceAsyncOperationCompletedCallbackStarting(transaction->database()->executionContext(), m_asyncOperationId);
+    InspectorInstrumentation::AsyncTask asyncTask(transaction->database()->getExecutionContext(), this);
 
     // Call the appropriate statement callback and track if it resulted in an error,
     // because then we need to jump to the transaction error callback.
@@ -106,8 +103,6 @@ bool SQLStatement::performCallback(SQLTransaction* transaction)
     } else if (callback) {
         callbackError = !callback->handleEvent(transaction, m_backend->sqlResultSet());
     }
-
-    InspectorInstrumentation::traceAsyncCallbackCompleted(cookie);
 
     return callbackError;
 }

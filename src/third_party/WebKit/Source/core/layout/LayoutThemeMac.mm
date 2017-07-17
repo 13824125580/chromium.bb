@@ -23,8 +23,6 @@
 #import "core/CSSValueKeywords.h"
 #import "core/HTMLNames.h"
 #import "core/fileapi/FileList.h"
-#import "core/html/HTMLMeterElement.h"
-#import "core/layout/LayoutMeter.h"
 #import "core/layout/LayoutProgress.h"
 #import "core/layout/LayoutView.h"
 #import "core/paint/MediaControlsPainter.h"
@@ -34,7 +32,6 @@
 #import "platform/Theme.h"
 #import "platform/graphics/BitmapImage.h"
 #import "platform/mac/ColorMac.h"
-#import "platform/mac/LocalCurrentGraphicsContext.h"
 #import "platform/mac/ThemeMac.h"
 #import "platform/mac/VersionUtilMac.h"
 #import "platform/mac/WebCoreNSCellExtras.h"
@@ -241,9 +238,9 @@ void LayoutThemeMac::systemFont(CSSValueID systemFontID, FontStyle& fontStyle, F
 
 bool LayoutThemeMac::needsHackForTextControlWithFontFamily(const AtomicString& family) const
 {
-    // This hack is only applied on OSX 10.9 and earlier.
+    // This hack is only applied on OSX 10.9.
     // https://code.google.com/p/chromium/issues/detail?id=515989#c8
-    return IsOSMavericksOrEarlier() && family == "BlinkMacSystemFont";
+    return IsOSMavericks() && family == "BlinkMacSystemFont";
 }
 
 static RGBA32 convertNSColorToColor(NSColor *color)
@@ -613,7 +610,7 @@ void LayoutThemeMac::setFontFromControlSize(ComputedStyle& style, NSControlSize 
     style.setLineHeight(ComputedStyle::initialLineHeight());
 
     // TODO(esprehn): The fontSelector manual management is buggy and error prone.
-    FontSelector* fontSelector = style.font().fontSelector();
+    FontSelector* fontSelector = style.font().getFontSelector();
     if (style.setFontDescription(fontDescription))
         style.font().update(fontSelector);
 }
@@ -657,91 +654,6 @@ const int* LayoutThemeMac::popupButtonPadding(NSControlSize size) const
         { 2, 22, 3, 10 }
     };
     return padding[size];
-}
-
-IntSize LayoutThemeMac::meterSizeForBounds(const LayoutMeter& layoutMeter, const IntRect& bounds) const
-{
-    if (NoControlPart == layoutMeter.style()->appearance())
-        return bounds.size();
-
-    NSLevelIndicatorCell* cell = levelIndicatorFor(layoutMeter);
-    // Makes enough room for cell's intrinsic size.
-    NSSize cellSize = [cell cellSizeForBounds:IntRect(IntPoint(), bounds.size())];
-    return IntSize(bounds.width() < cellSize.width ? cellSize.width : bounds.width(),
-                   bounds.height() < cellSize.height ? cellSize.height : bounds.height());
-}
-
-bool LayoutThemeMac::supportsMeter(ControlPart part) const
-{
-    switch (part) {
-    case RelevancyLevelIndicatorPart:
-    case DiscreteCapacityLevelIndicatorPart:
-    case RatingLevelIndicatorPart:
-    case MeterPart:
-    case ContinuousCapacityLevelIndicatorPart:
-        return true;
-    default:
-        return false;
-    }
-}
-
-NSLevelIndicatorStyle LayoutThemeMac::levelIndicatorStyleFor(ControlPart part) const
-{
-    switch (part) {
-    case RelevancyLevelIndicatorPart:
-        return NSRelevancyLevelIndicatorStyle;
-    case DiscreteCapacityLevelIndicatorPart:
-        return NSDiscreteCapacityLevelIndicatorStyle;
-    case RatingLevelIndicatorPart:
-        return NSRatingLevelIndicatorStyle;
-    case MeterPart:
-    case ContinuousCapacityLevelIndicatorPart:
-    default:
-        return NSContinuousCapacityLevelIndicatorStyle;
-    }
-}
-
-NSLevelIndicatorCell* LayoutThemeMac::levelIndicatorFor(const LayoutMeter& layoutMeter) const
-{
-    const ComputedStyle& style = layoutMeter.styleRef();
-    ASSERT(style.appearance() != NoControlPart);
-
-    if (!m_levelIndicator)
-        m_levelIndicator.adoptNS([[NSLevelIndicatorCell alloc] initWithLevelIndicatorStyle:NSContinuousCapacityLevelIndicatorStyle]);
-    NSLevelIndicatorCell* cell = m_levelIndicator.get();
-
-    HTMLMeterElement* element = layoutMeter.meterElement();
-    double value = element->value();
-
-    // Because NSLevelIndicatorCell does not support optimum-in-the-middle type
-    // coloring, we explicitly control the color instead giving low and high
-    // value to NSLevelIndicatorCell as is.
-    switch (element->gaugeRegion()) {
-    case HTMLMeterElement::GaugeRegionOptimum:
-        // Make meter the green.
-        [cell setWarningValue:value + 1];
-        [cell setCriticalValue:value + 2];
-        break;
-    case HTMLMeterElement::GaugeRegionSuboptimal:
-        // Make the meter yellow.
-        [cell setWarningValue:value - 1];
-        [cell setCriticalValue:value + 1];
-        break;
-    case HTMLMeterElement::GaugeRegionEvenLessGood:
-        // Make the meter red.
-        [cell setWarningValue:value - 2];
-        [cell setCriticalValue:value - 1];
-        break;
-    }
-
-    [cell setLevelIndicatorStyle:levelIndicatorStyleFor(style.appearance())];
-    [cell setBaseWritingDirection:style.isLeftToRightDirection() ? NSWritingDirectionLeftToRight : NSWritingDirectionRightToLeft];
-    [cell setMinValue:element->min()];
-    [cell setMaxValue:element->max()];
-    RetainPtr<NSNumber> valueObject = [NSNumber numberWithDouble:value];
-    [cell setObjectValue:valueObject.get()];
-
-    return cell;
 }
 
 const IntSize* LayoutThemeMac::progressBarSizes() const
@@ -881,8 +793,6 @@ void LayoutThemeMac::setPopupButtonCellState(const LayoutObject& object, const I
     updateCheckedState(popupButton, object);
     updateEnabledState(popupButton, object);
     updatePressedState(popupButton, object);
-    if (ThemeMac::drawWithFrameDrawsFocusRing())
-        updateFocusedState(popupButton, object);
 }
 
 const IntSize* LayoutThemeMac::menuListSizes() const
@@ -935,13 +845,13 @@ void LayoutThemeMac::adjustSearchFieldStyle(ComputedStyle& style) const
     style.resetBorder();
     const short borderWidth = searchFieldBorderWidth * style.effectiveZoom();
     style.setBorderLeftWidth(borderWidth);
-    style.setBorderLeftStyle(INSET);
+    style.setBorderLeftStyle(BorderStyleInset);
     style.setBorderRightWidth(borderWidth);
-    style.setBorderRightStyle(INSET);
+    style.setBorderRightStyle(BorderStyleInset);
     style.setBorderBottomWidth(borderWidth);
-    style.setBorderBottomStyle(INSET);
+    style.setBorderBottomStyle(BorderStyleInset);
     style.setBorderTopWidth(borderWidth);
-    style.setBorderTopStyle(INSET);
+    style.setBorderTopStyle(BorderStyleInset);
 
     // Override height.
     style.setHeight(Length(Auto));
@@ -971,30 +881,6 @@ const IntSize* LayoutThemeMac::cancelButtonSizes() const
 void LayoutThemeMac::adjustSearchFieldCancelButtonStyle(ComputedStyle& style) const
 {
     IntSize size = sizeForSystemFont(style, cancelButtonSizes());
-    style.setWidth(Length(size.width(), Fixed));
-    style.setHeight(Length(size.height(), Fixed));
-    style.setBoxShadow(nullptr);
-}
-
-const IntSize* LayoutThemeMac::resultsButtonSizes() const
-{
-    static const IntSize sizes[3] = { IntSize(15, 14), IntSize(16, 13), IntSize(14, 11) };
-    return sizes;
-}
-
-void LayoutThemeMac::adjustSearchFieldDecorationStyle(ComputedStyle& style) const
-{
-    NSControlSize controlSize = controlSizeForSystemFont(style);
-    IntSize searchFieldSize = searchFieldSizes()[controlSize];
-    int width = searchFieldSize.height() / 2 - searchFieldBorderWidth - searchFieldHorizontalPaddings()[controlSize];
-    style.setWidth(Length(width, Fixed));
-    style.setHeight(Length(0, Fixed));
-    style.setBoxShadow(nullptr);
-}
-
-void LayoutThemeMac::adjustSearchFieldResultsDecorationStyle(ComputedStyle& style) const
-{
-    IntSize size = sizeForSystemFont(style, resultsButtonSizes());
     style.setWidth(Length(size.width(), Fixed));
     style.setHeight(Length(size.height(), Fixed));
     style.setBoxShadow(nullptr);
@@ -1091,8 +977,7 @@ String LayoutThemeMac::fileListNameForWidth(Locale& locale, const FileList* file
         else
             strToTruncate = file->name();
     } else {
-        // FIXME: Localization of fileList->length().
-        return StringTruncator::rightTruncate(locale.queryString(WebLocalizedString::MultipleFileUploadText, String::number(fileList->length())), width, font);
+        return StringTruncator::rightTruncate(locale.queryString(WebLocalizedString::MultipleFileUploadText, locale.convertToLocalizedNumber(String::number(fileList->length()))), width, font);
     }
 
     return StringTruncator::centerTruncate(strToTruncate, width, font);
@@ -1149,7 +1034,7 @@ void LayoutThemeMac::adjustMediaSliderThumbSize(ComputedStyle& style) const
     MediaControlsPainter::adjustMediaSliderThumbSize(style);
 }
 
-String LayoutThemeMac::extraFullScreenStyleSheet()
+String LayoutThemeMac::extraFullscreenStyleSheet()
 {
     // FIXME: Chromium may wish to style its default media controls differently in fullscreen.
     return String();
@@ -1164,7 +1049,30 @@ String LayoutThemeMac::extraDefaultStyleSheet()
 
 bool LayoutThemeMac::themeDrawsFocusRing(const ComputedStyle& style) const
 {
-    return (style.hasAppearance() && style.appearance() != TextFieldPart && style.appearance() != SearchFieldPart && style.appearance() != TextAreaPart && style.appearance() != MenulistButtonPart && style.appearance() != ListboxPart && !shouldUseFallbackTheme(style));
+    if (shouldUseFallbackTheme(style))
+        return false;
+    switch (style.appearance()) {
+    case CheckboxPart:
+    case RadioPart:
+    case PushButtonPart:
+    case SquareButtonPart:
+    case ButtonPart:
+    case MenulistPart:
+    case SliderThumbHorizontalPart:
+    case SliderThumbVerticalPart:
+        return true;
+
+    // Actually, they don't support native focus rings, but this function
+    // returns true for them in order to prevent Blink from drawing focus rings.
+    // SliderThumb*Part have focus rings, and we don't need to draw two focus
+    // rings for single slider.
+    case SliderHorizontalPart:
+    case SliderVerticalPart:
+        return true;
+
+    default:
+        return false;
+    }
 }
 
 bool LayoutThemeMac::shouldUseFallbackTheme(const ComputedStyle& style) const

@@ -1,19 +1,37 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [184, 201, 19, 160]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow (positioned) DIV id='test'",
-        "LayoutBlockFlow DIV",
-        "LayoutText #text",
-        "InlineTextBox 'Some text in vertical mode'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutText #text",
+          "rect": [184, 201, 19, 160],
+          "reason": "selection"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow (positioned) DIV id='test'",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutBlockFlow DIV",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "selection"
+    },
+    {
+      "object": "InlineTextBox 'Some text in vertical mode'",
+      "reason": "selection"
     }
   ]
 }

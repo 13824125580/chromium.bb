@@ -11,9 +11,7 @@ namespace content {
 
 class RenderWidgetTest : public RenderViewTest {
  protected:
-  RenderWidget* widget() {
-    return static_cast<RenderViewImpl*>(view_);
-  }
+  RenderWidget* widget() { return view_->GetWidget(); }
 
   void OnResize(const ResizeParams& params) {
     widget()->OnResize(params);
@@ -84,8 +82,8 @@ class RenderWidgetInitialSizeTest : public RenderWidgetTest {
       : RenderWidgetTest(), initial_size_(200, 100) {}
 
  protected:
-  scoped_ptr<ResizeParams> InitialSizeParams() override {
-    scoped_ptr<ResizeParams> initial_size_params(new ResizeParams());
+  std::unique_ptr<ResizeParams> InitialSizeParams() override {
+    std::unique_ptr<ResizeParams> initial_size_params(new ResizeParams());
     initial_size_params->new_size = initial_size_;
     initial_size_params->physical_backing_size = initial_size_;
     initial_size_params->needs_resize_ack = true;

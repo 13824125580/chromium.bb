@@ -9,6 +9,8 @@
 
 #include <string>
 
+#include "base/message_loop/message_loop.h"
+#include "components/sync_driver/device_info_util.h"
 #include "components/sync_driver/local_device_info_provider_mock.h"
 #include "sync/api/sync_change.h"
 #include "sync/api/sync_change_processor.h"
@@ -18,6 +20,8 @@
 #include "sync/util/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::Time;
+using base::TimeDelta;
 using syncer::AttachmentIdList;
 using syncer::AttachmentServiceProxyForTest;
 using syncer::ModelType;
@@ -31,6 +35,7 @@ using syncer::SyncError;
 using syncer::SyncErrorFactory;
 using syncer::SyncErrorFactoryMock;
 using syncer::SyncMergeResult;
+using sync_pb::EntitySpecifics;
 
 namespace sync_driver {
 
@@ -78,6 +83,8 @@ class TestChangeProcessor : public SyncChangeProcessor {
   SyncChangeList change_list_;
 };
 
+}  // namespace
+
 class DeviceInfoSyncServiceTest : public testing::Test,
                                   public DeviceInfoTracker::Observer {
  public:
@@ -102,18 +109,18 @@ class DeviceInfoSyncServiceTest : public testing::Test,
 
   void OnDeviceInfoChange() override { num_device_info_changed_callbacks_++; }
 
-  scoped_ptr<SyncChangeProcessor> PassProcessor() {
-    return scoped_ptr<SyncChangeProcessor>(
+  std::unique_ptr<SyncChangeProcessor> PassProcessor() {
+    return std::unique_ptr<SyncChangeProcessor>(
         new SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   }
 
-  scoped_ptr<SyncErrorFactory> CreateAndPassSyncErrorFactory() {
-    return scoped_ptr<SyncErrorFactory>(new SyncErrorFactoryMock());
+  std::unique_ptr<SyncErrorFactory> CreateAndPassSyncErrorFactory() {
+    return std::unique_ptr<SyncErrorFactory>(new SyncErrorFactoryMock());
   }
 
-  SyncData CreateRemoteData(const std::string& client_id,
-                            const std::string& client_name,
-                            int64_t backup_timestamp = 0) {
+  sync_pb::EntitySpecifics CreateEntitySpecifics(
+      const std::string& client_id,
+      const std::string& client_name) {
     sync_pb::EntitySpecifics entity;
     sync_pb::DeviceInfoSpecifics& specifics = *entity.mutable_device_info();
 
@@ -123,11 +130,18 @@ class DeviceInfoSyncServiceTest : public testing::Test,
     specifics.set_sync_user_agent("Chrome 10k");
     specifics.set_device_type(sync_pb::SyncEnums_DeviceType_TYPE_LINUX);
     specifics.set_signin_scoped_device_id("device_id");
+    return entity;
+  }
 
-    return SyncData::CreateRemoteData(1,
-                                      entity,
-                                      base::Time(),
-                                      AttachmentIdList(),
+  // Default |last_updated_timestamp| to now to avoid pulse update on merge.
+  SyncData CreateRemoteData(const std::string& client_id,
+                            const std::string& client_name,
+                            Time last_updated_timestamp = Time::Now()) {
+    sync_pb::EntitySpecifics entity(
+        CreateEntitySpecifics(client_id, client_name));
+    entity.mutable_device_info()->set_last_updated_timestamp(
+        syncer::TimeToProtoTime(last_updated_timestamp));
+    return SyncData::CreateRemoteData(1, entity, Time(), AttachmentIdList(),
                                       AttachmentServiceProxyForTest::Create());
   }
 
@@ -148,11 +162,29 @@ class DeviceInfoSyncServiceTest : public testing::Test,
   }
 
  protected:
+  // Private method wrappers through friend class.
+  Time GetLastUpdateTime(const syncer::SyncData& data) {
+    return sync_service_->GetLastUpdateTime(data);
+  }
+  int CountActiveDevices(const Time now) {
+    return sync_service_->CountActiveDevices(now);
+  }
+  void StoreSyncData(const std::string& client_id,
+                     const syncer::SyncData& sync_data) {
+    sync_service_->StoreSyncData(client_id, sync_data);
+  }
+  bool IsPulseTimerRunning() { return sync_service_->pulse_timer_.IsRunning(); }
+
+  // Needs to be created for OneShotTimer to grab the current task runner.
+  base::MessageLoop message_loop_;
+
   int num_device_info_changed_callbacks_;
-  scoped_ptr<LocalDeviceInfoProviderMock> local_device_;
-  scoped_ptr<DeviceInfoSyncService> sync_service_;
-  scoped_ptr<TestChangeProcessor> sync_processor_;
+  std::unique_ptr<LocalDeviceInfoProviderMock> local_device_;
+  std::unique_ptr<DeviceInfoSyncService> sync_service_;
+  std::unique_ptr<TestChangeProcessor> sync_processor_;
 };
+
+namespace {
 
 // Sync with empty initial data.
 TEST_F(DeviceInfoSyncServiceTest, StartSyncEmptyInitialData) {
@@ -188,9 +220,11 @@ TEST_F(DeviceInfoSyncServiceTest, StopSyncing) {
       CreateAndPassSyncErrorFactory());
   EXPECT_TRUE(sync_service_->IsSyncing());
   EXPECT_EQ(1, num_device_info_changed_callbacks_);
+  EXPECT_TRUE(IsPulseTimerRunning());
   sync_service_->StopSyncing(syncer::DEVICE_INFO);
   EXPECT_FALSE(sync_service_->IsSyncing());
   EXPECT_EQ(2, num_device_info_changed_callbacks_);
+  EXPECT_FALSE(IsPulseTimerRunning());
 }
 
 // Sync with initial data matching the local device data.
@@ -412,6 +446,156 @@ TEST_F(DeviceInfoSyncServiceTest, ProcessChangesAfterUnsubscribing) {
 
   // The number of callback should still be zero.
   EXPECT_EQ(0, num_device_info_changed_callbacks_);
+}
+
+// While the initial data will match the current device, the last modified time
+// should be greater than the threshold and cause an update anyways.
+TEST_F(DeviceInfoSyncServiceTest, StartSyncMatchingButStale) {
+  SyncDataList sync_data;
+  sync_data.push_back(CreateRemoteData("guid_1", "foo_1", Time()));
+  SyncMergeResult merge_result = sync_service_->MergeDataAndStartSyncing(
+      syncer::DEVICE_INFO, sync_data, PassProcessor(),
+      CreateAndPassSyncErrorFactory());
+
+  EXPECT_EQ(1U, sync_processor_->change_list_size());
+  EXPECT_EQ(SyncChange::ACTION_UPDATE, sync_processor_->change_type_at(0));
+  EXPECT_EQ("guid_1", sync_processor_->cache_guid_at(0));
+  EXPECT_EQ("client_1", sync_processor_->client_name_at(0));
+}
+
+TEST_F(DeviceInfoSyncServiceTest, GetLastUpdateTime) {
+  Time time1(Time() + TimeDelta::FromDays(1));
+  Time time2(Time() + TimeDelta::FromDays(2));
+
+  SyncData localA(
+      SyncData::CreateLocalData("a", "a", CreateEntitySpecifics("a", "a")));
+
+  EntitySpecifics entityB(CreateEntitySpecifics("b", "b"));
+  entityB.mutable_device_info()->set_last_updated_timestamp(
+      syncer::TimeToProtoTime(time1));
+  SyncData localB(SyncData::CreateLocalData("b", "b", entityB));
+
+  SyncData remoteC(SyncData::CreateRemoteData(
+      1, CreateEntitySpecifics("c", "c"), time2, AttachmentIdList(),
+      AttachmentServiceProxyForTest::Create()));
+
+  EntitySpecifics entityD(CreateEntitySpecifics("d", "d"));
+  entityD.mutable_device_info()->set_last_updated_timestamp(
+      syncer::TimeToProtoTime(time1));
+  SyncData remoteD(
+      SyncData::CreateRemoteData(1, entityD, time2, AttachmentIdList(),
+                                 AttachmentServiceProxyForTest::Create()));
+
+  EXPECT_EQ(Time(), GetLastUpdateTime(localA));
+  EXPECT_EQ(time1, GetLastUpdateTime(localB));
+  EXPECT_EQ(time2, GetLastUpdateTime(remoteC));
+  EXPECT_EQ(time1, GetLastUpdateTime(remoteD));
+}
+
+// Verifies the number of active devices is 0 when there is no data.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesNone) {
+  EXPECT_EQ(0, CountActiveDevices(Time()));
+}
+
+// Verifies the number of active devices when we have one active device info.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesOneActive) {
+  StoreSyncData("active", CreateRemoteData("active", "active", Time()));
+  EXPECT_EQ(
+      1, CountActiveDevices(Time() + (DeviceInfoUtil::kActiveThreshold / 2)));
+}
+
+// Verifies the number of active devices when we have one stale that hasn't been
+// updated for exactly the threshold is considered stale.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesExactlyStale) {
+  StoreSyncData("stale", CreateRemoteData("stale", "stale", Time()));
+  EXPECT_EQ(0, CountActiveDevices(Time() + DeviceInfoUtil::kActiveThreshold));
+}
+
+// Verifies the number of active devices when we have a mix of active and stale
+// device infos.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesManyMix) {
+  StoreSyncData("stale", CreateRemoteData("stale", "stale", Time()));
+  StoreSyncData("active1", CreateRemoteData(
+                               "active1", "active1",
+                               Time() + DeviceInfoUtil::kActiveThreshold / 2));
+  StoreSyncData("active2",
+                CreateRemoteData("active2", "active2",
+                                 Time() + DeviceInfoUtil::kActiveThreshold));
+  EXPECT_EQ(2, CountActiveDevices(Time() + DeviceInfoUtil::kActiveThreshold));
+}
+
+// Verifies the number of active devices when we have many that are stale.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesManyStale) {
+  StoreSyncData("stale1", CreateRemoteData("stale1", "stale1", Time()));
+  StoreSyncData("stale2",
+                CreateRemoteData("stale2", "stale2",
+                                 Time() + DeviceInfoUtil::kActiveThreshold));
+  StoreSyncData("stale3", CreateRemoteData(
+                              "stale3", "stale3",
+                              Time() + (DeviceInfoUtil::kActiveThreshold * 2)));
+  EXPECT_EQ(
+      0, CountActiveDevices(Time() + (DeviceInfoUtil::kActiveThreshold * 3)));
+}
+
+// Verifies the number of active devices when we have devices that claim to have
+// been updated in the future.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesFuture) {
+  StoreSyncData("now",
+                CreateRemoteData("now", "now",
+                                 Time() + DeviceInfoUtil::kActiveThreshold));
+  StoreSyncData(
+      "future",
+      CreateRemoteData("future", "future",
+                       Time() + (DeviceInfoUtil::kActiveThreshold * 10)));
+  EXPECT_EQ(2, CountActiveDevices(Time() + DeviceInfoUtil::kActiveThreshold));
+}
+
+// Verifies the number of active devices when they don't have an updated time
+// set, and fallback to checking the SyncData's last modified time.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesModifiedTime) {
+  sync_pb::EntitySpecifics stale_entity;
+  sync_pb::DeviceInfoSpecifics& stale_specifics =
+      *stale_entity.mutable_device_info();
+  stale_specifics.set_cache_guid("stale");
+  StoreSyncData("stale", SyncData::CreateRemoteData(
+                             1, stale_entity, Time(), AttachmentIdList(),
+                             AttachmentServiceProxyForTest::Create()));
+
+  sync_pb::EntitySpecifics active_entity;
+  sync_pb::DeviceInfoSpecifics& active_specifics =
+      *active_entity.mutable_device_info();
+  active_specifics.set_cache_guid("active");
+  StoreSyncData(
+      "active",
+      SyncData::CreateRemoteData(
+          1, active_entity, Time() + (DeviceInfoUtil::kActiveThreshold / 2),
+          AttachmentIdList(), AttachmentServiceProxyForTest::Create()));
+
+  EXPECT_EQ(1, CountActiveDevices(Time() + DeviceInfoUtil::kActiveThreshold));
+}
+
+// Verifies the number of active devices when they don't have an updated time
+// and they're not remote, which means we cannot use SyncData's last modified
+// time. If now is close to uninitialized time, should still be active.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesLocalActive) {
+  sync_pb::EntitySpecifics entity;
+  sync_pb::DeviceInfoSpecifics& specifics = *entity.mutable_device_info();
+  specifics.set_cache_guid("active");
+  StoreSyncData("active",
+                SyncData::CreateLocalData("active", "active", entity));
+  EXPECT_EQ(
+      1, CountActiveDevices(Time() + (DeviceInfoUtil::kActiveThreshold / 2)));
+}
+
+// Verifies the number of active devices when they don't have an updated time
+// and they're not remote, which means we cannot use SyncData's last modified
+// time. If now is far from uninitialized time, should be stale.
+TEST_F(DeviceInfoSyncServiceTest, CountActiveDevicesLocalStale) {
+  sync_pb::EntitySpecifics entity;
+  sync_pb::DeviceInfoSpecifics& specifics = *entity.mutable_device_info();
+  specifics.set_cache_guid("stale");
+  StoreSyncData("stale", SyncData::CreateLocalData("stale", "stale", entity));
+  EXPECT_EQ(0, CountActiveDevices(Time() + DeviceInfoUtil::kActiveThreshold));
 }
 
 }  // namespace

@@ -4,7 +4,6 @@
 
 #include "platform/graphics/CompositorFilterOperations.h"
 
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 
 namespace blink {
@@ -88,10 +87,10 @@ void CompositorFilterOperations::appendSaturatingBrightnessFilter(float amount)
         cc::FilterOperation::CreateSaturatingBrightnessFilter(amount));
 }
 
-void CompositorFilterOperations::appendReferenceFilter(SkImageFilter* imageFilter)
+void CompositorFilterOperations::appendReferenceFilter(sk_sp<SkImageFilter> imageFilter)
 {
     m_filterOperations.Append(
-        cc::FilterOperation::CreateReferenceFilter(skia::SharePtr(imageFilter)));
+        cc::FilterOperation::CreateReferenceFilter(std::move(imageFilter)));
 }
 
 void CompositorFilterOperations::clear()

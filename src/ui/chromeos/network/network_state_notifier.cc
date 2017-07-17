@@ -197,7 +197,7 @@ bool NetworkStateNotifier::UpdateDefaultNetwork(const NetworkState* network) {
 
 void NetworkStateNotifier::UpdateVpnConnectionState(const NetworkState* vpn) {
   if (vpn->path() == connected_vpn_) {
-    if (!vpn->IsConnectedState()) {
+    if (!vpn->IsConnectedState() && !vpn->IsConnectingState()) {
       ShowVpnDisconnectedNotification(vpn);
       connected_vpn_.clear();
     }
@@ -340,7 +340,7 @@ void NetworkStateNotifier::ConnectErrorPropertiesFailed(
     const std::string& error_name,
     const std::string& service_path,
     const std::string& shill_connect_error,
-    scoped_ptr<base::DictionaryValue> shill_error_data) {
+    std::unique_ptr<base::DictionaryValue> shill_error_data) {
   base::DictionaryValue shill_properties;
   ShowConnectErrorNotification(error_name, service_path, shill_properties);
 }

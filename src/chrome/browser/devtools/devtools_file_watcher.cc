@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/bind.h"
@@ -41,7 +42,7 @@ class DevToolsFileWatcher::SharedFileWatcher :
   void DispatchNotifications();
 
   std::vector<DevToolsFileWatcher*> listeners_;
-  std::map<base::FilePath, scoped_ptr<base::FilePathWatcher>> watchers_;
+  std::map<base::FilePath, std::unique_ptr<base::FilePathWatcher>> watchers_;
   using FilePathTimesMap = std::map<base::FilePath, base::Time>;
   FilePathTimesMap file_path_times_;
   std::set<base::FilePath> pending_paths_;

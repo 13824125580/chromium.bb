@@ -10,17 +10,19 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/test/histogram_tester.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/fake_oauth2_token_service.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/oauth2_token_service_request.h"
@@ -131,13 +133,10 @@ void MockOAuth2TokenService::FetchOAuth2Token(
     const std::string& client_id,
     const std::string& client_secret,
     const ScopeSet& scopes) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&OAuth2TokenService::RequestImpl::InformConsumer,
-                 request->AsWeakPtr(),
-                 response_error_,
-                 response_access_token_,
-                 response_expiration_));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&OAuth2TokenService::RequestImpl::InformConsumer,
+                            request->AsWeakPtr(), response_error_,
+                            response_access_token_, response_expiration_));
 }
 
 void MockOAuth2TokenService::InvalidateAccessTokenImpl(
@@ -208,7 +207,7 @@ class AttachmentUploaderImplTest : public testing::Test,
   // Returns the attachment that was uploaded.
   Attachment UploadAndRespondWith(const net::HttpStatusCode& status_code);
 
-  scoped_ptr<AttachmentUploader>& uploader();
+  std::unique_ptr<AttachmentUploader>& uploader();
   const AttachmentUploader::UploadCallback& upload_callback() const;
   std::vector<HttpRequest>& http_requests_received();
   std::vector<AttachmentUploader::UploadResult>& upload_results();
@@ -224,8 +223,8 @@ class AttachmentUploaderImplTest : public testing::Test,
 
   base::MessageLoopForIO message_loop_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
-  scoped_ptr<RequestHandler> request_handler_;
-  scoped_ptr<AttachmentUploader> uploader_;
+  std::unique_ptr<RequestHandler> request_handler_;
+  std::unique_ptr<AttachmentUploader> uploader_;
   AttachmentUploader::UploadCallback upload_callback_;
   net::EmbeddedTestServer server_;
   // A closure that signals an upload has finished.
@@ -233,7 +232,7 @@ class AttachmentUploaderImplTest : public testing::Test,
   std::vector<HttpRequest> http_requests_received_;
   std::vector<AttachmentUploader::UploadResult> upload_results_;
   std::vector<AttachmentId> attachment_ids_;
-  scoped_ptr<MockOAuth2TokenService> token_service_;
+  std::unique_ptr<MockOAuth2TokenService> token_service_;
 
   // Must be last data member.
   base::WeakPtrFactory<AttachmentUploaderImplTest> weak_ptr_factory_;
@@ -252,7 +251,7 @@ class RequestHandler : public base::NonThreadSafe {
 
   ~RequestHandler();
 
-  scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request);
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request);
 
   // Set the HTTP status code to respond with.
   void SetStatusCode(const net::HttpStatusCode& status_code);
@@ -330,7 +329,7 @@ Attachment AttachmentUploaderImplTest::UploadAndRespondWith(
   return attachment;
 }
 
-scoped_ptr<AttachmentUploader>& AttachmentUploaderImplTest::uploader() {
+std::unique_ptr<AttachmentUploader>& AttachmentUploaderImplTest::uploader() {
   return uploader_;
 }
 
@@ -388,14 +387,14 @@ RequestHandler::~RequestHandler() {
   DetachFromThread();
 }
 
-scoped_ptr<HttpResponse> RequestHandler::HandleRequest(
+std::unique_ptr<HttpResponse> RequestHandler::HandleRequest(
     const HttpRequest& request) {
   DCHECK(CalledOnValidThread());
   test_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(
           &AttachmentUploaderImplTest::OnRequestReceived, test_, request));
-  scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
   response->set_code(GetStatusCode());
   response->set_content_type("text/plain");
   return std::move(response);

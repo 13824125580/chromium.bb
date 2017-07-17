@@ -8,13 +8,14 @@
 #include <errno.h>
 #include <mstcpip.h>
 
+#include <utility>
+
 #include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "net/base/address_list.h"
-#include "net/base/connection_type_histograms.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
@@ -49,36 +50,6 @@ int SetSocketSendBufferSize(SOCKET socket, int32_t size) {
 }
 
 // Disable Nagle.
-// The Nagle implementation on windows is governed by RFC 896.  The idea
-// behind Nagle is to reduce small packets on the network.  When Nagle is
-// enabled, if a partial packet has been sent, the TCP stack will disallow
-// further *partial* packets until an ACK has been received from the other
-// side.  Good applications should always strive to send as much data as
-// possible and avoid partial-packet sends.  However, in most real world
-// applications, there are edge cases where this does not happen, and two
-// partial packets may be sent back to back.  For a browser, it is NEVER
-// a benefit to delay for an RTT before the second packet is sent.
-//
-// As a practical example in Chromium today, consider the case of a small
-// POST.  I have verified this:
-//     Client writes 649 bytes of header  (partial packet #1)
-//     Client writes 50 bytes of POST data (partial packet #2)
-// In the above example, with Nagle, a RTT delay is inserted between these
-// two sends due to nagle.  RTTs can easily be 100ms or more.  The best
-// fix is to make sure that for POSTing data, we write as much data as
-// possible and minimize partial packets.  We will fix that.  But disabling
-// Nagle also ensure we don't run into this delay in other edge cases.
-// See also:
-//    http://technet.microsoft.com/en-us/library/bb726981.aspx
-bool DisableNagle(SOCKET socket, bool disable) {
-  BOOL val = disable ? TRUE : FALSE;
-  int rv = setsockopt(socket, IPPROTO_TCP, TCP_NODELAY,
-                      reinterpret_cast<const char*>(&val),
-                      sizeof(val));
-  DCHECK(!rv) << "Could not disable nagle";
-  return rv == 0;
-}
-
 // Enable TCP Keep-Alive to prevent NAT routers from timing out TCP
 // connections. See http://crbug.com/27400 for details.
 bool SetTCPKeepAlive(SOCKET socket, BOOL enable, int delay_secs) {
@@ -270,9 +241,12 @@ void TCPSocketWin::Core::WriteDelegate::OnObjectSignaled(
 
 //-----------------------------------------------------------------------------
 
-TCPSocketWin::TCPSocketWin(net::NetLog* net_log,
-                           const net::NetLog::Source& source)
+TCPSocketWin::TCPSocketWin(
+    std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+    net::NetLog* net_log,
+    const net::NetLog::Source& source)
     : socket_(INVALID_SOCKET),
+      socket_performance_watcher_(std::move(socket_performance_watcher)),
       accept_event_(WSA_INVALID_EVENT),
       accept_socket_(NULL),
       accept_address_(NULL),
@@ -388,7 +362,7 @@ int TCPSocketWin::Listen(int backlog) {
   return OK;
 }
 
-int TCPSocketWin::Accept(scoped_ptr<TCPSocketWin>* socket,
+int TCPSocketWin::Accept(std::unique_ptr<TCPSocketWin>* socket,
                          IPEndPoint* address,
                          const CompletionCallback& callback) {
   DCHECK(CalledOnValidThread());
@@ -579,7 +553,7 @@ int TCPSocketWin::SetDefaultOptionsForServer() {
 }
 
 void TCPSocketWin::SetDefaultOptionsForClient() {
-  DisableNagle(socket_, true);
+  SetTCPNoDelay(socket_, /*no_delay=*/true);
   SetTCPKeepAlive(socket_, true, kTCPKeepAliveSeconds);
 }
 
@@ -624,7 +598,7 @@ bool TCPSocketWin::SetKeepAlive(bool enable, int delay) {
 }
 
 bool TCPSocketWin::SetNoDelay(bool no_delay) {
-  return DisableNagle(socket_, no_delay);
+  return SetTCPNoDelay(socket_, no_delay);
 }
 
 void TCPSocketWin::Close() {
@@ -707,7 +681,7 @@ void TCPSocketWin::EndLoggingMultipleConnectAttempts(int net_error) {
   }
 }
 
-int TCPSocketWin::AcceptInternal(scoped_ptr<TCPSocketWin>* socket,
+int TCPSocketWin::AcceptInternal(std::unique_ptr<TCPSocketWin>* socket,
                                  IPEndPoint* address) {
   SockaddrStorage storage;
   int new_socket = accept(socket_, storage.addr, &storage.addr_len);
@@ -727,14 +701,14 @@ int TCPSocketWin::AcceptInternal(scoped_ptr<TCPSocketWin>* socket,
     net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_ACCEPT, net_error);
     return net_error;
   }
-  scoped_ptr<TCPSocketWin> tcp_socket(new TCPSocketWin(
-      net_log_.net_log(), net_log_.source()));
+  std::unique_ptr<TCPSocketWin> tcp_socket(
+      new TCPSocketWin(NULL, net_log_.net_log(), net_log_.source()));
   int adopt_result = tcp_socket->AdoptConnectedSocket(new_socket, ip_end_point);
   if (adopt_result != OK) {
     net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_ACCEPT, adopt_result);
     return adopt_result;
   }
-  *socket = tcp_socket.Pass();
+  *socket = std::move(tcp_socket);
   *address = ip_end_point;
   net_log_.EndEvent(NetLog::TYPE_TCP_ACCEPT,
                     CreateNetLogIPEndPointCallback(&ip_end_point));
@@ -846,9 +820,6 @@ void TCPSocketWin::LogConnectBegin(const AddressList& addresses) {
 }
 
 void TCPSocketWin::LogConnectEnd(int net_error) {
-  if (net_error == OK)
-    UpdateConnectionTypeHistograms(CONNECTION_ANY);
-
   if (net_error != OK) {
     net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_CONNECT, net_error);
     return;

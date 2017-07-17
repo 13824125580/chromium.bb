@@ -80,7 +80,7 @@ base::StringPiece FakeSSLClientSocket::GetSslServerHello() {
 }
 
 FakeSSLClientSocket::FakeSSLClientSocket(
-    scoped_ptr<net::StreamSocket> transport_socket)
+    std::unique_ptr<net::StreamSocket> transport_socket)
     : transport_socket_(std::move(transport_socket)),
       next_handshake_state_(STATE_NONE),
       handshake_completed_(false),
@@ -329,10 +329,6 @@ void FakeSSLClientSocket::SetOmniboxSpeculation() {
 
 bool FakeSSLClientSocket::WasEverUsed() const {
   return transport_socket_->WasEverUsed();
-}
-
-bool FakeSSLClientSocket::UsingTCPFastOpen() const {
-  return transport_socket_->UsingTCPFastOpen();
 }
 
 bool FakeSSLClientSocket::WasNpnNegotiated() const {

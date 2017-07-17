@@ -23,17 +23,21 @@ class BubbleDecoration : public LocationBarDecoration {
 
   // Setup the drawing parameters.
   NSImage* GetImage();
+  virtual NSColor* GetBackgroundBorderColor() = 0;
   void SetImage(NSImage* image);
   void SetLabel(NSString* label);
   void SetTextColor(NSColor* text_color);
+  void SetFont(NSFont* font);
+  void SetRetinaBaselineOffset(CGFloat offset);
   virtual ui::NinePartImageIds GetBubbleImageIds() = 0;
 
   // Implement |LocationBarDecoration|.
+  CGFloat GetWidthForSpace(CGFloat width) override;
   void DrawInFrame(NSRect frame, NSView* control_view) override;
   void DrawWithBackgroundInFrame(NSRect background_frame,
                                  NSRect frame,
                                  NSView* control_view) override;
-  CGFloat GetWidthForSpace(CGFloat width) override;
+  NSFont* GetFont() const override;
 
  protected:
   // Helper returning bubble width for the given |image| and |label|
@@ -43,6 +47,9 @@ class BubbleDecoration : public LocationBarDecoration {
   // Helper to return where the image is drawn, for subclasses to drag
   // from.  |frame| is the decoration's frame in the containing cell.
   NSRect GetImageRectInFrame(NSRect frame);
+
+  // Returns the text color when the theme is dark.
+  virtual NSColor* GetDarkModeTextColor();
 
  private:
   friend class SelectedKeywordDecorationTest;
@@ -57,6 +64,9 @@ class BubbleDecoration : public LocationBarDecoration {
 
   // Contains attribute for drawing |label_|.
   base::scoped_nsobject<NSMutableDictionary> attributes_;
+
+  // Contains any Retina-only baseline adjustment for |label_|.
+  CGFloat retina_baseline_offset_;
 
   DISALLOW_COPY_AND_ASSIGN(BubbleDecoration);
 };

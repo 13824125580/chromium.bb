@@ -25,6 +25,7 @@
 #include "grit/components_strings.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest_mac.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
@@ -47,14 +48,14 @@
 @end
 
 @implementation MockBubbleYesLocationBar
-- (bool)hasLocationBar { return true; }
++ (bool)hasVisibleLocationBarForBrowser:(Browser*)browser { return true; }
 @end
 
 @interface MockBubbleNoLocationBar : NSObject
 @end
 
 @implementation MockBubbleNoLocationBar
-- (bool)hasLocationBar { return false; }
++ (bool)hasVisibleLocationBarForBrowser:(Browser*)browser { return false; }
 @end
 
 namespace {
@@ -155,7 +156,7 @@ class PermissionBubbleControllerTest : public CocoaProfileTest,
 
  protected:
   PermissionBubbleController* controller_;  // Weak;  it deletes itself.
-  scoped_ptr<PermissionBubbleCocoa> bridge_;
+  std::unique_ptr<PermissionBubbleCocoa> bridge_;
   std::vector<PermissionBubbleRequest*> requests_;
   std::vector<bool> accept_states_;
 };
@@ -351,9 +352,8 @@ TEST_F(PermissionBubbleControllerTest, ExitFullscreen) {
 
 TEST_F(PermissionBubbleControllerTest, AnchorPositionWithLocationBar) {
   base::mac::ScopedObjCClassSwizzler locationSwizzle(
-      [PermissionBubbleController class],
-      [MockBubbleYesLocationBar class],
-      @selector(hasLocationBar));
+      [PermissionBubbleController class], [MockBubbleYesLocationBar class],
+      @selector(hasVisibleLocationBarForBrowser:));
 
   NSPoint anchor = [controller_ getExpectedAnchorPoint];
 
@@ -363,15 +363,14 @@ TEST_F(PermissionBubbleControllerTest, AnchorPositionWithLocationBar) {
       [BrowserWindowController browserWindowControllerForWindow:window];
   LocationBarViewMac* location_bar_bridge = [controller locationBarBridge];
   NSPoint expected = location_bar_bridge->GetPageInfoBubblePoint();
-  expected = [window convertBaseToScreen:expected];
+  expected = ui::ConvertPointFromWindowToScreen(window, expected);
   EXPECT_NSEQ(expected, anchor);
 }
 
 TEST_F(PermissionBubbleControllerTest, AnchorPositionWithoutLocationBar) {
   base::mac::ScopedObjCClassSwizzler locationSwizzle(
-      [PermissionBubbleController class],
-      [MockBubbleNoLocationBar class],
-      @selector(hasLocationBar));
+      [PermissionBubbleController class], [MockBubbleNoLocationBar class],
+      @selector(hasVisibleLocationBarForBrowser:));
 
   NSPoint anchor = [controller_ getExpectedAnchorPoint];
 
@@ -379,7 +378,7 @@ TEST_F(PermissionBubbleControllerTest, AnchorPositionWithoutLocationBar) {
   NSWindow* window = browser()->window()->GetNativeWindow();
   NSRect frame = [window frame];
   NSPoint expected = NSMakePoint(frame.size.width / 2, frame.size.height);
-  expected = [window convertBaseToScreen:expected];
+  expected = ui::ConvertPointFromWindowToScreen(window, expected);
   EXPECT_NSEQ(expected, anchor);
 }
 
@@ -388,18 +387,16 @@ TEST_F(PermissionBubbleControllerTest,
   NSPoint withLocationBar;
   {
     base::mac::ScopedObjCClassSwizzler locationSwizzle(
-        [PermissionBubbleController class],
-        [MockBubbleYesLocationBar class],
-        @selector(hasLocationBar));
+        [PermissionBubbleController class], [MockBubbleYesLocationBar class],
+        @selector(hasVisibleLocationBarForBrowser:));
     withLocationBar = [controller_ getExpectedAnchorPoint];
   }
 
   NSPoint withoutLocationBar;
   {
     base::mac::ScopedObjCClassSwizzler locationSwizzle(
-        [PermissionBubbleController class],
-        [MockBubbleNoLocationBar class],
-        @selector(hasLocationBar));
+        [PermissionBubbleController class], [MockBubbleNoLocationBar class],
+        @selector(hasVisibleLocationBarForBrowser:));
     withoutLocationBar = [controller_ getExpectedAnchorPoint];
   }
 

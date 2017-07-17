@@ -21,13 +21,11 @@
 #ifndef WTF_Forward_h
 #define WTF_Forward_h
 
+#include "wtf/Compiler.h"
 #include <stddef.h>
 
 namespace WTF {
 
-template <typename T> class Function;
-template <typename T> class OwnPtr;
-template <typename T> class PassOwnPtr;
 template <typename T> class PassRefPtr;
 template <typename T> class RefPtr;
 template <size_t size> class SizeSpecificPartitionAllocator;
@@ -48,6 +46,7 @@ class Int32Array;
 class String;
 class StringBuilder;
 class StringImpl;
+class StringView;
 class Uint8Array;
 class Uint8ClampedArray;
 class Uint16Array;
@@ -55,9 +54,6 @@ class Uint32Array;
 
 } // namespace WTF
 
-using WTF::Function;
-using WTF::OwnPtr;
-using WTF::PassOwnPtr;
 using WTF::PassRefPtr;
 using WTF::RefPtr;
 using WTF::Vector;
@@ -77,6 +73,7 @@ using WTF::String;
 using WTF::StringBuffer;
 using WTF::StringBuilder;
 using WTF::StringImpl;
+using WTF::StringView;
 using WTF::Uint8Array;
 using WTF::Uint8ClampedArray;
 using WTF::Uint16Array;

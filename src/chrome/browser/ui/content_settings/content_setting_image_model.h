@@ -53,8 +53,9 @@ class ContentSettingImageModel {
   bool is_visible() const { return is_visible_; }
 
 #if defined(OS_MACOSX)
-  const gfx::Image& raster_icon() const { return raster_icon_; }
-  int raster_icon_id() const { return raster_icon_id_; }
+  // Calls UpdateFromWebContents() and returns true if the icon has changed.
+  bool UpdateFromWebContentsAndCheckIfIconChanged(
+      content::WebContents* web_contents);
 #endif
 
   gfx::Image GetIcon(SkColor nearby_text_color) const;
@@ -109,8 +110,8 @@ class ContentSettingSimpleImageModel : public ContentSettingImageModel {
   void SetAnimationHasRun(content::WebContents* web_contents) override;
 
   // Factory method. Used only for testing.
-  static scoped_ptr<ContentSettingImageModel> CreateForContentTypeForTesting(
-      ContentSettingsType content_type);
+  static std::unique_ptr<ContentSettingImageModel>
+  CreateForContentTypeForTesting(ContentSettingsType content_type);
 
  protected:
   ContentSettingsType content_type() { return content_type_; }

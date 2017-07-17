@@ -11,7 +11,6 @@
 /**
  * Polymer class definition for 'cr-network-list'.
  * TODO(stevenjb): Update with iron-list(?) once implemented in Polymer 1.0.
- * @element cr-network-list
  */
 Polymer({
   is: 'cr-network-list',
@@ -39,10 +38,22 @@ Polymer({
 
     /**
      * The list of network state properties for the items to display.
+     * See <cr-network-list-network-item/> for details.
      *
      * @type {!Array<!CrOnc.NetworkStateProperties>}
      */
     networks: {
+      type: Array,
+      value: function() { return []; }
+    },
+
+    /**
+     * The list of custom state properties for the items to display.
+     * See <cr-network-list-custom-item/> for details.
+     *
+     * @type {!Array<Object>}
+     */
+    customItems: {
       type: Array,
       value: function() { return []; }
     },
@@ -53,7 +64,15 @@ Polymer({
     opened: {
       type: Boolean,
       value: true
-    }
+    },
+
+    /**
+     * Shows all buttons from the list items.
+     */
+    showButtons: {
+      type: Boolean,
+      value: false,
+    },
   },
 
   /**

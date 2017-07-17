@@ -46,6 +46,22 @@ Polymer({
       return this.horizontal ? 'width' : 'height';
     },
 
+    /**
+     * `maxWidth` or `maxHeight`.
+     * @private
+     */    
+    get _dimensionMax() {
+      return this.horizontal ? 'maxWidth' : 'maxHeight';
+    },
+
+    /**
+     * `max-width` or `max-height`.
+     * @private
+     */
+    get _dimensionMaxCss() {
+      return this.horizontal ? 'max-width' : 'max-height';
+    },
+
     hostAttributes: {
       role: 'group',
       'aria-hidden': 'true',
@@ -78,25 +94,31 @@ Polymer({
       this.opened = false;
     },
 
+    /**
+     * Updates the size of the element.
+     * @param {string} size The new value for `maxWidth`/`maxHeight` as css property value, usually `auto` or `0px`.
+     * @param {boolean=} animated if `true` updates the size with an animation, otherwise without.
+     */     
     updateSize: function(size, animated) {
       // No change!
-      if (this.style[this.dimension] === size) {
+      var curSize = this.style[this._dimensionMax];
+      if (curSize === size || (size === 'auto' && !curSize)) {
         return;
       }
 
       this._updateTransition(false);
       // If we can animate, must do some prep work.
-      if (animated && !this.noAnimation) {
+      if (animated && !this.noAnimation && this._isDisplayed) {
         // Animation will start at the current size.
         var startSize = this._calcSize();
         // For `auto` we must calculate what is the final size for the animation.
         // After the transition is done, _transitionEnd will set the size back to `auto`.
         if (size === 'auto') {
-          this.style[this.dimension] = size;
+          this.style[this._dimensionMax] = '';
           size = this._calcSize();
         }
         // Go to startSize without animation.
-        this.style[this.dimension] = startSize;
+        this.style[this._dimensionMax] = startSize;
         // Force layout to ensure transition will go. Set offsetHeight to itself
         // so that compilers won't remove it.
         this.offsetHeight = this.offsetHeight;
@@ -104,7 +126,11 @@ Polymer({
         this._updateTransition(true);
       }
       // Set the final size.
-      this.style[this.dimension] = size;
+      if (size === 'auto') {
+        this.style[this._dimensionMax] = '';
+      } else {
+        this.style[this._dimensionMax] = size;
+      }
     },
 
     /**
@@ -115,7 +141,7 @@ Polymer({
      * @deprecated since version 1.0.4
      */
     enableTransition: function(enabled) {
-      console.warn('`enableTransition()` is deprecated, use `noAnimation` instead.');
+      Polymer.Base._warn('`enableTransition()` is deprecated, use `noAnimation` instead.');
       this.noAnimation = !enabled;
     },
 
@@ -124,8 +150,8 @@ Polymer({
     },
 
     _horizontalChanged: function() {
-      this.style.transitionProperty = this.dimension;
-      var otherDimension = this.dimension === 'width' ? 'height' : 'width';
+      this.style.transitionProperty = this._dimensionMaxCss;
+      var otherDimension = this._dimensionMax === 'maxWidth' ? 'maxHeight' : 'maxWidth';
       this.style[otherDimension] = '';
       this.updateSize(this.opened ? 'auto' : '0px', false);
     },
@@ -149,12 +175,25 @@ Polymer({
 
     _transitionEnd: function() {
       if (this.opened) {
-        this.style[this.dimension] = 'auto';
+        this.style[this._dimensionMax] = '';
       }
       this.toggleClass('iron-collapse-closed', !this.opened);
       this.toggleClass('iron-collapse-opened', this.opened);
       this._updateTransition(false);
       this.notifyResize();
+    },
+
+    /**
+     * Simplistic heuristic to detect if element has a parent with display: none
+     *
+     * @private
+     */
+    get _isDisplayed() {
+      var rect = this.getBoundingClientRect();
+      for (var prop in rect) {
+        if (rect[prop] !== 0) return true;
+      }
+      return false;
     },
 
     _calcSize: function() {

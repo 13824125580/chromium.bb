@@ -4,6 +4,8 @@
 
 #include "ppapi/shared_impl/private/ppb_x509_certificate_private_shared.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/var.h"
@@ -15,15 +17,15 @@ PPB_X509Certificate_Fields::PPB_X509Certificate_Fields() {}
 
 PPB_X509Certificate_Fields::PPB_X509Certificate_Fields(
     const PPB_X509Certificate_Fields& fields) {
-  scoped_ptr<base::ListValue> new_values(fields.values_.DeepCopy());
+  std::unique_ptr<base::ListValue> new_values(fields.values_.DeepCopy());
   values_.Swap(new_values.get());
 }
 
 void PPB_X509Certificate_Fields::SetField(
     PP_X509Certificate_Private_Field field,
-    base::Value* value) {
+    std::unique_ptr<base::Value> value) {
   uint32_t index = static_cast<uint32_t>(field);
-  bool success = values_.Set(index, value);
+  bool success = values_.Set(index, std::move(value));
   DCHECK(success);
 }
 
@@ -115,7 +117,7 @@ PP_Bool PPB_X509Certificate_Private_Shared::Initialize(const char* bytes,
     return PP_FALSE;
 
   std::vector<char> der(bytes, bytes + length);
-  scoped_ptr<PPB_X509Certificate_Fields> fields(
+  std::unique_ptr<PPB_X509Certificate_Fields> fields(
       new PPB_X509Certificate_Fields());
   bool success = ParseDER(der, fields.get());
   if (success) {

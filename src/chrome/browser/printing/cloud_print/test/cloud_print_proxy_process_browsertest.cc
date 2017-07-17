@@ -7,6 +7,8 @@
 // line switch.
 
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -19,7 +21,8 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -48,6 +51,7 @@
 #include "ipc/ipc_descriptors.h"
 #include "ipc/ipc_multiprocess_test.h"
 #include "ipc/ipc_switches.h"
+#include "mojo/edk/embedder/embedder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -212,8 +216,8 @@ typedef base::Callback<void(MockServiceIPCServer* server)>
 // service process. Any non-zero return value will be printed out and can help
 // determine the failure.
 int CloudPrintMockService_Main(SetExpectationsCallback set_expectations) {
+  base::PlatformThread::SetName("Main Thread");
   base::MessageLoopForUI main_message_loop;
-  main_message_loop.set_thread_name("Main Thread");
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   content::RegisterPathProvider();
 
@@ -246,6 +250,9 @@ int CloudPrintMockService_Main(SetExpectationsCallback set_expectations) {
   // lifetime.
   EXPECT_TRUE(service_process.Initialize(&main_message_loop, state));
 
+  // Needed for IPC.
+  mojo::edk::Init();
+
   MockServiceIPCServer server(&service_process,
                               service_process.io_task_runner(),
                               state->GetServiceProcessChannel(),
@@ -269,7 +276,7 @@ int CloudPrintMockService_Main(SetExpectationsCallback set_expectations) {
   std::string startup_channel_name =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kProcessChannelID);
-  scoped_ptr<IPC::ChannelProxy> startup_channel;
+  std::unique_ptr<IPC::ChannelProxy> startup_channel;
   startup_channel =
       IPC::ChannelProxy::Create(startup_channel_name,
                                 IPC::Channel::MODE_CLIENT,
@@ -338,15 +345,15 @@ class CloudPrintProxyPolicyStartupTest : public base::MultiProcessTest,
   base::ScopedTempDir temp_user_data_dir_;
 
   std::string startup_channel_id_;
-  scoped_ptr<IPC::ChannelProxy> startup_channel_;
-  scoped_ptr<ChromeContentClient> content_client_;
-  scoped_ptr<ChromeContentBrowserClient> browser_content_client_;
+  std::unique_ptr<IPC::ChannelProxy> startup_channel_;
+  std::unique_ptr<ChromeContentClient> content_client_;
+  std::unique_ptr<ChromeContentBrowserClient> browser_content_client_;
 
 #if defined(OS_MACOSX)
   base::ScopedTempDir temp_dir_;
   base::FilePath executable_path_, bundle_path_;
-  scoped_ptr<MockLaunchd> mock_launchd_;
-  scoped_ptr<Launchd::ScopedInstance> scoped_launchd_instance_;
+  std::unique_ptr<MockLaunchd> mock_launchd_;
+  std::unique_ptr<Launchd::ScopedInstance> scoped_launchd_instance_;
 #endif
 
  private:

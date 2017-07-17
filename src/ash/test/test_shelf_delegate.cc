@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "ash/shelf/shelf_item_delegate_manager.h"
-#include "ash/shelf/shelf_model.h"
+#include "ash/common/shelf/shelf_item_delegate_manager.h"
+#include "ash/common/shelf/shelf_model.h"
 #include "ash/shelf/shelf_util.h"
 #include "ash/shell.h"
 #include "ash/test/test_shelf_item_delegate.h"
@@ -20,8 +20,7 @@ namespace test {
 
 TestShelfDelegate* TestShelfDelegate::instance_ = NULL;
 
-TestShelfDelegate::TestShelfDelegate(ShelfModel* model)
-    : model_(model) {
+TestShelfDelegate::TestShelfDelegate(ShelfModel* model) : model_(model) {
   CHECK(!instance_);
   instance_ = this;
 }
@@ -55,7 +54,8 @@ void TestShelfDelegate::AddShelfItem(aura::Window* window,
   ShelfItemDelegateManager* manager =
       Shell::GetInstance()->shelf_item_delegate_manager();
   // |manager| owns TestShelfItemDelegate.
-  scoped_ptr<ShelfItemDelegate> delegate(new TestShelfItemDelegate(window));
+  std::unique_ptr<ShelfItemDelegate> delegate(
+      new TestShelfItemDelegate(window));
   manager->SetShelfItemDelegate(id, std::move(delegate));
   SetShelfIDForWindow(id, window);
 }
@@ -82,7 +82,7 @@ void TestShelfDelegate::OnWindowDestroying(aura::Window* window) {
 }
 
 void TestShelfDelegate::OnWindowHierarchyChanging(
-      const HierarchyChangeParams& params) {
+    const HierarchyChangeParams& params) {
   // The window may be legitimately reparented while staying open if it moves
   // to another display or container. If the window does not have a new parent
   // then remove the shelf item.
@@ -90,11 +90,17 @@ void TestShelfDelegate::OnWindowHierarchyChanging(
     RemoveShelfItemForWindow(params.target);
 }
 
-void TestShelfDelegate::OnShelfCreated(Shelf* shelf) {
-}
+void TestShelfDelegate::OnShelfCreated(Shelf* shelf) {}
 
-void TestShelfDelegate::OnShelfDestroyed(Shelf* shelf) {
-}
+void TestShelfDelegate::OnShelfDestroyed(Shelf* shelf) {}
+
+void TestShelfDelegate::OnShelfAlignmentChanged(Shelf* shelf) {}
+
+void TestShelfDelegate::OnShelfAutoHideBehaviorChanged(Shelf* shelf) {}
+
+void TestShelfDelegate::OnShelfAutoHideStateChanged(Shelf* shelf) {}
+
+void TestShelfDelegate::OnShelfVisibilityStateChanged(Shelf* shelf) {}
 
 ShelfID TestShelfDelegate::GetShelfIDForAppID(const std::string& app_id) {
   for (auto const& iter : shelf_id_to_app_id_map_) {

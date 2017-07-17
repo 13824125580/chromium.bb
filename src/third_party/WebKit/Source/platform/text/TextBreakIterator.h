@@ -85,7 +85,7 @@ public:
             releaseLineBreakIterator(m_iterator);
     }
 
-    String string() const { return m_string; }
+    String getString() const { return m_string; }
 
     UChar lastCharacter() const
     {

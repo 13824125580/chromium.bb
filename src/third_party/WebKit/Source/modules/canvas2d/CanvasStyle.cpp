@@ -34,6 +34,8 @@
 #include "core/html/HTMLCanvasElement.h"
 #include "modules/canvas2d/CanvasGradient.h"
 #include "modules/canvas2d/CanvasPattern.h"
+#include "platform/graphics/skia/SkiaUtils.h"
+#include "third_party/skia/include/core/SkShader.h"
 #include "wtf/PassRefPtr.h"
 
 namespace blink {
@@ -54,7 +56,7 @@ static ColorParseResult parseColor(Color& parsedColor, const String& colorString
 
 static Color currentColor(HTMLCanvasElement* canvas)
 {
-    if (!canvas || !canvas->inDocument() || !canvas->inlineStyle())
+    if (!canvas || !canvas->inShadowIncludingDocument() || !canvas->inlineStyle())
         return Color::black;
     Color color = Color::black;
     CSSParser::parseColor(color, canvas->inlineStyle()->getPropertyValue(CSSPropertyColor));
@@ -69,7 +71,7 @@ bool parseColorOrCurrentColor(Color& parsedColor, const String& colorString, HTM
     case ParsedSystemColor:
         return true;
     case ParsedCurrentColor:
-        parsedColor = currentColor(canvas);
+        parsedColor = canvas ? currentColor(canvas) : Color::black;
         return true;
     case ParseFailed:
         return false;
@@ -116,10 +118,10 @@ void CanvasStyle::applyToPaint(SkPaint& paint) const
         paint.setShader(nullptr);
         break;
     case Gradient:
-        canvasGradient()->gradient()->applyToPaint(paint);
+        getCanvasGradient()->getGradient()->applyToPaint(paint, SkMatrix::I());
         break;
     case ImagePattern:
-        canvasPattern()->pattern()->applyToPaint(paint);
+        getCanvasPattern()->getPattern()->applyToPaint(paint, affineTransformToSkMatrix(getCanvasPattern()->getTransform()));
         break;
     default:
         ASSERT_NOT_REACHED();

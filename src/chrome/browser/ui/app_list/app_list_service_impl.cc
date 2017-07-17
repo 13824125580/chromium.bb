@@ -15,7 +15,7 @@
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_shutdown.h"
@@ -280,9 +280,10 @@ AppListServiceImpl::AppListServiceImpl()
   profile_store_->AddProfileObserver(this);
 }
 
-AppListServiceImpl::AppListServiceImpl(const base::CommandLine& command_line,
-                                       PrefService* local_state,
-                                       scoped_ptr<ProfileStore> profile_store)
+AppListServiceImpl::AppListServiceImpl(
+    const base::CommandLine& command_line,
+    PrefService* local_state,
+    std::unique_ptr<ProfileStore> profile_store)
     : profile_store_(std::move(profile_store)),
       command_line_(command_line),
       local_state_(local_state),

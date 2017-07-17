@@ -4,6 +4,8 @@
 
 #include "chrome/browser/android/webapps/add_to_homescreen_data_fetcher.h"
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/location.h"
 #include "base/strings/string16.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -25,9 +27,10 @@
 #include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/manifest.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/favicon_size.h"
-#include "ui/gfx/screen.h"
 #include "url/gurl.h"
 
 using content::Manifest;
@@ -163,14 +166,11 @@ AddToHomescreenDataFetcher::~AddToHomescreenDataFetcher() {
   DCHECK(!weak_observer_);
 }
 
-void AddToHomescreenDataFetcher::FetchSplashScreenImage(
+base::Closure AddToHomescreenDataFetcher::FetchSplashScreenImageCallback(
     const std::string& webapp_id) {
-  ShortcutHelper::FetchSplashScreenImage(
-      web_contents(),
-      splash_screen_url_,
-      ideal_splash_image_size_in_dp_,
-      minimum_splash_image_size_in_dp_,
-      webapp_id);
+  return base::Bind(&ShortcutHelper::FetchSplashScreenImage, web_contents(),
+                    splash_screen_url_, ideal_splash_image_size_in_dp_,
+                    minimum_splash_image_size_in_dp_, webapp_id);
 }
 
 void AddToHomescreenDataFetcher::FetchFavicon() {
@@ -194,7 +194,7 @@ void AddToHomescreenDataFetcher::FetchFavicon() {
   // otherwise using the largest icon among all avaliable icons.
   int ideal_icon_size_in_px =
       ideal_icon_size_in_dp_ *
-      gfx::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor();
+      display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor();
   int threshold_to_get_any_largest_icon = ideal_icon_size_in_px - 1;
   favicon_service->GetLargestRawFaviconForPageURL(
       shortcut_info_.url,
@@ -271,8 +271,9 @@ GURL AddToHomescreenDataFetcher::GetShortcutUrl(const GURL& actual_url) {
       dom_distiller::url_utils::GetOriginalUrlFromDistillerUrl(actual_url);
 
   // If URL points to an offline content, get original URL.
-  GURL online_url = offline_pages::OfflinePageUtils::GetOnlineURLForOfflineURL(
-      web_contents()->GetBrowserContext(), original_url);
+  GURL online_url =
+      offline_pages::OfflinePageUtils::MaybeGetOnlineURLForOfflineURL(
+          web_contents()->GetBrowserContext(), original_url);
   if (online_url.is_valid())
     return online_url;
 

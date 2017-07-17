@@ -5,6 +5,7 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
+<link rel="import" href="/tracing/base/iteration_helpers.html">
 <link rel="import" href="/tracing/core/scripting_controller.html">
 <link rel="import" href="/tracing/core/test_utils.html">
 <link rel="import" href="/tracing/extras/tquery/tquery.html">
@@ -17,7 +18,7 @@ tr.b.unittest.testSuite(function() {
   function createTestModel(sliceCount) {
     var slices = [];
     for (var i = 0; i < sliceCount; i++)
-      slices.push(tr.c.TestUtils.newSlice(1, 2));
+      slices.push(tr.c.TestUtils.newSliceEx({start: 1, duration: 2}));
     return createTestModelWithSlices(slices);
   }
 
@@ -70,41 +71,41 @@ tr.b.unittest.testSuite(function() {
   test('tqueryFilterHasTitle', function() {
     var hasTitle = getScriptObject('hasTitle');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a'},
-        {guid: 2, title: 'b'},
-        {guid: 3, title: 'c'}
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b'},
+      {guid: 3, title: 'c'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(hasTitle('a')).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 1);
 
     var result = tquery.filter('b').selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 2);
+    assert.equal(tr.b.getOnlyElement(result).guid, 2);
 
     var result = tquery.filter(/^c$/).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 3);
+    assert.equal(tr.b.getOnlyElement(result).guid, 3);
   });
 
   test('tqueryFilterHasAncestor', function() {
     var hasAncestor = getScriptObject('hasAncestor');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a'},
-        {guid: 2, title: 'b', subSlices: [{guid: 4}]},
-        {guid: 3, title: 'c'}
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b', subSlices: [{guid: 4}]},
+      {guid: 3, title: 'c'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(hasAncestor('b')).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 4);
+    assert.equal(tr.b.getOnlyElement(result).guid, 4);
 
     var result = tquery.filter(hasAncestor()).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 4);
+    assert.equal(tr.b.getOnlyElement(result).guid, 4);
 
     var result = tquery.filter(hasAncestor('a')).selection;
     assert.equal(result.length, 0);
@@ -113,19 +114,19 @@ tr.b.unittest.testSuite(function() {
   test('tqueryFilterAllOf', function() {
     var allOf = getScriptObject('allOf');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a1'},
-        {guid: 2, title: 'b1'},
-        {guid: 3, title: 'c1'}
+      {guid: 1, title: 'a1'},
+      {guid: 2, title: 'b1'},
+      {guid: 3, title: 'c1'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(allOf('a1')).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 1);
 
     var result = tquery.filter(allOf('a1', /1/)).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 1);
 
     var result = tquery.filter(allOf()).selection;
     assert.equal(result.length, 3);
@@ -134,20 +135,21 @@ tr.b.unittest.testSuite(function() {
   test('tqueryFilterAnyOf', function() {
     var anyOf = getScriptObject('anyOf');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a'},
-        {guid: 2, title: 'b'},
-        {guid: 3, title: 'c'}
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b'},
+      {guid: 3, title: 'c'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(anyOf('a', 'b')).selection;
     assert.equal(result.length, 2);
-    assert.equal(result[0].guid, 1);
-    assert.equal(result[1].guid, 2);
+    var nextGuid = 1;
+    for (var event of result)
+      assert.equal(event.guid, nextGuid++);
 
     var result = tquery.filter(anyOf('not there', 'a')).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 1);
 
     var result = tquery.filter(anyOf()).selection;
     assert.equal(result.length, 3);
@@ -156,40 +158,40 @@ tr.b.unittest.testSuite(function() {
   test('tqueryFilterIsTopLevel', function() {
     var isTopLevel = getScriptObject('isTopLevel');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a'},
-        {guid: 2, title: 'b', subSlices: [{guid: 4}]},
-        {guid: 3, title: 'c'}
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b', subSlices: [{guid: 4}]},
+      {guid: 3, title: 'c'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(isTopLevel()).selection;
     assert.equal(result.length, 3);
-    assert.equal(result[0].guid, 1);
-    assert.equal(result[1].guid, 2);
-    assert.equal(result[2].guid, 3);
+    var nextGuid = 1;
+    for (var event of result)
+      assert.equal(event.guid, nextGuid++);
 
     var result = tquery.filter(isTopLevel('a')).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 1);
   });
 
   test('tqueryFilterHasDuration', function() {
     var hasDuration = getScriptObject('hasDuration');
     var model = createTestModelWithSlices([
-        {guid: 1, title: 'a', duration: 1},
-        {guid: 2, title: 'b', duration: 2},
-        {guid: 3, title: 'c', duration: 3},
-        {guid: 4, title: 'no duration'}
+      {guid: 1, title: 'a', duration: 1},
+      {guid: 2, title: 'b', duration: 2},
+      {guid: 3, title: 'c', duration: 3},
+      {guid: 4, title: 'no duration'}
     ]);
     var tquery = new tr.e.tquery.TQuery(model);
 
     var result = tquery.filter(hasDuration(1.5, 2.5)).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 2);
+    assert.equal(tr.b.getOnlyElement(result).guid, 2);
 
     var result = tquery.filter(hasDuration(3, Infinity)).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 3);
+    assert.equal(tr.b.getOnlyElement(result).guid, 3);
 
     var result = tquery.filter(hasDuration(-1, 0)).selection;
     assert.equal(result.length, 0);
@@ -198,7 +200,44 @@ tr.b.unittest.testSuite(function() {
       return d > 2;
     })).selection;
     assert.equal(result.length, 1);
-    assert.equal(result[0].guid, 3);
+    assert.equal(tr.b.getOnlyElement(result).guid, 3);
+  });
+
+  test('tqueryFilterNot', function() {
+    var not = getScriptObject('not');
+    var model = createTestModelWithSlices([
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b'},
+      {guid: 3, title: 'c'}
+    ]);
+    var tquery = new tr.e.tquery.TQuery(model);
+
+    var result = tquery.filter(not(/a/)).selection;
+    assert.equal(result.length, 2);
+    var nextGuid = 2;
+    for (var event of result) {
+      assert.equal(event.guid, nextGuid++);
+    }
+
+    // Test a not() without any subexpressions.
+    assert.throws(function() { not(); });
+
+    // Test a not() with too many subexpressions.
+    assert.throws(function() { not(/a/, /b/); });
+  });
+
+  test('tqueryFilterNoneOf', function() {
+    var noneOf = getScriptObject('noneOf');
+    var model = createTestModelWithSlices([
+      {guid: 1, title: 'a'},
+      {guid: 2, title: 'b'},
+      {guid: 3, title: 'c'}
+    ]);
+    var tquery = new tr.e.tquery.TQuery(model);
+
+    var result = tquery.filter(noneOf(/a/, /b/)).selection;
+    assert.equal(result.length, 1);
+    assert.equal(tr.b.getOnlyElement(result).guid, 3);
   });
 });
 </script>

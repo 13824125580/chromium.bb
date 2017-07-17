@@ -32,7 +32,10 @@ if (is_debug || !is_win || !is_official_build) {
 }
 
 # Core targets also get wexit time destructors.
-core_config_add += [ "//build/config/compiler:wexit_time_destructors" ]
+core_config_add += [
+  "//build/config/compiler:wexit_time_destructors",
+  "//third_party/WebKit/Source:non_test_config",
+]
 
 if (remove_webcore_debug_symbols) {
   core_config_remove += [ "//build/config/compiler:default_symbols" ]
@@ -42,7 +45,6 @@ if (remove_webcore_debug_symbols) {
 # Config for code that builds as part of core.
 config("config") {
   defines = [ "BLINK_CORE_IMPLEMENTATION=1" ]
-  configs = [ ":link_core_modules_separately" ]
 
   cflags = []
   if (is_win) {
@@ -51,14 +53,6 @@ config("config") {
   }
 }
 core_config_add += [ ":config" ]
-
-# Config for linking core and modules separately in component builds.
-# Required for CoreExport.h and ModulesExport.h.
-config("link_core_modules_separately") {
-  if (is_component_build) {
-    defines = [ "LINK_CORE_MODULES_SEPARATELY=1" ]
-  }
-}
 
 config("core_include_dirs") {
   include_dirs = [
@@ -76,6 +70,7 @@ source_set("generated") {
     ":make_core_generated",
     ":prerequisites",
     "inspector:instrumentation_sources",
+    "inspector:protocol_sources",
     "//gin",
     "//skia",
     "//third_party/WebKit/Source/bindings/core/v8:bindings_core_v8_generated",
@@ -84,7 +79,6 @@ source_set("generated") {
     "//third_party/libwebp",
     "//third_party/libxml",
     "//third_party/libxslt",
-    "//third_party/npapi",
     "//third_party/qcms",
     "//third_party/sqlite",
 
@@ -111,18 +105,19 @@ source_set("prerequisites") {
     "//third_party/libwebp",
     "//third_party/libxml",
     "//third_party/libxslt",
-    "//third_party/npapi",
     "//third_party/ots",
     "//third_party/qcms",
     "//third_party/snappy",
     "//third_party/sqlite",
     "//third_party/zlib",
+    "//ui/gfx/geometry",
     "//url",
     "//v8",
   ]
   deps = [
     ":make_core_generated",
     "inspector:instrumentation_sources",
+    "inspector:protocol_sources",
     "//third_party/WebKit/Source/bindings/core/v8:bindings_core_v8_generated",
 
     # FIXME: don't depend on bindings_modules http://crbug.com/358074
@@ -165,7 +160,6 @@ component("core") {
     "//skia",
     "//third_party/WebKit/Source/platform",
     "//third_party/WebKit/Source/wtf",
-    "//third_party/npapi",
     "//third_party/qcms",
     "//url",
     "//v8",
@@ -185,10 +179,7 @@ component("core") {
     configs += [ "//build/config/win:no_incremental_linking" ]
   }
 
-  public_configs = [
-    ":core_include_dirs",
-    ":link_core_modules_separately",
-  ]
+  public_configs = [ ":core_include_dirs" ]
 }
 
 # GYP version: //third_party/WebKit/Source/core/core.gyp:webcore_dom
@@ -216,13 +207,6 @@ source_set("html") {
   deps = [
     ":prerequisites",
   ]
-
-  # TODO(GYP)
-  # Shard this target into parts to work around linker limitations.
-  # on link time code generation builds.
-  #['OS=="win" and buildtype=="Official"', {
-  #  'msvs_shard': 5,
-  #}],
 }
 
 # GYP version: //third_party/WebKit/Source/core/core.gyp:webcore_svg
@@ -235,13 +219,6 @@ source_set("svg") {
   deps = [
     ":prerequisites",
   ]
-
-  # TODO(GYP)
-  # Shard this target into parts to work around linker limitations.
-  # on link time code generation builds.
-  #['OS=="win" and buildtype=="Official"', {
-  #  'msvs_shard': 5,
-  #}],
 }
 
 # GYP version: //third_party/WebKit/Source/core/core.gyp:webcore_remaining
@@ -292,7 +269,10 @@ source_set("remaining") {
   }
 
   if (is_mac) {
-    libs += [ "Carbon.framework" ]
+    libs += [
+      "AppKit.framework",
+      "Carbon.framework",
+    ]
   } else {  # !is_mac
     sources -= [ "editing/commands/SmartReplaceCF.cpp" ]
   }
@@ -313,7 +293,6 @@ source_set("testing") {
   deps = [
     ":core",
     ":generated_testing_idls",
-    "//third_party/WebKit/Source/wtf:test_support",
   ]
 
   sources = generated_core_testing_dictionary_files + webcore_testing_files
@@ -342,12 +321,12 @@ source_set("testing") {
     "$bindings_core_v8_output_dir/V8LayerRectList.h",
     "$bindings_core_v8_output_dir/V8PrivateScriptTest.cpp",
     "$bindings_core_v8_output_dir/V8PrivateScriptTest.h",
-    "$bindings_core_v8_output_dir/V8RefCountedScriptWrappable.cpp",
-    "$bindings_core_v8_output_dir/V8RefCountedScriptWrappable.h",
     "$bindings_core_v8_output_dir/V8TypeConversions.cpp",
     "$bindings_core_v8_output_dir/V8TypeConversions.h",
     "$bindings_core_v8_output_dir/V8UnionTypesTest.cpp",
     "$bindings_core_v8_output_dir/V8UnionTypesTest.h",
+    "$bindings_core_v8_output_dir/V8WorkerInternals.cpp",
+    "$bindings_core_v8_output_dir/V8WorkerInternals.h",
   ]
 }
 
@@ -369,6 +348,7 @@ source_set("core_generated") {
     "$blink_core_output_dir/CSSValueKeywords.cpp",
 
     # Additional .cpp files from make_core_generated actions.
+    "$blink_core_output_dir/CSSPrimitiveValueUnitTrie.cpp",
     "$blink_core_output_dir/Event.cpp",
     "$blink_core_output_dir/EventHeaders.h",
     "$blink_core_output_dir/EventNames.cpp",
@@ -408,12 +388,38 @@ source_set("core_generated") {
     # Additional .cpp files from the make_core_generated rules.
     "$blink_core_output_dir/XPathGrammar.cpp",
 
-    # Additional .cpp files from the inspector_instrumentation_sources list.
-    "$blink_core_output_dir/InspectorConsoleInstrumentationInl.h",
+    # Additional .cpp files from the inspector:instrumentation_sources list.
     "$blink_core_output_dir/InspectorInstrumentationImpl.cpp",
     "$blink_core_output_dir/InspectorInstrumentationInl.h",
     "$blink_core_output_dir/InspectorOverridesInl.h",
-    "$blink_core_output_dir/InstrumentingAgentsInl.h",
+    "$blink_core_output_dir/InstrumentingAgents.h",
+
+    # Additional .cpp files from the inspector:protocol_sources list.
+    "$blink_core_output_dir/inspector/protocol/Accessibility.cpp",
+    "$blink_core_output_dir/inspector/protocol/Animation.cpp",
+    "$blink_core_output_dir/inspector/protocol/ApplicationCache.cpp",
+    "$blink_core_output_dir/inspector/protocol/CSS.cpp",
+    "$blink_core_output_dir/inspector/protocol/CacheStorage.cpp",
+    "$blink_core_output_dir/inspector/protocol/DOM.cpp",
+    "$blink_core_output_dir/inspector/protocol/DOMDebugger.cpp",
+    "$blink_core_output_dir/inspector/protocol/DOMStorage.cpp",
+    "$blink_core_output_dir/inspector/protocol/Database.cpp",
+    "$blink_core_output_dir/inspector/protocol/DeviceOrientation.cpp",
+    "$blink_core_output_dir/inspector/protocol/Emulation.cpp",
+    "$blink_core_output_dir/inspector/protocol/IO.cpp",
+    "$blink_core_output_dir/inspector/protocol/IndexedDB.cpp",
+    "$blink_core_output_dir/inspector/protocol/Input.cpp",
+    "$blink_core_output_dir/inspector/protocol/Inspector.cpp",
+    "$blink_core_output_dir/inspector/protocol/LayerTree.cpp",
+    "$blink_core_output_dir/inspector/protocol/Memory.cpp",
+    "$blink_core_output_dir/inspector/protocol/Network.cpp",
+    "$blink_core_output_dir/inspector/protocol/Page.cpp",
+    "$blink_core_output_dir/inspector/protocol/Rendering.cpp",
+    "$blink_core_output_dir/inspector/protocol/Security.cpp",
+    "$blink_core_output_dir/inspector/protocol/ServiceWorker.cpp",
+    "$blink_core_output_dir/inspector/protocol/Storage.cpp",
+    "$blink_core_output_dir/inspector/protocol/Tracing.cpp",
+    "$blink_core_output_dir/inspector/protocol/Worker.cpp",
 
     # Additional .cpp files for SVG.
     "$blink_core_output_dir/SVGElementFactory.cpp",
@@ -427,6 +433,12 @@ source_set("core_generated") {
 
     # Generated from make_css_property_metadata.py
     "$blink_core_output_dir/CSSPropertyMetadata.cpp",
+
+    # Generated from make_cssom_types.py
+    "$blink_core_output_dir/CSSOMTypes.cpp",
+
+    # Generated from make_cssom_keywords.py
+    "$blink_core_output_dir/CSSOMKeywords.cpp",
   ]
 
   configs -= core_config_remove
@@ -438,6 +450,7 @@ source_set("core_generated") {
     ":make_core_generated",
     ":prerequisites",
     "inspector:instrumentation_sources",
+    "inspector:protocol_sources",
     "//gin",
     "//skia",
     "//third_party/WebKit/Source/bindings/core/v8:bindings_core_v8_generated",
@@ -446,7 +459,6 @@ source_set("core_generated") {
     "//third_party/libwebp",
     "//third_party/libxml",
     "//third_party/libxslt",
-    "//third_party/npapi",
     "//third_party/qcms",
     "//third_party/sqlite",
 
@@ -577,10 +589,12 @@ action("generated_testing_idls_internal_runtime_flags") {
 group("make_core_generated") {
   public_deps = [
     ":make_core_generated_bison",
+    ":make_core_generated_css_primitive_value_unit_trie",
     ":make_core_generated_css_property_metadata",
     ":make_core_generated_css_property_names",
     ":make_core_generated_css_tokenizer_codepoints",
     ":make_core_generated_css_value_keywords",
+    ":make_core_generated_cssom_types",
     ":make_core_generated_event_factory",
     ":make_core_generated_event_names",
     ":make_core_generated_event_target_names",
@@ -657,6 +671,19 @@ css_properties("make_core_generated_style_builder") {
     "$blink_core_output_dir/StyleBuilder.cpp",
     "$blink_core_output_dir/StyleBuilderFunctions.h",
     "$blink_core_output_dir/StyleBuilderFunctions.cpp",
+  ]
+}
+
+# "CSSOMTypes" in make_core_generated from GYP.
+css_properties("make_core_generated_cssom_types") {
+  script = "../build/scripts/make_cssom_types.py"
+  other_inputs = [
+    "../build/scripts/templates/CSSOMKeywords.cpp.tmpl",
+    "../build/scripts/templates/CSSOMTypes.cpp.tmpl",
+  ]
+  outputs = [
+    "$blink_core_output_dir/CSSOMKeywords.cpp",
+    "$blink_core_output_dir/CSSOMTypes.cpp",
   ]
 }
 
@@ -968,6 +995,30 @@ action("make_core_generated_css_tokenizer_codepoints") {
   deps = make_core_generated_deps
 }
 
+# "CSSPrimitiveValueUnitTrie" in make_core_generated from GYP.
+action("make_core_generated_css_primitive_value_unit_trie") {
+  visibility = []  # Allow re-assignment of list.
+  visibility = [ ":make_core_generated" ]
+  script = "../build/scripts/make_css_primitive_value_unit_trie.py"
+
+  input_file = "css/CSSPrimitiveValueUnits.in"
+  inputs = make_trie_helpers_files + [
+             input_file,
+             "../build/scripts/templates/CSSPrimitiveValueUnitTrie.cpp.tmpl",
+           ]
+  outputs = [
+    "$blink_core_output_dir/CSSPrimitiveValueUnitTrie.cpp",
+  ]
+
+  args = [
+    rebase_path(input_file, root_build_dir),
+    "--output_dir",
+    rel_blink_core_gen_dir,
+  ]
+
+  deps = make_core_generated_deps
+}
+
 # "HTMLElementLookupTrie" in make_core_generated from GYP.
 action("make_core_generated_html_element_lookup_trie") {
   visibility = []  # Allow re-assignment of list.
@@ -975,7 +1026,7 @@ action("make_core_generated_html_element_lookup_trie") {
   script = "../build/scripts/make_element_lookup_trie.py"
 
   input_file = "html/HTMLTagNames.in"
-  inputs = scripts_for_in_files + [
+  inputs = make_trie_helpers_files + [
              input_file,
              "../build/scripts/templates/ElementLookupTrie.cpp.tmpl",
              "../build/scripts/templates/ElementLookupTrie.h.tmpl",

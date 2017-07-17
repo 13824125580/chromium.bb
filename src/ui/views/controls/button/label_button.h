@@ -5,10 +5,11 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_LABEL_BUTTON_H_
 #define UI_VIEWS_CONTROLS_BUTTON_LABEL_BUTTON_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/controls/button/custom_button.h"
@@ -18,8 +19,8 @@
 
 namespace views {
 
-class InkDropAnimation;
-class InkDropHover;
+class InkDropRipple;
+class InkDropHighlight;
 class LabelButtonBorder;
 class Painter;
 
@@ -40,7 +41,7 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
 
   // Gets or sets the image shown for the specified button state.
   // GetImage returns the image for STATE_NORMAL if the state's image is empty.
-  virtual const gfx::ImageSkia& GetImage(ButtonState for_state);
+  virtual gfx::ImageSkia GetImage(ButtonState for_state) const;
   void SetImage(ButtonState for_state, const gfx::ImageSkia& image);
 
   // Gets or sets the text shown on the button.
@@ -51,7 +52,7 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   void SetTextColor(ButtonState for_state, SkColor color);
 
   // Sets the text colors shown for the non-disabled states to |color|.
-  void SetEnabledTextColors(SkColor color);
+  virtual void SetEnabledTextColors(SkColor color);
 
   // Sets drop shadows underneath the text.
   void SetTextShadows(const gfx::ShadowValues& shadows);
@@ -87,15 +88,15 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // Call SetMinSize(gfx::Size()) to clear the size if needed.
   void SetImageLabelSpacing(int spacing);
 
-  void SetFocusPainter(scoped_ptr<Painter> focus_painter);
+  void SetFocusPainter(std::unique_ptr<Painter> focus_painter);
   Painter* focus_painter() { return focus_painter_.get(); }
 
   // Creates the default border for this button. This can be overridden by
   // subclasses.
-  virtual scoped_ptr<LabelButtonBorder> CreateDefaultBorder() const;
+  virtual std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const;
 
   // View:
-  void SetBorder(scoped_ptr<Border> border) override;
+  void SetBorder(std::unique_ptr<Border> border) override;
   gfx::Size GetPreferredSize() const override;
   int GetHeightForWidth(int w) const override;
   void Layout() override;
@@ -103,12 +104,16 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   void EnableCanvasFlippingForRTLUI(bool flip) override;
   void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
   void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
-  scoped_ptr<InkDropAnimation> CreateInkDropAnimation() const override;
-  scoped_ptr<InkDropHover> CreateInkDropHover() const override;
+  std::unique_ptr<InkDropRipple> CreateInkDropRipple() const override;
+  std::unique_ptr<InkDropHighlight> CreateInkDropHighlight() const override;
 
  protected:
   ImageView* image() const { return image_; }
   Label* label() const { return label_; }
+
+  bool explicitly_set_normal_color() const {
+    return explicitly_set_colors_[STATE_NORMAL];
+  }
 
   // Returns the available area for the label and image. Subclasses can change
   // these bounds if they need room to do manual painting.
@@ -129,6 +134,10 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // Resets colors from the NativeTheme, explicitly set colors are unchanged.
   virtual void ResetColorsFromNativeTheme();
 
+  // Changes the visual styling of this button to reflect the state of
+  // |is_default()|.
+  virtual void UpdateStyleToIndicateDefaultStatus();
+
   // Updates the image view to contain the appropriate button state image.
   void UpdateImage();
 
@@ -145,7 +154,8 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, Image);
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, LabelAndImage);
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, FontList);
-  FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, ButtonStyleIsDefaultSize);
+
+  void SetTextInternal(const base::string16& text);
 
   // View:
   void ChildPreferredSizeChanged(View* child) override;
@@ -163,6 +173,11 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // Resets |cached_preferred_size_| and marks |cached_preferred_size_valid_|
   // as false.
   void ResetCachedPreferredSize();
+
+  // Updates additional state related to focus or default status, rather than
+  // merely the CustomButton::state(). E.g. ensures the label text color is
+  // correct for the current background.
+  void ResetLabelEnabledColor();
 
   // The image and label shown in the button.
   ImageView* image_;
@@ -213,7 +228,7 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // UI direction).
   gfx::HorizontalAlignment horizontal_alignment_;
 
-  scoped_ptr<Painter> focus_painter_;
+  std::unique_ptr<Painter> focus_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(LabelButton);
 };

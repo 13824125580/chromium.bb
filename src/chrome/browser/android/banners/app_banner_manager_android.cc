@@ -33,7 +33,7 @@ namespace banners {
 AppBannerManagerAndroid::AppBannerManagerAndroid(
     JNIEnv* env,
     jobject obj)
-    : AppBannerManager(),
+    : AppBannerManager(nullptr),
       weak_java_banner_view_manager_(env, obj) {
 }
 
@@ -71,7 +71,7 @@ bool AppBannerManagerAndroid::HandleNonWebApp(const std::string& platform,
 
   std::string id_from_app_url = ExtractQueryValueForName(url, kIdName);
   if (id_from_app_url.size() && id != id_from_app_url) {
-    banners::OutputDeveloperDebugMessage(
+    banners::OutputDeveloperNotShownMessage(
         web_contents(), banners::kIgnoredIdsDoNotMatch, is_debug_mode);
     return false;
   }
@@ -103,14 +103,14 @@ bool AppBannerManagerAndroid::CheckPlatformAndId(const std::string& platform,
                                                  const std::string& id,
                                                  bool is_debug_mode) {
   if (platform != kPlayPlatform) {
-    banners::OutputDeveloperDebugMessage(
-        web_contents(), platform + banners::kIgnoredNotSupportedOnAndroid,
+    banners::OutputDeveloperNotShownMessage(
+        web_contents(), banners::kIgnoredNotSupportedOnAndroid, platform,
         is_debug_mode);
     return false;
   }
   if (id.empty()) {
-    banners::OutputDeveloperDebugMessage(web_contents(), banners::kIgnoredNoId,
-                                         is_debug_mode);
+    banners::OutputDeveloperNotShownMessage(
+        web_contents(), banners::kIgnoredNoId, is_debug_mode);
     return false;
   }
   return true;
@@ -185,9 +185,9 @@ bool AppBannerManagerAndroid::IsFetcherActive(
 void AppBannerManagerAndroid::RequestAppBanner(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  AppBannerManager::RequestAppBanner(web_contents()->GetMainFrame(),
-                                     web_contents()->GetLastCommittedURL(),
-                                     true);
+  // Set debug mode to true as this method is only called from DevTools.
+  AppBannerManager::RequestAppBanner(web_contents()->GetLastCommittedURL(),
+                                     true /* is_debug_mode */);
 }
 
 // static

@@ -19,8 +19,6 @@ FrameViewAutoSizeInfo::FrameViewAutoSizeInfo(FrameView* view)
     ASSERT(m_frameView);
 }
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(FrameViewAutoSizeInfo);
-
 DEFINE_TRACE(FrameViewAutoSizeInfo)
 {
     visitor->trace(m_frameView);
@@ -66,13 +64,13 @@ void FrameViewAutoSizeInfo::autoSizeIfNeeded()
     // which may result in a height change during the second iteration.
     for (int i = 0; i < 2; i++) {
         // Update various sizes including contentsSize, scrollHeight, etc.
-        document->updateLayoutIgnorePendingStylesheets();
+        document->updateStyleAndLayoutIgnorePendingStylesheets();
 
-        LayoutView* layoutView = document->layoutView();
-        if (!layoutView)
+        LayoutViewItem layoutViewItem = document->layoutViewItem();
+        if (layoutViewItem.isNull())
             return;
 
-        int width = layoutView->minPreferredLogicalWidth();
+        int width = layoutViewItem.minPreferredLogicalWidth();
 
         LayoutBox* documentLayoutBox = documentElement->layoutBox();
         if (!documentLayoutBox)
@@ -86,7 +84,7 @@ void FrameViewAutoSizeInfo::autoSizeIfNeeded()
         // Since the dimensions are only for the view rectangle, once a
         // dimension exceeds the maximum, there is no need to increase it further.
         if (newSize.width() > m_maxAutoSize.width()) {
-            RefPtrWillBeRawPtr<Scrollbar> localHorizontalScrollbar = m_frameView->horizontalScrollbar();
+            Scrollbar* localHorizontalScrollbar = m_frameView->horizontalScrollbar();
             if (!localHorizontalScrollbar)
                 localHorizontalScrollbar = m_frameView->createScrollbar(HorizontalScrollbar);
             if (!localHorizontalScrollbar->isOverlayScrollbar())
@@ -95,7 +93,7 @@ void FrameViewAutoSizeInfo::autoSizeIfNeeded()
             // Don't bother checking for a vertical scrollbar because the width is at
             // already greater the maximum.
         } else if (newSize.height() > m_maxAutoSize.height()) {
-            RefPtrWillBeRawPtr<Scrollbar> localVerticalScrollbar = m_frameView->verticalScrollbar();
+            Scrollbar* localVerticalScrollbar = m_frameView->verticalScrollbar();
             if (!localVerticalScrollbar)
                 localVerticalScrollbar = m_frameView->createScrollbar(VerticalScrollbar);
             if (!localVerticalScrollbar->isOverlayScrollbar())

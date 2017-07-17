@@ -34,10 +34,10 @@
 #include "bindings/core/v8/ScriptState.h"
 #include "core/CoreExport.h"
 #include "platform/weborigin/SecurityOrigin.h"
-#include "wtf/MainThread.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
@@ -55,6 +55,7 @@ enum WorldIdConstants {
 };
 
 class DOMObjectHolderBase;
+class DOMWrapperWorldVisitor;
 template<typename T> class DOMObjectHolder;
 
 // This class represent a collection of DOM wrappers for a specific world.
@@ -70,6 +71,8 @@ public:
 
     static bool isolatedWorldsExist() { return isolatedWorldCount; }
     static void allWorldsInMainThread(Vector<RefPtr<DOMWrapperWorld>>& worlds);
+    static void markWrappersInAllWorlds(ScriptWrappable*, const WrapperVisitor*);
+    static void setWrapperReferencesInAllWorlds(const v8::Persistent<v8::Object>& parent, ScriptWrappable*, v8::Isolate*);
 
     static DOMWrapperWorld& world(v8::Local<v8::Context> context)
     {
@@ -78,13 +81,6 @@ public:
 
     static DOMWrapperWorld& current(v8::Isolate* isolate)
     {
-        if (isMainThread() && worldOfInitializingWindow) {
-            // It's possible that current() is being called while window is being initialized.
-            // In order to make current() workable during the initialization phase,
-            // we cache the world of the initializing window on worldOfInitializingWindow.
-            // If there is no initiazing window, worldOfInitializingWindow is 0.
-            return *worldOfInitializingWindow;
-        }
         return world(isolate->GetCurrentContext());
     }
 
@@ -120,12 +116,6 @@ public:
     int extensionGroup() const { return m_extensionGroup; }
     DOMDataStore& domDataStore() const { return *m_domDataStore; }
 
-    static void setWorldOfInitializingWindow(DOMWrapperWorld* world)
-    {
-        ASSERT(isMainThread());
-        worldOfInitializingWindow = world;
-    }
-
 public:
     template<typename T>
     void registerDOMObjectHolder(v8::Isolate*, T*, v8::Local<v8::Value>);
@@ -134,16 +124,15 @@ private:
     DOMWrapperWorld(v8::Isolate*, int worldId, int extensionGroup);
 
     static void weakCallbackForDOMObjectHolder(const v8::WeakCallbackInfo<DOMObjectHolderBase>&);
-    void registerDOMObjectHolderInternal(PassOwnPtr<DOMObjectHolderBase>);
+    void registerDOMObjectHolderInternal(std::unique_ptr<DOMObjectHolderBase>);
     void unregisterDOMObjectHolder(DOMObjectHolderBase*);
 
     static unsigned isolatedWorldCount;
-    static DOMWrapperWorld* worldOfInitializingWindow;
 
     const int m_worldId;
     const int m_extensionGroup;
-    OwnPtr<DOMDataStore> m_domDataStore;
-    HashSet<OwnPtr<DOMObjectHolderBase>> m_domObjectHolders;
+    std::unique_ptr<DOMDataStore> m_domDataStore;
+    HashSet<std::unique_ptr<DOMObjectHolderBase>> m_domObjectHolders;
 };
 
 } // namespace blink

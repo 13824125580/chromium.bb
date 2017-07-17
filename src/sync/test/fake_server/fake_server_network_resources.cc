@@ -4,9 +4,11 @@
 
 #include "sync/test/fake_server/fake_server_network_resources.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "sync/internal_api/public/base/cancelation_signal.h"
 #include "sync/internal_api/public/http_post_provider_factory.h"
 #include "sync/internal_api/public/network_time_update_callback.h"
@@ -25,15 +27,14 @@ FakeServerNetworkResources::FakeServerNetworkResources(
 
 FakeServerNetworkResources::~FakeServerNetworkResources() {}
 
-scoped_ptr<syncer::HttpPostProviderFactory>
+std::unique_ptr<syncer::HttpPostProviderFactory>
 FakeServerNetworkResources::GetHttpPostProviderFactory(
     const scoped_refptr<net::URLRequestContextGetter>& baseline_context_getter,
     const NetworkTimeUpdateCallback& network_time_update_callback,
     CancelationSignal* cancelation_signal) {
-  return make_scoped_ptr<syncer::HttpPostProviderFactory>(
+  return base::WrapUnique<syncer::HttpPostProviderFactory>(
       new FakeServerHttpPostProviderFactory(
-          fake_server_,
-          base::MessageLoop::current()->task_runner()));
+          fake_server_, base::ThreadTaskRunnerHandle::Get()));
 }
 
 }  // namespace fake_server

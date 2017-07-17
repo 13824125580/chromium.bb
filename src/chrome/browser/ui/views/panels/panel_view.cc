@@ -10,14 +10,13 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/panels/panel.h"
 #include "chrome/browser/ui/panels/panel_bounds_animation.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
@@ -27,16 +26,16 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/content_accelerators/accelerator_util.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/path.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
-#include "chrome/browser/shell_integration.h"
+#include "chrome/browser/shell_integration_win.h"
 #include "chrome/browser/ui/views/panels/taskbar_window_thumbnailer_win.h"
 #include "ui/base/win/shell.h"
 #include "ui/gfx/icon_util.h"
@@ -75,9 +74,9 @@ const AcceleratorMapping kPanelAcceleratorMap[] = {
   { ui::VKEY_R, ui::EF_CONTROL_DOWN, IDC_RELOAD },
   { ui::VKEY_F5, ui::EF_NONE, IDC_RELOAD },
   { ui::VKEY_R, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
-      IDC_RELOAD_IGNORING_CACHE },
-  { ui::VKEY_F5, ui::EF_CONTROL_DOWN, IDC_RELOAD_IGNORING_CACHE },
-  { ui::VKEY_F5, ui::EF_SHIFT_DOWN, IDC_RELOAD_IGNORING_CACHE },
+      IDC_RELOAD_BYPASSING_CACHE },
+  { ui::VKEY_F5, ui::EF_CONTROL_DOWN, IDC_RELOAD_BYPASSING_CACHE },
+  { ui::VKEY_F5, ui::EF_SHIFT_DOWN, IDC_RELOAD_BYPASSING_CACHE },
   { ui::VKEY_ESCAPE, ui::EF_NONE, IDC_STOP },
   { ui::VKEY_OEM_MINUS, ui::EF_CONTROL_DOWN, IDC_ZOOM_MINUS },
   { ui::VKEY_SUBTRACT, ui::EF_CONTROL_DOWN, IDC_ZOOM_MINUS },
@@ -160,7 +159,7 @@ void NativePanelTestingViews::FinishDragTitlebar() {
 }
 
 bool NativePanelTestingViews::VerifyDrawingAttention() const {
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   return panel_view_->GetFrameView()->GetPaintState() ==
          PanelFrameView::PAINT_FOR_ATTENTION;
 }
@@ -182,7 +181,7 @@ bool NativePanelTestingViews::VerifyAppIcon() const {
       ::SendMessage(native_window, WM_GETICON, ICON_BIG, 0L));
   if (!app_icon)
     return false;
-  scoped_ptr<SkBitmap> bitmap(IconUtil::CreateSkBitmapFromHICON(app_icon));
+  std::unique_ptr<SkBitmap> bitmap(IconUtil::CreateSkBitmapFromHICON(app_icon));
   return bitmap.get() &&
          bitmap->width() == panel::kPanelAppIconSize &&
          bitmap->height() == panel::kPanelAppIconSize;
@@ -304,7 +303,8 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds, bool always_on_top)
 #if !defined(USE_ASH)
   // Prevent the browser process from shutting down while this window is open.
   // Chrome OS already has a mechanism to always stay alive and skips this.
-  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::PANEL_VIEW));
+  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::PANEL_VIEW,
+                                        KeepAliveRestartOption::DISABLED));
 #endif  // !defined(USE_ASH)
 
   web_view_ = new views::WebView(NULL);
@@ -323,7 +323,7 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds, bool always_on_top)
 
 #if defined(OS_WIN)
   ui::win::SetAppIdForWindow(
-      shell_integration::GetAppModelIdForProfile(
+      shell_integration::win::GetAppModelIdForProfile(
           base::UTF8ToWide(panel->app_name()), panel->profile()->GetPath()),
       views::HWNDForWidget(window_));
   ui::win::PreventWindowFromPinning(views::HWNDForWidget(window_));
@@ -336,7 +336,7 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds, bool always_on_top)
   views::DesktopWindowTreeHostX11* host =
       views::DesktopWindowTreeHostX11::GetHostForXID(
           window_->GetNativeView()->GetHost()->GetAcceleratedWidget());
-  scoped_ptr<ui::EventHandler> resizer(
+  std::unique_ptr<ui::EventHandler> resizer(
       new X11PanelResizer(panel_.get(), window_->GetNativeWindow()));
   host->SwapNonClientEventHandler(std::move(resizer));
 #endif
@@ -989,16 +989,13 @@ void PanelView::OnWidgetActivationChanged(views::Widget* widget, bool active) {
   if (window_closed_)
     return;
 
-  bool focused = active;
-  if (chrome::GetActiveDesktop() == chrome::HOST_DESKTOP_TYPE_NATIVE) {
-    // The panel window is in focus (actually accepting keystrokes) if it is
-    // active and belongs to a foreground application.
-    focused = active &&
-        views::HWNDForWidget(widget) == ::GetForegroundWindow();
-  }
+  // The panel window is in focus (actually accepting keystrokes) if it is
+  // active and belongs to a foreground application.
+  bool focused =
+      active && views::HWNDForWidget(widget) == ::GetForegroundWindow();
 #else
   bool focused = active;
-#endif
+#endif  // OS_WIN
 
   if (focused_ == focused)
     return;
@@ -1015,8 +1012,8 @@ void PanelView::OnWidgetActivationChanged(views::Widget* widget, bool active) {
 #if defined(OS_WIN)
   if (focused_ && panel_->IsMinimized() &&
       panel_->collection()->type() == PanelCollection::DOCKED &&
-      gfx::Screen::GetScreen()->GetWindowUnderCursor() !=
-          widget->GetNativeWindow()) {
+      !display::Screen::GetScreen()->IsWindowUnderCursor(
+          widget->GetNativeWindow())) {
     panel_->Restore();
   }
 #endif

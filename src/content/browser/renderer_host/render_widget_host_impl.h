@@ -10,13 +10,13 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/kill.h"
@@ -31,6 +31,7 @@
 #include "content/browser/renderer_host/input/render_widget_host_latency_tracker.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
 #include "content/browser/renderer_host/input/touch_emulator_client.h"
+#include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/common/input/input_event_ack_state.h"
 #include "content/common/input/synthetic_gesture_packet.h"
@@ -48,8 +49,11 @@
 
 struct FrameHostMsg_HittestData_Params;
 struct ViewHostMsg_SelectionBounds_Params;
-struct ViewHostMsg_TextInputState_Params;
 struct ViewHostMsg_UpdateRect_Params;
+
+namespace base {
+class RefCountedBytes;
+}
 
 namespace blink {
 class WebInputEvent;
@@ -65,6 +69,12 @@ namespace cc {
 class CompositorFrameAck;
 }
 
+#if defined(OS_MACOSX)
+namespace device {
+class PowerSaveBlocker;
+}  // namespace device
+#endif
+
 namespace gfx {
 class Range;
 }
@@ -74,7 +84,6 @@ namespace content {
 class BrowserAccessibilityManager;
 class InputRouter;
 class MockRenderWidgetHost;
-class RenderWidgetHostDelegate;
 class RenderWidgetHostOwnerDelegate;
 class SyntheticGestureController;
 class TimeoutMonitor;
@@ -82,6 +91,7 @@ class TouchEmulator;
 class WebCursor;
 struct EditCommand;
 struct ResizeParams;
+struct TextInputState;
 
 // This implements the RenderWidgetHost interface that is exposed to
 // embedders of content, and adds things only visible to content.
@@ -106,7 +116,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // Returns all RenderWidgetHosts including swapped out ones for
   // internal use. The public interface
   // RenderWidgetHost::GetRenderWidgetHosts only returns active ones.
-  static scoped_ptr<RenderWidgetHostIterator> GetAllRenderWidgetHosts();
+  static std::unique_ptr<RenderWidgetHostIterator> GetAllRenderWidgetHosts();
 
   // Use RenderWidgetHostImpl::From(rwh) to downcast a RenderWidgetHost to a
   // RenderWidgetHostImpl.
@@ -157,6 +167,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   bool IsLoading() const override;
   void ResizeRectChanged(const gfx::Rect& new_rect) override;
   void RestartHangMonitorTimeout() override;
+  void DisableHangMonitorForTesting() override;
   void SetIgnoreInputEvents(bool ignore_input_events) override;
   void WasResized() override;
   void AddKeyPressEventCallback(const KeyPressEventCallback& callback) override;
@@ -164,8 +175,11 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
       const KeyPressEventCallback& callback) override;
   void AddMouseEventCallback(const MouseEventCallback& callback) override;
   void RemoveMouseEventCallback(const MouseEventCallback& callback) override;
+  void AddInputEventObserver(
+      RenderWidgetHost::InputEventObserver* observer) override;
+  void RemoveInputEventObserver(
+      RenderWidgetHost::InputEventObserver* observer) override;
   void GetWebScreenInfo(blink::WebScreenInfo* result) override;
-  bool GetScreenColorProfile(std::vector<char>* color_profile) override;
   void HandleCompositorProto(const std::vector<uint8_t>& proto) override;
 
   // Notification that the screen info has changed.
@@ -241,6 +255,9 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // Called to notify the RenderWidget that it has lost the mouse lock.
   void LostMouseLock();
 
+  // Notifies the RenderWidget that it lost the mouse lock.
+  void SendMouseLockLost();
+
   // Noifies the RenderWidget of the current mouse cursor visibility state.
   void SendCursorVisibilityState(bool is_visible);
 
@@ -271,7 +288,9 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // Starts a hang monitor timeout. If there's already a hang monitor timeout
   // the new one will only fire if it has a shorter delay than the time
   // left on the existing timeouts.
-  void StartHangMonitorTimeout(base::TimeDelta delay);
+  void StartHangMonitorTimeout(
+      base::TimeDelta delay,
+      RenderWidgetHostDelegate::RendererUnresponsiveType hang_monitor_reason);
 
   // Stops all existing hang monitor timeouts and assumes the renderer is
   // responsive.
@@ -291,16 +310,16 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // when it has received a message.
   void ForwardGestureEventWithLatencyInfo(
       const blink::WebGestureEvent& gesture_event,
-      const ui::LatencyInfo& ui_latency);
+      const ui::LatencyInfo& ui_latency) override;
   void ForwardTouchEventWithLatencyInfo(
       const blink::WebTouchEvent& touch_event,
       const ui::LatencyInfo& ui_latency);
   void ForwardMouseEventWithLatencyInfo(
       const blink::WebMouseEvent& mouse_event,
       const ui::LatencyInfo& ui_latency);
-  void ForwardWheelEventWithLatencyInfo(
+  virtual void ForwardWheelEventWithLatencyInfo(
       const blink::WebMouseWheelEvent& wheel_event,
-      const ui::LatencyInfo& ui_latency);
+      const ui::LatencyInfo& ui_latency); // Virtual for testing.
 
   // Enables/disables touch emulation using mouse event. See TouchEmulator.
   void SetTouchEventEmulationEnabled(
@@ -317,7 +336,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // Queues a synthetic gesture for testing purposes.  Invokes the on_complete
   // callback when the gesture is finished running.
   void QueueSyntheticGesture(
-      scoped_ptr<SyntheticGesture> synthetic_gesture,
+      std::unique_ptr<SyntheticGesture> synthetic_gesture,
       const base::Callback<void(SyntheticGesture::Result)>& on_complete);
 
   void CancelUpdateTextDirection();
@@ -475,10 +494,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
 
   void RejectMouseLockOrUnlockIfNecessary();
 
-#if defined(OS_WIN)
-  gfx::NativeViewAccessible GetParentNativeViewAccessible();
-#endif
-
   void set_renderer_initialized(bool renderer_initialized) {
     renderer_initialized_ = renderer_initialized;
   }
@@ -512,16 +527,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
 
   bool renderer_initialized() const { return renderer_initialized_; }
 
-  bool scale_input_to_viewport() const { return scale_input_to_viewport_; }
-  void set_scale_input_to_viewport(bool scale_input_to_viewport) {
-    scale_input_to_viewport_ = scale_input_to_viewport;
-  }
-
  protected:
-  // Retrieves an id the renderer can use to refer to its view.
-  // This is used for various IPC messages, including plugins.
-  gfx::NativeViewId GetNativeViewId() const;
-
   // ---------------------------------------------------------------------------
   // The following method is overridden by RenderViewHost to send upwards to
   // its delegate.
@@ -560,10 +566,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // NotifyRendererResponsive.
   void RendererIsResponsive();
 
-  // Routines used to send the RenderWidget its screen color profile.
-  void DispatchColorProfile();
-  void SendColorProfile();
-
   // IPC message handlers
   void OnRenderProcessGone(int status, int error_code);
   void OnClose();
@@ -575,8 +577,7 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   void OnUpdateRect(const ViewHostMsg_UpdateRect_Params& params);
   void OnQueueSyntheticGesture(const SyntheticGesturePacket& gesture_packet);
   void OnSetCursor(const WebCursor& cursor);
-  void OnTextInputStateChanged(
-      const ViewHostMsg_TextInputState_Params& params);
+  void OnTextInputStateChanged(const TextInputState& params);
 
   void OnImeCompositionRangeChanged(
       const gfx::Range& range,
@@ -589,12 +590,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   void OnShowDisambiguationPopup(const gfx::Rect& rect_pixels,
                                  const gfx::Size& size,
                                  const cc::SharedBitmapId& id);
-#if defined(OS_WIN)
-  void OnWindowlessPluginDummyWindowCreated(
-      gfx::NativeViewId dummy_activation_window);
-  void OnWindowlessPluginDummyWindowDestroyed(
-      gfx::NativeViewId dummy_activation_window);
-#endif
   void OnSelectionChanged(const base::string16& text,
                           uint32_t offset,
                           const gfx::Range& range);
@@ -625,6 +620,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   void DidFlush() override;
   void DidOverscroll(const DidOverscrollParams& params) override;
   void DidStopFlinging() override;
+
+  // Dispatch input events with latency information
+  void DispatchInputEventWithLatencyInfo(const blink::WebInputEvent& event,
+                                         ui::LatencyInfo* latency);
 
   // InputAckHandler
   void OnKeyboardEventAck(const NativeWebKeyboardEventWithLatencyInfo& event,
@@ -690,15 +689,11 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // True when waiting for RESIZE_ACK.
   bool resize_ack_pending_;
 
-  // Set if the color profile should fetched and sent to the RenderWidget
-  // during the WasResized() resize message flow.
-  bool color_profile_out_of_date_;
-
   // The current size of the RenderWidget.
   gfx::Size current_size_;
 
   // Resize information that was previously sent to the renderer.
-  scoped_ptr<ResizeParams> old_resize_params_;
+  std::unique_ptr<ResizeParams> old_resize_params_;
 
   // The next auto resize to send.
   gfx::Size new_auto_size_;
@@ -722,6 +717,10 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
 
   // Mouse event callbacks.
   std::vector<MouseEventCallback> mouse_event_callbacks_;
+
+  // Input event callbacks.
+  base::ObserverList<RenderWidgetHost::InputEventObserver>
+      input_event_observers_;
 
   // If true, then we should repaint when restoring even if we have a
   // backingstore.  This flag is set to true if we receive a paint message
@@ -781,18 +780,19 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // TODO(wjmaclean) Remove the code for supporting resending gesture events
   // when WebView transitions to OOPIF and BrowserPlugin is removed.
   // http://crbug.com/533069
-  bool is_in_gesture_scroll_;
+  bool is_in_touchpad_gesture_scroll_;
+  bool is_in_touchscreen_gesture_scroll_;
 
-  scoped_ptr<SyntheticGestureController> synthetic_gesture_controller_;
+  std::unique_ptr<SyntheticGestureController> synthetic_gesture_controller_;
 
-  scoped_ptr<TouchEmulator> touch_emulator_;
+  std::unique_ptr<TouchEmulator> touch_emulator_;
 
   // Receives and handles all input events.
-  scoped_ptr<InputRouter> input_router_;
+  std::unique_ptr<InputRouter> input_router_;
 
-  scoped_ptr<TimeoutMonitor> hang_monitor_timeout_;
+  std::unique_ptr<TimeoutMonitor> hang_monitor_timeout_;
 
-  scoped_ptr<TimeoutMonitor> new_content_rendering_timeout_;
+  std::unique_ptr<TimeoutMonitor> new_content_rendering_timeout_;
 
   // This boolean is true if RenderWidgetHostImpl receives a compositor frame
   // from a newly loaded page before StartNewContentRenderingTimeout() is
@@ -805,10 +805,6 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // receipt of those messages (unless FirstPaintAfterLoad is prevented from
   // being sent, in which case the timer should fire).
   bool received_paint_after_load_;
-
-#if defined(OS_WIN)
-  std::list<HWND> dummy_windows_for_activation_;
-#endif
 
   RenderWidgetHostLatencyTracker latency_tracker_;
 
@@ -826,22 +822,20 @@ class CONTENT_EXPORT RenderWidgetHostImpl : public RenderWidgetHost,
   // causing HasFocus to return false when is_focused_ is true.
   bool is_focused_;
 
-  // When true, the host will scale the input to viewport.
-  // TODO(oshima): Remove this once crbug.com/563730 is addressed.
-  bool scale_input_to_viewport_;
-
   // This value indicates how long to wait before we consider a renderer hung.
   base::TimeDelta hung_renderer_delay_;
+
+  // Stores the reason the hang_monitor_timeout_ has been started. Used to
+  // report histograms if the renderer is hung.
+  RenderWidgetHostDelegate::RendererUnresponsiveType hang_monitor_reason_;
 
   // This value indicates how long to wait for a new compositor frame from a
   // renderer process before clearing any previously displayed content.
   base::TimeDelta new_content_rendering_delay_;
 
-  // Timer used to batch together mouse wheel events for the delegate
-  // OnUserInteraction method. A wheel event is only dispatched when a wheel
-  // event has not been seen for kMouseWheelCoalesceInterval seconds prior.
-  // TODO(dominickn): remove this when GestureScrollBegin has landed.
-  scoped_ptr<base::ElapsedTimer> mouse_wheel_coalesce_timer_;
+#if defined(OS_MACOSX)
+  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
+#endif
 
   base::WeakPtrFactory<RenderWidgetHostImpl> weak_factory_;
 

@@ -10,7 +10,7 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "device/bluetooth/bluetooth_gatt_service.h"
+#include "device/bluetooth/bluetooth_remote_gatt_service.h"
 #include "device/bluetooth/test/test_bluetooth_adapter_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -20,6 +20,8 @@
 #include "device/bluetooth/test/bluetooth_test_mac.h"
 #elif defined(OS_WIN)
 #include "device/bluetooth/test/bluetooth_test_win.h"
+#elif defined(OS_CHROMEOS) || defined(OS_LINUX)
+#include "device/bluetooth/test/bluetooth_test_bluez.h"
 #endif
 
 namespace device {
@@ -80,7 +82,7 @@ TEST_F(BluetoothTest, LowEnergyDeviceProperties) {
   }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(1);
+  BluetoothDevice* device = SimulateLowEnergyDevice(1);
   ASSERT_TRUE(device);
 // Bluetooth class information for BLE device is not available on Windows.
 #ifndef OS_WIN
@@ -91,7 +93,7 @@ TEST_F(BluetoothTest, LowEnergyDeviceProperties) {
   EXPECT_EQ(0, device->GetVendorID());
   EXPECT_EQ(0, device->GetProductID());
   EXPECT_EQ(0, device->GetDeviceID());
-  EXPECT_EQ(base::UTF8ToUTF16(kTestDeviceName), device->GetName());
+  EXPECT_EQ(base::UTF8ToUTF16(kTestDeviceName), device->GetNameForDisplay());
   EXPECT_FALSE(device->IsPaired());
   BluetoothDevice::UUIDList uuids = device->GetUUIDs();
   EXPECT_TRUE(ContainsValue(uuids, BluetoothUUID(kTestUUIDGenericAccess)));
@@ -108,12 +110,26 @@ TEST_F(BluetoothTest, LowEnergyDeviceNoUUIDs) {
   }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   ASSERT_TRUE(device);
   BluetoothDevice::UUIDList uuids = device->GetUUIDs();
   EXPECT_EQ(0u, uuids.size());
 }
 #endif  // defined(OS_ANDROID) || defined(OS_MACOSX) || defined(OS_WIN)
+
+#if defined(OS_ANDROID)
+// GetDeviceName for Device with no name.
+TEST_F(BluetoothTest, GetDeviceName_NullName) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+  InitWithFakeAdapter();
+  StartLowEnergyDiscoverySession();
+  BluetoothDevice* device = SimulateLowEnergyDevice(5);
+  EXPECT_EQ("", device->GetDeviceName());
+}
+#endif  // defined(OS_ANDROID)
 
 // TODO(scheib): Test with a device with no name. http://crbug.com/506415
 // BluetoothDevice::GetAddressWithLocalizedDeviceTypeName() will run, which
@@ -122,12 +138,16 @@ TEST_F(BluetoothTest, LowEnergyDeviceNoUUIDs) {
 // also require build configuration to generate string resources into a .pak
 // file.
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Basic CreateGattConnection test.
 TEST_F(BluetoothTest, CreateGattConnection) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   ResetEventCounts();
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -137,15 +157,43 @@ TEST_F(BluetoothTest, CreateGattConnection) {
   EXPECT_TRUE(device->IsGattConnected());
   EXPECT_TRUE(gatt_connections_[0]->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
+TEST_F(BluetoothTest, DisconnectionNotifiesDeviceChanged) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+  InitWithFakeAdapter();
+  TestBluetoothAdapterObserver observer(adapter_);
+  StartLowEnergyDiscoverySession();
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
+  device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
+                               GetConnectErrorCallback(Call::NOT_EXPECTED));
+  SimulateGattConnection(device);
+  EXPECT_EQ(1, observer.device_changed_count());
+  EXPECT_TRUE(device->IsConnected());
+  EXPECT_TRUE(device->IsGattConnected());
+
+  SimulateGattDisconnection(device);
+  EXPECT_EQ(2, observer.device_changed_count());
+  EXPECT_FALSE(device->IsConnected());
+  EXPECT_FALSE(device->IsGattConnected());
+}
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
+
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Creates BluetoothGattConnection instances and tests that the interface
 // functions even when some Disconnect and the BluetoothDevice is destroyed.
 TEST_F(BluetoothTest, BluetoothGattConnection) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   std::string device_address = device->GetAddress();
 
   // CreateGattConnection
@@ -198,15 +246,19 @@ TEST_F(BluetoothTest, BluetoothGattConnection) {
   EXPECT_EQ(device_address, gatt_connections_[0]->GetDeviceAddress());
   EXPECT_EQ(device_address, gatt_connections_[1]->GetDeviceAddress());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection then simulates multiple connections from platform.
 TEST_F(BluetoothTest,
        BluetoothGattConnection_ConnectWithMultipleOSConnections) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   // CreateGattConnection, & multiple connections from platform only invoke
   // callbacks once:
@@ -224,14 +276,18 @@ TEST_F(BluetoothTest,
   SimulateGattDisconnection(device);
   EXPECT_FALSE(gatt_connections_[0]->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection after already connected.
 TEST_F(BluetoothTest, BluetoothGattConnection_AlreadyConnected) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   // Be already connected:
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -246,15 +302,19 @@ TEST_F(BluetoothTest, BluetoothGattConnection_AlreadyConnected) {
   EXPECT_EQ(0, gatt_connection_attempts_);
   EXPECT_TRUE(gatt_connections_[1]->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Creates BluetoothGattConnection after one exists that has disconnected.
 TEST_F(BluetoothTest,
        BluetoothGattConnection_NewConnectionLeavesPreviousDisconnected) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   // Create connection:
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -275,14 +335,18 @@ TEST_F(BluetoothTest,
          "connection is created.";
   EXPECT_TRUE(gatt_connections_[1]->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Deletes BluetoothGattConnection causing disconnection.
 TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectWhenObjectsDestroyed) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   // Create multiple connections and simulate connection complete:
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -296,14 +360,18 @@ TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectWhenObjectsDestroyed) {
   gatt_connections_.clear();
   EXPECT_EQ(1, gatt_disconnection_attempts_);
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Starts process of disconnecting and then calls BluetoothGattConnection.
 TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectInProgress) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   // Create multiple connections and simulate connection complete:
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -333,15 +401,19 @@ TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectInProgress) {
   for (BluetoothGattConnection* connection : gatt_connections_)
     EXPECT_FALSE(connection->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection but receives notice that the device disconnected
 // before it ever connects.
 TEST_F(BluetoothTest, BluetoothGattConnection_SimulateDisconnect) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   ResetEventCounts();
   device->CreateGattConnection(GetGattConnectionCallback(Call::NOT_EXPECTED),
@@ -352,14 +424,18 @@ TEST_F(BluetoothTest, BluetoothGattConnection_SimulateDisconnect) {
   for (BluetoothGattConnection* connection : gatt_connections_)
     EXPECT_FALSE(connection->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection & DisconnectGatt, then simulates connection.
 TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectGatt_SimulateConnect) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   ResetEventCounts();
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
@@ -376,15 +452,19 @@ TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectGatt_SimulateConnect) {
   EXPECT_EQ(0, callback_count_);
   EXPECT_EQ(0, error_callback_count_);
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection & DisconnectGatt, then simulates disconnection.
 TEST_F(BluetoothTest,
        BluetoothGattConnection_DisconnectGatt_SimulateDisconnect) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   ResetEventCounts();
   device->CreateGattConnection(GetGattConnectionCallback(Call::NOT_EXPECTED),
@@ -397,15 +477,19 @@ TEST_F(BluetoothTest,
   for (BluetoothGattConnection* connection : gatt_connections_)
     EXPECT_FALSE(connection->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection & DisconnectGatt, then checks that gatt services
 // have been cleaned up.
 TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectGatt_Cleanup) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   EXPECT_FALSE(device->IsConnected());
 
   // Connect to the device
@@ -446,15 +530,19 @@ TEST_F(BluetoothTest, BluetoothGattConnection_DisconnectGatt_Cleanup) {
   EXPECT_EQ(1u, device->GetGattServices().size());
   EXPECT_EQ(2, observer.gatt_services_discovered_count());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 // Calls CreateGattConnection, but simulate errors connecting. Also, verifies
 // multiple errors should only invoke callbacks once.
 TEST_F(BluetoothTest, BluetoothGattConnection_ErrorAfterConnection) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
   ResetEventCounts();
   device->CreateGattConnection(GetGattConnectionCallback(Call::NOT_EXPECTED),
@@ -462,17 +550,21 @@ TEST_F(BluetoothTest, BluetoothGattConnection_ErrorAfterConnection) {
   EXPECT_EQ(1, gatt_connection_attempts_);
   SimulateGattConnectionError(device, BluetoothDevice::ERROR_AUTH_FAILED);
   SimulateGattConnectionError(device, BluetoothDevice::ERROR_FAILED);
+#if defined(OS_ANDROID)
   // TODO: Change to ERROR_AUTH_FAILED. We should be getting a callback
   // only with the first error, but our android framework doesn't yet
   // support sending different errors.
   // http://crbug.com/578191
   EXPECT_EQ(BluetoothDevice::ERROR_FAILED, last_connect_error_code_);
+#else
+  EXPECT_EQ(BluetoothDevice::ERROR_AUTH_FAILED, last_connect_error_code_);
+#endif
   for (BluetoothGattConnection* connection : gatt_connections_)
     EXPECT_FALSE(connection->IsConnected());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID) || defined(OS_WIN)
+#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 TEST_F(BluetoothTest, GattServices_ObserversCalls) {
   if (!PlatformSupportsLowEnergy()) {
     LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
@@ -480,7 +572,7 @@ TEST_F(BluetoothTest, GattServices_ObserversCalls) {
   }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
                                GetConnectErrorCallback(Call::NOT_EXPECTED));
   TestBluetoothAdapterObserver observer(adapter_);
@@ -496,9 +588,9 @@ TEST_F(BluetoothTest, GattServices_ObserversCalls) {
   EXPECT_EQ(1, observer.gatt_services_discovered_count());
   EXPECT_EQ(2, observer.gatt_service_added_count());
 }
-#endif  // defined(OS_ANDROID) || defined(OS_WIN)
+#endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID) || defined(OS_WIN)
+#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 TEST_F(BluetoothTest, GetGattServices_and_GetGattService) {
   if (!PlatformSupportsLowEnergy()) {
     LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
@@ -506,7 +598,7 @@ TEST_F(BluetoothTest, GetGattServices_and_GetGattService) {
   }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
                                GetConnectErrorCallback(Call::NOT_EXPECTED));
   ResetEventCounts();
@@ -529,13 +621,17 @@ TEST_F(BluetoothTest, GetGattServices_and_GetGattService) {
   EXPECT_TRUE(device->GetGattService(service_id2));
   EXPECT_TRUE(device->GetGattService(service_id3));
 }
-#endif  // defined(OS_ANDROID) || defined(OS_WIN)
+#endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
 TEST_F(BluetoothTest, GetGattServices_DiscoveryError) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
   InitWithFakeAdapter();
   StartLowEnergyDiscoverySession();
-  BluetoothDevice* device = DiscoverLowEnergyDevice(3);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
   device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
                                GetConnectErrorCallback(Call::NOT_EXPECTED));
   ResetEventCounts();
@@ -545,6 +641,24 @@ TEST_F(BluetoothTest, GetGattServices_DiscoveryError) {
   SimulateGattServicesDiscoveryError(device);
   EXPECT_EQ(0u, device->GetGattServices().size());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
+
+#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+TEST_F(BluetoothTest, GetDeviceTransportType) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+  InitWithFakeAdapter();
+  BluetoothDevice* device = SimulateLowEnergyDevice(1);
+  EXPECT_EQ(BLUETOOTH_TRANSPORT_LE, device->GetType());
+
+  BluetoothDevice* device2 = SimulateLowEnergyDevice(6);
+  EXPECT_EQ(BLUETOOTH_TRANSPORT_DUAL, device2->GetType());
+
+  BluetoothDevice* device3 = SimulateClassicDevice();
+  EXPECT_EQ(BLUETOOTH_TRANSPORT_CLASSIC, device3->GetType());
+}
+#endif  // defined(OS_CHROMEOS) || defined(OS_LINUX)
 
 }  // namespace device

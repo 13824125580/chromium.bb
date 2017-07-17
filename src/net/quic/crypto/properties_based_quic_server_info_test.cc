@@ -8,7 +8,6 @@
 
 #include "net/base/net_errors.h"
 #include "net/http/http_server_properties_impl.h"
-#include "net/quic/crypto/quic_server_info.h"
 #include "net/quic/quic_server_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -16,18 +15,20 @@ namespace net {
 namespace test {
 
 namespace {
-const std::string kServerConfigA("server_config_a");
-const std::string kSourceAddressTokenA("source_address_token_a");
-const std::string kServerConfigSigA("server_config_sig_a");
-const std::string kCertA("cert_a");
-const std::string kCertB("cert_b");
+const char kServerConfigA[] = "server_config_a";
+const char kSourceAddressTokenA[] = "source_address_token_a";
+const char kCertSCTA[] = "cert_sct_a";
+const char kChloHashA[] = "chlo_hash_a";
+const char kServerConfigSigA[] = "server_config_sig_a";
+const char kCertA[] = "cert_a";
+const char kCertB[] = "cert_b";
 }  // namespace
 
 class PropertiesBasedQuicServerInfoTest : public ::testing::Test {
  protected:
   PropertiesBasedQuicServerInfoTest()
       : server_id_("www.google.com", 443, PRIVACY_MODE_DISABLED),
-        server_info_(server_id_, http_server_properties_.GetWeakPtr()) {}
+        server_info_(server_id_, &http_server_properties_) {}
 
   // Initialize |server_info_| object and persist it.
   void InitializeAndPersist() {
@@ -39,6 +40,8 @@ class PropertiesBasedQuicServerInfoTest : public ::testing::Test {
     state->server_config = kServerConfigA;
     state->source_address_token = kSourceAddressTokenA;
     state->server_config_sig = kServerConfigSigA;
+    state->cert_sct = kCertSCTA;
+    state->chlo_hash = kChloHashA;
     state->certs.push_back(kCertA);
     EXPECT_TRUE(server_info_.IsReadyToPersist());
     server_info_.Persist();
@@ -51,6 +54,8 @@ class PropertiesBasedQuicServerInfoTest : public ::testing::Test {
   void VerifyInitialData(const QuicServerInfo::State& state) {
     EXPECT_EQ(kServerConfigA, state.server_config);
     EXPECT_EQ(kSourceAddressTokenA, state.source_address_token);
+    EXPECT_EQ(kCertSCTA, state.cert_sct);
+    EXPECT_EQ(kChloHashA, state.chlo_hash);
     EXPECT_EQ(kServerConfigSigA, state.server_config_sig);
     EXPECT_EQ(kCertA, state.certs[0]);
   }
@@ -66,8 +71,8 @@ TEST_F(PropertiesBasedQuicServerInfoTest, Update) {
   InitializeAndPersist();
 
   // Read the persisted data and verify we have read the data correctly.
-  PropertiesBasedQuicServerInfo server_info1(
-      server_id_, http_server_properties_.GetWeakPtr());
+  PropertiesBasedQuicServerInfo server_info1(server_id_,
+                                             &http_server_properties_);
   server_info1.Start();
   EXPECT_EQ(OK, server_info1.WaitForDataReady(callback_));  // Read the data.
   EXPECT_TRUE(server_info1.IsDataReady());
@@ -84,8 +89,8 @@ TEST_F(PropertiesBasedQuicServerInfoTest, Update) {
   server_info1.Persist();
 
   // Read the persisted data and verify we have read the data correctly.
-  PropertiesBasedQuicServerInfo server_info2(
-      server_id_, http_server_properties_.GetWeakPtr());
+  PropertiesBasedQuicServerInfo server_info2(server_id_,
+                                             &http_server_properties_);
   server_info2.Start();
   EXPECT_EQ(OK, server_info2.WaitForDataReady(callback_));  // Read the data.
   EXPECT_TRUE(server_info1.IsDataReady());

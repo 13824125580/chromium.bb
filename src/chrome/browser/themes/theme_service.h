@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_THEMES_THEME_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -13,7 +14,6 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "build/build_config.h"
@@ -136,6 +136,10 @@ class ThemeService : public base::NonThreadSafe,
   // Returns true if the ThemeService should use the system theme on startup.
   virtual bool ShouldInitWithSystemTheme() const;
 
+  // Returns the color to use for |id| and |incognito| if the theme service does
+  // not provide an override.
+  virtual SkColor GetDefaultColor(int id, bool incognito) const;
+
   // Get the specified tint - |id| is one of the TINT_* enum values.
   color_utils::HSL GetTint(int id, bool incognito) const;
 
@@ -156,6 +160,11 @@ class ThemeService : public base::NonThreadSafe,
   // Clears the platform-specific caches. Do not call directly; it's called
   // from ClearAllThemeData().
   virtual void FreePlatformCaches();
+
+  // Implementation for ui::ThemeProvider (see block of functions in private
+  // section).
+  virtual bool ShouldUseNativeFrame() const;
+  bool HasCustomImage(int id) const;
 
   Profile* profile() const { return profile_; }
 
@@ -181,6 +190,7 @@ class ThemeService : public base::NonThreadSafe,
     // Overridden from ui::ThemeProvider:
     gfx::ImageSkia* GetImageSkiaNamed(int id) const override;
     SkColor GetColor(int original_id) const override;
+    color_utils::HSL GetTint(int original_id) const override;
     int GetDisplayProperty(int id) const override;
     bool ShouldUseNativeFrame() const override;
     bool HasCustomImage(int id) const override;
@@ -188,11 +198,14 @@ class ThemeService : public base::NonThreadSafe,
         const override;
 #if defined(OS_MACOSX)
     bool UsingSystemTheme() const override;
+    bool InIncognitoMode() const override;
+    bool HasCustomColor(int id) const override;
     NSImage* GetNSImageNamed(int id) const override;
     NSColor* GetNSImageColorNamed(int id) const override;
     NSColor* GetNSColor(int id) const override;
     NSColor* GetNSColorTint(int id) const override;
     NSGradient* GetNSGradient(int id) const override;
+    bool ShouldIncreaseContrast() const override;
 #endif
 
    private:
@@ -218,21 +231,18 @@ class ThemeService : public base::NonThreadSafe,
   // and contrasting with the foreground tab is the most important).
   static SkColor GetSeparatorColor(SkColor tab_color, SkColor frame_color);
 
-  const ui::ThemeProvider& GetOrCreateThemeProviderForProfile(Profile* profile);
-
   // These methods provide the implementation for ui::ThemeProvider (exposed
   // via BrowserThemeProvider).
   gfx::ImageSkia* GetImageSkiaNamed(int id, bool incognito) const;
   SkColor GetColor(int id, bool incognito) const;
   int GetDisplayProperty(int id) const;
-  bool ShouldUseNativeFrame() const;
-  bool HasCustomImage(int id) const;
   base::RefCountedMemory* GetRawData(int id,
                                      ui::ScaleFactor scale_factor) const;
 #if defined(OS_MACOSX)
-  NSImage* GetNSImageNamed(int id) const;
-  NSColor* GetNSImageColorNamed(int id) const;
-  NSColor* GetNSColor(int id) const;
+  NSImage* GetNSImageNamed(int id, bool incognito) const;
+  NSColor* GetNSImageColorNamed(int id, bool incognito) const;
+  bool HasCustomColor(int id) const;
+  NSColor* GetNSColor(int id, bool incognito) const;
   NSColor* GetNSColorTint(int id) const;
   NSGradient* GetNSGradient(int id) const;
 #endif
@@ -307,11 +317,11 @@ class ThemeService : public base::NonThreadSafe,
 
   content::NotificationRegistrar registrar_;
 
-  scoped_ptr<ThemeSyncableService> theme_syncable_service_;
+  std::unique_ptr<ThemeSyncableService> theme_syncable_service_;
 
 #if defined(ENABLE_EXTENSIONS)
   class ThemeObserver;
-  scoped_ptr<ThemeObserver> theme_observer_;
+  std::unique_ptr<ThemeObserver> theme_observer_;
 #endif
 
   BrowserThemeProvider original_theme_provider_;

@@ -29,7 +29,6 @@
 #include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
-#include "core/dom/ExceptionCode.h"
 #include "modules/mediastream/UserMediaController.h"
 
 namespace blink {
@@ -42,7 +41,7 @@ MediaDevicesRequest* MediaDevicesRequest::create(ScriptState* state, UserMediaCo
 }
 
 MediaDevicesRequest::MediaDevicesRequest(ScriptState* state, UserMediaController* controller)
-    : ActiveDOMObject(state->executionContext())
+    : ActiveDOMObject(state->getExecutionContext())
     , m_controller(controller)
     , m_resolver(ScriptPromiseResolver::create(state))
 {
@@ -54,7 +53,7 @@ MediaDevicesRequest::~MediaDevicesRequest()
 
 Document* MediaDevicesRequest::ownerDocument()
 {
-    if (ExecutionContext* context = executionContext()) {
+    if (ExecutionContext* context = getExecutionContext()) {
         return toDocument(context);
     }
 
@@ -63,7 +62,7 @@ Document* MediaDevicesRequest::ownerDocument()
 
 ScriptPromise MediaDevicesRequest::start()
 {
-    ASSERT(m_controller);
+    DCHECK(m_controller);
     m_resolver->keepAliveWhilePending();
     m_controller->requestMediaDevices(this);
     return m_resolver->promise();
@@ -71,7 +70,7 @@ ScriptPromise MediaDevicesRequest::start()
 
 void MediaDevicesRequest::succeed(const MediaDeviceInfoVector& mediaDevices)
 {
-    if (!executionContext() || !m_resolver)
+    if (!getExecutionContext() || !m_resolver)
         return;
 
     m_resolver->resolve(mediaDevices);

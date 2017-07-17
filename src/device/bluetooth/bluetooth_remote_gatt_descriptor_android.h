@@ -5,9 +5,12 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_REMOTE_GATT_DESCRIPTOR_ANDROID_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_REMOTE_GATT_DESCRIPTOR_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/macros.h"
-#include "device/bluetooth/bluetooth_gatt_descriptor.h"
+#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
+#include "device/bluetooth/bluetooth_remote_gatt_descriptor.h"
 
 namespace device {
 
@@ -15,7 +18,7 @@ namespace device {
 // org.chromium.device.bluetooth.ChromeBluetoothRemoteGattDescriptor
 // implement BluetootGattDescriptor.
 class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattDescriptorAndroid
-    : public BluetoothGattDescriptor {
+    : public BluetoothRemoteGattDescriptor {
  public:
   // Create a BluetoothRemoteGattDescriptorAndroid instance and associated
   // Java ChromeBluetoothRemoteGattDescriptor using the provided
@@ -23,7 +26,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattDescriptorAndroid
   //
   // The ChromeBluetoothRemoteGattDescriptor instance will hold a Java
   // reference to |bluetooth_gatt_descriptor_wrapper|.
-  static scoped_ptr<BluetoothRemoteGattDescriptorAndroid> Create(
+  static std::unique_ptr<BluetoothRemoteGattDescriptorAndroid> Create(
       const std::string& instanceId,
       jobject /* BluetoothGattDescriptorWrapper */
       bluetooth_gatt_descriptor_wrapper,
@@ -37,18 +40,29 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattDescriptorAndroid
   // Returns the associated ChromeBluetoothRemoteGattDescriptor Java object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
-  // BluetoothGattDescriptor interface:
+  // BluetoothRemoteGattDescriptor interface:
   std::string GetIdentifier() const override;
   BluetoothUUID GetUUID() const override;
-  bool IsLocal() const override;
   const std::vector<uint8_t>& GetValue() const override;
-  BluetoothGattCharacteristic* GetCharacteristic() const override;
-  BluetoothGattCharacteristic::Permissions GetPermissions() const override;
+  BluetoothRemoteGattCharacteristic* GetCharacteristic() const override;
+  BluetoothRemoteGattCharacteristic::Permissions GetPermissions()
+      const override;
   void ReadRemoteDescriptor(const ValueCallback& callback,
                             const ErrorCallback& error_callback) override;
   void WriteRemoteDescriptor(const std::vector<uint8_t>& new_value,
                              const base::Closure& callback,
                              const ErrorCallback& error_callback) override;
+
+  // Called when Read operation completes.
+  void OnRead(JNIEnv* env,
+              const base::android::JavaParamRef<jobject>& jcaller,
+              int32_t status,
+              const base::android::JavaParamRef<jbyteArray>& value);
+
+  // Called when Write operation completes.
+  void OnWrite(JNIEnv* env,
+               const base::android::JavaParamRef<jobject>& jcaller,
+               int32_t status);
 
  private:
   BluetoothRemoteGattDescriptorAndroid(const std::string& instanceId);
@@ -59,6 +73,18 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattDescriptorAndroid
 
   // Adapter unique instance ID.
   std::string instance_id_;
+
+  // ReadRemoteCharacteristic callbacks and pending state.
+  bool read_pending_ = false;
+  ValueCallback read_callback_;
+  ErrorCallback read_error_callback_;
+
+  // WriteRemoteCharacteristic callbacks and pending state.
+  bool write_pending_ = false;
+  base::Closure write_callback_;
+  ErrorCallback write_error_callback_;
+
+  std::vector<uint8_t> value_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothRemoteGattDescriptorAndroid);
 };

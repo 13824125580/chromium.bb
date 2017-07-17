@@ -32,43 +32,46 @@
 #define ErrorEvent_h
 
 #include "bindings/core/v8/DOMWrapperWorld.h"
+#include "bindings/core/v8/SourceLocation.h"
 #include "core/events/ErrorEventInit.h"
 #include "core/events/Event.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
 class ErrorEvent final : public Event {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<ErrorEvent> create()
+    static ErrorEvent* create()
     {
-        return adoptRefWillBeNoop(new ErrorEvent);
+        return new ErrorEvent;
     }
-    static PassRefPtrWillBeRawPtr<ErrorEvent> create(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, DOMWrapperWorld* world)
+    static ErrorEvent* create(const String& message, std::unique_ptr<SourceLocation> location, DOMWrapperWorld* world)
     {
-        return adoptRefWillBeNoop(new ErrorEvent(message, fileName, lineNumber, columnNumber, world));
+        return new ErrorEvent(message, std::move(location), world);
     }
-    static PassRefPtrWillBeRawPtr<ErrorEvent> create(const AtomicString& type, const ErrorEventInit& initializer)
+    static ErrorEvent* create(const AtomicString& type, const ErrorEventInit& initializer)
     {
-        return adoptRefWillBeNoop(new ErrorEvent(type, initializer));
+        return new ErrorEvent(type, initializer);
     }
-    static PassRefPtrWillBeRawPtr<ErrorEvent> createSanitizedError(DOMWrapperWorld* world)
+    static ErrorEvent* createSanitizedError(DOMWrapperWorld* world)
     {
-        return adoptRefWillBeNoop(new ErrorEvent("Script error.", String(), 0, 0, world));
+        return new ErrorEvent("Script error.", SourceLocation::create(String(), 0, 0, nullptr), world);
     }
     ~ErrorEvent() override;
 
     // As 'message' is exposed to JavaScript, never return unsanitizedMessage.
     const String& message() const { return m_sanitizedMessage; }
-    const String& filename() const { return m_fileName; }
-    unsigned lineno() const { return m_lineNumber; }
-    unsigned colno() const { return m_columnNumber; }
+    const String& filename() const { return m_location->url(); }
+    unsigned lineno() const { return m_location->lineNumber(); }
+    unsigned colno() const { return m_location->columnNumber(); }
     ScriptValue error(ScriptState*) const;
 
     // 'messageForConsole' is not exposed to JavaScript, and prefers 'm_unsanitizedMessage'.
     const String& messageForConsole() const { return !m_unsanitizedMessage.isEmpty() ? m_unsanitizedMessage : m_sanitizedMessage; }
+    SourceLocation* location() const { return m_location.get(); }
 
     const AtomicString& interfaceName() const override;
 
@@ -80,14 +83,12 @@ public:
 
 private:
     ErrorEvent();
-    ErrorEvent(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, DOMWrapperWorld*);
+    ErrorEvent(const String& message, std::unique_ptr<SourceLocation>, DOMWrapperWorld*);
     ErrorEvent(const AtomicString&, const ErrorEventInit&);
 
     String m_unsanitizedMessage;
     String m_sanitizedMessage;
-    String m_fileName;
-    unsigned m_lineNumber;
-    unsigned m_columnNumber;
+    std::unique_ptr<SourceLocation> m_location;
     ScriptValue m_error;
 
     RefPtr<DOMWrapperWorld> m_world;

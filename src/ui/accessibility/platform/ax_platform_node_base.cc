@@ -44,7 +44,12 @@ gfx::NativeViewAccessible AXPlatformNodeBase::ChildAtIndex(int index) {
 // AXPlatformNode overrides.
 
 void AXPlatformNodeBase::Destroy() {
+  AXPlatformNode::Destroy();
   delegate_ = nullptr;
+  Dispose();
+}
+
+void AXPlatformNodeBase::Dispose() {
   delete this;
 }
 
@@ -92,7 +97,10 @@ bool AXPlatformNodeBase::IsDescendant(AXPlatformNodeBase* node) {
     return false;
   if (node == this)
     return true;
-  AXPlatformNodeBase* parent = FromNativeViewAccessible(node->GetParent());
+  gfx::NativeViewAccessible native_parent = node->GetParent();
+  if (!native_parent)
+    return false;
+  AXPlatformNodeBase* parent = FromNativeViewAccessible(native_parent);
   return IsDescendant(parent);
 }
 
@@ -185,6 +193,7 @@ AXPlatformNodeBase::AXPlatformNodeBase() {
 }
 
 AXPlatformNodeBase::~AXPlatformNodeBase() {
+  CHECK(!delegate_);
 }
 
 // static

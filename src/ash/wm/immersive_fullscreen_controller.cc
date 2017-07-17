@@ -6,10 +6,11 @@
 
 #include <set>
 
-#include "ash/ash_constants.h"
+#include "ash/common/ash_constants.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shell.h"
 #include "ash/wm/resize_handle_window_targeter.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "base/metrics/histogram.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
@@ -18,12 +19,12 @@
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/animation/slide_animation.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/transient_window_manager.h"
@@ -62,15 +63,22 @@ const int kSwipeVerticalThresholdMultiplier = 3;
 // See ShouldIgnoreMouseEventAtLocation() for more details.
 const int kHeightOfDeadRegionAboveTopContainer = 10;
 
-// Returns the BubbleDelegateView corresponding to |maybe_bubble| if
+// Returns the BubbleDialogDelegateView corresponding to |maybe_bubble| if
 // |maybe_bubble| is a bubble.
-views::BubbleDelegateView* AsBubbleDelegate(aura::Window* maybe_bubble) {
+views::BubbleDialogDelegateView* AsBubbleDialogDelegate(
+    aura::Window* maybe_bubble) {
   if (!maybe_bubble)
-    return NULL;
+    return nullptr;
   views::Widget* widget = views::Widget::GetWidgetForNativeView(maybe_bubble);
   if (!widget)
-    return NULL;
-  return widget->widget_delegate()->AsBubbleDelegate();
+    return nullptr;
+  return widget->widget_delegate()->AsBubbleDialogDelegate();
+}
+
+views::View* GetAnchorView(aura::Window* maybe_bubble) {
+  views::BubbleDialogDelegateView* bubble_dialog =
+      AsBubbleDialogDelegate(maybe_bubble);
+  return bubble_dialog ? bubble_dialog->GetAnchorView() : nullptr;
 }
 
 // Returns true if |maybe_transient| is a transient child of |toplevel|.
@@ -99,7 +107,7 @@ gfx::Point GetEventLocationInScreen(const ui::LocatedEvent& event) {
 
 // Returns the bounds of the display nearest to |window| in screen coordinates.
 gfx::Rect GetDisplayBoundsInScreen(aura::Window* window) {
-  return gfx::Screen::GetScreen()->GetDisplayNearestWindow(window).bounds();
+  return display::Screen::GetScreen()->GetDisplayNearestWindow(window).bounds();
 }
 
 }  // namespace
@@ -128,11 +136,11 @@ const int ImmersiveFullscreenController::kMouseRevealBoundsHeight = 3;
 // so that bubbles which are not activatable and bubbles which do not close
 // upon deactivation also keep the top-of-window views revealed for the
 // duration of their visibility.
-class ImmersiveFullscreenController::BubbleManager
+class ImmersiveFullscreenController::BubbleObserver
     : public aura::WindowObserver {
  public:
-  explicit BubbleManager(ImmersiveFullscreenController* controller);
-  ~BubbleManager() override;
+  explicit BubbleObserver(ImmersiveFullscreenController* controller);
+  ~BubbleObserver() override;
 
   // Start / stop observing changes to |bubble|'s visibility.
   void StartObserving(aura::Window* bubble);
@@ -152,24 +160,21 @@ class ImmersiveFullscreenController::BubbleManager
 
   // Lock which keeps the top-of-window views revealed based on whether any of
   // |bubbles_| is visible.
-  scoped_ptr<ImmersiveRevealedLock> revealed_lock_;
+  std::unique_ptr<ImmersiveRevealedLock> revealed_lock_;
 
-  DISALLOW_COPY_AND_ASSIGN(BubbleManager);
+  DISALLOW_COPY_AND_ASSIGN(BubbleObserver);
 };
 
-ImmersiveFullscreenController::BubbleManager::BubbleManager(
+ImmersiveFullscreenController::BubbleObserver::BubbleObserver(
     ImmersiveFullscreenController* controller)
-    : controller_(controller) {
+    : controller_(controller) {}
+
+ImmersiveFullscreenController::BubbleObserver::~BubbleObserver() {
+  for (aura::Window* bubble : bubbles_)
+    bubble->RemoveObserver(this);
 }
 
-ImmersiveFullscreenController::BubbleManager::~BubbleManager() {
-  for (std::set<aura::Window*>::const_iterator it = bubbles_.begin();
-       it != bubbles_.end(); ++it) {
-    (*it)->RemoveObserver(this);
-  }
-}
-
-void ImmersiveFullscreenController::BubbleManager::StartObserving(
+void ImmersiveFullscreenController::BubbleObserver::StartObserving(
     aura::Window* bubble) {
   if (bubbles_.insert(bubble).second) {
     bubble->AddObserver(this);
@@ -177,7 +182,7 @@ void ImmersiveFullscreenController::BubbleManager::StartObserving(
   }
 }
 
-void ImmersiveFullscreenController::BubbleManager::StopObserving(
+void ImmersiveFullscreenController::BubbleObserver::StopObserving(
     aura::Window* bubble) {
   if (bubbles_.erase(bubble)) {
     bubble->RemoveObserver(this);
@@ -185,11 +190,10 @@ void ImmersiveFullscreenController::BubbleManager::StopObserving(
   }
 }
 
-void ImmersiveFullscreenController::BubbleManager::UpdateRevealedLock() {
+void ImmersiveFullscreenController::BubbleObserver::UpdateRevealedLock() {
   bool has_visible_bubble = false;
-  for (std::set<aura::Window*>::const_iterator it = bubbles_.begin();
-       it != bubbles_.end(); ++it) {
-    if ((*it)->IsVisible()) {
+  for (aura::Window* bubble : bubbles_) {
+    if (bubble->IsVisible()) {
       has_visible_bubble = true;
       break;
     }
@@ -212,22 +216,20 @@ void ImmersiveFullscreenController::BubbleManager::UpdateRevealedLock() {
     // Currently, there is no nice way for bubbles to reposition themselves
     // whenever the anchor view moves. Tell the bubbles to reposition themselves
     // explicitly instead. The hidden bubbles are also repositioned because
-    // BubbleDelegateView does not reposition its widget as a result of a
+    // BubbleDialogDelegateView does not reposition its widget as a result of a
     // visibility change.
-    for (std::set<aura::Window*>::const_iterator it = bubbles_.begin();
-         it != bubbles_.end(); ++it) {
-      AsBubbleDelegate(*it)->OnAnchorBoundsChanged();
-    }
+    for (aura::Window* bubble : bubbles_)
+      AsBubbleDialogDelegate(bubble)->OnAnchorBoundsChanged();
   }
 }
 
-void ImmersiveFullscreenController::BubbleManager::OnWindowVisibilityChanged(
+void ImmersiveFullscreenController::BubbleObserver::OnWindowVisibilityChanged(
     aura::Window*,
     bool visible) {
   UpdateRevealedLock();
 }
 
-void ImmersiveFullscreenController::BubbleManager::OnWindowDestroying(
+void ImmersiveFullscreenController::BubbleObserver::OnWindowDestroying(
     aura::Window* window) {
   StopObserving(window);
 }
@@ -247,8 +249,7 @@ ImmersiveFullscreenController::ImmersiveFullscreenController()
       gesture_begun_(false),
       animation_(new gfx::SlideAnimation(this)),
       animations_disabled_for_test_(false),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 ImmersiveFullscreenController::~ImmersiveFullscreenController() {
   EnableWindowObservers(false);
@@ -261,7 +262,7 @@ void ImmersiveFullscreenController::Init(Delegate* delegate,
   top_container_ = top_container;
   widget_ = widget;
   native_window_ = widget_->GetNativeWindow();
-  native_window_->SetEventTargeter(scoped_ptr<ui::EventTargeter>(
+  native_window_->SetEventTargeter(std::unique_ptr<ui::EventTargeter>(
       new ResizeHandleWindowTargeter(native_window_, this)));
 }
 
@@ -275,7 +276,9 @@ void ImmersiveFullscreenController::SetEnabled(WindowType window_type,
 
   ash::wm::WindowState* window_state = wm::GetWindowState(native_window_);
   // Auto hide the shelf in immersive fullscreen instead of hiding it.
-  window_state->set_hide_shelf_when_fullscreen(!enabled);
+  window_state->set_shelf_mode_in_fullscreen(
+      enabled ? ash::wm::WindowState::SHELF_AUTO_HIDE_VISIBLE
+              : ash::wm::WindowState::SHELF_HIDDEN);
 
   // Update the window's immersive mode state for the window manager.
   window_state->set_in_immersive_fullscreen(enabled);
@@ -313,8 +316,7 @@ void ImmersiveFullscreenController::SetEnabled(WindowType window_type,
   }
 
   if (enabled_) {
-    UMA_HISTOGRAM_ENUMERATION("Ash.ImmersiveFullscreen.WindowType",
-                              window_type,
+    UMA_HISTOGRAM_ENUMERATION("Ash.ImmersiveFullscreen.WindowType", window_type,
                               WINDOW_TYPE_COUNT);
   }
 }
@@ -439,8 +441,7 @@ void ImmersiveFullscreenController::OnGestureEvent(ui::GestureEvent* event) {
 
 void ImmersiveFullscreenController::OnWillChangeFocus(
     views::View* focused_before,
-    views::View* focused_now) {
-}
+    views::View* focused_now) {}
 
 void ImmersiveFullscreenController::OnDidChangeFocus(
     views::View* focused_before,
@@ -489,21 +490,19 @@ void ImmersiveFullscreenController::AnimationProgressed(
 void ImmersiveFullscreenController::OnTransientChildAdded(
     aura::Window* window,
     aura::Window* transient) {
-  views::BubbleDelegateView* bubble_delegate = AsBubbleDelegate(transient);
-  if (bubble_delegate &&
-      bubble_delegate->GetAnchorView() &&
-      top_container_->Contains(bubble_delegate->GetAnchorView())) {
+  views::View* anchor = GetAnchorView(transient);
+  if (anchor && top_container_->Contains(anchor)) {
     // Observe the aura::Window because the BubbleDelegateView may not be
     // parented to the widget's root view yet so |bubble_delegate->GetWidget()|
     // may still return NULL.
-    bubble_manager_->StartObserving(transient);
+    bubble_observer_->StartObserving(transient);
   }
 }
 
 void ImmersiveFullscreenController::OnTransientChildRemoved(
     aura::Window* window,
     aura::Window* transient) {
-  bubble_manager_->StopObserving(transient);
+  bubble_observer_->StopObserving(transient);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -512,8 +511,8 @@ void ImmersiveFullscreenController::OnTransientChildRemoved(
 void ImmersiveFullscreenController::LockRevealedState(
     AnimateReveal animate_reveal) {
   ++revealed_lock_count_;
-  Animate animate = (animate_reveal == ANIMATE_REVEAL_YES) ?
-      ANIMATE_FAST : ANIMATE_NO;
+  Animate animate =
+      (animate_reveal == ANIMATE_REVEAL_YES) ? ANIMATE_FAST : ANIMATE_NO;
   MaybeStartReveal(animate);
 }
 
@@ -540,22 +539,20 @@ void ImmersiveFullscreenController::EnableWindowObservers(bool enable) {
     widget_->AddObserver(this);
     focus_manager->AddFocusChangeListener(this);
     Shell::GetInstance()->AddPreTargetHandler(this);
-    ::wm::TransientWindowManager::Get(native_window_)->
-        AddObserver(this);
+    ::wm::TransientWindowManager::Get(native_window_)->AddObserver(this);
 
-    RecreateBubbleManager();
+    RecreateBubbleObserver();
   } else {
     widget_->RemoveObserver(this);
     focus_manager->RemoveFocusChangeListener(this);
     Shell::GetInstance()->RemovePreTargetHandler(this);
-    ::wm::TransientWindowManager::Get(native_window_)->
-        RemoveObserver(this);
+    ::wm::TransientWindowManager::Get(native_window_)->RemoveObserver(this);
 
     // We have stopped observing whether transient children are added or removed
-    // to |native_window_|. The set of bubbles that BubbleManager is observing
-    // will become stale really quickly. Destroy BubbleManager and recreate it
+    // to |native_window_|. The set of bubbles that BubbleObserver is observing
+    // will become stale really quickly. Destroy BubbleObserver and recreate it
     // when we start observing |native_window_| again.
-    bubble_manager_.reset();
+    bubble_observer_.reset();
 
     animation_->Stop();
   }
@@ -607,8 +604,7 @@ void ImmersiveFullscreenController::UpdateTopEdgeHoverTimer(
   top_edge_hover_timer_.Stop();
   // Timer is stopped when |this| is destroyed, hence Unretained() is safe.
   top_edge_hover_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromMilliseconds(kMouseRevealDelayMs),
+      FROM_HERE, base::TimeDelta::FromMilliseconds(kMouseRevealDelayMs),
       base::Bind(
           &ImmersiveFullscreenController::AcquireLocatedEventRevealedLock,
           base::Unretained(this)));
@@ -642,8 +638,8 @@ void ImmersiveFullscreenController::UpdateLocatedEventRevealedLock(
   if (event && event->type() != ui::ET_MOUSE_CAPTURE_CHANGED) {
     location_in_screen = GetEventLocationInScreen(*event);
   } else {
-    aura::client::CursorClient* cursor_client = aura::client::GetCursorClient(
-        native_window_->GetRootWindow());
+    aura::client::CursorClient* cursor_client =
+        aura::client::GetCursorClient(native_window_->GetRootWindow());
     if (!cursor_client->IsMouseEventsEnabled()) {
       // If mouse events are disabled, the user's last interaction was probably
       // via touch. Do no do further processing in this case as there is no easy
@@ -703,12 +699,11 @@ void ImmersiveFullscreenController::UpdateFocusRevealedLock() {
     if (top_container_->Contains(focused_view))
       hold_lock = true;
   } else {
-    aura::Window* active_window = aura::client::GetActivationClient(
-        native_window_->GetRootWindow())->GetActiveWindow();
-    views::BubbleDelegateView* bubble_delegate =
-        AsBubbleDelegate(active_window);
-    if (bubble_delegate && bubble_delegate->anchor_widget()) {
-      // BubbleManager will already have locked the top-of-window views if the
+    aura::Window* active_window =
+        aura::client::GetActivationClient(native_window_->GetRootWindow())
+            ->GetActiveWindow();
+    if (GetAnchorView(active_window)) {
+      // BubbleObserver will already have locked the top-of-window views if the
       // bubble is anchored to a child of |top_container_|. Don't acquire
       // |focus_revealed_lock_| here for the sake of simplicity.
       // Note: Instead of checking for the existence of the |anchor_view|,
@@ -926,26 +921,22 @@ bool ImmersiveFullscreenController::ShouldHandleGestureEvent(
   // closest screen ensures that the event is from a valid bezel (as opposed to
   // another screen in an extended desktop).
   gfx::Rect screen_bounds =
-      gfx::Screen::GetScreen()->GetDisplayNearestPoint(location).bounds();
+      display::Screen::GetScreen()->GetDisplayNearestPoint(location).bounds();
   return (!screen_bounds.Contains(location) &&
           location.y() < hit_bounds_in_screen.y() &&
           location.x() >= hit_bounds_in_screen.x() &&
           location.x() < hit_bounds_in_screen.right());
 }
 
-void ImmersiveFullscreenController::RecreateBubbleManager() {
-  bubble_manager_.reset(new BubbleManager(this));
+void ImmersiveFullscreenController::RecreateBubbleObserver() {
+  bubble_observer_.reset(new BubbleObserver(this));
   const std::vector<aura::Window*> transient_children =
       ::wm::GetTransientChildren(native_window_);
   for (size_t i = 0; i < transient_children.size(); ++i) {
     aura::Window* transient_child = transient_children[i];
-    views::BubbleDelegateView* bubble_delegate =
-        AsBubbleDelegate(transient_child);
-    if (bubble_delegate &&
-        bubble_delegate->GetAnchorView() &&
-        top_container_->Contains(bubble_delegate->GetAnchorView())) {
-      bubble_manager_->StartObserving(transient_child);
-    }
+    views::View* anchor_view = GetAnchorView(transient_child);
+    if (anchor_view && top_container_->Contains(anchor_view))
+      bubble_observer_->StartObserving(transient_child);
   }
 }
 

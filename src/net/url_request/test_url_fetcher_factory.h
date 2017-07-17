@@ -9,6 +9,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -16,7 +17,6 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "net/http/http_request_headers.h"
@@ -130,7 +130,7 @@ class TestURLFetcher : public URLFetcher {
   void SaveResponseToTemporaryFile(
       scoped_refptr<base::SequencedTaskRunner> file_task_runner) override;
   void SaveResponseWithWriter(
-      scoped_ptr<URLFetcherResponseWriter> response_writer) override;
+      std::unique_ptr<URLFetcherResponseWriter> response_writer) override;
   HttpResponseHeaders* GetResponseHeaders() const override;
   HostPortPair GetSocketAddress() const override;
   bool WasFetchedViaProxy() const override;
@@ -149,7 +149,6 @@ class TestURLFetcher : public URLFetcher {
   const GURL& GetURL() const override;
   const URLRequestStatus& GetStatus() const override;
   int GetResponseCode() const override;
-  const ResponseCookies& GetCookies() const override;
   void ReceivedContentWasMalformed() override;
   // Override response access functions to return fake data.
   bool GetResponseAsString(std::string* out_response_string) const override;
@@ -187,7 +186,6 @@ class TestURLFetcher : public URLFetcher {
   void set_response_code(int response_code) {
     fake_response_code_ = response_code;
   }
-  void set_cookies(const ResponseCookies& c) { fake_cookies_ = c; }
   void set_was_fetched_via_proxy(bool flag);
   void set_was_cached(bool flag);
   void set_response_headers(scoped_refptr<HttpResponseHeaders> headers);
@@ -225,7 +223,6 @@ class TestURLFetcher : public URLFetcher {
   GURL fake_url_;
   URLRequestStatus fake_status_;
   int fake_response_code_;
-  ResponseCookies fake_cookies_;
   ResponseDestinationType fake_response_destination_;
   std::string fake_response_string_;
   base::FilePath fake_response_file_path_;
@@ -237,7 +234,7 @@ class TestURLFetcher : public URLFetcher {
   HttpRequestHeaders fake_extra_request_headers_;
   int fake_max_retries_;
   base::TimeDelta fake_backoff_delay_;
-  scoped_ptr<URLFetcherResponseWriter> response_writer_;
+  std::unique_ptr<URLFetcherResponseWriter> response_writer_;
 
   DISALLOW_COPY_AND_ASSIGN(TestURLFetcher);
 };
@@ -254,10 +251,11 @@ class TestURLFetcherFactory : public URLFetcherFactory,
   TestURLFetcherFactory();
   ~TestURLFetcherFactory() override;
 
-  scoped_ptr<URLFetcher> CreateURLFetcher(int id,
-                                          const GURL& url,
-                                          URLFetcher::RequestType request_type,
-                                          URLFetcherDelegate* d) override;
+  std::unique_ptr<URLFetcher> CreateURLFetcher(
+      int id,
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d) override;
   TestURLFetcher* GetFetcherByID(int id) const;
   void RemoveFetcherFromMap(int id);
   void SetDelegateForTests(TestURLFetcherDelegateForTests* delegate_for_tests);
@@ -384,12 +382,13 @@ class FakeURLFetcherFactory : public URLFetcherFactory,
   // These arguments should by default be used in instantiating FakeURLFetcher
   // like so:
   // new FakeURLFetcher(url, delegate, response_data, response_code, status)
-  typedef base::Callback<scoped_ptr<FakeURLFetcher>(
+  typedef base::Callback<std::unique_ptr<FakeURLFetcher>(
       const GURL&,
       URLFetcherDelegate*,
       const std::string&,
       HttpStatusCode,
-      URLRequestStatus::Status)> FakeURLFetcherCreator;
+      URLRequestStatus::Status)>
+      FakeURLFetcherCreator;
 
   // |default_factory|, which can be NULL, is a URLFetcherFactory that
   // will be used to construct a URLFetcher in case the URL being created
@@ -414,10 +413,11 @@ class FakeURLFetcherFactory : public URLFetcherFactory,
   // NULL.
   // Otherwise, it will return a URLFetcher object which will respond with the
   // pre-baked response that the client has set by calling SetFakeResponse().
-  scoped_ptr<URLFetcher> CreateURLFetcher(int id,
-                                          const GURL& url,
-                                          URLFetcher::RequestType request_type,
-                                          URLFetcherDelegate* d) override;
+  std::unique_ptr<URLFetcher> CreateURLFetcher(
+      int id,
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d) override;
 
   // Sets the fake response for a given URL. The |response_data| may be empty.
   // The |response_code| may be any HttpStatusCode. For instance, HTTP_OK will
@@ -447,7 +447,7 @@ class FakeURLFetcherFactory : public URLFetcherFactory,
   FakeResponseMap fake_responses_;
   URLFetcherFactory* const default_factory_;
 
-  static scoped_ptr<FakeURLFetcher> DefaultFakeURLFetcherCreator(
+  static std::unique_ptr<FakeURLFetcher> DefaultFakeURLFetcherCreator(
       const GURL& url,
       URLFetcherDelegate* delegate,
       const std::string& response_data,
@@ -466,10 +466,11 @@ class URLFetcherImplFactory : public URLFetcherFactory {
   ~URLFetcherImplFactory() override;
 
   // This method will create a real URLFetcher.
-  scoped_ptr<URLFetcher> CreateURLFetcher(int id,
-                                          const GURL& url,
-                                          URLFetcher::RequestType request_type,
-                                          URLFetcherDelegate* d) override;
+  std::unique_ptr<URLFetcher> CreateURLFetcher(
+      int id,
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d) override;
 };
 
 }  // namespace net

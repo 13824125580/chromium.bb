@@ -5,12 +5,12 @@
 // This file implements the Windows service controlling Me2Me host processes
 // running within user sessions.
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -54,12 +54,14 @@ int DesktopProcessMain() {
                                  channel_name);
 
   // Create a platform-dependent environment factory.
-  scoped_ptr<DesktopEnvironmentFactory> desktop_environment_factory;
+  std::unique_ptr<DesktopEnvironmentFactory> desktop_environment_factory;
 #if defined(OS_WIN)
   desktop_environment_factory.reset(new SessionDesktopEnvironmentFactory(
       ui_task_runner, video_capture_task_runner, input_task_runner,
       ui_task_runner,
-      base::Bind(&DesktopProcess::InjectSas, desktop_process.AsWeakPtr())));
+      base::Bind(&DesktopProcess::InjectSas, desktop_process.AsWeakPtr()),
+      base::Bind(&DesktopProcess::LockWorkStation,
+                 desktop_process.AsWeakPtr())));
 #else  // !defined(OS_WIN)
   desktop_environment_factory.reset(new Me2MeDesktopEnvironmentFactory(
       ui_task_runner, video_capture_task_runner, input_task_runner,

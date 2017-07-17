@@ -33,8 +33,6 @@
 
 #include "platform/Length.h"
 #include "platform/LengthFunctions.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefCounted.h"
 
 namespace blink {
@@ -53,10 +51,10 @@ public:
     }
     bool operator==(const CalculationValue& o) const { return pixels() == o.pixels() && percent() == o.percent(); }
     bool isNonNegative() const { return m_isNonNegative; }
-    ValueRange valueRange() const { return m_isNonNegative ? ValueRangeNonNegative : ValueRangeAll; }
+    ValueRange getValueRange() const { return m_isNonNegative ? ValueRangeNonNegative : ValueRangeAll; }
     float pixels() const { return m_value.pixels; }
     float percent() const { return m_value.percent; }
-    PixelsAndPercent pixelsAndPercent() const { return m_value; }
+    PixelsAndPercent getPixelsAndPercent() const { return m_value; }
 
 private:
     CalculationValue(PixelsAndPercent value, ValueRange range)

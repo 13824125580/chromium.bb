@@ -12,6 +12,54 @@
 #include "core/inspector/ConsoleMessage.h"
 #include "core/workers/WorkerGlobalScope.h"
 
+namespace {
+
+const char* milestoneString(int milestone)
+{
+    // These are the Estimated Stable Dates:
+    // https://www.chromium.org/developers/calendar
+
+    switch (milestone) {
+    case 50:
+        return "M50, around April 2016";
+    case 51:
+        return "M51, around May 2016";
+    case 52:
+        return "M52, around July 2016";
+    case 53:
+        return "M53, around September 2016";
+    case 54:
+        return "M54, around October 2016";
+    case 55:
+        return "M55, around November 2016";
+    }
+
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+String replacedBy(const char* feature, const char* replacement)
+{
+    return String::format("%s is deprecated. Please use %s instead.", feature, replacement);
+}
+
+String willBeRemoved(const char* feature, int milestone, const char* details)
+{
+    return String::format("%s is deprecated and will be removed in %s. See https://www.chromestatus.com/features/%s for more details.", feature, milestoneString(milestone), details);
+}
+
+String dopplerWillBeRemoved(const char* feature, int milestone, const char* details)
+{
+    return String::format("%s is deprecated and will be removed in %s. It has no effect as the Web Audio doppler effects have already been removed internally. See https://www.chromestatus.com/features/%s for more details.", feature, milestoneString(milestone), details);
+}
+
+String replacedWillBeRemoved(const char* feature, const char* replacement, int milestone, const char* details)
+{
+    return String::format("%s is deprecated and will be removed in %s. Please use %s instead. See https://www.chromestatus.com/features/%s for more details.", feature, milestoneString(milestone), replacement, details);
+}
+
+} // anonymous namespace
+
 namespace blink {
 
 Deprecation::Deprecation()
@@ -50,18 +98,16 @@ void Deprecation::warnOnDeprecatedProperties(const LocalFrame* frame, CSSPropert
     String message = deprecationMessage(unresolvedProperty);
     if (!message.isEmpty()) {
         host->deprecation().suppress(unresolvedProperty);
-        frame->console().addMessage(ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, message));
+        ConsoleMessage* consoleMessage = ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, message);
+        frame->console().addMessage(consoleMessage);
     }
 }
 
 String Deprecation::deprecationMessage(CSSPropertyID unresolvedProperty)
 {
-    switch (unresolvedProperty) {
-    case CSSPropertyWebkitBackgroundComposite:
-        return willBeRemoved("'-webkit-background-composite'", 51, "6607299456008192");
-    default:
-        return emptyString();
-    }
+    // TODO: Add a switch here when there are properties that we intend to deprecate.
+    // Returning an empty string for now.
+    return emptyString();
 }
 
 void Deprecation::countDeprecation(const LocalFrame* frame, UseCounter::Feature feature)
@@ -75,7 +121,8 @@ void Deprecation::countDeprecation(const LocalFrame* frame, UseCounter::Feature 
     if (!host->useCounter().hasRecordedMeasurement(feature)) {
         host->useCounter().recordMeasurement(feature);
         ASSERT(!deprecationMessage(feature).isEmpty());
-        frame->console().addMessage(ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, deprecationMessage(feature)));
+        ConsoleMessage* consoleMessage = ConsoleMessage::create(DeprecationMessageSource, WarningMessageLevel, deprecationMessage(feature));
+        frame->console().addMessage(consoleMessage);
     }
 }
 
@@ -103,41 +150,21 @@ void Deprecation::countDeprecationIfNotPrivateScript(v8::Isolate* isolate, Execu
     Deprecation::countDeprecation(context, feature);
 }
 
-static const char* milestoneString(int milestone)
+void Deprecation::countDeprecationCrossOriginIframe(const LocalFrame* frame, UseCounter::Feature feature)
 {
-    // These are the Estimated Stable Dates:
-    // https://www.chromium.org/developers/calendar
-
-    switch (milestone) {
-    case 50:
-        return "M50, around April 2016";
-    case 51:
-        return "M51, around May 2016";
-    case 52:
-        return "M52, around July 2016";
-    case 53:
-        return "M53, around September 2016";
-    case 54:
-        return "M54, around October 2016";
-    }
-
-    ASSERT_NOT_REACHED();
-    return nullptr;
+    // Check to see if the frame can script into the top level document.
+    SecurityOrigin* securityOrigin = frame->securityContext()->getSecurityOrigin();
+    Frame* top = frame->tree().top();
+    if (top && !securityOrigin->canAccess(top->securityContext()->getSecurityOrigin()))
+        countDeprecation(frame, feature);
 }
 
-static String replacedBy(const char* feature, const char* replacement)
+void Deprecation::countDeprecationCrossOriginIframe(const Document& document, UseCounter::Feature feature)
 {
-    return String::format("%s is deprecated. Please use %s instead.", feature, replacement);
-}
-
-String Deprecation::willBeRemoved(const char* feature, int milestone, const char* details)
-{
-    return String::format("%s is deprecated and will be removed in %s. See https://www.chromestatus.com/features/%s for more details.", feature, milestoneString(milestone), details);
-}
-
-static String replacedWillBeRemoved(const char* feature, const char* replacement, int milestone, const char* details)
-{
-    return String::format("%s is deprecated and will be removed in %s. Please use %s instead. See https://www.chromestatus.com/features/%s for more details.", feature, milestoneString(milestone), replacement, details);
+    LocalFrame* frame = document.frame();
+    if (!frame)
+        return;
+    countDeprecationCrossOriginIframe(frame, feature);
 }
 
 String Deprecation::deprecationMessage(UseCounter::Feature feature)
@@ -151,7 +178,7 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
         return replacedBy("'console.markTimeline'", "'console.timeStamp'");
 
     case UseCounter::FileError:
-        return "FileError is deprecated. Please use the 'name' or 'message' attributes of DOMError rather than 'code'.";
+        return String::format("'FileError is deprecated and will be removed in %s. Please use the 'name' or 'message' attributes of the error rather than 'code'. See https://www.chromestatus.com/features/6687420359639040 for more details.", milestoneString(54));
 
     case UseCounter::CSSStyleSheetInsertRuleOptionalArg:
         return "Calling CSSStyleSheet.insertRule() with one argument is deprecated. Please pass the index argument as well: insertRule(x, 0).";
@@ -210,9 +237,6 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
     case UseCounter::PrefixedCancelRequestAnimationFrame:
         return "'webkitCancelRequestAnimationFrame' is vendor-specific. Please use the standard 'cancelAnimationFrame' instead.";
 
-    case UseCounter::SyncXHRWithCredentials:
-        return "Setting 'XMLHttpRequest.withCredentials' for synchronous requests is deprecated.";
-
     case UseCounter::PictureSourceSrc:
         return "<source src> with a <picture> parent is invalid and therefore ignored. Please use <source srcset> instead.";
 
@@ -232,13 +256,16 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
         return replacedBy("'CanvasRenderingContext2D.webkitImageSmoothingEnabled'", "'CanvasRenderingContext2D.imageSmoothingEnabled'");
 
     case UseCounter::AudioListenerDopplerFactor:
-        return "dopplerFactor is deprecated and will be removed in M45 when all doppler effects are removed";
+        return dopplerWillBeRemoved("'AudioListener.dopplerFactor'", 55, "5238926818148352");
 
     case UseCounter::AudioListenerSpeedOfSound:
-        return "speedOfSound is deprecated and will be removed in M45 when all doppler effects are removed";
+        return dopplerWillBeRemoved("'AudioListener.speedOfSound'", 55, "5238926818148352");
 
     case UseCounter::AudioListenerSetVelocity:
-        return "setVelocity() is deprecated and will be removed in M45 when all doppler effects are removed";
+        return dopplerWillBeRemoved("'AudioListener.setVelocity()'", 55, "5238926818148352");
+
+    case UseCounter::PannerNodeSetVelocity:
+        return dopplerWillBeRemoved("'PannerNode.setVelocity()'", 55, "5238926818148352");
 
     case UseCounter::PrefixedWindowURL:
         return replacedBy("'webkitURL'", "'URL'");
@@ -263,17 +290,24 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
         return "The deviceorientationabsolute event is deprecated on insecure origins, and support will be removed in the future. You should consider switching your application to a secure origin, such as HTTPS. See https://goo.gl/rStTGz for more details.";
 
     case UseCounter::GeolocationInsecureOrigin:
-        // TODO(jww): This message should be made less ambigous after WebView
-        // is fixed so geolocation can be removed there. After that, this
-        // should be updated to read similarly to GetUserMediaInsecureOrigin's
-        // message.
+    case UseCounter::GeolocationInsecureOriginIframe:
+        return "getCurrentPosition() and watchPosition() no longer work on insecure origins. To use this feature, you should consider switching your application to a secure origin, such as HTTPS. See https://goo.gl/rStTGz for more details.";
+
+    case UseCounter::GeolocationInsecureOriginDeprecatedNotRemoved:
+    case UseCounter::GeolocationInsecureOriginIframeDeprecatedNotRemoved:
         return "getCurrentPosition() and watchPosition() are deprecated on insecure origins. To use this feature, you should consider switching your application to a secure origin, such as HTTPS. See https://goo.gl/rStTGz for more details.";
 
     case UseCounter::GetUserMediaInsecureOrigin:
+    case UseCounter::GetUserMediaInsecureOriginIframe:
         return "getUserMedia() no longer works on insecure origins. To use this feature, you should consider switching your application to a secure origin, such as HTTPS. See https://goo.gl/rStTGz for more details.";
 
     case UseCounter::EncryptedMediaInsecureOrigin:
         return "requestMediaKeySystemAccess() is deprecated on insecure origins in the specification. Support will be removed in the future. You should consider switching your application to a secure origin, such as HTTPS. See https://goo.gl/rStTGz for more details.";
+
+    case UseCounter::MediaSourceAbortRemove:
+        return "Using SourceBuffer.abort() to abort remove()'s asynchronous range removal is deprecated due to specification change. Support will be removed in the future. You should instead await 'updateend'. abort() is intended to only abort an asynchronous media append or reset parser state. See https://www.chromestatus.com/features/6107495151960064 for more details.";
+    case UseCounter::MediaSourceDurationTruncatingBuffered:
+        return "Setting MediaSource.duration below the highest presentation timestamp of any buffered coded frames is deprecated due to specification change. Support for implicit removal of truncated buffered media will be removed in the future. You should instead perform explicit remove(newDuration, oldDuration) on all sourceBuffers, where newDuration < oldDuration. See https://www.chromestatus.com/features/6107495151960064 for more details.";
 
     case UseCounter::ApplicationCacheManifestSelectInsecureOrigin:
     case UseCounter::ApplicationCacheAPIInsecureOrigin:
@@ -281,9 +315,6 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
 
     case UseCounter::ElementCreateShadowRootMultiple:
         return "Calling Element.createShadowRoot() for an element which already hosts a shadow root is deprecated. See https://www.chromestatus.com/features/4668884095336448 for more details.";
-
-    case UseCounter::ElementCreateShadowRootMultipleWithUserAgentShadowRoot:
-        return "Calling Element.createShadowRoot() for an element which already hosts a user-agent shadow root is deprecated. See https://www.chromestatus.com/features/4668884095336448 for more details.";
 
     case UseCounter::CSSDeepCombinator:
         return "/deep/ combinator is deprecated. See https://www.chromestatus.com/features/6750456638341120 for more details.";
@@ -304,23 +335,11 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
     case UseCounter::PrefixedPerformanceResourceTimingBufferFull:
         return replacedBy("'Performance.onwebkitresourcetimingbufferfull'", "'Performance.onresourcetimingbufferfull'");
 
-    case UseCounter::BluetoothDeviceInstanceId:
-        return replacedBy("'BluetoothDevice.instanceID'", "'BluetoothDevice.id'");
-
-    case UseCounter::BluetoothDeviceConnectGATT:
-        return replacedWillBeRemoved("'BluetoothDevice.connectGATT'", "'BluetoothDevice.gatt.connect'", 52, "5264933985976320");
-
     case UseCounter::MediaStreamTrackGetSources:
         return "MediaStreamTrack.getSources is deprecated. See https://www.chromestatus.com/feature/4765305641369600 for more details.";
 
     case UseCounter::V8TouchEvent_InitTouchEvent_Method:
-        return replacedWillBeRemoved("'TouchEvent.initTouchEvent'", "the TouchEvent constructor", 53, "5730982598541312");
-
-    case UseCounter::RTCPeerConnectionCreateAnswerLegacyNoFailureCallback:
-        return "RTCPeerConnection.CreateAnswer without a failure callback is deprecated. The failure callback will be a required parameter in M50. See https://www.chromestatus.com/feature/5663288008376320 for more details";
-
-    case UseCounter::RTCPeerConnectionCreateOfferLegacyNoFailureCallback:
-        return "RTCPeerConnection.CreateOffer without a failure callback is deprecated. The failure callback will be a required parameter in M50. See https://www.chromestatus.com/feature/5663288008376320 for more details";
+        return replacedWillBeRemoved("'TouchEvent.initTouchEvent'", "the TouchEvent constructor", 54, "5730982598541312");
 
     case UseCounter::ObjectObserve:
         return willBeRemoved("'Object.observe'", 50, "6147094632988672");
@@ -328,17 +347,44 @@ String Deprecation::deprecationMessage(UseCounter::Feature feature)
     case UseCounter::SVGZoomEvent:
         return willBeRemoved("'SVGZoomEvent'", 52, "5760883808534528");
 
-    case UseCounter::BorderImageWithBorderStyleNone:
-        return "Elements using the 'border-image' CSS property with no 'border-style' set should have no border, but currently do. Setting 'border-style' will be required in M51, around May 2016. See https://www.chromestatus.com/features/5542503914668032 for more details.";
-
     case UseCounter::WebAnimationHyphenatedProperty:
-        return replacedWillBeRemoved("Hyphenated naming in Web Animations keyframes", "camelCase", 51, "5650817352728576");
-
-    case UseCounter::PresentationConnectionStateChangeEventListener:
-        return replacedWillBeRemoved("'PresentationConnection.onstateachange'", "'PresentationConnection.on{connect,close,terminate}'", 51, "5662456714100736");
+        return "Hyphenated property names in Web Animations keyframes are invalid and therefore ignored. Please use camelCase instead.";
 
     case UseCounter::HTMLKeygenElement:
         return willBeRemoved("The <keygen> element", 54, "5716060992962560");
+
+    case UseCounter::WebAnimationsEasingAsFunctionLinear:
+        return String::format("Specifying animation easing as a function is deprecated and all support will be removed in %s, at which point this will throw a TypeError. This warning may have been triggered by the Web Animations or Polymer polyfills. See http://crbug.com/601672 for details.", milestoneString(54));
+
+    case UseCounter::WindowPostMessageWithLegacyTargetOriginArgument:
+        return replacedWillBeRemoved("'window.postMessage(message, transferables, targetOrigin)'", "'window.postMessage(message, targetOrigin, transferables)'", 54, "5719033043222528");
+
+    case UseCounter::EncryptedMediaAllSelectedContentTypesMissingCodecs:
+        return String::format("EME requires that contentType strings accepted by requestMediaKeySystemAccess() include codecs. Non-standard support for contentType strings without codecs will be removed in %s. Please specify the desired codec(s) as part of the contentType.", milestoneString(54));
+
+    case UseCounter::V8KeyboardEvent_KeyIdentifier_AttributeGetter:
+        return willBeRemoved("'KeyboardEvent.keyIdentifier'", 54, "5316065118650368");
+
+    case UseCounter::During_Microtask_SyncXHR:
+        return willBeRemoved("Invoking 'send()' on a sync XHR during microtask execution", 54, "5647113010544640");
+
+    case UseCounter::MediaStreamOnEnded:
+        return willBeRemoved("The MediaStream 'ended' event", 54, "5730404371791872");
+
+    case UseCounter::UntrustedEventDefaultHandled:
+        return String::format("A DOM event generated from JavaScript has triggered a default action inside the browser. This behavior is non-standard and will be removed in %s. See https://www.chromestatus.com/features/5718803933560832 for more details.", milestoneString(53));
+
+    case UseCounter::UnloadHandler_Navigation:
+        return "Navigating in the unload handler is deprecated and will be removed.";
+
+    case UseCounter::TouchStartUserGestureUtilized:
+        return willBeRemoved("Performing operations that require explicit user interaction on touchstart events", 54, "5649871251963904");
+
+    case UseCounter::TouchMoveUserGestureUtilized:
+        return willBeRemoved("Performing operations that require explicit user interaction on touchmove events", 54, "5649871251963904");
+
+    case UseCounter::TouchEndDuringScrollUserGestureUtilized:
+        return willBeRemoved("Performing operations that require explicit user interaction on touchend events that occur as part of a scroll", 54, "5649871251963904");
 
     // Features that aren't deprecated don't have a deprecation message.
     default:

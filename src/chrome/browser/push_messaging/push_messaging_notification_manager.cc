@@ -11,13 +11,14 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/budget_service/background_budget_service.h"
+#include "chrome/browser/budget_service/background_budget_service_factory.h"
+#include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/push_messaging/push_messaging_constants.h"
 #include "chrome/common/features.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/prefs/pref_service.h"
 #include "components/rappor/rappor_utils.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_context.h"
@@ -52,7 +53,6 @@ using content::ServiceWorkerContext;
 using content::WebContents;
 
 namespace {
-
 void RecordUserVisibleStatus(content::PushUserVisibleStatus status) {
   UMA_HISTOGRAM_ENUMERATION("PushMessaging.UserVisibleStatus", status,
                             content::PUSH_USER_VISIBLE_STATUS_LAST + 1);
@@ -65,11 +65,10 @@ content::StoragePartition* GetStoragePartition(Profile* profile,
 
 NotificationDatabaseData CreateDatabaseData(
     const GURL& origin,
-    int64_t service_worker_registration_id,
-    const std::string& languages) {
+    int64_t service_worker_registration_id) {
   PlatformNotificationData notification_data;
-  notification_data.title =
-      url_formatter::FormatUrlForSecurityDisplayOmitScheme(origin, languages);
+  notification_data.title = url_formatter::FormatUrlForSecurityDisplay(
+      origin, url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS);
   notification_data.direction =
       PlatformNotificationData::DIRECTION_LEFT_TO_RIGHT;
   notification_data.body =
@@ -84,8 +83,6 @@ NotificationDatabaseData CreateDatabaseData(
   database_data.notification_data = notification_data;
   return database_data;
 }
-
-void IgnoreResult(bool unused) {}
 
 }  // namespace
 
@@ -189,24 +186,60 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
     }
   }
 
-  // Don't track push messages that didn't show a notification but were exempt
-  // from needing to do so.
-  if (notification_shown || notification_needed) {
-    ServiceWorkerContext* service_worker_context =
-        GetStoragePartition(profile_, origin)->GetServiceWorkerContext();
+  // Get the budget for the service worker.
+  BackgroundBudgetService* service =
+      BackgroundBudgetServiceFactory::GetForProfile(profile_);
+  service->GetBudget(
+      origin,
+      base::Bind(&PushMessagingNotificationManager::DidGetBudget,
+                 weak_factory_.GetWeakPtr(), origin,
+                 service_worker_registration_id, message_handled_closure,
+                 notification_needed, notification_shown));
+}
 
-    PushMessagingService::GetNotificationsShownByLastFewPushes(
-        service_worker_context, service_worker_registration_id,
-        base::Bind(&PushMessagingNotificationManager::
-                       DidGetNotificationsShownAndNeeded,
-                   weak_factory_.GetWeakPtr(), origin,
-                   service_worker_registration_id, notification_shown,
-                   notification_needed, message_handled_closure));
-  } else {
+void PushMessagingNotificationManager::DidGetBudget(
+    const GURL& origin,
+    int64_t service_worker_registration_id,
+    const base::Closure& message_handled_closure,
+    bool notification_needed,
+    bool notification_shown,
+    const double budget) {
+  // Record the budget available any time the budget is queried.
+  UMA_HISTOGRAM_COUNTS_100("PushMessaging.BackgroundBudget", budget);
+
+  // Get the site engagement score. Only used for UMA recording.
+  SiteEngagementService* ses_service = SiteEngagementService::Get(profile_);
+  double ses_score = ses_service->GetScore(origin);
+
+  // Generate histograms for the GetBudget calls which would return "no budget"
+  // or "low budget" if an API was available to app developers.
+  double cost = BackgroundBudgetService::GetCost(
+      BackgroundBudgetService::CostType::SILENT_PUSH);
+  if (budget < cost)
+    UMA_HISTOGRAM_COUNTS_100("PushMessaging.SESForNoBudgetOrigin", ses_score);
+  else if (budget < 2.0 * cost)
+    UMA_HISTOGRAM_COUNTS_100("PushMessaging.SESForLowBudgetOrigin", ses_score);
+
+  if (notification_needed && !notification_shown) {
+    // If the worker needed to show a notification and didn't, check the budget
+    // and take appropriate action.
+    CheckForMissedNotification(origin, service_worker_registration_id,
+                               message_handled_closure, budget);
+    return;
+  }
+
+  if (notification_needed && notification_shown) {
+    RecordUserVisibleStatus(
+        content::PUSH_USER_VISIBLE_STATUS_REQUIRED_AND_SHOWN);
+  } else if (!notification_needed && !notification_shown) {
     RecordUserVisibleStatus(
         content::PUSH_USER_VISIBLE_STATUS_NOT_REQUIRED_AND_NOT_SHOWN);
-    message_handled_closure.Run();
+  } else {
+    RecordUserVisibleStatus(
+        content::PUSH_USER_VISIBLE_STATUS_NOT_REQUIRED_BUT_SHOWN);
   }
+
+  message_handled_closure.Run();
 }
 
 bool PushMessagingNotificationManager::IsTabVisible(
@@ -242,66 +275,40 @@ bool PushMessagingNotificationManager::IsTabVisible(
   return visible_url.GetOrigin() == origin;
 }
 
-void PushMessagingNotificationManager::DidGetNotificationsShownAndNeeded(
+void PushMessagingNotificationManager::CheckForMissedNotification(
     const GURL& origin,
     int64_t service_worker_registration_id,
-    bool notification_shown,
-    bool notification_needed,
     const base::Closure& message_handled_closure,
-    const std::string& data,
-    bool success,
-    bool not_found) {
+    const double budget) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  ServiceWorkerContext* service_worker_context =
-      GetStoragePartition(profile_, origin)->GetServiceWorkerContext();
 
-  // We remember whether the last (up to) 10 pushes showed notifications.
-  const size_t MISSED_NOTIFICATIONS_LENGTH = 10;
-  // data is a string like "0001000", where '0' means shown, and '1' means
-  // needed but not shown. We manipulate it in bitset form.
-  std::bitset<MISSED_NOTIFICATIONS_LENGTH> missed_notifications(data);
-
-  DCHECK(notification_shown || notification_needed);  // Caller must ensure this
-  bool needed_but_not_shown = notification_needed && !notification_shown;
-
-  // New entries go at the end, and old ones are shifted off the beginning once
-  // the history length is exceeded.
-  missed_notifications <<= 1;
-  missed_notifications[0] = needed_but_not_shown;
-  std::string updated_data(missed_notifications.
-      to_string<char, std::string::traits_type, std::string::allocator_type>());
-  PushMessagingService::SetNotificationsShownByLastFewPushes(
-      service_worker_context, service_worker_registration_id, origin,
-      updated_data,
-      base::Bind(&IgnoreResult));  // This is a heuristic; ignore failure.
-
-  if (notification_shown) {
-    RecordUserVisibleStatus(
-        notification_needed
-            ? content::PUSH_USER_VISIBLE_STATUS_REQUIRED_AND_SHOWN
-            : content::PUSH_USER_VISIBLE_STATUS_NOT_REQUIRED_BUT_SHOWN);
-    message_handled_closure.Run();
-    return;
-  }
-  DCHECK(needed_but_not_shown);
-  if (missed_notifications.count() <= 1) {  // Apply grace.
+  // If the service needed to show a notification but did not, update the
+  // budget.
+  double cost = BackgroundBudgetService::GetCost(
+      BackgroundBudgetService::CostType::SILENT_PUSH);
+  if (budget >= cost) {
     RecordUserVisibleStatus(
         content::PUSH_USER_VISIBLE_STATUS_REQUIRED_BUT_NOT_SHOWN_USED_GRACE);
-    message_handled_closure.Run();
+
+    BackgroundBudgetService* service =
+        BackgroundBudgetServiceFactory::GetForProfile(profile_);
+    // Update the stored budget.
+    service->StoreBudget(origin, budget - cost, message_handled_closure);
+
     return;
   }
+
   RecordUserVisibleStatus(
       content::PUSH_USER_VISIBLE_STATUS_REQUIRED_BUT_NOT_SHOWN_GRACE_EXCEEDED);
   rappor::SampleDomainAndRegistryFromGURL(
       g_browser_process->rappor_service(),
       "PushMessaging.GenericNotificationShown.Origin", origin);
 
-  // The site failed to show a notification when one was needed, and they have
-  // already failed once in the previous 10 push messages, so we will show a
-  // generic notification. See https://crbug.com/437277.
-  NotificationDatabaseData database_data = CreateDatabaseData(
-      origin, service_worker_registration_id,
-      profile_->GetPrefs()->GetString(prefs::kAcceptLanguages));
+  // The site failed to show a notification when one was needed, and they don't
+  // have enough budget to cover the cost of suppressing, so we will show a
+  // generic notification.
+  NotificationDatabaseData database_data =
+      CreateDatabaseData(origin, service_worker_registration_id);
   scoped_refptr<PlatformNotificationContext> notification_context =
       GetStoragePartition(profile_, origin)->GetPlatformNotificationContext();
   BrowserThread::PostTask(

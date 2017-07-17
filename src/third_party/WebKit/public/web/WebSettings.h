@@ -34,6 +34,7 @@
 #include "../platform/PointerProperties.h"
 #include "../platform/WebCommon.h"
 #include "../platform/WebSize.h"
+#include "../platform/WebViewportStyle.h"
 #include <unicode/uscript.h>
 
 namespace blink {
@@ -65,6 +66,20 @@ public:
         V8CacheOptionsCode,
     };
 
+    enum class V8CacheStrategiesForCacheStorage {
+        Default,
+        None,
+        Normal,
+        Aggressive,
+    };
+
+    enum class ProgressBarCompletion {
+        LoadEvent,
+        ResourcesBeforeDCL,
+        DOMContentLoaded,
+        ResourcesBeforeDCLAndSameOriginIFrames
+    };
+
     // Selection strategy defines how the selection granularity changes when the
     // selection extent is moved.
     enum class SelectionStrategyType {
@@ -85,6 +100,15 @@ public:
         Captions,
         // If available, display subtitles track in preferred language, else display captions.
         Subtitles
+    };
+
+    // Defines the default for 'passive' field used in the AddEventListenerOptions interface
+    // when javascript calls addEventListener.
+    enum class PassiveEventListenerDefault {
+        False, // Default of false.
+        True, // Default of true.
+        DocumentTrue, // Default of true for document level elements, false otherwise.
+        ForceAllTrue // Force all values to be true even when specified.
     };
 
     // Sets value of a setting by its string identifier from Settings.in and
@@ -118,6 +142,7 @@ public:
     virtual void setAllowRunningOfInsecureContent(bool) = 0;
     virtual void setAllowScriptsToCloseWindows(bool) = 0;
     virtual void setAllowUniversalAccessFromFileURLs(bool) = 0;
+    virtual void setAlwaysShowContextMenuOnTouch(bool) = 0;
     virtual void setAntialiased2dCanvasEnabled(bool) = 0;
     virtual void setAntialiasedClips2dCanvasEnabled(bool) = 0;
     virtual void setAutoplayExperimentMode(const WebString&) = 0;
@@ -149,7 +174,6 @@ public:
     virtual void setExperimentalWebGLEnabled(bool) = 0;
     virtual void setFantasyFontFamily(const WebString&, UScriptCode = USCRIPT_COMMON) = 0;
     virtual void setFixedFontFamily(const WebString&, UScriptCode = USCRIPT_COMMON) = 0;
-    virtual void setReportWheelOverscroll(bool) = 0;
     virtual void setForceZeroLayoutHeight(bool) = 0;
     virtual void setFullscreenSupported(bool) = 0;
     virtual void setHyperlinkAuditingEnabled(bool) = 0;
@@ -164,6 +188,8 @@ public:
     void setLayerSquashingEnabled(bool) { }
     virtual void setLoadsImagesAutomatically(bool) = 0;
     virtual void setLoadWithOverviewMode(bool) = 0;
+    virtual void setShouldReuseGlobalForUnownedMainFrame(bool) = 0;
+    virtual void setProgressBarCompletion(ProgressBarCompletion) = 0;
     virtual void setLocalStorageEnabled(bool) = 0;
     virtual void setMainFrameClipsContent(bool) = 0;
     virtual void setMainFrameResizesAreOrientationChanges(bool) = 0;
@@ -176,7 +202,7 @@ public:
     virtual void setMinimumLogicalFontSize(int) = 0;
     virtual void setMockScrollbarsEnabled(bool) = 0;
     virtual void setOfflineWebApplicationCacheEnabled(bool) = 0;
-    virtual void setOpenGLMultisamplingEnabled(bool) = 0;
+    virtual void setPassiveEventListenerDefault(PassiveEventListenerDefault) = 0;
     virtual void setPasswordEchoDurationInSeconds(double) = 0;
     virtual void setPasswordEchoEnabled(bool) = 0;
     virtual void setPerTilePaintingEnabled(bool) = 0;
@@ -229,19 +255,20 @@ public:
     virtual void setTextTrackFontFamily(const WebString&) = 0;
     virtual void setTextTrackFontStyle(const WebString&) = 0;
     virtual void setTextTrackFontVariant(const WebString&) = 0;
+    virtual void setTextTrackMarginPercentage(float) = 0;
     virtual void setTextTrackTextColor(const WebString&) = 0;
     virtual void setTextTrackTextShadow(const WebString&) = 0;
     virtual void setTextTrackTextSize(const WebString&) = 0;
     virtual void setThreadedScrollingEnabled(bool) = 0;
     virtual void setTouchDragDropEnabled(bool) = 0;
     virtual void setUnifiedTextCheckerEnabled(bool) = 0;
-    virtual void setUnsafePluginPastingEnabled(bool) = 0;
     virtual void setUseLegacyBackgroundSizeShorthandBehavior(bool) = 0;
-    virtual void setUseMobileViewportStyle(bool) = 0;
+    virtual void setViewportStyle(WebViewportStyle) = 0;
     virtual void setUseSolidColorScrollbars(bool) = 0;
     virtual void setUseWideViewport(bool) = 0;
     virtual void setUsesEncodingDetector(bool) = 0;
     virtual void setV8CacheOptions(V8CacheOptions) = 0;
+    virtual void setV8CacheStrategiesForCacheStorage(V8CacheStrategiesForCacheStorage) = 0;
     virtual void setValidationMessageTimerMagnification(int) = 0;
     virtual void setViewportEnabled(bool) = 0;
     virtual void setViewportMetaEnabled(bool) = 0;

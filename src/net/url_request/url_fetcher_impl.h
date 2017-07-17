@@ -77,7 +77,7 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   void SaveResponseToTemporaryFile(
       scoped_refptr<base::SequencedTaskRunner> file_task_runner) override;
   void SaveResponseWithWriter(
-      scoped_ptr<URLFetcherResponseWriter> response_writer) override;
+      std::unique_ptr<URLFetcherResponseWriter> response_writer) override;
   HttpResponseHeaders* GetResponseHeaders() const override;
   HostPortPair GetSocketAddress() const override;
   bool WasFetchedViaProxy() const override;
@@ -89,7 +89,6 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   const GURL& GetURL() const override;
   const URLRequestStatus& GetStatus() const override;
   int GetResponseCode() const override;
-  const ResponseCookies& GetCookies() const override;
   void ReceivedContentWasMalformed() override;
   bool GetResponseAsString(std::string* out_response_string) const override;
   bool GetResponseAsFilePath(bool take_ownership,

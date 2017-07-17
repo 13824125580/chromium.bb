@@ -128,7 +128,9 @@ fontSizeAdjust
 fontStretch
 fontStyle
 fontVariant
+fontVariantCaps
 fontVariantLigatures
+fontVariantNumeric
 fontWeight
 getPropertyPriority
 getPropertyValue
@@ -151,6 +153,7 @@ gridTemplateAreas
 gridTemplateColumns
 gridTemplateRows
 height
+hyphens
 imageOrientation
 imageRendering
 isolation
@@ -270,6 +273,7 @@ textOrientation
 textOverflow
 textRendering
 textShadow
+textSizeAdjust
 textTransform
 textUnderlinePosition
 top
@@ -292,7 +296,6 @@ visibility
 webkitAppRegion
 webkitAppearance
 webkitBackgroundClip
-webkitBackgroundComposite
 webkitBackgroundOrigin
 webkitBorderAfter
 webkitBorderAfterColor
@@ -327,7 +330,6 @@ webkitClipPath
 webkitColumnBreakAfter
 webkitColumnBreakBefore
 webkitColumnBreakInside
-webkitFilter
 webkitFontSizeDelta
 webkitFontSmoothing
 webkitHighlight

@@ -15,16 +15,16 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/notifications/desktop_notification_profile_util.h"
+#include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/notifications/notification_object_proxy.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/notifications/persistent_notification_delegate.h"
+#include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -36,6 +36,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/desktop_notification_delegate.h"
 #include "content/public/browser/notification_event_dispatcher.h"
+#include "content/public/browser/permission_type.h"
 #include "content/public/browser/platform_notification_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/user_metrics.h"
@@ -58,6 +59,11 @@
 #include "extensions/common/permissions/permissions_data.h"
 #endif
 
+#if BUILDFLAG(ENABLE_BACKGROUND)
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
+#endif
+
 using content::BrowserContext;
 using content::BrowserThread;
 using content::PlatformNotificationContext;
@@ -71,68 +77,54 @@ namespace {
 // permission without having an associated renderer process yet.
 const int kInvalidRenderProcessId = -1;
 
-// Persistent notifications fired through the delegate do not care about the
-// lifetime of the Service Worker responsible for executing the event.
-void OnClickEventDispatchComplete(
-    content::PersistentNotificationStatus status) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Notifications.PersistentWebNotificationClickResult", status,
-      content::PersistentNotificationStatus::
-          PERSISTENT_NOTIFICATION_STATUS_MAX);
-}
-
-void OnCloseEventDispatchComplete(
-    content::PersistentNotificationStatus status) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Notifications.PersistentWebNotificationCloseResult", status,
-      content::PersistentNotificationStatus::
-          PERSISTENT_NOTIFICATION_STATUS_MAX);
-}
-
-void CancelNotification(const std::string& id, ProfileID profile_id) {
-  PlatformNotificationServiceImpl::GetInstance()
-      ->GetNotificationUIManager()->CancelById(id, profile_id);
+void OnCloseNonPersistentNotificationProfileLoaded(
+    const std::string& notification_id,
+    Profile* profile) {
+  NotificationDisplayServiceFactory::GetForProfile(profile)->Close(
+      notification_id);
 }
 
 // Callback to run once the profile has been loaded in order to perform a
 // given |operation| in a notification.
-void ProfileLoadedCallback(
-    PlatformNotificationServiceImpl::NotificationOperation operation,
-    const GURL& origin,
-    int64_t persistent_notification_id,
-    int action_index,
-    bool incognito,
-    Profile* profile,
-    Profile::CreateStatus status) {
-  if (status == Profile::CREATE_STATUS_CREATED) {
-    // This is an intermediate state, we will be also called
-    // again with CREATE_STATUS_INITIALIZED once everything is ready
-    // so ignore it.
-    return;
-  }
-  if (status != Profile::CREATE_STATUS_INITIALIZED) {
+void ProfileLoadedCallback(NotificationCommon::Operation operation,
+                           const GURL& origin,
+                           int64_t persistent_notification_id,
+                           int action_index,
+                           Profile* profile) {
+  if (!profile) {
+    // TODO(miguelg): Add UMA for this condition.
+    // Perhaps propagate this through PersistentNotificationStatus.
     LOG(WARNING) << "Profile not loaded correctly";
     return;
   }
-  DCHECK(profile);
-  profile = incognito ? profile->GetOffTheRecordProfile() : profile;
 
   switch (operation) {
-    case PlatformNotificationServiceImpl::NOTIFICATION_CLICK:
+    case NotificationCommon::CLICK:
       PlatformNotificationServiceImpl::GetInstance()
           ->OnPersistentNotificationClick(profile, persistent_notification_id,
                                           origin, action_index);
       break;
-    case PlatformNotificationServiceImpl::NOTIFICATION_CLOSE:
+    case NotificationCommon::CLOSE:
       PlatformNotificationServiceImpl::GetInstance()
           ->OnPersistentNotificationClose(profile, persistent_notification_id,
                                           origin, true);
       break;
-    case PlatformNotificationServiceImpl::NOTIFICATION_SETTINGS:
-      PlatformNotificationServiceImpl::GetInstance()->OpenNotificationSettings(
-          profile);
+    case NotificationCommon::SETTINGS:
+      NotificationCommon::OpenNotificationSettings(profile);
       break;
   }
+}
+
+// Callback used to close an non-persistent notification from blink.
+void CancelNotification(const std::string& notification_id,
+                        std::string profile_id,
+                        bool incognito) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  DCHECK(profile_manager);
+  profile_manager->LoadProfile(
+      profile_id, incognito,
+      base::Bind(&OnCloseNonPersistentNotificationProfileLoaded,
+                 notification_id));
 }
 
 }  // namespace
@@ -144,14 +136,16 @@ PlatformNotificationServiceImpl::GetInstance() {
 }
 
 PlatformNotificationServiceImpl::PlatformNotificationServiceImpl()
-    : native_notification_ui_manager_(
-          NotificationUIManager::CreateNativeNotificationManager()),
-      notification_ui_manager_for_tests_(nullptr) {}
+    : test_display_service_(nullptr) {
+#if BUILDFLAG(ENABLE_BACKGROUND)
+  pending_click_dispatch_events_ = 0;
+#endif
+}
 
 PlatformNotificationServiceImpl::~PlatformNotificationServiceImpl() {}
 
 void PlatformNotificationServiceImpl::ProcessPersistentNotificationOperation(
-    NotificationOperation operation,
+    NotificationCommon::Operation operation,
     const std::string& profile_id,
     bool incognito,
     const GURL& origin,
@@ -160,25 +154,10 @@ void PlatformNotificationServiceImpl::ProcessPersistentNotificationOperation(
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   DCHECK(profile_manager);
 
-  // ProfileManager does not offer a good interface to load a profile or
-  // fail. Instead it offers a method to create the profile and simply load it
-  // if it already exist. We therefore check first that the profile is there
-  // and fail early otherwise.
-  const base::FilePath profile_path =
-      profile_manager->user_data_dir().AppendASCII(profile_id);
-
-  ProfileAttributesEntry* entry = nullptr;
-  if (!profile_manager->GetProfileAttributesStorage().
-      GetProfileAttributesWithPath(profile_path, &entry)) {
-    LOG(ERROR) << "Loading a path that does not exist";
-    return;
-  }
-
-  profile_manager->CreateProfileAsync(
-      profile_path,
+  profile_manager->LoadProfile(
+      profile_id, incognito,
       base::Bind(&ProfileLoadedCallback, operation, origin,
-                 persistent_notification_id, action_index, incognito),
-      base::string16(), std::string(), std::string());
+                 persistent_notification_id, action_index));
 }
 
 void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
@@ -187,13 +166,13 @@ void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
     const GURL& origin,
     int action_index) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  blink::WebNotificationPermission permission =
+  blink::mojom::PermissionStatus permission_status =
       CheckPermissionOnUIThread(browser_context, origin,
                                 kInvalidRenderProcessId);
 
   // TODO(peter): Change this to a CHECK() when Issue 555572 is resolved.
   // Also change this method to be const again.
-  if (permission != blink::WebNotificationPermissionAllowed) {
+  if (permission_status != blink::mojom::PermissionStatus::GRANTED) {
     content::RecordAction(base::UserMetricsAction(
         "Notifications.Persistent.ClickedWithoutPermission"));
     return;
@@ -207,10 +186,21 @@ void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
         "Notifications.Persistent.ClickedActionButton"));
   }
 
+#if BUILDFLAG(ENABLE_BACKGROUND)
+  // Ensure the browser stays alive while the event is processed.
+  if (pending_click_dispatch_events_++ == 0) {
+    click_dispatch_keep_alive_.reset(
+        new ScopedKeepAlive(KeepAliveOrigin::PENDING_NOTIFICATION_CLICK_EVENT,
+                            KeepAliveRestartOption::DISABLED));
+  }
+#endif
+
   content::NotificationEventDispatcher::GetInstance()
       ->DispatchNotificationClickEvent(
           browser_context, persistent_notification_id, origin, action_index,
-          base::Bind(&OnClickEventDispatchComplete));
+          base::Bind(
+              &PlatformNotificationServiceImpl::OnClickEventDispatchComplete,
+              base::Unretained(this)));
 }
 
 void PlatformNotificationServiceImpl::OnPersistentNotificationClose(
@@ -234,10 +224,12 @@ void PlatformNotificationServiceImpl::OnPersistentNotificationClose(
   content::NotificationEventDispatcher::GetInstance()
       ->DispatchNotificationCloseEvent(
           browser_context, persistent_notification_id, origin, by_user,
-          base::Bind(&OnCloseEventDispatchComplete));
+          base::Bind(
+              &PlatformNotificationServiceImpl::OnCloseEventDispatchComplete,
+              base::Unretained(this)));
 }
 
-blink::WebNotificationPermission
+blink::mojom::PermissionStatus
 PlatformNotificationServiceImpl::CheckPermissionOnUIThread(
     BrowserContext* browser_context,
     const GURL& origin,
@@ -271,23 +263,16 @@ PlatformNotificationServiceImpl::CheckPermissionOnUIThread(
 
       NotifierId notifier_id(NotifierId::APPLICATION, extension->id());
       if (notifier_state_tracker->IsNotifierEnabled(notifier_id))
-        return blink::WebNotificationPermissionAllowed;
+        return blink::mojom::PermissionStatus::GRANTED;
     }
   }
 #endif
 
-  ContentSetting setting =
-      DesktopNotificationProfileUtil::GetContentSetting(profile, origin);
-
-  if (setting == CONTENT_SETTING_ALLOW)
-    return blink::WebNotificationPermissionAllowed;
-  if (setting == CONTENT_SETTING_BLOCK)
-    return blink::WebNotificationPermissionDenied;
-
-  return blink::WebNotificationPermissionDefault;
+  return PermissionManager::Get(profile)->GetPermissionStatus(
+      content::PermissionType::NOTIFICATIONS, origin, origin);
 }
 
-blink::WebNotificationPermission
+blink::mojom::PermissionStatus
 PlatformNotificationServiceImpl::CheckPermissionOnIOThread(
     content::ResourceContext* resource_context,
     const GURL& origin,
@@ -312,7 +297,7 @@ PlatformNotificationServiceImpl::CheckPermissionOnIOThread(
             extensions::APIPermission::kNotifications) &&
         process_map.Contains(extension->id(), render_process_id)) {
       if (!extension_info_map->AreNotificationsDisabled(extension->id()))
-        return blink::WebNotificationPermissionAllowed;
+        return blink::mojom::PermissionStatus::GRANTED;
     }
   }
 #endif
@@ -327,11 +312,11 @@ PlatformNotificationServiceImpl::CheckPermissionOnIOThread(
       content_settings::ResourceIdentifier());
 
   if (setting == CONTENT_SETTING_ALLOW)
-    return blink::WebNotificationPermissionAllowed;
+    return blink::mojom::PermissionStatus::GRANTED;
   if (setting == CONTENT_SETTING_BLOCK)
-    return blink::WebNotificationPermissionDenied;
+    return blink::mojom::PermissionStatus::DENIED;
 
-  return blink::WebNotificationPermissionDefault;
+  return blink::mojom::PermissionStatus::ASK;
 }
 
 void PlatformNotificationServiceImpl::DisplayNotification(
@@ -339,7 +324,7 @@ void PlatformNotificationServiceImpl::DisplayNotification(
     const GURL& origin,
     const content::PlatformNotificationData& notification_data,
     const content::NotificationResources& notification_resources,
-    scoped_ptr<content::DesktopNotificationDelegate> delegate,
+    std::unique_ptr<content::DesktopNotificationDelegate> delegate,
     base::Closure* cancel_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -352,13 +337,19 @@ void PlatformNotificationServiceImpl::DisplayNotification(
       new NotificationObjectProxy(browser_context, std::move(delegate));
   Notification notification = CreateNotificationFromData(
       profile, origin, notification_data, notification_resources, proxy);
-
-  GetNotificationUIManager()->Add(notification, profile);
-  if (cancel_callback)
+  GetNotificationDisplayService(profile)->Display(notification.delegate_id(),
+                                                  notification);
+  if (cancel_callback) {
+#if defined(OS_WIN)
+    std::string profile_id =
+        base::WideToUTF8(profile->GetPath().BaseName().value());
+#elif defined(OS_POSIX)
+    std::string profile_id = profile->GetPath().BaseName().value();
+#endif
     *cancel_callback =
-        base::Bind(&CancelNotification,
-                   notification.delegate_id(),
-                   NotificationUIManager::GetProfileID(profile));
+        base::Bind(&CancelNotification, notification.delegate_id(), profile_id,
+                   profile->IsOffTheRecord());
+  }
 
   HostContentSettingsMapFactory::GetForProfile(profile)->UpdateLastUsage(
       origin, origin, CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
@@ -389,7 +380,9 @@ void PlatformNotificationServiceImpl::DisplayPersistentNotification(
   // the message_center::Notification objects.
   persistent_notifications_[persistent_notification_id] = notification.id();
 
-  GetNotificationUIManager()->Add(notification, profile);
+  GetNotificationDisplayService(profile)->Display(
+      base::Int64ToString(delegate->persistent_notification_id()),
+      notification);
   content::RecordAction(
       base::UserMetricsAction("Notifications.Persistent.Shown"));
 
@@ -410,25 +403,23 @@ void PlatformNotificationServiceImpl::ClosePersistentNotification(
 #if defined(OS_ANDROID)
   bool cancel_by_persistent_id = true;
 #else
-  bool cancel_by_persistent_id = (native_notification_ui_manager_ != nullptr);
+  bool cancel_by_persistent_id =
+      GetNotificationDisplayService(profile)->SupportsNotificationCenter();
 #endif
 
   if (cancel_by_persistent_id) {
     // TODO(peter): Remove this conversion when the notification ids are being
     // generated by the caller of this method.
-    GetNotificationUIManager()->CancelById(
-        base::Int64ToString(persistent_notification_id),
-        NotificationUIManager::GetProfileID(profile));
+    GetNotificationDisplayService(profile)->Close(
+        base::Int64ToString(persistent_notification_id));
+  } else {
+    auto iter = persistent_notifications_.find(persistent_notification_id);
+    if (iter == persistent_notifications_.end())
+      return;
+    GetNotificationDisplayService(profile)->Close(iter->second);
   }
 
-  auto iter = persistent_notifications_.find(persistent_notification_id);
-  if (iter == persistent_notifications_.end())
-    return;
-
-  GetNotificationUIManager()->CancelById(
-      iter->second, NotificationUIManager::GetProfileID(profile));
-
-  persistent_notifications_.erase(iter);
+  persistent_notifications_.erase(persistent_notification_id);
 }
 
 bool PlatformNotificationServiceImpl::GetDisplayedPersistentNotifications(
@@ -436,28 +427,35 @@ bool PlatformNotificationServiceImpl::GetDisplayedPersistentNotifications(
     std::set<std::string>* displayed_notifications) {
   DCHECK(displayed_notifications);
 
-#if !defined(OS_ANDROID)
   Profile* profile = Profile::FromBrowserContext(browser_context);
   if (!profile || profile->AsTestingProfile())
     return false;  // Tests will not have a message center.
 
-  // There may not be a notification ui manager when another feature erroneously
-  // instantiates a storage partition when the browser process is shutting down.
-  // TODO(peter): Remove in favor of a DCHECK when crbug.com/546745 is fixed.
-  NotificationUIManager* ui_manager = GetNotificationUIManager();
-  if (!ui_manager)
-    return false;
-
   // TODO(peter): Filter for persistent notifications only.
-  *displayed_notifications = ui_manager->GetAllIdsByProfile(
-      NotificationUIManager::GetProfileID(profile));
+  return GetNotificationDisplayService(profile)->GetDisplayed(
+      displayed_notifications);
+}
 
-  return true;
-#else
-  // Android cannot reliably return the notifications that are currently being
-  // displayed on the platform, see the comment in NotificationUIManagerAndroid.
-  return false;
-#endif  // !defined(OS_ANDROID)
+void PlatformNotificationServiceImpl::OnClickEventDispatchComplete(
+    content::PersistentNotificationStatus status) {
+  UMA_HISTOGRAM_ENUMERATION(
+      "Notifications.PersistentWebNotificationClickResult", status,
+      content::PersistentNotificationStatus::
+          PERSISTENT_NOTIFICATION_STATUS_MAX);
+#if BUILDFLAG(ENABLE_BACKGROUND)
+  DCHECK_GT(pending_click_dispatch_events_, 0);
+  if (--pending_click_dispatch_events_ == 0) {
+    click_dispatch_keep_alive_.reset();
+  }
+#endif
+}
+
+void PlatformNotificationServiceImpl::OnCloseEventDispatchComplete(
+    content::PersistentNotificationStatus status) {
+  UMA_HISTOGRAM_ENUMERATION(
+      "Notifications.PersistentWebNotificationCloseResult", status,
+      content::PersistentNotificationStatus::
+          PERSISTENT_NOTIFICATION_STATUS_MAX);
 }
 
 Notification PlatformNotificationServiceImpl::CreateNotificationFromData(
@@ -486,6 +484,16 @@ Notification PlatformNotificationServiceImpl::CreateNotificationFromData(
   notification.set_renotify(notification_data.renotify);
   notification.set_silent(notification_data.silent);
 
+  // Badges are only supported on Android, primarily because it's the only
+  // platform that makes good use of them in the status bar.
+  // TODO(mvanouwerkerk): ensure no badge is loaded when it will not be used.
+#if defined(OS_ANDROID)
+  // TODO(peter): Handle different screen densities instead of always using the
+  // 1x bitmap - crbug.com/585815.
+  notification.set_small_image(
+      gfx::Image::CreateFrom1xBitmap(notification_resources.badge));
+#endif  // defined(OS_ANDROID)
+
   // Developer supplied action buttons.
   std::vector<message_center::ButtonInfo> buttons;
   for (size_t i = 0; i < notification_data.actions.size(); i++) {
@@ -507,42 +515,12 @@ Notification PlatformNotificationServiceImpl::CreateNotificationFromData(
   return notification;
 }
 
-NotificationUIManager*
-PlatformNotificationServiceImpl::GetNotificationUIManager() const {
-  if (notification_ui_manager_for_tests_)
-    return notification_ui_manager_for_tests_;
-
-  if (native_notification_ui_manager_) {
-    return native_notification_ui_manager_.get();
-  }
-
-  return g_browser_process->notification_ui_manager();
-}
-
-void PlatformNotificationServiceImpl::OpenNotificationSettings(
-    BrowserContext* browser_context) {
-#if defined(OS_ANDROID)
-  NOTIMPLEMENTED();
-#else
-
-  Profile* profile = Profile::FromBrowserContext(browser_context);
-  DCHECK(profile);
-
-  if (switches::SettingsWindowEnabled()) {
-    chrome::ShowContentSettingsExceptionsInWindow(
-        profile, CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
-  } else {
-    chrome::ScopedTabbedBrowserDisplayer browser_displayer(profile);
-    chrome::ShowContentSettingsExceptions(browser_displayer.browser(),
-                                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
-  }
-
-#endif  // defined(OS_ANDROID)
-}
-
-void PlatformNotificationServiceImpl::SetNotificationUIManagerForTesting(
-    NotificationUIManager* manager) {
-  notification_ui_manager_for_tests_ = manager;
+NotificationDisplayService*
+PlatformNotificationServiceImpl::GetNotificationDisplayService(
+    Profile* profile) {
+  if (test_display_service_ != nullptr)
+    return test_display_service_;
+  return NotificationDisplayServiceFactory::GetForProfile(profile);
 }
 
 base::string16 PlatformNotificationServiceImpl::DisplayNameForContextMessage(
@@ -561,4 +539,9 @@ base::string16 PlatformNotificationServiceImpl::DisplayNameForContextMessage(
 #endif
 
   return base::string16();
+}
+
+void PlatformNotificationServiceImpl::SetNotificationDisplayServiceForTesting(
+    NotificationDisplayService* display_service) {
+  test_display_service_ = display_service;
 }

@@ -6,7 +6,9 @@
 
 #include <utility>
 
+#include "remoting/codec/video_encoder.h"
 #include "remoting/protocol/session.h"
+#include "remoting/protocol/video_frame_pump.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 
 namespace remoting {
@@ -23,15 +25,15 @@ void FakeVideoStream::SetLosslessEncode(bool want_lossless) {}
 
 void FakeVideoStream::SetLosslessColor(bool want_lossless) {}
 
-void FakeVideoStream::SetSizeCallback(const SizeCallback& size_callback) {
-  size_callback_ = size_callback;
+void FakeVideoStream::SetObserver(Observer* observer) {
+  observer_ = observer;
 }
 
 base::WeakPtr<FakeVideoStream> FakeVideoStream::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-FakeConnectionToClient::FakeConnectionToClient(scoped_ptr<Session> session)
+FakeConnectionToClient::FakeConnectionToClient(std::unique_ptr<Session> session)
     : session_(std::move(session)) {}
 
 FakeConnectionToClient::~FakeConnectionToClient() {}
@@ -40,9 +42,22 @@ void FakeConnectionToClient::SetEventHandler(EventHandler* event_handler) {
   event_handler_ = event_handler;
 }
 
-scoped_ptr<VideoStream> FakeConnectionToClient::StartVideoStream(
-    scoped_ptr<webrtc::DesktopCapturer> desktop_capturer) {
-  scoped_ptr<FakeVideoStream> result(new FakeVideoStream());
+std::unique_ptr<VideoStream> FakeConnectionToClient::StartVideoStream(
+    std::unique_ptr<webrtc::DesktopCapturer> desktop_capturer) {
+  if (video_stub_ && video_encode_task_runner_) {
+    std::unique_ptr<VideoEncoder> video_encoder =
+        VideoEncoder::Create(session_->config());
+
+    std::unique_ptr<protocol::VideoFramePump> pump(
+        new protocol::VideoFramePump(video_encode_task_runner_,
+                                     std::move(desktop_capturer),
+                                     std::move(video_encoder),
+                                     video_stub_));
+    video_feedback_stub_ = pump->video_feedback_stub();
+    return std::move(pump);
+  }
+
+  std::unique_ptr<FakeVideoStream> result(new FakeVideoStream());
   last_video_stream_ = result->GetWeakPtr();
   return std::move(result);
 }

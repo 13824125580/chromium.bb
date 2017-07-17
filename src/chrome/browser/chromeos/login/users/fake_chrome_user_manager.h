@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_CHROMEOS_LOGIN_USERS_FAKE_CHROME_USER_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/login/user_flow.h"
 #include "chrome/browser/chromeos/login/users/user_manager_interface.h"
 #include "components/user_manager/fake_user_manager.h"
@@ -30,7 +30,7 @@ class FakeChromeUserManager : public user_manager::FakeUserManager,
   ~FakeChromeUserManager() override;
 
   // Create and add a kiosk app user.
-  void AddKioskAppUser(const AccountId& kiosk_app_account_id);
+  user_manager::User* AddKioskAppUser(const AccountId& account_id);
 
   // Create and add a public account user.
   const user_manager::User* AddPublicAccountUser(const AccountId& account_id);
@@ -45,6 +45,7 @@ class FakeChromeUserManager : public user_manager::FakeUserManager,
   const user_manager::User* AddUser(const AccountId& account_id) override;
   const user_manager::User* AddUserWithAffiliation(const AccountId& account_id,
                                                    bool is_affiliated) override;
+  bool AreEphemeralUsersEnabled() const override;
 
   // UserManagerInterface implementation.
   BootstrapManager* GetBootstrapManager() override;
@@ -83,6 +84,10 @@ class FakeChromeUserManager : public user_manager::FakeUserManager,
                              std::string* out_resolved_locale) const override;
   bool IsValidDefaultUserImageId(int image_index) const override;
 
+  void set_ephemeral_users_enabled(bool ephemeral_users_enabled) {
+    fake_ephemeral_users_enabled_ = ephemeral_users_enabled;
+  }
+
   void set_owner_id(const AccountId& owner_account_id) {
     owner_account_id_ = owner_account_id;
   }
@@ -100,14 +105,15 @@ class FakeChromeUserManager : public user_manager::FakeUserManager,
   // Lazily creates default user flow.
   UserFlow* GetDefaultUserFlow() const;
 
-  scoped_ptr<FakeSupervisedUserManager> supervised_user_manager_;
+  std::unique_ptr<FakeSupervisedUserManager> supervised_user_manager_;
   AccountId owner_account_id_ = EmptyAccountId();
+  bool fake_ephemeral_users_enabled_ = false;
 
   BootstrapManager* bootstrap_manager_;
   MultiProfileUserController* multi_profile_user_controller_;
 
   // Lazy-initialized default flow.
-  mutable scoped_ptr<UserFlow> default_flow_;
+  mutable std::unique_ptr<UserFlow> default_flow_;
 
   using FlowMap = std::map<AccountId, UserFlow*>;
 

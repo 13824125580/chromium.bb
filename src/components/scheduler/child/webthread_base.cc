@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/pending_task.h"
 #include "base/threading/platform_thread.h"
 #include "components/scheduler/child/single_thread_idle_task_runner.h"
@@ -19,7 +20,7 @@ namespace scheduler {
 class WebThreadBase::TaskObserverAdapter
     : public base::MessageLoop::TaskObserver {
  public:
-  TaskObserverAdapter(WebThread::TaskObserver* observer)
+  explicit TaskObserverAdapter(WebThread::TaskObserver* observer)
       : observer_(observer) {}
 
   void WillProcessTask(const base::PendingTask& pending_task) override {
@@ -46,7 +47,7 @@ WebThreadBase::~WebThreadBase() {
 void WebThreadBase::addTaskObserver(TaskObserver* observer) {
   CHECK(isCurrentThread());
   std::pair<TaskObserverMap::iterator, bool> result = task_observer_map_.insert(
-      std::make_pair(observer, static_cast<TaskObserverAdapter*>(NULL)));
+      std::make_pair(observer, nullptr));
   if (result.second)
     result.first->second = new TaskObserverAdapter(observer);
   AddTaskObserverInternal(result.first->second);
@@ -74,7 +75,7 @@ void WebThreadBase::RemoveTaskObserverInternal(
 
 // static
 void WebThreadBase::RunWebThreadIdleTask(
-    scoped_ptr<blink::WebThread::IdleTask> idle_task,
+    std::unique_ptr<blink::WebThread::IdleTask> idle_task,
     base::TimeTicks deadline) {
   idle_task->run((deadline - base::TimeTicks()).InSecondsF());
 }
@@ -83,9 +84,9 @@ void WebThreadBase::postIdleTask(const blink::WebTraceLocation& web_location,
                                  IdleTask* idle_task) {
   tracked_objects::Location location(web_location.functionName(),
                                      web_location.fileName(), -1, nullptr);
-  IdleTaskRunner()->PostIdleTask(
+  GetIdleTaskRunner()->PostIdleTask(
       location, base::Bind(&WebThreadBase::RunWebThreadIdleTask,
-                           base::Passed(make_scoped_ptr(idle_task))));
+                           base::Passed(base::WrapUnique(idle_task))));
 }
 
 void WebThreadBase::postIdleTaskAfterWakeup(
@@ -93,13 +94,13 @@ void WebThreadBase::postIdleTaskAfterWakeup(
     IdleTask* idle_task) {
   tracked_objects::Location location(web_location.functionName(),
                                      web_location.fileName(), -1, nullptr);
-  IdleTaskRunner()->PostIdleTaskAfterWakeup(
+  GetIdleTaskRunner()->PostIdleTaskAfterWakeup(
       location, base::Bind(&WebThreadBase::RunWebThreadIdleTask,
-                           base::Passed(make_scoped_ptr(idle_task))));
+                           base::Passed(base::WrapUnique(idle_task))));
 }
 
 bool WebThreadBase::isCurrentThread() const {
-  return TaskRunner()->BelongsToCurrentThread();
+  return GetTaskRunner()->BelongsToCurrentThread();
 }
 
 }  // namespace scheduler

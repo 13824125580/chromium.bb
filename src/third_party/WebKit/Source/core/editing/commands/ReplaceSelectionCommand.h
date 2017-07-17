@@ -48,9 +48,9 @@ public:
 
     typedef unsigned CommandOptions;
 
-    static PassRefPtrWillBeRawPtr<ReplaceSelectionCommand> create(Document& document, PassRefPtrWillBeRawPtr<DocumentFragment> fragment, CommandOptions options, EditAction action = EditActionPaste)
+    static ReplaceSelectionCommand* create(Document& document, DocumentFragment* fragment, CommandOptions options, EditAction action = EditActionPaste)
     {
-        return adoptRefWillBeNoop(new ReplaceSelectionCommand(document, fragment, options, action));
+        return new ReplaceSelectionCommand(document, fragment, options, action);
     }
 
     EphemeralRange insertedRange() const;
@@ -58,7 +58,7 @@ public:
     DECLARE_VIRTUAL_TRACE();
 
 private:
-    ReplaceSelectionCommand(Document&, PassRefPtrWillBeRawPtr<DocumentFragment>, CommandOptions, EditAction);
+    ReplaceSelectionCommand(Document&, DocumentFragment*, CommandOptions, EditAction);
 
     void doApply(EditingState*) override;
     EditAction editingAction() const override;
@@ -77,11 +77,11 @@ private:
         Node* pastLastLeaf() const { return m_lastNodeInserted ? NodeTraversal::next(NodeTraversal::lastWithinOrSelf(*m_lastNodeInserted)) : 0; }
 
     private:
-        RefPtrWillBeMember<Node> m_firstNodeInserted;
-        RefPtrWillBeMember<Node> m_lastNodeInserted;
+        Member<Node> m_firstNodeInserted;
+        Member<Node> m_lastNodeInserted;
     };
 
-    Node* insertAsListItems(PassRefPtrWillBeRawPtr<HTMLElement> listElement, Element* insertionBlock, const Position&, InsertedNodes&, EditingState*);
+    Node* insertAsListItems(HTMLElement* listElement, Element* insertionBlock, const Position&, InsertedNodes&, EditingState*);
 
     void updateNodesInserted(Node*);
     bool shouldRemoveEndBR(HTMLBRElement*, const VisiblePosition&);
@@ -96,7 +96,7 @@ private:
 
     void removeRedundantStylesAndKeepStyleSpanInline(InsertedNodes&, EditingState*);
     void makeInsertedContentRoundTrippableWithHTMLTreeBuilder(const InsertedNodes&, EditingState*);
-    void moveElementOutOfAncestor(PassRefPtrWillBeRawPtr<Element>, PassRefPtrWillBeRawPtr<Element> ancestor, EditingState*);
+    void moveElementOutOfAncestor(Element*, Element* ancestor, EditingState*);
     void handleStyleSpans(InsertedNodes&, EditingState*);
 
     VisiblePosition positionAtStartOfInsertedContent() const;
@@ -111,11 +111,11 @@ private:
 
     Position m_startOfInsertedContent;
     Position m_endOfInsertedContent;
-    RefPtrWillBeMember<EditingStyle> m_insertionStyle;
+    Member<EditingStyle> m_insertionStyle;
     bool m_selectReplacement;
     bool m_smartReplace;
     bool m_matchStyle;
-    RefPtrWillBeMember<DocumentFragment> m_documentFragment;
+    Member<DocumentFragment> m_documentFragment;
     bool m_preventNesting;
     bool m_movingParagraph;
     EditAction m_editAction;

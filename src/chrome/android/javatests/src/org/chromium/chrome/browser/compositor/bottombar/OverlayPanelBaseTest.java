@@ -31,7 +31,7 @@ public class OverlayPanelBaseTest extends InstrumentationTestCase {
      */
     private static class MockOverlayPanel extends OverlayPanel {
         public MockOverlayPanel(Context context, OverlayPanelManager manager) {
-            super(context, null, manager);
+            super(context, null, null, manager);
         }
 
         /**
@@ -70,13 +70,13 @@ public class OverlayPanelBaseTest extends InstrumentationTestCase {
         }
 
         @Override
-        public boolean supportsExpandedState() {
-            return false;
+        public float getThresholdToNextState() {
+            return 0.3f;
         }
 
         @Override
-        public float getThresholdToNextState() {
-            return 0.3f;
+        protected boolean isSupportedState(PanelState state) {
+            return state != PanelState.EXPANDED;
         }
     }
 

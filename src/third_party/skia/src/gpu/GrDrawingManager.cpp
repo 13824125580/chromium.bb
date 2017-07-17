@@ -58,24 +58,25 @@ void GrDrawingManager::reset() {
 }
 
 void GrDrawingManager::flush() {
-    if (fFlushing || this->abandoned()) {
+    if (fFlushing || this->wasAbandoned()) {
         return;
     }
     fFlushing = true;
 
-    SkDEBUGCODE(bool result =) 
+    SkDEBUGCODE(bool result =)
                         SkTTopoSort<GrDrawTarget, GrDrawTarget::TopoSortTraits>(&fDrawTargets);
     SkASSERT(result);
 
+    for (int i = 0; i < fDrawTargets.count(); ++i) {
+        fDrawTargets[i]->prepareBatches(&fFlushState);
+    }
+
+    // Enable this to print out verbose batching information
 #if 0
     for (int i = 0; i < fDrawTargets.count(); ++i) {
         SkDEBUGCODE(fDrawTargets[i]->dump();)
     }
 #endif
-
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->prepareBatches(&fFlushState);
-    }
 
     // Upload all data to the GPU
     fFlushState.preIssueDraws();
@@ -84,7 +85,7 @@ void GrDrawingManager::flush() {
         fDrawTargets[i]->drawBatches(&fFlushState);
     }
 
-    SkASSERT(fFlushState.lastFlushedToken() == fFlushState.currentToken());
+    SkASSERT(fFlushState.nextDrawToken() == fFlushState.nextTokenToFlush());
 
     for (int i = 0; i < fDrawTargets.count(); ++i) {
         fDrawTargets[i]->reset();
@@ -129,7 +130,7 @@ GrDrawTarget* GrDrawingManager::newDrawTarget(GrRenderTarget* rt) {
 
     *fDrawTargets.append() = dt;
 
-    // DrawingManager gets the creation ref - this ref is for the caller 
+    // DrawingManager gets the creation ref - this ref is for the caller
     return SkRef(dt);
 }
 
@@ -151,7 +152,7 @@ GrPathRenderer* GrDrawingManager::getPathRenderer(const GrPathRenderer::CanDrawP
     GrPathRenderer* pr = fPathRendererChain->getPathRenderer(args, drawType, stencilSupport);
     if (!pr && allowSW) {
         if (!fSoftwarePathRenderer) {
-            fSoftwarePathRenderer = new GrSoftwarePathRenderer(fContext);
+            fSoftwarePathRenderer = new GrSoftwarePathRenderer(fContext->textureProvider());
         }
         pr = fSoftwarePathRenderer;
     }
@@ -159,9 +160,9 @@ GrPathRenderer* GrDrawingManager::getPathRenderer(const GrPathRenderer::CanDrawP
     return pr;
 }
 
-GrDrawContext* GrDrawingManager::drawContext(GrRenderTarget* rt,
-                                             const SkSurfaceProps* surfaceProps) {
-    if (this->abandoned()) {
+sk_sp<GrDrawContext> GrDrawingManager::drawContext(sk_sp<GrRenderTarget> rt,
+                                                   const SkSurfaceProps* surfaceProps) {
+    if (this->wasAbandoned()) {
         return nullptr;
     }
 
@@ -173,13 +174,16 @@ GrDrawContext* GrDrawingManager::drawContext(GrRenderTarget* rt,
 
     if (useDIF && fContext->caps()->shaderCaps()->pathRenderingSupport() &&
         rt->isStencilBufferMultisampled()) {
-        GrStencilAttachment* sb = fContext->resourceProvider()->attachStencilAttachment(rt);
+        GrStencilAttachment* sb = fContext->resourceProvider()->attachStencilAttachment(rt.get());
         if (sb) {
-            return new GrPathRenderingDrawContext(fContext, this, rt, surfaceProps,
-                                                  fContext->getAuditTrail(), fSingleOwner);
+            return sk_sp<GrDrawContext>(new GrPathRenderingDrawContext(
+                                                        fContext, this, std::move(rt), 
+                                                        surfaceProps,
+                                                        fContext->getAuditTrail(), fSingleOwner));
         }
     }
 
-    return new GrDrawContext(fContext, this, rt, surfaceProps, fContext->getAuditTrail(),
-                             fSingleOwner);
+    return sk_sp<GrDrawContext>(new GrDrawContext(fContext, this, std::move(rt), surfaceProps,
+                                                  fContext->getAuditTrail(),
+                                                  fSingleOwner));
 }

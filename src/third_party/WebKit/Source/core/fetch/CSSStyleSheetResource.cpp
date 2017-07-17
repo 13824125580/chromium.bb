@@ -28,7 +28,8 @@
 
 #include "core/css/StyleSheetContents.h"
 #include "core/fetch/FetchRequest.h"
-#include "core/fetch/ResourceClientWalker.h"
+#include "core/fetch/MemoryCache.h"
+#include "core/fetch/ResourceClientOrObserverWalker.h"
 #include "core/fetch/ResourceFetcher.h"
 #include "core/fetch/StyleSheetResourceClient.h"
 #include "platform/SharedBuffer.h"
@@ -36,40 +37,34 @@
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<CSSStyleSheetResource> CSSStyleSheetResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
+CSSStyleSheetResource* CSSStyleSheetResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
 {
     ASSERT(request.resourceRequest().frameType() == WebURLRequest::FrameTypeNone);
     request.mutableResourceRequest().setRequestContext(WebURLRequest::RequestContextStyle);
     return toCSSStyleSheetResource(fetcher->requestResource(request, CSSStyleSheetResourceFactory()));
 }
 
-PassRefPtrWillBeRawPtr<CSSStyleSheetResource> CSSStyleSheetResource::createForTest(const ResourceRequest& request, const String& charset)
+CSSStyleSheetResource* CSSStyleSheetResource::createForTest(const ResourceRequest& request, const String& charset)
 {
-    return adoptRefWillBeNoop(new CSSStyleSheetResource(request, charset));
+    return new CSSStyleSheetResource(request, ResourceLoaderOptions(), charset);
 }
 
-CSSStyleSheetResource::CSSStyleSheetResource(const ResourceRequest& resourceRequest, const String& charset)
-    : StyleSheetResource(resourceRequest, CSSStyleSheet, "text/css", charset)
+CSSStyleSheetResource::CSSStyleSheetResource(const ResourceRequest& resourceRequest, const ResourceLoaderOptions& options, const String& charset)
+    : StyleSheetResource(resourceRequest, CSSStyleSheet, options, "text/css", charset)
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, acceptCSS, ("text/css,*/*;q=0.1", AtomicString::ConstructFromLiteral));
-
-    // Prefer text/css but accept any type (dell.com serves a stylesheet
-    // as text/html; see <http://bugs.webkit.org/show_bug.cgi?id=11451>).
-    setAccept(acceptCSS);
 }
 
 CSSStyleSheetResource::~CSSStyleSheetResource()
 {
-    // Make sure dispose() was cllaed before destruction.
-    ASSERT(!m_parsedStyleSheetCache);
 }
 
-void CSSStyleSheetResource::removedFromMemoryCache()
+void CSSStyleSheetResource::setParsedStyleSheetCache(StyleSheetContents* newSheet)
 {
     if (m_parsedStyleSheetCache)
-        m_parsedStyleSheetCache->removedFromMemoryCache();
-    m_parsedStyleSheetCache.clear();
-    Resource::removedFromMemoryCache();
+        m_parsedStyleSheetCache->clearReferencedFromResource();
+    m_parsedStyleSheetCache = newSheet;
+    if (m_parsedStyleSheetCache)
+        m_parsedStyleSheetCache->setReferencedFromResource(this);
 }
 
 DEFINE_TRACE(CSSStyleSheetResource)
@@ -111,8 +106,10 @@ void CSSStyleSheetResource::checkNotify()
         m_decodedSheetText = decodedText();
 
     ResourceClientWalker<StyleSheetResourceClient> w(m_clients);
-    while (StyleSheetResourceClient* c = w.next())
-        c->setCSSStyleSheet(m_resourceRequest.url(), m_response.url(), encoding(), this);
+    while (StyleSheetResourceClient* c = w.next()) {
+        markClientFinished(c);
+        c->setCSSStyleSheet(resourceRequest().url(), response().url(), encoding(), this);
+    }
     // Clear the decoded text as it is unlikely to be needed immediately again and is cheap to regenerate.
     m_decodedSheetText = String();
 }
@@ -127,9 +124,7 @@ void CSSStyleSheetResource::destroyDecodedDataIfPossible()
     if (!m_parsedStyleSheetCache)
         return;
 
-    m_parsedStyleSheetCache->removedFromMemoryCache();
-    m_parsedStyleSheetCache.clear();
-
+    setParsedStyleSheetCache(nullptr);
     setDecodedSize(0);
 }
 
@@ -151,18 +146,17 @@ bool CSSStyleSheetResource::canUseSheet(MIMETypeCheck mimeTypeCheck) const
     return contentType.isEmpty() || equalIgnoringCase(contentType, "text/css") || equalIgnoringCase(contentType, "application/x-unknown-content-type");
 }
 
-PassRefPtrWillBeRawPtr<StyleSheetContents> CSSStyleSheetResource::restoreParsedStyleSheet(const CSSParserContext& context)
+StyleSheetContents* CSSStyleSheetResource::restoreParsedStyleSheet(const CSSParserContext& context)
 {
     if (!m_parsedStyleSheetCache)
         return nullptr;
     if (m_parsedStyleSheetCache->hasFailedOrCanceledSubresources()) {
-        m_parsedStyleSheetCache->removedFromMemoryCache();
-        m_parsedStyleSheetCache.clear();
+        setParsedStyleSheetCache(nullptr);
         return nullptr;
     }
 
-    ASSERT(m_parsedStyleSheetCache->isCacheable());
-    ASSERT(m_parsedStyleSheetCache->isInMemoryCache());
+    ASSERT(m_parsedStyleSheetCache->isCacheableForResource());
+    ASSERT(m_parsedStyleSheetCache->isReferencedFromResource());
 
     // Contexts must be identical so we know we would get the same exact result if we parsed again.
     if (m_parsedStyleSheetCache->parserContext() != context)
@@ -173,15 +167,17 @@ PassRefPtrWillBeRawPtr<StyleSheetContents> CSSStyleSheetResource::restoreParsedS
     return m_parsedStyleSheetCache;
 }
 
-void CSSStyleSheetResource::saveParsedStyleSheet(PassRefPtrWillBeRawPtr<StyleSheetContents> sheet)
+void CSSStyleSheetResource::saveParsedStyleSheet(StyleSheetContents* sheet)
 {
-    ASSERT(sheet && sheet->isCacheable());
+    ASSERT(sheet && sheet->isCacheableForResource());
 
-    if (m_parsedStyleSheetCache)
-        m_parsedStyleSheetCache->removedFromMemoryCache();
-    m_parsedStyleSheetCache = sheet;
-    m_parsedStyleSheetCache->addedToMemoryCache();
-
+    if (!memoryCache()->contains(this)) {
+        // This stylesheet resource did conflict with another resource and was
+        // not added to the cache.
+        setParsedStyleSheetCache(nullptr);
+        return;
+    }
+    setParsedStyleSheetCache(sheet);
     setDecodedSize(m_parsedStyleSheetCache->estimatedSizeInBytes());
 }
 

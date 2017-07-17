@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/component_updater/component_updater_service.h"
+
 #include <limits>
 #include <string>
 #include <vector>
@@ -11,19 +13,18 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/histogram_tester.h"
 #include "base/test/sequenced_worker_pool_owner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "components/component_updater/component_updater_service.h"
 #include "components/component_updater/component_updater_service_internal.h"
 #include "components/update_client/test_configurator.h"
 #include "components/update_client/test_installer.h"
 #include "components/update_client/update_client.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -115,11 +116,11 @@ class ComponentUpdaterTest : public testing::Test {
   base::RunLoop runloop_;
   base::Closure quit_closure_;
 
-  scoped_ptr<base::SequencedWorkerPoolOwner> worker_pool_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> worker_pool_;
 
   scoped_refptr<TestConfigurator> config_;
   scoped_refptr<MockUpdateClient> update_client_;
-  scoped_ptr<ComponentUpdateService> component_updater_;
+  std::unique_ptr<ComponentUpdateService> component_updater_;
 
   DISALLOW_COPY_AND_ASSIGN(ComponentUpdaterTest);
 };
@@ -152,11 +153,10 @@ bool OnDemandTester::OnDemand(ComponentUpdateService* cus,
   return cus->GetOnDemandUpdater().OnDemandUpdate(id);
 }
 
-scoped_ptr<ComponentUpdateService> TestComponentUpdateServiceFactory(
+std::unique_ptr<ComponentUpdateService> TestComponentUpdateServiceFactory(
     const scoped_refptr<Configurator>& config) {
   DCHECK(config);
-  return scoped_ptr<ComponentUpdateService>(
-      new CrxUpdateService(config, new MockUpdateClient()));
+  return base::WrapUnique(new CrxUpdateService(config, new MockUpdateClient()));
 }
 
 ComponentUpdaterTest::ComponentUpdaterTest()
@@ -215,6 +215,7 @@ TEST_F(ComponentUpdaterTest, RegisterComponent) {
     void OnUpdate(const std::vector<std::string>& ids,
                   const UpdateClient::CrxDataCallback& crx_data_callback,
                   const UpdateClient::CompletionCallback& completion_callback) {
+      completion_callback.Run(0);
       static int cnt = 0;
       ++cnt;
       if (cnt >= max_cnt_)
@@ -225,6 +226,8 @@ TEST_F(ComponentUpdaterTest, RegisterComponent) {
     const int max_cnt_;
     base::Closure quit_closure_;
   };
+
+  base::HistogramTester ht;
 
   scoped_refptr<MockInstaller> installer(new MockInstaller());
   EXPECT_CALL(*installer, Uninstall()).WillOnce(Return(true));
@@ -260,8 +263,11 @@ TEST_F(ComponentUpdaterTest, RegisterComponent) {
   EXPECT_TRUE(component_updater().RegisterComponent(crx_component2));
 
   RunThreads();
-
   EXPECT_TRUE(component_updater().UnregisterComponent(id1));
+
+  ht.ExpectUniqueSample("ComponentUpdater.Calls", 1, 2);
+  ht.ExpectUniqueSample("ComponentUpdater.UpdateCompleteResult", 0, 2);
+  ht.ExpectTotalCount("ComponentUpdater.UpdateCompleteTime", 2);
 }
 
 // Tests that on-demand updates invoke UpdateClient::Install.
@@ -275,6 +281,7 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
         const std::string& ids,
         const UpdateClient::CrxDataCallback& crx_data_callback,
         const UpdateClient::CompletionCallback& completion_callback) {
+      completion_callback.Run(0);
       static int cnt = 0;
       ++cnt;
       if (cnt >= max_cnt_)
@@ -285,6 +292,8 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
     const int max_cnt_;
     base::Closure quit_closure_;
   };
+
+  base::HistogramTester ht;
 
   auto config = configurator();
   config->SetInitialDelay(3600);
@@ -312,6 +321,10 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
   EXPECT_TRUE(OnDemandTester::OnDemand(&cus, id));
 
   RunThreads();
+
+  ht.ExpectUniqueSample("ComponentUpdater.Calls", 0, 1);
+  ht.ExpectUniqueSample("ComponentUpdater.UpdateCompleteResult", 0, 1);
+  ht.ExpectTotalCount("ComponentUpdater.UpdateCompleteTime", 1);
 }
 
 // Tests that throttling an update invokes UpdateClient::Install.
@@ -325,6 +338,7 @@ TEST_F(ComponentUpdaterTest, MaybeThrottle) {
         const std::string& ids,
         const UpdateClient::CrxDataCallback& crx_data_callback,
         const UpdateClient::CompletionCallback& completion_callback) {
+      completion_callback.Run(0);
       static int cnt = 0;
       ++cnt;
       if (cnt >= max_cnt_)
@@ -335,6 +349,8 @@ TEST_F(ComponentUpdaterTest, MaybeThrottle) {
     const int max_cnt_;
     base::Closure quit_closure_;
   };
+
+  base::HistogramTester ht;
 
   auto config = configurator();
   config->SetInitialDelay(3600);
@@ -359,6 +375,10 @@ TEST_F(ComponentUpdaterTest, MaybeThrottle) {
       base::Bind(&ComponentUpdaterTest::ReadyCallback));
 
   RunThreads();
+
+  ht.ExpectUniqueSample("ComponentUpdater.Calls", 0, 1);
+  ht.ExpectUniqueSample("ComponentUpdater.UpdateCompleteResult", 0, 1);
+  ht.ExpectTotalCount("ComponentUpdater.UpdateCompleteTime", 1);
 }
 
 }  // namespace component_updater

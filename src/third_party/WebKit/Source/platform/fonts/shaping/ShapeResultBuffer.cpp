@@ -4,11 +4,12 @@
 
 #include "platform/fonts/shaping/ShapeResultBuffer.h"
 
-#include "platform/fonts/Character.h"
+#include "platform/fonts/CharacterRange.h"
 #include "platform/fonts/GlyphBuffer.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/fonts/shaping/ShapeResultInlineHeaders.h"
 #include "platform/geometry/FloatPoint.h"
+#include "platform/text/Character.h"
 #include "platform/text/TextBreakIterator.h"
 #include "platform/text/TextDirection.h"
 
@@ -204,7 +205,7 @@ float ShapeResultBuffer::fillGlyphBuffer(GlyphBuffer* glyphBuffer, const TextRun
     unsigned from, unsigned to) const
 {
     // Fast path: full run with no vertical offsets
-    if (!from && to == static_cast<unsigned>(textRun.length()) && !hasVerticalOffsets())
+    if (!from && to == textRun.length() && !hasVerticalOffsets())
         return fillFastHorizontalGlyphBuffer(glyphBuffer, textRun.direction());
 
     float advance = 0;
@@ -213,7 +214,7 @@ float ShapeResultBuffer::fillGlyphBuffer(GlyphBuffer* glyphBuffer, const TextRun
         unsigned wordOffset = textRun.length();
         for (unsigned j = 0; j < m_results.size(); j++) {
             unsigned resolvedIndex = m_results.size() - 1 - j;
-            const RefPtr<ShapeResult>& wordResult = m_results[resolvedIndex];
+            const RefPtr<const ShapeResult>& wordResult = m_results[resolvedIndex];
             for (unsigned i = 0; i < wordResult->m_runs.size(); i++) {
                 advance += fillGlyphBufferForRun<RTL>(glyphBuffer,
                     wordResult->m_runs[i].get(), advance, from, to,
@@ -224,7 +225,7 @@ float ShapeResultBuffer::fillGlyphBuffer(GlyphBuffer* glyphBuffer, const TextRun
     } else {
         unsigned wordOffset = 0;
         for (unsigned j = 0; j < m_results.size(); j++) {
-            const RefPtr<ShapeResult>& wordResult = m_results[j];
+            const RefPtr<const ShapeResult>& wordResult = m_results[j];
             for (unsigned i = 0; i < wordResult->m_runs.size(); i++) {
                 advance += fillGlyphBufferForRun<LTR>(glyphBuffer,
                     wordResult->m_runs[i].get(), advance, from, to, wordOffset);
@@ -244,7 +245,7 @@ float ShapeResultBuffer::fillGlyphBufferForTextEmphasis(GlyphBuffer* glyphBuffer
 
     for (unsigned j = 0; j < m_results.size(); j++) {
         unsigned resolvedIndex = textRun.rtl() ? m_results.size() - 1 - j : j;
-        const RefPtr<ShapeResult>& wordResult = m_results[resolvedIndex];
+        const RefPtr<const ShapeResult>& wordResult = m_results[resolvedIndex];
         for (unsigned i = 0; i < wordResult->m_runs.size(); i++) {
             unsigned resolvedOffset = wordOffset -
                 (textRun.rtl() ? wordResult->numCharacters() : 0);
@@ -258,8 +259,8 @@ float ShapeResultBuffer::fillGlyphBufferForTextEmphasis(GlyphBuffer* glyphBuffer
     return advance;
 }
 
-FloatRect ShapeResultBuffer::selectionRect(TextDirection direction, float totalWidth,
-    const FloatPoint& point, int height, unsigned absoluteFrom, unsigned absoluteTo) const
+CharacterRange ShapeResultBuffer::getCharacterRange(TextDirection direction,
+    float totalWidth, unsigned absoluteFrom, unsigned absoluteTo) const
 {
     float currentX = 0;
     float fromX = 0;
@@ -278,7 +279,7 @@ FloatRect ShapeResultBuffer::selectionRect(TextDirection direction, float totalW
 
     unsigned totalNumCharacters = 0;
     for (unsigned j = 0; j < m_results.size(); j++) {
-        const RefPtr<ShapeResult> result = m_results[j];
+        const RefPtr<const ShapeResult> result = m_results[j];
         if (direction == RTL) {
             // Convert logical offsets to visual offsets, because results are in
             // logical order while runs are in visual order.
@@ -334,22 +335,62 @@ FloatRect ShapeResultBuffer::selectionRect(TextDirection direction, float totalW
     if (!foundToX && !foundFromX)
         fromX = toX = 0;
     if (fromX < toX)
-        return FloatRect(point.x() + fromX, point.y(), toX - fromX, height);
-    return FloatRect(point.x() + toX, point.y(), fromX - toX, height);
+        return CharacterRange(fromX, toX);
+    return CharacterRange(toX, fromX);
 }
 
-int ShapeResultBuffer::offsetForPosition(const TextRun& run, float targetX) const
+void ShapeResultBuffer::addRunInfoRanges(const ShapeResult::RunInfo& runInfo,
+    float offset, Vector<CharacterRange>& ranges)
+{
+    Vector<float> characterWidths(runInfo.m_numCharacters);
+    for (const auto& glyph : runInfo.m_glyphData)
+        characterWidths[glyph.characterIndex] += glyph.advance;
+
+    for (unsigned characterIndex = 0; characterIndex < runInfo.m_numCharacters; characterIndex++) {
+        float start = offset;
+        offset += characterWidths[characterIndex];
+        float end = offset;
+
+        // To match getCharacterRange we flip ranges to ensure start <= end.
+        if (end < start)
+            ranges.append(CharacterRange(end, start));
+        else
+            ranges.append(CharacterRange(start, end));
+    }
+}
+
+Vector<CharacterRange> ShapeResultBuffer::individualCharacterRanges(
+    TextDirection direction, float totalWidth) const
+{
+    Vector<CharacterRange> ranges;
+    float currentX = direction == RTL ? totalWidth : 0;
+    for (const RefPtr<const ShapeResult> result : m_results) {
+        if (direction == RTL)
+            currentX -= result->width();
+        unsigned runCount = result->m_runs.size();
+        for (unsigned index = 0; index < runCount; index++) {
+            unsigned runIndex = direction == RTL ? runCount - 1 - index : index;
+            addRunInfoRanges(*result->m_runs[runIndex], currentX, ranges);
+            currentX += result->m_runs[runIndex]->m_width;
+        }
+        if (direction == RTL)
+            currentX -= result->width();
+    }
+    return ranges;
+}
+
+int ShapeResultBuffer::offsetForPosition(const TextRun& run, float targetX, bool includePartialGlyphs) const
 {
     unsigned totalOffset;
     if (run.rtl()) {
         totalOffset = run.length();
         for (unsigned i = m_results.size(); i; --i) {
-            const RefPtr<ShapeResult>& wordResult = m_results[i - 1];
+            const RefPtr<const ShapeResult>& wordResult = m_results[i - 1];
             if (!wordResult)
                 continue;
             totalOffset -= wordResult->numCharacters();
             if (targetX >= 0 && targetX <= wordResult->width()) {
-                int offsetForWord = wordResult->offsetForPosition(targetX);
+                int offsetForWord = wordResult->offsetForPosition(targetX, includePartialGlyphs);
                 return totalOffset + offsetForWord;
             }
             targetX -= wordResult->width();
@@ -359,7 +400,7 @@ int ShapeResultBuffer::offsetForPosition(const TextRun& run, float targetX) cons
         for (const auto& wordResult : m_results) {
             if (!wordResult)
                 continue;
-            int offsetForWord = wordResult->offsetForPosition(targetX);
+            int offsetForWord = wordResult->offsetForPosition(targetX, includePartialGlyphs);
             ASSERT(offsetForWord >= 0);
             totalOffset += offsetForWord;
             if (targetX >= 0 && targetX <= wordResult->width())

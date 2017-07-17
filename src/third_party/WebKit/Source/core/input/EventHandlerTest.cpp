@@ -16,6 +16,7 @@
 #include "core/testing/DummyPageHolder.h"
 #include "platform/PlatformMouseEvent.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -29,7 +30,7 @@ protected:
     void setHtmlInnerHTML(const char* htmlContent);
 
 private:
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
 };
 
 class TapEventBuilder : public PlatformGestureEvent {
@@ -69,7 +70,7 @@ TEST_F(EventHandlerTest, dragSelectionAfterScroll)
         "</div>");
 
     FrameView* frameView = document().view();
-    frameView->scrollTo(DoublePoint(0, 400));
+    frameView->setScrollPosition(DoublePoint(0, 400), ProgrammaticScroll);
 
     PlatformMouseEvent mouseDownEvent(
         IntPoint(0, 0),
@@ -106,8 +107,8 @@ TEST_F(EventHandlerTest, dragSelectionAfterScroll)
 
     FrameSelection& selection = document().frame()->selection();
     ASSERT_TRUE(selection.isRange());
-    RefPtrWillBeRawPtr<Range> range = createRange(selection.selection().toNormalizedEphemeralRange());
-    ASSERT_TRUE(range.get());
+    Range* range = createRange(selection.selection().toNormalizedEphemeralRange());
+    ASSERT_TRUE(range);
     EXPECT_EQ("Line 1\nLine 2", range->text());
 }
 

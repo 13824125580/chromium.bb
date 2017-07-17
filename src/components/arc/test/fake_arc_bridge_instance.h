@@ -12,20 +12,28 @@
 
 namespace arc {
 
-class FakeArcBridgeInstance : public ArcBridgeInstance {
+class FakeArcBridgeInstance : public mojom::ArcBridgeInstance {
  public:
+  class Delegate {
+   public:
+    virtual ~Delegate() = default;
+    virtual void OnStopped(ArcBridgeService::StopReason reason) = 0;
+  };
+
   FakeArcBridgeInstance();
   ~FakeArcBridgeInstance() override;
 
+  void set_delegate(Delegate* delegate) { delegate_ = delegate; }
+
   // Finalizes the connection between the host and the instance, and signals
   // the host that the boot sequence has finished.
-  void Bind(mojo::InterfaceRequest<ArcBridgeInstance> interface_request);
+  void Bind(mojo::InterfaceRequest<mojom::ArcBridgeInstance> interface_request);
 
   // Resets the binding. Useful to simulate a restart.
   void Unbind();
 
   // ArcBridgeInstance:
-  void Init(ArcBridgeHostPtr host) override;
+  void Init(mojom::ArcBridgeHostPtr host) override;
 
   // Ensures the call to Init() has been dispatched.
   void WaitForInitCall();
@@ -33,10 +41,15 @@ class FakeArcBridgeInstance : public ArcBridgeInstance {
   // The number of times Init() has been called.
   int init_calls() const { return init_calls_; }
 
+  // Stops the instance.
+  void Stop(ArcBridgeService::StopReason reason);
+
  private:
+  Delegate* delegate_ = nullptr;
+
   // Mojo endpoints.
-  mojo::Binding<ArcBridgeInstance> binding_;
-  ArcBridgeHostPtr host_ptr_;
+  mojo::Binding<mojom::ArcBridgeInstance> binding_;
+  mojom::ArcBridgeHostPtr host_ptr_;
   int init_calls_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(FakeArcBridgeInstance);

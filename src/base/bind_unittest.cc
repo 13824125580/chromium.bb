@@ -10,8 +10,8 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -650,28 +650,6 @@ TEST_F(BindTest, ArrayArgumentBinding) {
   EXPECT_EQ(3, const_array_cb.Run());
 }
 
-// Verify SupportsAddRefAndRelease correctly introspects the class type for
-// AddRef() and Release().
-//  - Class with AddRef() and Release()
-//  - Class without AddRef() and Release()
-//  - Derived Class with AddRef() and Release()
-//  - Derived Class without AddRef() and Release()
-//  - Derived Class with AddRef() and Release() and a private destructor.
-TEST_F(BindTest, SupportsAddRefAndRelease) {
-  EXPECT_TRUE(internal::SupportsAddRefAndRelease<HasRef>::value);
-  EXPECT_FALSE(internal::SupportsAddRefAndRelease<NoRef>::value);
-
-  // StrictMock<T> is a derived class of T.  So, we use StrictMock<HasRef> and
-  // StrictMock<NoRef> to test that SupportsAddRefAndRelease works over
-  // inheritance.
-  EXPECT_TRUE(internal::SupportsAddRefAndRelease<StrictMock<HasRef> >::value);
-  EXPECT_FALSE(internal::SupportsAddRefAndRelease<StrictMock<NoRef> >::value);
-
-  // This matters because the implementation creates a dummy class that
-  // inherits from the template type.
-  EXPECT_TRUE(internal::SupportsAddRefAndRelease<HasRefPrivateDtor>::value);
-}
-
 // Unretained() wrapper support.
 //   - Method bound to Unretained() non-const object.
 //   - Const method bound to Unretained() non-const object.
@@ -763,15 +741,10 @@ TEST_F(BindTest, ConstRef) {
 }
 
 TEST_F(BindTest, ScopedRefptr) {
-  // BUG: The scoped_refptr should cause the only AddRef()/Release() pair. But
-  // due to a bug in base::Bind(), there's an extra call when invoking the
-  // callback.
-  // https://code.google.com/p/chromium/issues/detail?id=251937
-  EXPECT_CALL(has_ref_, AddRef()).Times(2);
-  EXPECT_CALL(has_ref_, Release()).Times(2);
+  EXPECT_CALL(has_ref_, AddRef()).Times(1);
+  EXPECT_CALL(has_ref_, Release()).Times(1);
 
-  const scoped_refptr<StrictMock<HasRef> > refptr(&has_ref_);
-
+  const scoped_refptr<HasRef> refptr(&has_ref_);
   Callback<int()> scoped_refptr_const_ref_cb =
       Bind(&FunctionWithScopedRefptrFirstParam, base::ConstRef(refptr), 1);
   EXPECT_EQ(1, scoped_refptr_const_ref_cb.Run());
@@ -802,6 +775,12 @@ TEST_F(BindTest, Owned) {
   EXPECT_EQ(1, deletes);
 }
 
+TEST_F(BindTest, UniquePtrReceiver) {
+  std::unique_ptr<StrictMock<NoRef>> no_ref(new StrictMock<NoRef>);
+  EXPECT_CALL(*no_ref, VoidMethod0()).Times(1);
+  Bind(&NoRef::VoidMethod0, std::move(no_ref)).Run();
+}
+
 // Tests for Passed() wrapper support:
 //   - Passed() can be constructed from a pointer to scoper.
 //   - Passed() can be constructed from a scoper rvalue.
@@ -817,7 +796,7 @@ struct CustomDeleter {
 };
 
 using MoveOnlyTypesToTest =
-    ::testing::Types<scoped_ptr<DeleteCounter>,
+    ::testing::Types<std::unique_ptr<DeleteCounter>,
                      std::unique_ptr<DeleteCounter>,
                      std::unique_ptr<DeleteCounter, CustomDeleter>>;
 TYPED_TEST_CASE(BindMoveOnlyTypeTest, MoveOnlyTypesToTest);
@@ -874,23 +853,23 @@ TYPED_TEST(BindMoveOnlyTypeTest, UnboundForwarding) {
   EXPECT_EQ(1, deletes);
 }
 
-void VerifyVector(const std::vector<scoped_ptr<int>>& v) {
+void VerifyVector(const std::vector<std::unique_ptr<int>>& v) {
   ASSERT_EQ(1u, v.size());
   EXPECT_EQ(12345, *v[0]);
 }
 
-std::vector<scoped_ptr<int>> AcceptAndReturnMoveOnlyVector(
-    std::vector<scoped_ptr<int>> v) {
+std::vector<std::unique_ptr<int>> AcceptAndReturnMoveOnlyVector(
+    std::vector<std::unique_ptr<int>> v) {
   VerifyVector(v);
   return v;
 }
 
 // Test that a vector containing move-only types can be used with Callback.
 TEST_F(BindTest, BindMoveOnlyVector) {
-  using MoveOnlyVector = std::vector<scoped_ptr<int>>;
+  using MoveOnlyVector = std::vector<std::unique_ptr<int>>;
 
   MoveOnlyVector v;
-  v.push_back(make_scoped_ptr(new int(12345)));
+  v.push_back(WrapUnique(new int(12345)));
 
   // Early binding should work:
   base::Callback<MoveOnlyVector()> bound_cb =
@@ -928,7 +907,7 @@ TEST_F(BindTest, ArgumentCopies) {
   copies = 0;
   assigns = 0;
   Bind(&VoidPolymorphic<CopyCounter>::Run).Run(counter);
-  EXPECT_EQ(1, copies);
+  EXPECT_EQ(2, copies);
   EXPECT_EQ(0, assigns);
 
   copies = 0;
@@ -967,7 +946,20 @@ TEST_F(BindTest, ArgumentMoves) {
   // TODO(tzik): Support binding move-only type into a non-reference parameter
   // of a variant of Callback.
 
-  // TODO(tzik): Support move-only type forwarding on Callback::Run.
+  move_constructs = 0;
+  move_assigns = 0;
+  Bind(&VoidPolymorphic<MoveCounter>::Run)
+      .Run(MoveCounter(&move_constructs, &move_assigns));
+  EXPECT_EQ(1, move_constructs);
+  EXPECT_EQ(0, move_assigns);
+
+  move_constructs = 0;
+  move_assigns = 0;
+  Bind(&VoidPolymorphic<MoveCounter>::Run)
+      .Run(MoveCounter(DerivedCopyMoveCounter(
+          nullptr, nullptr, &move_constructs, &move_assigns)));
+  EXPECT_EQ(2, move_constructs);
+  EXPECT_EQ(0, move_assigns);
 }
 
 // Argument constructor usage for non-reference movable-copyable
@@ -1006,22 +998,20 @@ TEST_F(BindTest, ArgumentCopiesAndMoves) {
   Bind(&VoidPolymorphic<CopyMoveCounter>::Run).Run(counter);
   EXPECT_EQ(1, copies);
   EXPECT_EQ(0, assigns);
-  EXPECT_EQ(0, move_constructs);
+  EXPECT_EQ(1, move_constructs);
   EXPECT_EQ(0, move_assigns);
 
-  // TODO(tzik): This case should be done in no copy and one move.
   copies = 0;
   assigns = 0;
   move_constructs = 0;
   move_assigns = 0;
   Bind(&VoidPolymorphic<CopyMoveCounter>::Run)
       .Run(CopyMoveCounter(&copies, &assigns, &move_constructs, &move_assigns));
-  EXPECT_EQ(1, copies);
+  EXPECT_EQ(0, copies);
   EXPECT_EQ(0, assigns);
-  EXPECT_EQ(0, move_constructs);
+  EXPECT_EQ(1, move_constructs);
   EXPECT_EQ(0, move_assigns);
 
-  // TODO(tzik): This case should be done in one copy and one move.
   DerivedCopyMoveCounter derived_counter(&copies, &assigns, &move_constructs,
                                          &move_assigns);
   copies = 0;
@@ -1030,12 +1020,11 @@ TEST_F(BindTest, ArgumentCopiesAndMoves) {
   move_assigns = 0;
   Bind(&VoidPolymorphic<CopyMoveCounter>::Run)
       .Run(CopyMoveCounter(derived_counter));
-  EXPECT_EQ(2, copies);
+  EXPECT_EQ(1, copies);
   EXPECT_EQ(0, assigns);
-  EXPECT_EQ(0, move_constructs);
+  EXPECT_EQ(1, move_constructs);
   EXPECT_EQ(0, move_assigns);
 
-  // TODO(tzik): This case should be done in no copy and two move.
   copies = 0;
   assigns = 0;
   move_constructs = 0;
@@ -1043,9 +1032,9 @@ TEST_F(BindTest, ArgumentCopiesAndMoves) {
   Bind(&VoidPolymorphic<CopyMoveCounter>::Run)
       .Run(CopyMoveCounter(DerivedCopyMoveCounter(
           &copies, &assigns, &move_constructs, &move_assigns)));
-  EXPECT_EQ(1, copies);
+  EXPECT_EQ(0, copies);
   EXPECT_EQ(0, assigns);
-  EXPECT_EQ(1, move_constructs);
+  EXPECT_EQ(2, move_constructs);
   EXPECT_EQ(0, move_assigns);
 }
 

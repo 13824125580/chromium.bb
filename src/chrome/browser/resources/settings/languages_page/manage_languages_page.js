@@ -5,9 +5,6 @@
 /**
  * @fileoverview 'settings-manage-languages-page' is a sub-page for enabling
  * and disabling languages.
- *
- * @group Chrome Settings Elements
- * @element settings-manage-languages-page
  */
 Polymer({
   is: 'settings-manage-languages-page',
@@ -29,24 +26,45 @@ Polymer({
       notify: true,
     },
 
-    /**
-     * @private {!Array<!{code: string, displayName: string,
-     *                    nativeDisplayName: string, enabled: boolean}>|
-     *           undefined}
-     */
-    availableLanguages_: Array,
+    /** @private {!LanguageHelper} */
+    languageHelper_: Object,
   },
 
-  /** @private {!LanguageHelper} */
-  languageHelper_: LanguageHelperImpl.getInstance(),
+  /** @override */
+  created: function() {
+     this.languageHelper_ = LanguageHelperImpl.getInstance();
+  },
 
-  observers: [
-    'enabledLanguagesChanged_(languages.enabledLanguages.*)',
-  ],
+  /**
+   * @param {!chrome.languageSettingsPrivate.Language} language
+   * @param {!Object} change Polymer change object (provided in the HTML so this
+   *     gets called whenever languages.enabled.* changes).
+   * @return {boolean}
+   * @private
+   */
+  isCheckboxChecked_: function(language, change) {
+    return this.languageHelper_.isLanguageEnabled(language.code);
+  },
+
+  /**
+   * Determines whether a language must be enabled. If so, the checkbox in the
+   * available languages list should not be changeable.
+   * @param {!chrome.languageSettingsPrivate.Language} language
+   * @param {!Object} change Polymer change object (provided in the HTML so this
+   *     gets called whenever languages.enabled.* changes).
+   * @return {boolean}
+   * @private
+   */
+  isLanguageRequired_: function(language, change) {
+    // This check only applies to enabled languages.
+    if (!this.languageHelper_.isLanguageEnabled(language.code))
+      return false;
+    return !this.languageHelper_.canDisableLanguage(language.code);
+  },
 
   /**
    * Handler for removing a language.
-   * @param {!{model: !{item: !LanguageInfo}}} e
+   * @param {!{model: !{item: !LanguageState}}} e
    * @private
    */
   onRemoveLanguageTap_: function(e) {
@@ -54,55 +72,16 @@ Polymer({
   },
 
   /**
-   * Handler for adding a language.
-   * @param {!{model: {item: !chrome.languageSettingsPrivate.Language}}} e
+   * Handler for checking or unchecking a language item.
+   * @param {!{model: !{item: !chrome.languageSettingsPrivate.Language},
+   *           target: !PaperCheckboxElement}} e
    * @private
    */
-  onAddLanguageTap_: function(e) {
-    this.languageHelper_.enableLanguage(e.model.item.code);
-  },
-
-  /**
-   * True if a language is not the current or prospective UI language.
-   * @param {string} languageCode
-   * @param {string} prospectiveUILanguageCode
-   * @return {boolean}
-   * @private
-   */
-  canRemoveLanguage_: function(languageCode, prospectiveUILanguageCode) {
-    if (languageCode == navigator.language ||
-        languageCode == prospectiveUILanguageCode) {
-      return false;
-    }
-    assert(this.languages.enabledLanguages.length > 1);
-    return true;
-  },
-
-  /**
-   * Updates the available languages that are bound to the iron-list.
-   * @private
-   */
-  enabledLanguagesChanged_: function() {
-    if (!this.availableLanguages_) {
-      var availableLanguages = [];
-      for (var i = 0; i < this.languages.supportedLanguages.length; i++) {
-        var language = this.languages.supportedLanguages[i];
-        availableLanguages.push({
-          code: language.code,
-          displayName: language.displayName,
-          nativeDisplayName: language.nativeDisplayName,
-          enabled: this.languageHelper_.isLanguageEnabled(language.code),
-        });
-      }
-      // Set the Polymer property after building the full array.
-      this.availableLanguages_ = availableLanguages;
-    } else {
-      // Update the available languages in place.
-      for (var i = 0; i < this.availableLanguages_.length; i++) {
-        this.set('availableLanguages_.' + i + '.enabled',
-                 this.languageHelper_.isLanguageEnabled(
-                      this.availableLanguages_[i].code));
-      }
-    }
+  onLanguageCheckboxChange_: function(e) {
+    var code = e.model.item.code;
+    if (e.target.checked)
+      this.languageHelper_.enableLanguage(code);
+    else
+      this.languageHelper_.disableLanguage(code);
   },
 });

@@ -46,7 +46,7 @@ void WriteEvent(
     const char** arg_names,
     const unsigned char* arg_types,
     const TraceEvent::TraceValue* arg_values,
-    const scoped_refptr<ConvertableToTraceFormat>* convertable_values,
+    const std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
     unsigned int flags) {
   std::string out = StringPrintf("%c|%d|%s", phase, getpid(), name);
   if (flags & TRACE_EVENT_FLAG_HAS_ID)
@@ -128,7 +128,8 @@ void TraceLog::StopATrace() {
   // TraceLog::Flush() requires the current thread to have a message loop, but
   // this thread called from Java may not have one, so flush in another thread.
   Thread end_chrome_tracing_thread("end_chrome_tracing");
-  WaitableEvent complete_event(false, false);
+  WaitableEvent complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                               WaitableEvent::InitialState::NOT_SIGNALED);
   end_chrome_tracing_thread.Start();
   end_chrome_tracing_thread.task_runner()->PostTask(
       FROM_HERE, base::Bind(&EndChromeTracing, Unretained(this),

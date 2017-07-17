@@ -31,14 +31,13 @@
 #include "core/layout/LayoutPart.h"
 #include "core/layout/LayoutScrollbarPart.h"
 #include "core/layout/LayoutScrollbarTheme.h"
-#include "core/layout/LayoutView.h"
 #include "platform/graphics/GraphicsContext.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<Scrollbar> LayoutScrollbar::createCustomScrollbar(ScrollableArea* scrollableArea, ScrollbarOrientation orientation, Node* ownerNode, LocalFrame* owningFrame)
+Scrollbar* LayoutScrollbar::createCustomScrollbar(ScrollableArea* scrollableArea, ScrollbarOrientation orientation, Node* ownerNode, LocalFrame* owningFrame)
 {
-    return adoptRefWillBeNoop(new LayoutScrollbar(scrollableArea, orientation, ownerNode, owningFrame));
+    return new LayoutScrollbar(scrollableArea, orientation, ownerNode, owningFrame);
 }
 
 LayoutScrollbar::LayoutScrollbar(ScrollableArea* scrollableArea, ScrollbarOrientation orientation, Node* ownerNode, LocalFrame* owningFrame)
@@ -82,10 +81,8 @@ LayoutScrollbar::~LayoutScrollbar()
 
 DEFINE_TRACE(LayoutScrollbar)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_owner);
     visitor->trace(m_owningFrame);
-#endif
     Scrollbar::trace(visitor);
 }
 
@@ -212,22 +209,22 @@ static PseudoId pseudoForScrollbarPart(ScrollbarPart part)
     case ForwardButtonStartPart:
     case BackButtonEndPart:
     case ForwardButtonEndPart:
-        return SCROLLBAR_BUTTON;
+        return PseudoIdScrollbarButton;
     case BackTrackPart:
     case ForwardTrackPart:
-        return SCROLLBAR_TRACK_PIECE;
+        return PseudoIdScrollbarTrackPiece;
     case ThumbPart:
-        return SCROLLBAR_THUMB;
+        return PseudoIdScrollbarThumb;
     case TrackBGPart:
-        return SCROLLBAR_TRACK;
+        return PseudoIdScrollbarTrack;
     case ScrollbarBGPart:
-        return SCROLLBAR;
+        return PseudoIdScrollbar;
     case NoPart:
     case AllParts:
         break;
     }
     ASSERT_NOT_REACHED();
-    return SCROLLBAR;
+    return PseudoIdScrollbar;
 }
 
 void LayoutScrollbar::updateScrollbarPart(ScrollbarPart partType, bool destroy)
@@ -263,8 +260,8 @@ void LayoutScrollbar::updateScrollbarPart(ScrollbarPart partType, bool destroy)
     }
 
     LayoutScrollbarPart* partLayoutObject = m_parts.get(partType);
-    if (!partLayoutObject && needLayoutObject) {
-        partLayoutObject = LayoutScrollbarPart::createAnonymous(&owningLayoutObject()->document(), this, partType);
+    if (!partLayoutObject && needLayoutObject && m_scrollableArea) {
+        partLayoutObject = LayoutScrollbarPart::createAnonymous(&owningLayoutObject()->document(), m_scrollableArea, this, partType);
         m_parts.set(partType, partLayoutObject);
     } else if (partLayoutObject && !needLayoutObject) {
         m_parts.remove(partType);
@@ -361,10 +358,10 @@ int LayoutScrollbar::minimumThumbLength() const
     return orientation() == HorizontalScrollbar ? partLayoutObject->size().width() : partLayoutObject->size().height();
 }
 
-void LayoutScrollbar::invalidateDisplayItemClientsOfScrollbarParts(const LayoutBoxModelObject& paintInvalidationContainer)
+void LayoutScrollbar::invalidateDisplayItemClientsOfScrollbarParts()
 {
     for (auto& part : m_parts)
-        part.value->invalidateDisplayItemClientsIncludingNonCompositingDescendants(&paintInvalidationContainer, PaintInvalidationScroll);
+        part.value->invalidateDisplayItemClientsIncludingNonCompositingDescendants(PaintInvalidationScroll);
 }
 
 } // namespace blink

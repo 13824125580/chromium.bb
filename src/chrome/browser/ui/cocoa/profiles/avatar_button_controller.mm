@@ -7,6 +7,8 @@
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -20,6 +22,7 @@
 #include "grit/theme_resources.h"
 #import "ui/base/cocoa/appkit_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/nine_image_painter_factory.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -214,7 +217,8 @@ NSImage* GetImageFromResourceID(int resourceId) {
   [shadow setShadowBlurRadius:0];
 
   NSColor* foregroundColor;
-  if (browser_->profile()->IsGuestSession()) {
+  if (browser_->profile()->IsGuestSession() &&
+      !ui::MaterialDesignController::IsModeMaterial()) {
     foregroundColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.9];
     [shadow setShadowColor:[NSColor colorWithCalibratedWhite:0.0 alpha:0.4]];
   } else if (!isThemedWindow_) {
@@ -225,14 +229,15 @@ NSImage* GetImageFromResourceID(int resourceId) {
     [shadow setShadowColor:[NSColor colorWithCalibratedWhite:1.0 alpha:0.4]];
   }
 
-  const ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
+  ProfileAttributesStorage& storage =
+      g_browser_process->profile_manager()->GetProfileAttributesStorage();
   // If there is a single local profile, then use the generic avatar button
   // instead of the profile name. Never use the generic button if the active
   // profile is Guest.
-  bool useGenericButton = (!browser_->profile()->IsGuestSession() &&
-                           cache.GetNumberOfProfiles() == 1 &&
-                           !cache.ProfileIsAuthenticatedAtIndex(0));
+  bool useGenericButton =
+      !browser_->profile()->IsGuestSession() &&
+      storage.GetNumberOfProfiles() == 1 &&
+      !storage.GetAllProfilesAttributes().front()->IsAuthenticated();
 
 
   NSString* buttonTitle = base::SysUTF16ToNSString(useGenericButton ?

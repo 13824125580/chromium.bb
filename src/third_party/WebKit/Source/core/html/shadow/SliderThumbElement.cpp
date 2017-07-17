@@ -40,8 +40,6 @@
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/shadow/ShadowElementNames.h"
 #include "core/input/EventHandler.h"
-#include "core/layout/LayoutFlexibleBox.h"
-#include "core/layout/LayoutSlider.h"
 #include "core/layout/LayoutSliderContainer.h"
 #include "core/layout/LayoutSliderThumb.h"
 #include "core/layout/LayoutTheme.h"
@@ -64,11 +62,11 @@ inline SliderThumbElement::SliderThumbElement(Document& document)
 {
 }
 
-PassRefPtrWillBeRawPtr<SliderThumbElement> SliderThumbElement::create(Document& document)
+SliderThumbElement* SliderThumbElement::create(Document& document)
 {
-    RefPtrWillBeRawPtr<SliderThumbElement> element = adoptRefWillBeNoop(new SliderThumbElement(document));
+    SliderThumbElement* element = new SliderThumbElement(document);
     element->setAttribute(idAttr, ShadowElementNames::sliderThumb());
-    return element.release();
+    return element;
 }
 
 void SliderThumbElement::setPositionFromValue()
@@ -107,21 +105,20 @@ Node* SliderThumbElement::focusDelegate()
 
 void SliderThumbElement::dragFrom(const LayoutPoint& point)
 {
-    RefPtrWillBeRawPtr<SliderThumbElement> protector(this);
     startDragging();
     setPositionFromPoint(point);
 }
 
 void SliderThumbElement::setPositionFromPoint(const LayoutPoint& point)
 {
-    RefPtrWillBeRawPtr<HTMLInputElement> input(hostInput());
+    HTMLInputElement* input(hostInput());
     Element* trackElement = input->userAgentShadowRoot()->getElementById(ShadowElementNames::sliderTrack());
 
     if (!input->layoutObject() || !layoutBox() || !trackElement->layoutBox())
         return;
 
     LayoutPoint offset = roundedLayoutPoint(input->layoutObject()->absoluteToLocal(FloatPoint(point), UseTransforms));
-    bool isVertical = hasVerticalAppearance(input.get());
+    bool isVertical = hasVerticalAppearance(input);
     bool isLeftToRightDirection = layoutBox()->style()->isLeftToRightDirection();
     LayoutUnit trackSize;
     LayoutUnit position;
@@ -266,13 +263,13 @@ HTMLInputElement* SliderThumbElement::hostInput() const
 
 static const AtomicString& sliderThumbShadowPartId()
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, sliderThumb, ("-webkit-slider-thumb", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, sliderThumb, ("-webkit-slider-thumb"));
     return sliderThumb;
 }
 
 static const AtomicString& mediaSliderThumbShadowPartId()
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, mediaSliderThumb, ("-webkit-media-slider-thumb", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, mediaSliderThumb, ("-webkit-media-slider-thumb"));
     return mediaSliderThumb;
 }
 
@@ -312,8 +309,8 @@ LayoutObject* SliderContainerElement::createLayoutObject(const ComputedStyle&)
 
 const AtomicString& SliderContainerElement::shadowPseudoId() const
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, mediaSliderContainer, ("-webkit-media-slider-container", AtomicString::ConstructFromLiteral));
-    DEFINE_STATIC_LOCAL(const AtomicString, sliderContainer, ("-webkit-slider-container", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, mediaSliderContainer, ("-webkit-media-slider-container"));
+    DEFINE_STATIC_LOCAL(const AtomicString, sliderContainer, ("-webkit-slider-container"));
 
     if (!shadowHost() || !shadowHost()->layoutObject())
         return sliderContainer;

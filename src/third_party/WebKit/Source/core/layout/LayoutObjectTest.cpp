@@ -11,6 +11,9 @@
 namespace blink {
 
 class LayoutObjectTest : public RenderingTest {
+public:
+    LayoutObjectTest()
+        : RenderingTest(SingleChildFrameLoaderClient::create()) {}
 protected:
     LayoutView& layoutView() const { return *document().layoutView(); }
 };
@@ -106,20 +109,18 @@ TEST_F(LayoutObjectTest, ContainingBlockAbsoluteLayoutObjectShouldNotBeNonStatic
     EXPECT_EQ(layoutObject->containingBlock(), bodyLayoutObject);
 }
 
-TEST_F(LayoutObjectTest, MapToVisibleRectInAncestorSpace)
+TEST_F(LayoutObjectTest, PaintingLayerOfOverflowClipLayerUnderColumnSpanAll)
 {
     setBodyInnerHTML(
-        "<div id='container' style='overflow: scroll; will-change: transform; width: 50px; height: 50px'>"
-        "  <span><img style='width: 20px; height: 100px'></span>"
-        "  text text text text text text text"
+        "<div id='columns' style='columns: 3'>"
+        "  <div style='column-span: all'>"
+        "    <div id='overflow-clip-layer' style='height: 100px; overflow: hidden'></div>"
+        "  </div>"
         "</div>");
-    LayoutBlock* container = toLayoutBlock(getLayoutObjectByElementId("container"));
-    LayoutText* text = toLayoutText(container->lastChild());
 
-    container->setScrollTop(LayoutUnit(50));
-    LayoutRect rect(0, 60, 20, 20);
-    text->mapToVisibleRectInAncestorSpace(container, rect, nullptr);
-    EXPECT_TRUE(rect == LayoutRect(0, 10, 20, 20));
+    LayoutObject* overflowClipObject = getLayoutObjectByElementId("overflow-clip-layer");
+    LayoutBlock* columns = toLayoutBlock(getLayoutObjectByElementId("columns"));
+    EXPECT_EQ(columns->layer(), overflowClipObject->paintingLayer());
 }
 
 } // namespace blink

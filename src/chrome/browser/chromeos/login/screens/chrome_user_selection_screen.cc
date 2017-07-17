@@ -4,14 +4,15 @@
 
 #include "chrome/browser/chromeos/login/screens/chrome_user_selection_screen.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
@@ -103,7 +104,7 @@ void ChromeUserSelectionScreen::CheckForPublicSessionDisplayNameChange(
   // and |this| are informed of the display name change is undefined. Post a
   // task that will update the UI after the UserManager is guaranteed to have
   // been informed of the change.
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&ChromeUserSelectionScreen::SetPublicSessionDisplayName,
                  weak_factory_.GetWeakPtr(), account_id));
@@ -167,7 +168,7 @@ void ChromeUserSelectionScreen::SetPublicSessionLocales(
 
   // Construct the list of available locales. This list consists of the
   // recommended locales, followed by all others.
-  scoped_ptr<base::ListValue> available_locales =
+  std::unique_ptr<base::ListValue> available_locales =
       GetUILanguageList(&recommended_locales, std::string());
 
   // Set the initially selected locale to the first recommended locale that is

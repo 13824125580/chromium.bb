@@ -50,8 +50,11 @@
 #include "public/platform/WebString.h"
 #include "public/platform/WebURL.h"
 #include "wtf/ASCIICType.h"
+#include "wtf/PtrUtil.h"
 #include <cmath>
 #include <limits>
+
+#define MEDIA_KEY_SESSION_LOG_LEVEL 3
 
 namespace {
 
@@ -102,7 +105,7 @@ static String ConvertKeyStatusToString(const WebEncryptedMediaKeyInformation::Ke
         return "internal-error";
     }
 
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return "internal-error";
 }
 
@@ -129,61 +132,61 @@ public:
         Remove
     };
 
-    Type type() const { return m_type; }
+    Type getType() const { return m_type; }
 
     const Persistent<ContentDecryptionModuleResult> result() const
     {
         return m_result;
     }
 
-    const PassRefPtr<DOMArrayBuffer> data() const
+    DOMArrayBuffer* data() const
     {
-        ASSERT(m_type == GenerateRequest || m_type == Update);
+        DCHECK(m_type == GenerateRequest || m_type == Update);
         return m_data;
     }
 
     WebEncryptedMediaInitDataType initDataType() const
     {
-        ASSERT(m_type == GenerateRequest);
+        DCHECK_EQ(GenerateRequest, m_type);
         return m_initDataType;
     }
 
     const String& sessionId() const
     {
-        ASSERT(m_type == Load);
+        DCHECK_EQ(Load, m_type);
         return m_stringData;
     }
 
-    static PendingAction* CreatePendingGenerateRequest(ContentDecryptionModuleResult* result, WebEncryptedMediaInitDataType initDataType, PassRefPtr<DOMArrayBuffer> initData)
+    static PendingAction* CreatePendingGenerateRequest(ContentDecryptionModuleResult* result, WebEncryptedMediaInitDataType initDataType, DOMArrayBuffer* initData)
     {
-        ASSERT(result);
-        ASSERT(initData);
+        DCHECK(result);
+        DCHECK(initData);
         return new PendingAction(GenerateRequest, result, initDataType, initData, String());
     }
 
     static PendingAction* CreatePendingLoadRequest(ContentDecryptionModuleResult* result, const String& sessionId)
     {
-        ASSERT(result);
-        return new PendingAction(Load, result, WebEncryptedMediaInitDataType::Unknown, PassRefPtr<DOMArrayBuffer>(), sessionId);
+        DCHECK(result);
+        return new PendingAction(Load, result, WebEncryptedMediaInitDataType::Unknown, nullptr, sessionId);
     }
 
-    static PendingAction* CreatePendingUpdate(ContentDecryptionModuleResult* result, PassRefPtr<DOMArrayBuffer> data)
+    static PendingAction* CreatePendingUpdate(ContentDecryptionModuleResult* result, DOMArrayBuffer* data)
     {
-        ASSERT(result);
-        ASSERT(data);
+        DCHECK(result);
+        DCHECK(data);
         return new PendingAction(Update, result, WebEncryptedMediaInitDataType::Unknown, data, String());
     }
 
     static PendingAction* CreatePendingClose(ContentDecryptionModuleResult* result)
     {
-        ASSERT(result);
-        return new PendingAction(Close, result, WebEncryptedMediaInitDataType::Unknown, PassRefPtr<DOMArrayBuffer>(), String());
+        DCHECK(result);
+        return new PendingAction(Close, result, WebEncryptedMediaInitDataType::Unknown, nullptr, String());
     }
 
     static PendingAction* CreatePendingRemove(ContentDecryptionModuleResult* result)
     {
-        ASSERT(result);
-        return new PendingAction(Remove, result, WebEncryptedMediaInitDataType::Unknown, PassRefPtr<DOMArrayBuffer>(), String());
+        DCHECK(result);
+        return new PendingAction(Remove, result, WebEncryptedMediaInitDataType::Unknown, nullptr, String());
     }
 
     ~PendingAction()
@@ -193,10 +196,11 @@ public:
     DEFINE_INLINE_TRACE()
     {
         visitor->trace(m_result);
+        visitor->trace(m_data);
     }
 
 private:
-    PendingAction(Type type, ContentDecryptionModuleResult* result, WebEncryptedMediaInitDataType initDataType, PassRefPtr<DOMArrayBuffer> data, const String& stringData)
+    PendingAction(Type type, ContentDecryptionModuleResult* result, WebEncryptedMediaInitDataType initDataType, DOMArrayBuffer* data, const String& stringData)
         : m_type(type)
         , m_result(result)
         , m_initDataType(initDataType)
@@ -208,7 +212,7 @@ private:
     const Type m_type;
     const Member<ContentDecryptionModuleResult> m_result;
     const WebEncryptedMediaInitDataType m_initDataType;
-    const RefPtr<DOMArrayBuffer> m_data;
+    const Member<DOMArrayBuffer> m_data;
     const String m_stringData;
 };
 
@@ -233,7 +237,7 @@ public:
     void completeWithSession(WebContentDecryptionModuleResult::SessionStatus status) override
     {
         if (status != WebContentDecryptionModuleResult::NewSession) {
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             reject(InvalidStateError, "Unexpected completion.");
         }
 
@@ -282,12 +286,12 @@ public:
             return;
 
         case WebContentDecryptionModuleResult::SessionAlreadyExists:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             reject(InvalidStateError, "Unexpected completion.");
             return;
         }
 
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
     }
 
     DEFINE_INLINE_TRACE()
@@ -302,13 +306,14 @@ private:
 
 MediaKeySession* MediaKeySession::create(ScriptState* scriptState, MediaKeys* mediaKeys, WebEncryptedMediaSessionType sessionType)
 {
-    RefPtrWillBeRawPtr<MediaKeySession> session = new MediaKeySession(scriptState, mediaKeys, sessionType);
+    MediaKeySession* session = new MediaKeySession(scriptState, mediaKeys, sessionType);
     session->suspendIfNeeded();
-    return session.get();
+    return session;
 }
 
 MediaKeySession::MediaKeySession(ScriptState* scriptState, MediaKeys* mediaKeys, WebEncryptedMediaSessionType sessionType)
-    : ActiveDOMObject(scriptState->executionContext())
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(scriptState->getExecutionContext())
     , m_asyncEventQueue(GenericEventQueue::create(this))
     , m_mediaKeys(mediaKeys)
     , m_sessionType(sessionType)
@@ -317,40 +322,41 @@ MediaKeySession::MediaKeySession(ScriptState* scriptState, MediaKeys* mediaKeys,
     , m_isUninitialized(true)
     , m_isCallable(false)
     , m_isClosed(false)
-    , m_closedPromise(new ClosedPromise(scriptState->executionContext(), this, ClosedPromise::Closed))
+    , m_closedPromise(new ClosedPromise(scriptState->getExecutionContext(), this, ClosedPromise::Closed))
     , m_actionTimer(this, &MediaKeySession::actionTimerFired)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::MediaKeySession", this);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
+    ThreadState::current()->registerPreFinalizer(this);
 
     // Create the matching Chromium object. It will not be usable until
     // initializeNewSession() is called in response to the user calling
     // generateRequest().
     WebContentDecryptionModule* cdm = mediaKeys->contentDecryptionModule();
-    m_session = adoptPtr(cdm->createSession());
+    m_session = wrapUnique(cdm->createSession());
     m_session->setClientInterface(this);
 
     // From https://w3c.github.io/encrypted-media/#createSession:
     // MediaKeys::createSession(), step 3.
     // 3.1 Let the sessionId attribute be the empty string.
-    ASSERT(sessionId().isEmpty());
+    DCHECK(sessionId().isEmpty());
 
     // 3.2 Let the expiration attribute be NaN.
-    ASSERT(std::isnan(m_expiration));
+    DCHECK(std::isnan(m_expiration));
 
     // 3.3 Let the closed attribute be a new promise.
-    ASSERT(!closed(scriptState).isUndefinedOrNull());
+    DCHECK(!closed(scriptState).isUndefinedOrNull());
 
     // 3.4 Let the keyStatuses attribute be empty.
-    ASSERT(m_keyStatusesMap->size() == 0);
+    DCHECK_EQ(0u, m_keyStatusesMap->size());
 
     // 3.5 Let the session type be sessionType.
-    ASSERT(m_sessionType != WebEncryptedMediaSessionType::Unknown);
+    DCHECK(m_sessionType != WebEncryptedMediaSessionType::Unknown);
 
     // 3.6 Let uninitialized be true.
-    ASSERT(m_isUninitialized);
+    DCHECK(m_isUninitialized);
 
     // 3.7 Let callable be false.
-    ASSERT(!m_isCallable);
+    DCHECK(!m_isCallable);
 
     // 3.8 Let the use distinctive identifier value be this object's
     // use distinctive identifier.
@@ -362,14 +368,14 @@ MediaKeySession::MediaKeySession(ScriptState* scriptState, MediaKeys* mediaKeys,
 
 MediaKeySession::~MediaKeySession()
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::~MediaKeySession", this);
-    m_session.clear();
-#if !ENABLE(OILPAN)
-    // MediaKeySession and m_asyncEventQueue always become unreachable
-    // together. So MediaKeySession and m_asyncEventQueue are destructed in the
-    // same GC. We don't need to call cancelAllEvents explicitly in Oilpan.
-    m_asyncEventQueue->cancelAllEvents();
-#endif
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
+}
+
+void MediaKeySession::dispose()
+{
+    // Promptly clears a raw reference from content/ to an on-heap object
+    // so that content/ doesn't access it in a lazy sweeping phase.
+    m_session.reset();
 }
 
 String MediaKeySession::sessionId() const
@@ -389,7 +395,7 @@ MediaKeyStatusMap* MediaKeySession::keyStatuses()
 
 ScriptPromise MediaKeySession::generateRequest(ScriptState* scriptState, const String& initDataTypeString, const DOMArrayPiece& initData)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::generateRequest %s", this, initDataTypeString.ascii().data());
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") " << initDataTypeString;
 
     // From https://w3c.github.io/encrypted-media/#generateRequest:
     // Generates a request based on the initData. When this method is invoked,
@@ -432,7 +438,7 @@ ScriptPromise MediaKeySession::generateRequest(ScriptState* scriptState, const S
     }
 
     // 6. Let init data be a copy of the contents of the initData parameter.
-    RefPtr<DOMArrayBuffer> initDataBuffer = DOMArrayBuffer::create(initData.data(), initData.byteLength());
+    DOMArrayBuffer* initDataBuffer = DOMArrayBuffer::create(initData.data(), initData.byteLength());
 
     // 7. Let session type be this object's session type.
     //    (Done in constructor.)
@@ -443,8 +449,8 @@ ScriptPromise MediaKeySession::generateRequest(ScriptState* scriptState, const S
 
     // 9. Run the following steps asynchronously (documented in
     //    actionTimerFired())
-    m_pendingActions.append(PendingAction::CreatePendingGenerateRequest(result, initDataType, initDataBuffer.release()));
-    ASSERT(!m_actionTimer.isActive());
+    m_pendingActions.append(PendingAction::CreatePendingGenerateRequest(result, initDataType, initDataBuffer));
+    DCHECK(!m_actionTimer.isActive());
     m_actionTimer.startOneShot(0, BLINK_FROM_HERE);
 
     // 10. Return promise.
@@ -453,7 +459,7 @@ ScriptPromise MediaKeySession::generateRequest(ScriptState* scriptState, const S
 
 ScriptPromise MediaKeySession::load(ScriptState* scriptState, const String& sessionId)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::load %s", this, sessionId.ascii().data());
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") " << sessionId;
 
     // From https://w3c.github.io/encrypted-media/#load:
     // Loads the data stored for the specified session into this object. When
@@ -489,7 +495,7 @@ ScriptPromise MediaKeySession::load(ScriptState* scriptState, const String& sess
     // FIXME: Implement this (http://crbug.com/448922).
 
     // 6. Let origin be the origin of this object's Document.
-    //    (Available as executionContext()->securityOrigin() anytime.)
+    //    (Available as getExecutionContext()->getSecurityOrigin() anytime.)
 
     // 7. Let promise be a new promise.
     LoadSessionResultPromise* result = new LoadSessionResultPromise(scriptState, this);
@@ -498,7 +504,7 @@ ScriptPromise MediaKeySession::load(ScriptState* scriptState, const String& sess
     // 8. Run the following steps asynchronously (documented in
     //    actionTimerFired())
     m_pendingActions.append(PendingAction::CreatePendingLoadRequest(result, sessionId));
-    ASSERT(!m_actionTimer.isActive());
+    DCHECK(!m_actionTimer.isActive());
     m_actionTimer.startOneShot(0, BLINK_FROM_HERE);
 
     // 9. Return promise.
@@ -507,8 +513,8 @@ ScriptPromise MediaKeySession::load(ScriptState* scriptState, const String& sess
 
 ScriptPromise MediaKeySession::update(ScriptState* scriptState, const DOMArrayPiece& response)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::update", this);
-    ASSERT(!m_isClosed);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
+    DCHECK(!m_isClosed);
 
     // From https://w3c.github.io/encrypted-media/#update:
     // Provides messages, including licenses, to the CDM. When this method is
@@ -527,7 +533,7 @@ ScriptPromise MediaKeySession::update(ScriptState* scriptState, const DOMArrayPi
     }
 
     // 3. Let response copy be a copy of the contents of the response parameter.
-    RefPtr<DOMArrayBuffer> responseCopy = DOMArrayBuffer::create(response.data(), response.byteLength());
+    DOMArrayBuffer* responseCopy = DOMArrayBuffer::create(response.data(), response.byteLength());
 
     // 4. Let promise be a new promise.
     SimpleContentDecryptionModuleResultPromise* result = new SimpleContentDecryptionModuleResultPromise(scriptState);
@@ -535,7 +541,7 @@ ScriptPromise MediaKeySession::update(ScriptState* scriptState, const DOMArrayPi
 
     // 5. Run the following steps asynchronously (documented in
     //    actionTimerFired())
-    m_pendingActions.append(PendingAction::CreatePendingUpdate(result, responseCopy.release()));
+    m_pendingActions.append(PendingAction::CreatePendingUpdate(result, responseCopy));
     if (!m_actionTimer.isActive())
         m_actionTimer.startOneShot(0, BLINK_FROM_HERE);
 
@@ -545,7 +551,7 @@ ScriptPromise MediaKeySession::update(ScriptState* scriptState, const DOMArrayPi
 
 ScriptPromise MediaKeySession::close(ScriptState* scriptState)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::close", this);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
 
     // From https://w3c.github.io/encrypted-media/#close:
     // Indicates that the application no longer needs the session and the CDM
@@ -578,7 +584,7 @@ ScriptPromise MediaKeySession::close(ScriptState* scriptState)
 
 ScriptPromise MediaKeySession::remove(ScriptState* scriptState)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::remove", this);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
 
     // From https://w3c.github.io/encrypted-media/#remove:
     // Removes stored session data associated with this object. When this
@@ -621,7 +627,7 @@ ScriptPromise MediaKeySession::remove(ScriptState* scriptState)
 
 void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 {
-    ASSERT(m_pendingActions.size());
+    DCHECK(m_pendingActions.size());
 
     // Resolving promises now run synchronously and may result in additional
     // actions getting added to the queue. As a result, swap the queue to
@@ -632,10 +638,10 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
     while (!pendingActions.isEmpty()) {
         PendingAction* action = pendingActions.takeFirst();
 
-        switch (action->type()) {
+        switch (action->getType()) {
         case PendingAction::GenerateRequest:
             // NOTE: Continue step 9 of MediaKeySession::generateRequest().
-            WTF_LOG(Media, "MediaKeySession(%p)::actionTimerFired: GenerateRequest", this);
+            DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") GenerateRequest";
 
             // initializeNewSession() in Chromium will execute steps 9.1 to 9.7.
             m_session->initializeNewSession(action->initDataType(), static_cast<unsigned char*>(action->data()->data()), action->data()->byteLength(), m_sessionType, action->result()->result());
@@ -646,7 +652,7 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 
         case PendingAction::Load:
             // NOTE: Continue step 8 of MediaKeySession::load().
-            WTF_LOG(Media, "MediaKeySession(%p)::actionTimerFired: Load", this);
+            DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") Load";
 
             // 8.1 Let sanitized session ID be a validated and/or sanitized
             //     version of sessionId. The user agent should thoroughly
@@ -670,7 +676,7 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 
             // 8.4 Let expiration time be NaN.
             //     (Done in the constructor.)
-            ASSERT(std::isnan(m_expiration));
+            DCHECK(std::isnan(m_expiration));
 
             // load() in Chromium will execute steps 8.5 through 8.8.
             m_session->load(action->sessionId(), action->result()->result());
@@ -681,7 +687,7 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 
         case PendingAction::Update:
             // NOTE: Continue step 5 of MediaKeySession::update().
-            WTF_LOG(Media, "MediaKeySession(%p)::actionTimerFired: Update", this);
+            DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") Update";
 
             // update() in Chromium will execute steps 5.1 through 5.8.
             m_session->update(static_cast<unsigned char*>(action->data()->data()), action->data()->byteLength(), action->result()->result());
@@ -692,7 +698,7 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 
         case PendingAction::Close:
             // NOTE: Continue step 4 of MediaKeySession::close().
-            WTF_LOG(Media, "MediaKeySession(%p)::actionTimerFired: Close", this);
+            DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") Close";
 
             // close() in Chromium will execute steps 4.1 through 4.2.
             m_session->close(action->result()->result());
@@ -703,7 +709,7 @@ void MediaKeySession::actionTimerFired(Timer<MediaKeySession>*)
 
         case PendingAction::Remove:
             // NOTE: Continue step 5 of MediaKeySession::remove().
-            WTF_LOG(Media, "MediaKeySession(%p)::actionTimerFired: Remove", this);
+            DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") Remove";
 
             // remove() in Chromium will execute steps 5.1 through 5.3.
             m_session->remove(action->result()->result());
@@ -722,7 +728,7 @@ void MediaKeySession::finishGenerateRequest()
     //     (Done by CDM calling result.completeWithError() as appropriate.)
 
     // 9.9 Set the sessionId attribute to session id.
-    ASSERT(!sessionId().isEmpty());
+    DCHECK(!sessionId().isEmpty());
 
     // 9.10 Let this object's callable be true.
     m_isCallable = true;
@@ -742,7 +748,7 @@ void MediaKeySession::finishLoad()
     //     (Done by CDM calling result.completeWithError() as appropriate.)
 
     // 8.10 Set the sessionId attribute to sanitized session ID.
-    ASSERT(!sessionId().isEmpty());
+    DCHECK(!sessionId().isEmpty());
 
     // 8.11 Let this object's callable be true.
     m_isCallable = true;
@@ -773,10 +779,10 @@ void MediaKeySession::finishLoad()
 // Queue a task to fire a simple event named keymessage at the new object.
 void MediaKeySession::message(MessageType messageType, const unsigned char* message, size_t messageLength)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::message", this);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
 
     // Verify that 'message' not fired before session initialization is complete.
-    ASSERT(m_isCallable);
+    DCHECK(m_isCallable);
 
     // From https://w3c.github.io/encrypted-media/#queue-message:
     // The following steps are run:
@@ -800,14 +806,14 @@ void MediaKeySession::message(MessageType messageType, const unsigned char* mess
     }
     init.setMessage(DOMArrayBuffer::create(static_cast<const void*>(message), messageLength));
 
-    RefPtrWillBeRawPtr<MediaKeyMessageEvent> event = MediaKeyMessageEvent::create(EventTypeNames::message, init);
+    MediaKeyMessageEvent* event = MediaKeyMessageEvent::create(EventTypeNames::message, init);
     event->setTarget(this);
-    m_asyncEventQueue->enqueueEvent(event.release());
+    m_asyncEventQueue->enqueueEvent(event);
 }
 
 void MediaKeySession::close()
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::close", this);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")";
 
     // From https://w3c.github.io/encrypted-media/#session-close:
     // The following steps are run:
@@ -823,7 +829,7 @@ void MediaKeySession::close()
 
 void MediaKeySession::expirationChanged(double updatedExpiryTimeInMS)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::expirationChanged %f", this, updatedExpiryTimeInMS);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") " << updatedExpiryTimeInMS;
 
     // From https://w3c.github.io/encrypted-media/#update-expiration:
     // The following steps are run:
@@ -844,7 +850,7 @@ void MediaKeySession::expirationChanged(double updatedExpiryTimeInMS)
 
 void MediaKeySession::keysStatusesChange(const WebVector<WebEncryptedMediaKeyInformation>& keys, bool hasAdditionalUsableKey)
 {
-    WTF_LOG(Media, "MediaKeySession(%p)::keysStatusesChange with %zu keys and usable key: %d", this, keys.size(), hasAdditionalUsableKey);
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ") with " << keys.size() << " keys and hasAdditionalUsableKey is " << (hasAdditionalUsableKey ? "true" : "false");
 
     // From https://w3c.github.io/encrypted-media/#update-key-statuses:
     // The following steps are run:
@@ -868,9 +874,9 @@ void MediaKeySession::keysStatusesChange(const WebVector<WebEncryptedMediaKeyInf
 
     // 5. Queue a task to fire a simple event named keystatuseschange
     //    at the session.
-    RefPtrWillBeRawPtr<Event> event = Event::create(EventTypeNames::keystatuseschange);
+    Event* event = Event::create(EventTypeNames::keystatuseschange);
     event->setTarget(this);
-    m_asyncEventQueue->enqueueEvent(event.release());
+    m_asyncEventQueue->enqueueEvent(event);
 
     // 6. Queue a task to run the attempt to resume playback if necessary
     //    algorithm on each of the media element(s) whose mediaKeys attribute
@@ -885,23 +891,21 @@ const AtomicString& MediaKeySession::interfaceName() const
     return EventTargetNames::MediaKeySession;
 }
 
-ExecutionContext* MediaKeySession::executionContext() const
+ExecutionContext* MediaKeySession::getExecutionContext() const
 {
-    return ActiveDOMObject::executionContext();
+    return ActiveDOMObject::getExecutionContext();
 }
 
 bool MediaKeySession::hasPendingActivity() const
 {
     // Remain around if there are pending events or MediaKeys is still around
     // and we're not closed.
-    WTF_LOG(Media, "MediaKeySession(%p)::hasPendingActivity %s%s%s%s", this,
-        ScriptWrappable::hasPendingActivity() ? " ScriptWrappable::hasPendingActivity()" : "",
-        !m_pendingActions.isEmpty() ? " !m_pendingActions.isEmpty()" : "",
-        m_asyncEventQueue->hasPendingEvents() ? " m_asyncEventQueue->hasPendingEvents()" : "",
-        (m_mediaKeys && !m_isClosed) ? " m_mediaKeys && !m_isClosed" : "");
+    DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __FUNCTION__ << "(" << this << ")"
+        << (!m_pendingActions.isEmpty() ? " !m_pendingActions.isEmpty()" : "")
+        << (m_asyncEventQueue->hasPendingEvents() ? " m_asyncEventQueue->hasPendingEvents()" : "")
+        << ((m_mediaKeys && !m_isClosed) ? " m_mediaKeys && !m_isClosed" : "");
 
-    return ScriptWrappable::hasPendingActivity()
-        || !m_pendingActions.isEmpty()
+    return !m_pendingActions.isEmpty()
         || m_asyncEventQueue->hasPendingEvents()
         || (m_mediaKeys && !m_isClosed);
 }
@@ -909,7 +913,7 @@ bool MediaKeySession::hasPendingActivity() const
 void MediaKeySession::stop()
 {
     // Stop the CDM from firing any more events for this session.
-    m_session.clear();
+    m_session.reset();
     m_isClosed = true;
 
     if (m_actionTimer.isActive())
@@ -925,7 +929,7 @@ DEFINE_TRACE(MediaKeySession)
     visitor->trace(m_mediaKeys);
     visitor->trace(m_keyStatusesMap);
     visitor->trace(m_closedPromise);
-    RefCountedGarbageCollectedEventTargetWithInlineData<MediaKeySession>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     ActiveDOMObject::trace(visitor);
 }
 

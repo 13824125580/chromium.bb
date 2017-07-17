@@ -111,7 +111,7 @@ class SearchTest : public BrowserWithTestWindowTest {
         contents->GetRenderProcessHost()->GetID());
   }
 
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 };
 
 struct SearchTestCase {
@@ -185,9 +185,11 @@ TEST_F(SearchTest, ShouldUseProcessPerSiteForInstantURL) {
     {"https://foo.com/instant?strk=0", false,  ""},
     {"https://foo.com/url?strk",       false,  ""},
     {"https://foo.com/alt?strk",       false,  ""},
+    {"https://foo.com:80/instant",     false,  "HTTPS with port"},
     {"http://foo.com/instant",         false,  "Non-HTTPS"},
     {"http://foo.com/instant?strk",    false,  "Non-HTTPS"},
     {"http://foo.com/instant?strk=1",  false,  "Non-HTTPS"},
+    {"http://foo.com:443/instant",     false,  "Non-HTTPS"},
     {"https://foo.com/instant",        false,  "No search terms replacement"},
     {"https://foo.com/?strk",          false,  "Non-exact path"},
   };
@@ -512,9 +514,6 @@ TEST_F(SearchTest, InstantSearchEnabledCGI) {
 }
 
 TEST_F(SearchTest, CommandLineOverrides) {
-  GURL local_instant_url(GetLocalInstantURL(profile()));
-  EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), local_instant_url);
-
   TemplateURLService* template_url_service =
       TemplateURLServiceFactory::GetForProfile(profile());
   TemplateURLData data;
@@ -542,12 +541,6 @@ TEST_F(SearchTest, CommandLineOverrides) {
   instant_url = GetInstantURL(profile(), false);
   ASSERT_TRUE(instant_url.is_valid());
   EXPECT_EQ("http://www.bar.com/webhp?strk", instant_url.spec());
-
-  // Similarly, setting a Google base URL on the command line should allow you
-  // to get the Google version of the local NTP, even though search provider's
-  // URL doesn't contain "google".
-  local_instant_url = GetLocalInstantURL(profile());
-  EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), local_instant_url);
 
   // If we specify extra search query params, they should be inserted into the
   // query portion of the instant URL.
@@ -603,7 +596,6 @@ TEST_F(SearchTest,
 }
 
 
-
 TEST_F(SearchTest, ShouldShowGoogleLocalNTP_Default) {
   EXPECT_TRUE(ShouldShowGoogleLocalNTP());
 }
@@ -624,7 +616,7 @@ TEST_F(SearchTest, ShouldShowGoogleLocalNTP_DisabledViaFinch) {
 TEST_F(SearchTest, IsNTPURL) {
   GURL invalid_url;
   GURL ntp_url(chrome::kChromeUINewTabURL);
-  GURL local_ntp_url(GetLocalInstantURL(profile()));
+  GURL local_ntp_url(chrome::kChromeSearchLocalNtpUrl);
 
   EXPECT_FALSE(IsNTPURL(invalid_url, profile()));
   // No margin.
@@ -707,6 +699,40 @@ TEST_F(SearchTest, IsQueryExtractionAllowedForURL) {
               IsQueryExtractionAllowedForURL(profile(), GURL(test.url)))
         << test.url << " " << test.comment;
   }
+}
+
+// Regression test for https://crbug.com/605720: Set up a search provider backed
+// by localhost on a specific port, like browsertests do.  The chrome-search://
+// URLs generated in this mode should not have ports.
+TEST_F(SearchTest, SearchProviderWithPort) {
+  TemplateURLService* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(profile());
+  TemplateURLData data;
+  data.SetShortName(base::ASCIIToUTF16("localhost"));
+  data.SetURL("https://[::1]:1993/url?bar={searchTerms}");
+  data.instant_url =
+      "https://[::1]:1993/instant?"
+      "{google:forceInstantResults}foo=foo#foo=foo&strk";
+  data.new_tab_url = "https://[::1]:1993/newtab?strk";
+  data.alternate_urls.push_back("https://[::1]:1993/alt#quux={searchTerms}");
+  data.search_terms_replacement_key = "strk";
+
+  TemplateURL* template_url = new TemplateURL(data);
+  template_url_service->Add(template_url); // Takes ownership of |template_url|.
+  template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
+
+  EXPECT_TRUE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1993/newtab?lala"), profile()));
+  EXPECT_FALSE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1992/newtab?lala"), profile()));
+  EXPECT_EQ(GURL("chrome-search://remote-ntp/newtab?lala"),
+            GetEffectiveURLForInstant(GURL("https://[::1]:1993/newtab?lala"),
+                                      profile()));
+  EXPECT_EQ(GURL("chrome-search://[::1]/instant?strk"),
+            GetEffectiveURLForInstant(GURL("https://[::1]:1993/instant?strk"),
+                                      profile()));
+  EXPECT_FALSE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1993/unregistered-path?strk"), profile()));
 }
 
 class SearchURLTest : public SearchTest {

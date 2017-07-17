@@ -54,7 +54,7 @@ class MediaStreamDevicesControllerTest : public WebRtcTestBase {
   // Dummy callback for when we deny the current request directly.
   void OnMediaStreamResponse(const content::MediaStreamDevices& devices,
                              content::MediaStreamRequestResult result,
-                             scoped_ptr<content::MediaStreamUI> ui) {
+                             std::unique_ptr<content::MediaStreamUI> ui) {
     media_stream_devices_ = devices;
     media_stream_result_ = result;
   }
@@ -99,13 +99,11 @@ class MediaStreamDevicesControllerTest : public WebRtcTestBase {
     HostContentSettingsMap* content_settings =
         HostContentSettingsMapFactory::GetForProfile(
             Profile::FromBrowserContext(GetWebContents()->GetBrowserContext()));
-    ContentSettingsPattern pattern =
-        ContentSettingsPattern::FromURLNoWildcard(example_url_);
-    content_settings->SetContentSetting(pattern, pattern,
-                                        CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
-                                        std::string(), mic_setting);
-    content_settings->SetContentSetting(
-        pattern, pattern, CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
+    content_settings->SetContentSettingDefaultScope(
+        example_url_, GURL(), CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+        std::string(), mic_setting);
+    content_settings->SetContentSettingDefaultScope(
+        example_url_, GURL(), CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
         std::string(), cam_setting);
   }
 
@@ -512,9 +510,9 @@ IN_PROC_BROWSER_TEST_F(MediaStreamDevicesControllerTest,
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   dispatcher->SetTestVideoCaptureDevices(video_devices);
-  scoped_ptr<content::MediaStreamUI> video_stream_ui =
-      dispatcher->GetMediaStreamCaptureIndicator()->
-          RegisterMediaStream(GetWebContents(), video_devices);
+  std::unique_ptr<content::MediaStreamUI> video_stream_ui =
+      dispatcher->GetMediaStreamCaptureIndicator()->RegisterMediaStream(
+          GetWebContents(), video_devices);
   video_stream_ui->OnStarted(base::Closure());
 
   // Request mic and deny.
@@ -703,21 +701,6 @@ IN_PROC_BROWSER_TEST_F(MediaStreamDevicesControllerTest,
                  this));
   ASSERT_FALSE(controller.IsAskingForAudio());
   ASSERT_FALSE(controller.IsAskingForVideo());
-}
-
-// For non-Pepper request from insecure origin, if it's ALLOW, it will be
-// changed to ASK.
-IN_PROC_BROWSER_TEST_F(MediaStreamDevicesControllerTest,
-                       NonPepperRequestInsecure) {
-  InitWithUrl(GURL("http://www.example.com"));
-  SetContentSettings(CONTENT_SETTING_ALLOW, CONTENT_SETTING_ALLOW);
-
-  MediaStreamDevicesController controller(
-      GetWebContents(), CreateRequest(example_audio_id(), example_video_id()),
-      base::Bind(&MediaStreamDevicesControllerTest::OnMediaStreamResponse,
-                 this));
-  ASSERT_TRUE(controller.IsAskingForAudio());
-  ASSERT_TRUE(controller.IsAskingForVideo());
 }
 
 // Request and block microphone and camera access with kill switch.

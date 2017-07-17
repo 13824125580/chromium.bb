@@ -22,6 +22,7 @@
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         '../gfx/gfx.gyp:gfx_test_support',
+        '../gfx/ipc/geometry/gfx_ipc_geometry.gyp:gfx_ipc_geometry',
         'devices/events_devices.gyp:events_devices',
         'events.gyp:dom_keycode_converter',
         'events.gyp:events',
@@ -72,7 +73,8 @@
           'dependencies': [
             '../../build/linux/system.gyp:x11',
             '../gfx/x/gfx_x11.gyp:gfx_x11',
-	    'x/events_x.gyp:events_x',
+            'devices/x11/events_devices_x11.gyp:events_devices_x11',
+            'x/events_x.gyp:events_x',
           ],
         }],
         ['use_ozone==1', {

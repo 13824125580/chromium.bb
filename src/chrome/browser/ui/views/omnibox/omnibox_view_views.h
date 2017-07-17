@@ -7,12 +7,12 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/omnibox_view.h"
@@ -88,9 +88,8 @@ class OmniboxViewViews
   void Update() override;
   base::string16 GetText() const override;
   void SetUserText(const base::string16& text,
-                   const base::string16& display_text,
                    bool update_popup) override;
-  void SetForcedQuery() override;
+  void EnterKeywordModeForDefaultSearchProvider() override;
   void GetSelectionBounds(base::string16::size_type* start,
                           base::string16::size_type* end) const override;
   void SelectAll(bool reversed) override;
@@ -180,6 +179,8 @@ class OmniboxViewViews
   bool IsCommandIdEnabled(int command_id) const override;
   base::string16 GetSelectionClipboardText() const override;
   void DoInsertChar(base::char16 ch) override;
+  bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
+  void ExecuteTextEditCommand(ui::TextEditCommand command) override;
 
   // chromeos::input_method::InputMethodManager::CandidateWindowObserver:
 #if defined(OS_CHROMEOS)
@@ -211,7 +212,7 @@ class OmniboxViewViews
   // different presentation (smaller font size). This is used for popups.
   bool popup_window_mode_;
 
-  scoped_ptr<OmniboxPopupView> popup_view_;
+  std::unique_ptr<OmniboxPopupView> popup_view_;
 
   security_state::SecurityStateModel::SecurityLevel security_level_;
 
@@ -223,8 +224,7 @@ class OmniboxViewViews
   gfx::Range saved_selection_for_focus_change_;
 
   // Tracking state before and after a possible change.
-  base::string16 text_before_change_;
-  gfx::Range sel_before_change_;
+  State state_before_change_;
   bool ime_composing_before_change_;
 
   // Was the delete key pressed with an empty selection at the end of the edit?

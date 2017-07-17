@@ -31,7 +31,6 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/webui/options/options_handlers_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -297,7 +296,7 @@ void ManageProfileHandler::RequestNewProfileDefaults(
   profile_info.SetString("iconURL",
       profiles::GetDefaultAvatarIconUrl(icon_index));
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ManageProfileOverlay.receiveNewProfileDefaults", profile_info);
 }
 
@@ -333,7 +332,7 @@ void ManageProfileHandler::SendProfileIconsAndNames(
     default_name_list.AppendString(storage.ChooseNameForNewProfile(i));
   }
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ManageProfileOverlay.receiveDefaultProfileIconsAndNames", mode,
       image_url_list, default_name_list);
 }
@@ -346,7 +345,7 @@ void ManageProfileHandler::SendExistingProfileNames() {
   for (const ProfileAttributesEntry* entry : entries)
     profile_name_dict.SetBoolean(base::UTF16ToUTF8(entry->GetName()), true);
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ManageProfileOverlay.receiveExistingProfileNames", profile_name_dict);
 }
 
@@ -354,7 +353,7 @@ void ManageProfileHandler::ShowDisconnectManagedProfileDialog(
     const base::ListValue* args) {
   base::DictionaryValue replacements;
   GenerateSignedinUserSpecificStrings(&replacements);
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ManageProfileOverlay.showDisconnectManagedProfileDialog", replacements);
 }
 
@@ -466,8 +465,8 @@ void ManageProfileHandler::ProfileIconSelectionChanged(
 
   base::StringValue gaia_name_value(gaia_name);
   base::StringValue mode_value(kManageProfileIdentifier);
-  web_ui()->CallJavascriptFunction("ManageProfileOverlay.setProfileName",
-                                   gaia_name_value, mode_value);
+  web_ui()->CallJavascriptFunctionUnsafe("ManageProfileOverlay.setProfileName",
+                                         gaia_name_value, mode_value);
 }
 
 void ManageProfileHandler::RequestHasProfileShortcuts(
@@ -516,9 +515,9 @@ void ManageProfileHandler::RequestCreateProfileUpdate(
                     state == GoogleServiceAuthError::USER_NOT_SIGNED_UP ||
                     state == GoogleServiceAuthError::ACCOUNT_DELETED ||
                     state == GoogleServiceAuthError::ACCOUNT_DISABLED);
-  web_ui()->CallJavascriptFunction("CreateProfileOverlay.updateSignedInStatus",
-                                   base::StringValue(username),
-                                   base::FundamentalValue(has_error));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "CreateProfileOverlay.updateSignedInStatus", base::StringValue(username),
+      base::FundamentalValue(has_error));
 
   OnCreateSupervisedUserPrefChange();
 }
@@ -527,7 +526,7 @@ void ManageProfileHandler::OnCreateSupervisedUserPrefChange() {
   PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
   base::FundamentalValue allowed(
       prefs->GetBoolean(prefs::kSupervisedUserCreationAllowed));
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "CreateProfileOverlay.updateSupervisedUsersAllowed", allowed);
 }
 
@@ -535,7 +534,7 @@ void ManageProfileHandler::OnHasProfileShortcuts(bool has_shortcuts) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   const base::FundamentalValue has_shortcuts_value(has_shortcuts);
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "ManageProfileOverlay.receiveHasProfileShortcuts", has_shortcuts_value);
 }
 

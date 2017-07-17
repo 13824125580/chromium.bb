@@ -45,11 +45,13 @@
 #define PaintLayerScrollableArea_h
 
 #include "core/CoreExport.h"
-#include "core/layout/LayoutBox.h"
 #include "core/layout/ScrollAnchor.h"
+#include "core/layout/ScrollEnums.h"
 #include "core/paint/PaintInvalidationCapableScrollableArea.h"
 #include "core/paint/PaintLayerFragment.h"
 #include "platform/heap/Handle.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -58,10 +60,25 @@ enum ResizerHitTestType {
     ResizerForTouch
 };
 
-class PlatformEvent;
+class ComputedStyle;
+class HitTestResult;
 class LayoutBox;
-class PaintLayer;
 class LayoutScrollbarPart;
+class PaintLayer;
+class PlatformEvent;
+class StickyPositionScrollingConstraints;
+class SubtreeLayoutScope;
+
+typedef WTF::HashMap<PaintLayer*, StickyPositionScrollingConstraints> StickyConstraintsMap;
+
+struct PaintLayerScrollableAreaRareData {
+    WTF_MAKE_NONCOPYABLE(PaintLayerScrollableAreaRareData);
+    USING_FAST_MALLOC(PaintLayerScrollableAreaRareData);
+public:
+    PaintLayerScrollableAreaRareData();
+
+    StickyConstraintsMap m_stickyConstraintsMap;
+};
 
 // PaintLayerScrollableArea represents the scrollable area of a LayoutBox.
 //
@@ -98,9 +115,8 @@ class LayoutScrollbarPart;
 // to be painted on top of everything. Hardware accelerated overlay scrollbars
 // are painted by their associated GraphicsLayer that sets the paint flag
 // PaintLayerPaintingOverlayScrollbars.
-class CORE_EXPORT PaintLayerScrollableArea final : public NoBaseWillBeGarbageCollectedFinalized<PaintLayerScrollableArea>, public PaintInvalidationCapableScrollableArea {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(PaintLayerScrollableArea);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PaintLayerScrollableArea);
+class CORE_EXPORT PaintLayerScrollableArea final : public GarbageCollectedFinalized<PaintLayerScrollableArea>, public PaintInvalidationCapableScrollableArea {
+    USING_GARBAGE_COLLECTED_MIXIN(PaintLayerScrollableArea);
     friend class Internals;
 
 private:
@@ -122,13 +138,6 @@ private:
 
         void dispose();
 
-        // When canDetachScrollbars is true, calls to setHas*Scrollbar(false) will NOT destroy
-        // an existing scrollbar, but instead detach it without destroying it.  If, subsequently,
-        // setHas*Scrollbar(true) is called, the existing scrollbar will be reattached.  When
-        // setCanDetachScrollbars(false) is called, any detached scrollbars will be destructed.
-        bool canDetachScrollbars() const { return m_canDetachScrollbars; }
-        void setCanDetachScrollbars(bool);
-
         Scrollbar* horizontalScrollbar() const { return m_hBarIsAttached ? m_hBar.get(): nullptr; }
         Scrollbar* verticalScrollbar() const { return m_vBarIsAttached ? m_vBar.get() : nullptr; }
         bool hasHorizontalScrollbar() const { return horizontalScrollbar(); }
@@ -136,31 +145,90 @@ private:
 
         void setHasHorizontalScrollbar(bool hasScrollbar);
         void setHasVerticalScrollbar(bool hasScrollbar);
+        void destroyDetachedScrollbars();
 
         DECLARE_TRACE();
 
     private:
-        PassRefPtrWillBeRawPtr<Scrollbar> createScrollbar(ScrollbarOrientation);
+        Scrollbar* createScrollbar(ScrollbarOrientation);
         void destroyScrollbar(ScrollbarOrientation);
 
     private:
-        RawPtrWillBeMember<PaintLayerScrollableArea> m_scrollableArea;
+        Member<PaintLayerScrollableArea> m_scrollableArea;
 
         // The scrollbars associated with m_scrollableArea. Both can nullptr.
-        RefPtrWillBeMember<Scrollbar> m_hBar;
-        RefPtrWillBeMember<Scrollbar> m_vBar;
+        Member<Scrollbar> m_hBar;
+        Member<Scrollbar> m_vBar;
 
-        unsigned m_canDetachScrollbars: 1;
         unsigned m_hBarIsAttached: 1;
         unsigned m_vBarIsAttached: 1;
     };
 
 public:
+
+    // If a PreventRelayoutScope object is alive, updateAfterLayout() will not
+    // re-run box layout as a result of adding or removing scrollbars.
+    // Instead, it will mark the PLSA as needing relayout of its box.
+    // When the last PreventRelayoutScope object is popped off the stack,
+    // box().setNeedsLayout(), and box().scrollbarsChanged() for LayoutBlock's,
+    // will be called as appropriate for all marked PLSA's.
+    class PreventRelayoutScope {
+        STACK_ALLOCATED();
+    public:
+        PreventRelayoutScope(SubtreeLayoutScope&);
+        ~PreventRelayoutScope();
+
+        static bool relayoutIsPrevented() { return s_count; }
+        static void setBoxNeedsLayout(PaintLayerScrollableArea&, bool hadHorizontalScrollbar, bool hadVerticalScrollbar);
+        static bool relayoutNeeded() { return s_count == 0 && s_relayoutNeeded; }
+        static void resetRelayoutNeeded();
+
+    private:
+        static int s_count;
+        static SubtreeLayoutScope* s_layoutScope;
+        static bool s_relayoutNeeded;
+        static PersistentHeapVector<Member<PaintLayerScrollableArea>>* s_needsRelayout;
+    };
+
+    // If a FreezeScrollbarScope object is alive, updateAfterLayout() will not
+    // recompute the existence of overflow:auto scrollbars.
+    class FreezeScrollbarsScope {
+        STACK_ALLOCATED();
+    public:
+        FreezeScrollbarsScope() { s_count++; }
+        ~FreezeScrollbarsScope() { s_count--; }
+
+        static bool scrollbarsAreFrozen() { return s_count; }
+
+    private:
+        static int s_count;
+    };
+
+    // If a DelayScrollPositionClampScope object is alive, updateAfterLayout() will not
+    // clamp scroll positions to ensure they are in the valid range.  When
+    // the last DelayScrollPositionClampScope object is destructed, all PaintLayerScrollableArea's
+    // that delayed clamping their positions will immediately clamp them.
+    class DelayScrollPositionClampScope {
+        STACK_ALLOCATED();
+    public:
+        DelayScrollPositionClampScope();
+        ~DelayScrollPositionClampScope();
+
+        static bool clampingIsDelayed() { return s_count; }
+        static void setNeedsClamp(PaintLayerScrollableArea*);
+
+    private:
+        static void clampScrollableAreas();
+
+        static int s_count;
+        static PersistentHeapVector<Member<PaintLayerScrollableArea>>* s_needsClamp;
+    };
+
     // FIXME: We should pass in the LayoutBox but this opens a window
     // for crashers during PaintLayer setup (see crbug.com/368062).
-    static PassOwnPtrWillBeRawPtr<PaintLayerScrollableArea> create(PaintLayer& layer)
+    static PaintLayerScrollableArea* create(PaintLayer& layer)
     {
-        return adoptPtrWillBeNoop(new PaintLayerScrollableArea(layer));
+        return new PaintLayerScrollableArea(layer);
     }
 
     ~PaintLayerScrollableArea() override;
@@ -172,7 +240,7 @@ public:
     Scrollbar* horizontalScrollbar() const override { return m_scrollbarManager.horizontalScrollbar(); }
     Scrollbar* verticalScrollbar() const override { return m_scrollbarManager.verticalScrollbar(); }
 
-    HostWindow* hostWindow() const override;
+    HostWindow* getHostWindow() const override;
 
     // For composited scrolling, we allocate an extra GraphicsLayer to hold
     // onto the scrolling content. The layer can be shifted on the GPU and
@@ -190,7 +258,6 @@ public:
 
     bool usesCompositedScrolling() const override;
     bool shouldScrollOnMainThread() const override;
-    void scrollControlWasSetNeedsPaintInvalidation() override;
     bool shouldUseIntegerScrollOffset() const override;
     bool isActive() const override;
     bool isScrollCornerVisible() const override;
@@ -220,6 +287,7 @@ public:
     bool shouldPlaceVerticalScrollbarOnLeft() const override;
     int pageStep(ScrollbarOrientation) const override;
     ScrollBehavior scrollBehaviorStyle() const override;
+    CompositorAnimationTimeline* compositorAnimationTimeline() const override;
 
     double scrollXOffset() const { return m_scrollOffset.width() + scrollOrigin().x(); }
     double scrollYOffset() const { return m_scrollOffset.height() + scrollOrigin().y(); }
@@ -253,9 +321,12 @@ public:
         scrollToOffset(toDoubleSize(position), ScrollOffsetClamped, scrollBehavior, scrollType);
     }
 
-    // Returns true if a layout object was marked for layout. In such a case, the layout scope's root
-    // should be laid out again.
-    bool updateAfterLayout(SubtreeLayoutScope* = nullptr);
+    // TODO(szager): Actually run these after all of layout is finished.  Currently, they
+    // run at the end of box()'es layout (or after all flexbox layout has finished) but while
+    // document layout is still happening.
+    void updateAfterLayout();
+    void clampScrollPositionsAfterLayout();
+
     void updateAfterStyleChange(const ComputedStyle*);
     void updateAfterOverflowRecalc();
 
@@ -282,8 +353,8 @@ public:
     int pixelSnappedScrollWidth() const;
     int pixelSnappedScrollHeight() const;
 
-    int verticalScrollbarWidth(OverlayScrollbarSizeRelevancy = IgnoreOverlayScrollbarSize) const;
-    int horizontalScrollbarHeight(OverlayScrollbarSizeRelevancy = IgnoreOverlayScrollbarSize) const;
+    int verticalScrollbarWidth(OverlayScrollbarClipBehavior = IgnoreOverlayScrollbarSize) const;
+    int horizontalScrollbarHeight(OverlayScrollbarClipBehavior = IgnoreOverlayScrollbarSize) const;
 
     DoubleSize adjustedScrollOffset() const { return DoubleSize(scrollXOffset(), scrollYOffset()); }
 
@@ -332,13 +403,39 @@ public:
     IntRect rectForHorizontalScrollbar(const IntRect& borderBoxRect) const;
     IntRect rectForVerticalScrollbar(const IntRect& borderBoxRect) const;
 
-    Widget* widget() override;
+    Widget* getWidget() override;
     ScrollAnchor& scrollAnchor() { return m_scrollAnchor; }
     bool isPaintLayerScrollableArea() const override { return true; }
 
     bool shouldRebuildHorizontalScrollbarLayer() const { return m_rebuildHorizontalScrollbarLayer; }
     bool shouldRebuildVerticalScrollbarLayer() const { return m_rebuildVerticalScrollbarLayer; }
     void resetRebuildScrollbarLayerFlags();
+
+    // Did DelayScrollPositionClampScope prevent us from running clampScrollPositionsAfterLayout()
+    // in updateAfterLayout()?
+    bool needsScrollPositionClamp() const { return m_needsScrollPositionClamp; }
+    void setNeedsScrollPositionClamp(bool val) { m_needsScrollPositionClamp = val; }
+
+    // Did PreventRelayoutScope prevent us from running re-layout due to adding/subtracting
+    // scrollbars in updateAfterLayout()?
+    bool needsRelayout() const { return m_needsRelayout; }
+    void setNeedsRelayout(bool val) { m_needsRelayout = val; }
+
+    // Were we laid out with a horizontal scrollbar at the time we were marked as
+    // needing relayout by PreventRelayoutScope?
+    bool hadHorizontalScrollbarBeforeRelayout() const { return m_hadHorizontalScrollbarBeforeRelayout; }
+    void setHadHorizontalScrollbarBeforeRelayout(bool val) { m_hadHorizontalScrollbarBeforeRelayout = val; }
+
+    // Were we laid out with a vertical scrollbar at the time we were marked as
+    // needing relayout by PreventRelayoutScope?
+    bool hadVerticalScrollbarBeforeRelayout() const { return m_hadVerticalScrollbarBeforeRelayout; }
+    void setHadVerticalScrollbarBeforeRelayout(bool val) { m_hadVerticalScrollbarBeforeRelayout = val; }
+
+    StickyConstraintsMap& stickyConstraintsMap() { return ensureRareData().m_stickyConstraintsMap; }
+    void invalidateAllStickyConstraints();
+    void invalidateStickyConstraintsFor(PaintLayer*, bool needsCompositingUpdate = true);
+
+    uint64_t id() const;
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -353,9 +450,9 @@ private:
 
     bool needsScrollbarReconstruction() const;
 
-    void computeScrollDimensions();
+    void updateScrollOrigin();
+    void updateScrollDimensions();
 
-    void setScrollOffset(const IntPoint&, ScrollType) override;
     void setScrollOffset(const DoublePoint&, ScrollType) override;
 
     int verticalScrollbarStart(int minX, int maxX) const;
@@ -376,19 +473,31 @@ private:
 
     void updateCompositingLayersAfterScroll();
 
+    PaintLayerScrollableAreaRareData* rareData()
+    {
+        return m_rareData.get();
+    }
+
+    PaintLayerScrollableAreaRareData& ensureRareData()
+    {
+        if (!m_rareData)
+            m_rareData = wrapUnique(new PaintLayerScrollableAreaRareData());
+        return *m_rareData.get();
+    }
+
     // PaintInvalidationCapableScrollableArea
     LayoutBox& boxForScrollControlPaintInvalidation() const { return box(); }
 
     PaintLayer& m_layer;
+
+    PaintLayer* m_nextTopmostScrollChild;
+    PaintLayer* m_topmostScrollChild;
 
     // Keeps track of whether the layer is currently resizing, so events can cause resizing to start and stop.
     unsigned m_inResizeMode : 1;
     unsigned m_scrollsOverflow : 1;
 
     unsigned m_inOverflowRelayout : 1;
-
-    PaintLayer* m_nextTopmostScrollChild;
-    PaintLayer* m_topmostScrollChild;
 
     // FIXME: once cc can handle composited scrolling with clip paths, we will
     // no longer need this bit.
@@ -399,6 +508,11 @@ private:
     // instance has been reconstructed.
     unsigned m_rebuildHorizontalScrollbarLayer : 1;
     unsigned m_rebuildVerticalScrollbarLayer : 1;
+
+    unsigned m_needsScrollPositionClamp : 1;
+    unsigned m_needsRelayout : 1;
+    unsigned m_hadHorizontalScrollbarBeforeRelayout : 1;
+    unsigned m_hadVerticalScrollbarBeforeRelayout : 1;
 
     // The width/height of our scrolled area.
     // This is OverflowModel's layout overflow translated to physical
@@ -421,6 +535,8 @@ private:
     LayoutScrollbarPart* m_resizer;
 
     ScrollAnchor m_scrollAnchor;
+
+    std::unique_ptr<PaintLayerScrollableAreaRareData> m_rareData;
 
 #if ENABLE(ASSERT)
     bool m_hasBeenDisposed;

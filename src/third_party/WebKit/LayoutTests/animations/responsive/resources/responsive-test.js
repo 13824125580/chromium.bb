@@ -51,7 +51,7 @@ function assertCSSResponsive(options) {
     options,
     bindings: {
       prefixProperty(property) {
-        return property;
+        return toCamelCase(property);
       },
       createTargetContainer(container) {
         if (options.targetTag) {
@@ -143,14 +143,23 @@ function createTargets(bindings, n, container) {
 }
 
 function setState(bindings, targets, property, state) {
-  if (state.inherited) {
-    var parent = targets[0].parentElement;
-    console.assert(targets.every(target => target.parentElement === parent));
-    bindings.setValue(parent, property, state.inherited);
-  }
-  if (state.underlying) {
-    for (var target of targets) {
-      bindings.setValue(target, property, state.underlying);
+  for (var item in state) {
+    switch (item) {
+    case 'inherited':
+      var parent = targets[0].parentElement;
+      console.assert(targets.every(target => target.parentElement === parent));
+      bindings.setValue(parent, property, state.inherited);
+      break;
+    case 'underlying':
+      for (var target of targets) {
+        bindings.setValue(target, property, state.underlying);
+      }
+      break;
+    default:
+      for (var target of targets) {
+        bindings.setValue(target, item, state[item]);
+      }
+      break;
     }
   }
 }
@@ -161,6 +170,15 @@ function isNeutralKeyframe(keyframe) {
 
 function keyframeText(keyframe) {
   return isNeutralKeyframe(keyframe) ? 'neutral' : `[${keyframe}]`;
+}
+
+function toCamelCase(property) {
+  for (var i = property.length - 2; i > 0; --i) {
+    if (property[i] === '-') {
+      property = property.substring(0, i) + property[i + 1].toUpperCase() + property.substring(i + 2);
+    }
+  }
+  return property;
 }
 
 function createKeyframes(prefixedProperty, from, to) {

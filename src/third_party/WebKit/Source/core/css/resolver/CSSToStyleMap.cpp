@@ -222,7 +222,7 @@ void CSSToStyleMap::mapFillXPosition(StyleResolverState& state, FillLayer* layer
     if (value.isValuePair())
         length = toCSSPrimitiveValue(toCSSValuePair(value).second()).convertToLength(state.cssToLengthConversionData());
     else
-        length = toCSSPrimitiveValue(value).convertToLength(state.cssToLengthConversionData());
+        length = StyleBuilderConverter::convertPositionLength<CSSValueLeft, CSSValueRight>(state, toCSSPrimitiveValue(value));
 
     layer->setXPosition(length);
     if (value.isValuePair())
@@ -243,7 +243,7 @@ void CSSToStyleMap::mapFillYPosition(StyleResolverState& state, FillLayer* layer
     if (value.isValuePair())
         length = toCSSPrimitiveValue(toCSSValuePair(value).second()).convertToLength(state.cssToLengthConversionData());
     else
-        length = toCSSPrimitiveValue(value).convertToLength(state.cssToLengthConversionData());
+        length = StyleBuilderConverter::convertPositionLength<CSSValueTop, CSSValueBottom>(state, toCSSPrimitiveValue(value));
 
     layer->setYPosition(length);
     if (value.isValuePair())
@@ -388,21 +388,21 @@ PassRefPtr<TimingFunction> CSSToStyleMap::mapAnimationTimingFunction(const CSSVa
         case CSSValueLinear:
             return LinearTimingFunction::shared();
         case CSSValueEase:
-            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::Ease);
+            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseType::EASE);
         case CSSValueEaseIn:
-            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseIn);
+            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseType::EASE_IN);
         case CSSValueEaseOut:
-            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseOut);
+            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseType::EASE_OUT);
         case CSSValueEaseInOut:
-            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseInOut);
+            return CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseType::EASE_IN_OUT);
         case CSSValueStepStart:
-            return StepsTimingFunction::preset(StepsTimingFunction::Start);
+            return StepsTimingFunction::preset(StepsTimingFunction::StepPosition::START);
         case CSSValueStepMiddle:
             if (allowStepMiddle)
-                return StepsTimingFunction::preset(StepsTimingFunction::Middle);
+                return StepsTimingFunction::preset(StepsTimingFunction::StepPosition::MIDDLE);
             return CSSTimingData::initialTimingFunction();
         case CSSValueStepEnd:
-            return StepsTimingFunction::preset(StepsTimingFunction::End);
+            return StepsTimingFunction::preset(StepsTimingFunction::StepPosition::END);
         default:
             ASSERT_NOT_REACHED();
             return CSSTimingData::initialTimingFunction();
@@ -418,9 +418,9 @@ PassRefPtr<TimingFunction> CSSToStyleMap::mapAnimationTimingFunction(const CSSVa
         return CSSTimingData::initialTimingFunction();
 
     const CSSStepsTimingFunctionValue& stepsTimingFunction = toCSSStepsTimingFunctionValue(value);
-    if (stepsTimingFunction.stepAtPosition() == StepsTimingFunction::Middle && !allowStepMiddle)
+    if (stepsTimingFunction.getStepPosition() == StepsTimingFunction::StepPosition::MIDDLE && !allowStepMiddle)
         return CSSTimingData::initialTimingFunction();
-    return StepsTimingFunction::create(stepsTimingFunction.numberOfSteps(), stepsTimingFunction.stepAtPosition());
+    return StepsTimingFunction::create(stepsTimingFunction.numberOfSteps(), stepsTimingFunction.getStepPosition());
 }
 
 void CSSToStyleMap::mapNinePieceImage(StyleResolverState& state, CSSPropertyID property, const CSSValue& value, NinePieceImage& image)
@@ -442,7 +442,7 @@ void CSSToStyleMap::mapNinePieceImage(StyleResolverState& state, CSSPropertyID p
         imageProperty = property;
 
     for (unsigned i = 0 ; i < borderImage.length() ; ++i) {
-        const CSSValue& current = *borderImage.item(i);
+        const CSSValue& current = borderImage.item(i);
 
         if (current.isImageValue() || current.isImageGeneratorValue() || current.isImageSetValue()) {
             image.setImage(state.styleImage(imageProperty, current));
@@ -452,16 +452,16 @@ void CSSToStyleMap::mapNinePieceImage(StyleResolverState& state, CSSPropertyID p
             const CSSValueList& slashList = toCSSValueList(current);
             size_t length = slashList.length();
             // Map in the image slices.
-            if (length && slashList.item(0)->isBorderImageSliceValue())
-                mapNinePieceImageSlice(state, *slashList.item(0), image);
+            if (length && slashList.item(0).isBorderImageSliceValue())
+                mapNinePieceImageSlice(state, slashList.item(0), image);
 
             // Map in the border slices.
             if (length > 1)
-                image.setBorderSlices(mapNinePieceImageQuad(state, *slashList.item(1)));
+                image.setBorderSlices(mapNinePieceImageQuad(state, slashList.item(1)));
 
             // Map in the outset.
             if (length > 2)
-                image.setOutset(mapNinePieceImageQuad(state, *slashList.item(2)));
+                image.setOutset(mapNinePieceImageQuad(state, slashList.item(2)));
         } else if (current.isPrimitiveValue() || current.isValuePair()) {
             // Set the appropriate rules for stretch/round/repeat of the slices.
             mapNinePieceImageRepeat(state, current, image);
@@ -500,15 +500,15 @@ void CSSToStyleMap::mapNinePieceImageSlice(StyleResolverState&, const CSSValue& 
 
     // Set up a length box to represent our image slices.
     LengthBox box;
-    CSSQuadValue* slices = borderImageSlice.slices();
-    box.m_top = convertBorderImageSliceSide(*slices->top());
-    box.m_bottom = convertBorderImageSliceSide(*slices->bottom());
-    box.m_left = convertBorderImageSliceSide(*slices->left());
-    box.m_right = convertBorderImageSliceSide(*slices->right());
+    const CSSQuadValue& slices = borderImageSlice.slices();
+    box.m_top = convertBorderImageSliceSide(*slices.top());
+    box.m_bottom = convertBorderImageSliceSide(*slices.bottom());
+    box.m_left = convertBorderImageSliceSide(*slices.left());
+    box.m_right = convertBorderImageSliceSide(*slices.right());
     image.setImageSlices(box);
 
     // Set our fill mode.
-    image.setFill(borderImageSlice.m_fill);
+    image.setFill(borderImageSlice.fill());
 }
 
 static BorderImageLength toBorderImageLength(CSSPrimitiveValue& value, const CSSToLengthConversionData& conversionData)

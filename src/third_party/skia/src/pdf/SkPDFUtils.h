@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2011 Google Inc.
  *
@@ -14,7 +13,6 @@
 #include "SkPath.h"
 
 class SkMatrix;
-class SkPath;
 class SkPDFArray;
 struct SkRect;
 class SkWStream;
@@ -35,8 +33,8 @@ class SkWStream;
 
 class SkPDFUtils {
 public:
-    static SkPDFArray* RectToArray(const SkRect& rect);
-    static SkPDFArray* MatrixToArray(const SkMatrix& matrix);
+    static sk_sp<SkPDFArray> RectToArray(const SkRect& rect);
+    static sk_sp<SkPDFArray> MatrixToArray(const SkMatrix& matrix);
     static void AppendTransform(const SkMatrix& matrix, SkWStream* content);
 
     static void MoveTo(SkScalar x, SkScalar y, SkWStream* content);
@@ -67,7 +65,7 @@ public:
     static size_t FloatToDecimal(float value,
                                  char output[kMaximumFloatDecimalLength]);
     static void AppendScalar(SkScalar value, SkWStream* stream);
-    static SkString FormatString(const char* input, size_t len);
+    static void WriteString(SkWStream* wStream, const char* input, size_t len);
 };
 
 #endif

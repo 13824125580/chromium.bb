@@ -31,14 +31,11 @@
 #ifndef WebViewClient_h
 #define WebViewClient_h
 
-#include "../platform/WebGraphicsContext3D.h"
+#include "../platform/WebDragOperation.h"
 #include "../platform/WebPageVisibilityState.h"
 #include "../platform/WebString.h"
 #include "WebAXEnums.h"
 #include "WebContentDetectionResult.h"
-#include "WebDragOperation.h"
-#include "WebFileChooserCompletion.h"
-#include "WebFileChooserParams.h"
 #include "WebFrame.h"
 #include "WebPopupType.h"
 #include "WebTextDirection.h"
@@ -69,7 +66,7 @@ struct WebWindowFeatures;
 // Since a WebView is a WebWidget, a WebViewClient is a WebWidgetClient.
 // Virtual inheritance allows an implementation of WebWidgetClient to be
 // easily reused as part of an implementation of WebViewClient.
-class WebViewClient : virtual public WebWidgetClient {
+class WebViewClient : protected WebWidgetClient {
 public:
     // Factory methods -----------------------------------------------------
 
@@ -110,10 +107,6 @@ public:
     // will never be called.
     virtual bool enumerateChosenDirectory(const WebString& path, WebFileChooserCompletion*) { return false; }
 
-    // This method is called in response to WebView's saveImageAt(x, y).
-    // A data url from <canvas> or <img> is passed to the method's argument.
-    virtual void saveImageFromDataURL(const WebString&) { }
-
     // Called when PageImportanceSignals for the WebView is updated.
     virtual void pageImportanceSignalsChanged() { }
 
@@ -134,13 +127,6 @@ public:
     virtual bool handleCurrentKeyboardEvent() { return false; }
 
     // Dialogs -------------------------------------------------------------
-
-    // This method returns immediately after showing the dialog. When the
-    // dialog is closed, it should call the WebFileChooserCompletion to
-    // pass the results of the dialog. Returns false if
-    // WebFileChooseCompletion will never be called.
-    virtual bool runFileChooser(const WebFileChooserParams&,
-                                WebFileChooserCompletion*) { return false; }
 
     // Ask users to choose date/time for the specified parameters. When a user
     // chooses a value, an implementation of this function should call
@@ -244,15 +230,6 @@ public:
     virtual void pageScaleFactorChanged() { }
 
 
-    // Visibility -----------------------------------------------------------
-
-    // Returns the current visibility of the WebView.
-    virtual WebPageVisibilityState visibilityState() const
-    {
-        return WebPageVisibilityStateVisible;
-    }
-
-
     // Content detection ----------------------------------------------------
 
     // Retrieves detectable content (e.g., email addresses, phone numbers)
@@ -273,6 +250,38 @@ public:
 
     // Informs the browser that the draggable regions have been updated.
     virtual void draggableRegionsChanged() { }
+
+    // TODO(lfg): These methods are only exposed through WebViewClient while we
+    // refactor WebView to not inherit from WebWidget.
+    // WebWidgetClient overrides.
+    bool allowsBrokenNullLayerTreeView() const override { return false; }
+    void closeWidgetSoon() override {}
+    void convertViewportToWindow(WebRect* rect) override {}
+    void convertWindowToViewport(WebFloatRect* rect) override {}
+    void didAutoResize(const WebSize& newSize) override {}
+    void didChangeCursor(const WebCursorInfo&) override {}
+    void didFocus() override {}
+    void didHandleGestureEvent(const WebGestureEvent& event, bool eventCancelled) override {}
+    void didInvalidateRect(const WebRect&) override {}
+    void didMeaningfulLayout(WebMeaningfulLayout) override {}
+    void didOverscroll(const WebFloatSize& overscrollDelta, const WebFloatSize& accumulatedOverscroll, const WebFloatPoint& positionInViewport, const WebFloatSize& velocityInViewport) override {}
+    void didUpdateTextOfFocusedElementByNonUserInput() override {}
+    void hasTouchEventHandlers(bool) override {}
+    void initializeLayerTreeView() override {}
+    WebLayerTreeView* layerTreeView() override { return 0; }
+    void onMouseDown(const WebNode& mouseDownNode) override {}
+    void resetInputMethod() override {}
+    WebRect rootWindowRect() override { return WebRect(); }
+    void scheduleAnimation() override {}
+    WebScreenInfo screenInfo() override { return WebScreenInfo(); }
+    void setToolTipText(const WebString&, WebTextDirection hint) override {}
+    void setTouchAction(WebTouchAction touchAction) override {}
+    void setWindowRect(const WebRect&) override {}
+    void showImeIfNeeded() override {}
+    void showUnhandledTapUIIfNeeded(const WebPoint& tappedPosition, const WebNode& tappedNode, bool pageChanged) override {}
+    void show(WebNavigationPolicy) override {}
+    WebRect windowRect() override { return WebRect(); }
+    WebRect windowResizerRect() override { return WebRect(); }
 
 protected:
     ~WebViewClient() { }

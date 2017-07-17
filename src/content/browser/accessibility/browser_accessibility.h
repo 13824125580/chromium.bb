@@ -75,6 +75,8 @@ class CONTENT_EXPORT BrowserAccessibility {
 
   virtual ~BrowserAccessibility();
 
+  static BrowserAccessibility* GetFromUniqueID(int32_t unique_id);
+
   // Called only once, immediately after construction. The constructor doesn't
   // take any arguments because in the Windows subclass we use a special
   // function to construct a COM object.
@@ -88,6 +90,11 @@ class CONTENT_EXPORT BrowserAccessibility {
 
   // Called when the location changed.
   virtual void OnLocationChanged() {}
+
+  // This is called when the platform-specific attributes for a node need
+  // to be recomputed, which may involve firing native events, due to a
+  // change other than an update from OnAccessibilityEvents.
+  virtual void UpdatePlatformAttributes() {}
 
   // Return true if this object is equal to or a descendant of |ancestor|.
   bool IsDescendantOf(const BrowserAccessibility* ancestor) const;
@@ -123,6 +130,9 @@ class CONTENT_EXPORT BrowserAccessibility {
   BrowserAccessibility* GetPreviousSibling() const;
   BrowserAccessibility* GetNextSibling() const;
 
+  bool IsPreviousSiblingOnSameLine() const;
+  bool IsNextSiblingOnSameLine() const;
+
   // Returns nullptr if there are no children.
   BrowserAccessibility* PlatformDeepestFirstChild() const;
   // Returns nullptr if there are no children.
@@ -151,20 +161,25 @@ class CONTENT_EXPORT BrowserAccessibility {
 
   // This is to handle the cases such as ARIA textbox, where the value should
   // be calculated from the object's inner text.
-  base::string16 GetValue() const;
+  virtual base::string16 GetValue() const;
 
-  // Searches in the given text and from the given offset until the start of
-  // the next or previous word is found and returns its position.
+  // Starting at the given character offset, locates the start of the next or
+  // previous line and returns its character offset.
+  int GetLineStartBoundary(int start,
+                           ui::TextBoundaryDirection direction) const;
+
+  // Starting at the given character offset, locates the start of the next or
+  // previous word and returns its character offset.
   // In case there is no word boundary before or after the given offset, it
-  // returns one past the last character, i.e. the text's length.
+  // returns one past the last character.
   // If the given offset is already at the start of a word, returns the start
-  // of the next word if the search is forwards and the given offset if it is
+  // of the next word if the search is forwards, and the given offset if it is
   // backwards.
   // If the start offset is equal to -1 and the search is in the forwards
   // direction, returns the start boundary of the first word.
   // Start offsets that are not in the range -1 to text length are invalid.
-  int GetWordStartBoundary(
-      int start, ui::TextBoundaryDirection direction) const;
+  int GetWordStartBoundary(int start,
+                           ui::TextBoundaryDirection direction) const;
 
   // Returns the deepest descendant that contains the specified point
   // (in global screen coordinates).
@@ -192,8 +207,9 @@ class CONTENT_EXPORT BrowserAccessibility {
   //
 
   BrowserAccessibilityManager* manager() const { return manager_; }
-  bool instance_active() const { return node_ != NULL; }
+  bool instance_active() const { return node_ && manager_; }
   ui::AXNode* node() const { return node_; }
+  int32_t unique_id() const { return unique_id_; }
 
   // These access the internal accessibility tree, which doesn't necessarily
   // reflect the accessibility tree that should be exposed on each platform.
@@ -220,17 +236,6 @@ class CONTENT_EXPORT BrowserAccessibility {
   // IsNative returns false.
   virtual bool IsNative() const;
 
-#if defined(OS_MACOSX) && __OBJC__
-  const BrowserAccessibilityCocoa* ToBrowserAccessibilityCocoa() const;
-  BrowserAccessibilityCocoa* ToBrowserAccessibilityCocoa();
-#elif defined(OS_WIN)
-  const BrowserAccessibilityWin* ToBrowserAccessibilityWin() const;
-  BrowserAccessibilityWin* ToBrowserAccessibilityWin();
-#elif defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_X11)
-  const BrowserAccessibilityAuraLinux* ToBrowserAccessibilityAuraLinux() const;
-  BrowserAccessibilityAuraLinux* ToBrowserAccessibilityAuraLinux();
-#endif
-
   // Accessing accessibility attributes:
   //
   // There are dozens of possible attributes for an accessibility node,
@@ -254,6 +259,17 @@ class CONTENT_EXPORT BrowserAccessibility {
   float GetFloatAttribute(ui::AXFloatAttribute attr) const;
   bool GetFloatAttribute(ui::AXFloatAttribute attr, float* value) const;
 
+  bool HasInheritedStringAttribute(ui::AXStringAttribute attribute) const;
+  const std::string& GetInheritedStringAttribute(
+      ui::AXStringAttribute attribute) const;
+  bool GetInheritedStringAttribute(ui::AXStringAttribute attribute,
+                                   std::string* value) const;
+
+  base::string16 GetInheritedString16Attribute(
+      ui::AXStringAttribute attribute) const;
+  bool GetInheritedString16Attribute(ui::AXStringAttribute attribute,
+                                     base::string16* value) const;
+
   bool HasIntAttribute(ui::AXIntAttribute attribute) const;
   int GetIntAttribute(ui::AXIntAttribute attribute) const;
   bool GetIntAttribute(ui::AXIntAttribute attribute, int* value) const;
@@ -264,10 +280,10 @@ class CONTENT_EXPORT BrowserAccessibility {
   bool GetStringAttribute(ui::AXStringAttribute attribute,
                           std::string* value) const;
 
-  bool GetString16Attribute(ui::AXStringAttribute attribute,
-                            base::string16* value) const;
   base::string16 GetString16Attribute(
       ui::AXStringAttribute attribute) const;
+  bool GetString16Attribute(ui::AXStringAttribute attribute,
+                            base::string16* value) const;
 
   bool HasIntListAttribute(ui::AXIntListAttribute attribute) const;
   const std::vector<int32_t>& GetIntListAttribute(
@@ -296,6 +312,8 @@ class CONTENT_EXPORT BrowserAccessibility {
                        bool* is_defined,
                        bool* is_mixed) const;
 
+  base::string16 GetFontFamily() const;
+  base::string16 GetLanguage() const;
   virtual base::string16 GetText() const;
 
   // Returns true if the bit corresponding to the given state enum is 1.
@@ -310,7 +328,10 @@ class CONTENT_EXPORT BrowserAccessibility {
   // True if this is a web area, and its grandparent is a presentational iframe.
   bool IsWebAreaForPresentationalIframe() const;
 
+  virtual bool IsClickable() const;
   bool IsControl() const;
+  bool IsMenuRelated() const;
+  bool IsRangeControl() const;
   bool IsSimpleTextControl() const;
   // Indicates if this object is at the root of a rich edit text control.
   bool IsRichTextControl() const;
@@ -327,6 +348,9 @@ class CONTENT_EXPORT BrowserAccessibility {
 
   // The underlying node.
   ui::AXNode* node_;
+
+  // A unique ID, since node IDs are frame-local.
+  int32_t unique_id_;
 
  private:
   // |GetInnerText| recursively includes all the text from descendants such as

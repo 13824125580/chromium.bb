@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/top_sites/top_sites_api.h"
@@ -42,7 +43,7 @@ class TopSitesExtensionTest : public InProcessBrowserTest {
 
     if (!top_sites_inited_) {
       waiting_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
     }
 
     // By this point, we know topsites has loaded. We can run the tests now.
@@ -74,7 +75,7 @@ IN_PROC_BROWSER_TEST_F(TopSitesExtensionTest, GetTopSites) {
   // Without a callback the function will not generate a result.
   get_top_sites_function->set_has_callback(true);
 
-  scoped_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
       get_top_sites_function.get(), "[]", browser()));
   base::ListValue* list;
   ASSERT_TRUE(result->GetAsList(&list));

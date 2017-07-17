@@ -38,10 +38,10 @@
 #include "core/paint/PaintPhase.h"
 #include "platform/Supplementable.h"
 #include "platform/graphics/ImageOrientation.h"
-#include "platform/graphics/paint/DisplayItem.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "wtf/HashSet.h"
+#include <memory>
 
 namespace blink {
 
@@ -62,27 +62,29 @@ class InputMethodController;
 class IntPoint;
 class IntSize;
 class InstrumentingAgents;
+class JSONObject;
+class LayoutView;
+class LayoutViewItem;
 class LocalDOMWindow;
 class NavigationScheduler;
 class Node;
 class NodeTraversal;
+template <typename Strategy> class PositionWithAffinityTemplate;
+class PluginData;
 class Range;
-class LayoutView;
-class TreeScope;
 class ScriptController;
+class ServiceRegistry;
 class SpellChecker;
-class TreeScope;
 class WebFrameHostScheduler;
 class WebFrameScheduler;
-template <typename Strategy> class PositionWithAffinityTemplate;
 
-class CORE_EXPORT LocalFrame : public Frame, public LocalFrameLifecycleNotifier, public WillBeHeapSupplementable<LocalFrame>, public DisplayItemClient {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(LocalFrame);
+class CORE_EXPORT LocalFrame : public Frame, public LocalFrameLifecycleNotifier, public Supplementable<LocalFrame> {
+    USING_GARBAGE_COLLECTED_MIXIN(LocalFrame);
 public:
-    static PassRefPtrWillBeRawPtr<LocalFrame> create(FrameLoaderClient*, FrameHost*, FrameOwner*);
+    static LocalFrame* create(FrameLoaderClient*, FrameHost*, FrameOwner*, ServiceRegistry* = nullptr);
 
     void init();
-    void setView(PassRefPtrWillBeRawPtr<FrameView>);
+    void setView(FrameView*);
     void createView(const IntSize&, const Color&, bool,
         ScrollbarMode = ScrollbarAuto, bool horizontalLock = false,
         ScrollbarMode = ScrollbarAuto, bool verticalLock = false);
@@ -90,29 +92,29 @@ public:
     // Frame overrides:
     ~LocalFrame() override;
     DECLARE_VIRTUAL_TRACE();
-    bool isLocalFrame() const override { return true; }
     DOMWindow* domWindow() const override;
     WindowProxy* windowProxy(DOMWrapperWorld&) override;
     void navigate(Document& originDocument, const KURL&, bool replaceCurrentItem, UserGestureStatus) override;
     void navigate(const FrameLoadRequest&) override;
     void reload(FrameLoadType, ClientRedirectPolicy) override;
     void detach(FrameDetachType) override;
-    void disconnectOwnerElement() override;
     bool shouldClose() override;
     SecurityContext* securityContext() const override;
     void printNavigationErrorMessage(const Frame&, const char* reason) override;
     bool prepareForCommit() override;
+    void didChangeVisibilityState() override;
 
     void willDetachFrameHost();
 
     LocalDOMWindow* localDOMWindow() const;
-    void setDOMWindow(PassRefPtrWillBeRawPtr<LocalDOMWindow>);
+    void setDOMWindow(LocalDOMWindow*);
     FrameView* view() const;
     Document* document() const;
     void setPagePopupOwner(Element&);
     Element* pagePopupOwner() const { return m_pagePopupOwner.get(); }
 
     LayoutView* contentLayoutObject() const; // Root of the layout tree for the document contained in this frame.
+    LayoutViewItem contentLayoutItem() const;
 
     Editor& editor() const;
     EventHandler& eventHandler() const;
@@ -124,15 +126,13 @@ public:
     SpellChecker& spellChecker() const;
     FrameConsole& console() const;
 
-    void didChangeVisibilityState();
-
     // This method is used to get the highest level LocalFrame in this
     // frame's in-process subtree.
     // FIXME: This is a temporary hack to support RemoteFrames, and callers
     // should be updated to avoid storing things on the main frame.
     LocalFrame* localFrameRoot();
 
-    InstrumentingAgents* instrumentingAgents() const { return m_instrumentingAgents.get(); }
+    InstrumentingAgents* instrumentingAgents() { return m_instrumentingAgents.get(); }
 
     // ======== All public functions below this point are candidates to move out of LocalFrame into another class. ========
 
@@ -155,8 +155,8 @@ public:
     void deviceScaleFactorChanged();
     double devicePixelRatio() const;
 
-    PassOwnPtr<DragImage> nodeImage(Node&);
-    PassOwnPtr<DragImage> dragImageForSelection(float opacity);
+    std::unique_ptr<DragImage> nodeImage(Node&);
+    std::unique_ptr<DragImage> dragImageForSelection(float opacity);
 
     String selectedText() const;
     String selectedTextForClipboard() const;
@@ -169,55 +169,51 @@ public:
     bool shouldReuseDefaultView(const KURL&) const;
     void removeSpellingMarkersUnderWords(const Vector<String>& words);
 
-    // FIXME: once scroll customization is enabled everywhere
-    // (crbug.com/416862), this should take a ScrollState object.
-    ScrollResult applyScrollDelta(ScrollGranularity, const FloatSize& delta, bool isScrollBegin);
-    bool shouldScrollTopControls(const FloatSize& delta) const;
-
-    // DisplayItemClient methods
-    String debugName() const final { return "LocalFrame"; }
-    // TODO(chrishtr): fix this.
-    LayoutRect visualRect() const override { return LayoutRect(); }
-
     bool shouldThrottleRendering() const;
 
     // Returns the frame scheduler, creating one if needed.
     WebFrameScheduler* frameScheduler();
     void scheduleVisualUpdateUnlessThrottled();
 
-    void updateSecurityOrigin(SecurityOrigin*);
-
     bool isNavigationAllowed() const { return m_navigationDisableCount == 0; }
+
+    ServiceRegistry* serviceRegistry() { return m_serviceRegistry; }
+
+    FrameLoaderClient* client() const;
+
+    PluginData* pluginData() const;
 
 private:
     friend class FrameNavigationDisabler;
 
-    LocalFrame(FrameLoaderClient*, FrameHost*, FrameOwner*);
+    LocalFrame(FrameLoaderClient*, FrameHost*, FrameOwner*, ServiceRegistry*);
 
     // Internal Frame helper overrides:
-    WindowProxyManager* windowProxyManager() const override;
-
-    String localLayerTreeAsText(unsigned flags) const;
+    WindowProxyManager* getWindowProxyManager() const override;
+    // Intentionally private to prevent redundant checks when the type is
+    // already LocalFrame.
+    bool isLocalFrame() const override { return true; }
+    bool isRemoteFrame() const override { return false; }
 
     void enableNavigation() { --m_navigationDisableCount; }
     void disableNavigation() { ++m_navigationDisableCount; }
 
     mutable FrameLoader m_loader;
-    OwnPtrWillBeMember<NavigationScheduler> m_navigationScheduler;
+    Member<NavigationScheduler> m_navigationScheduler;
 
-    RefPtrWillBeMember<FrameView> m_view;
-    RefPtrWillBeMember<LocalDOMWindow> m_domWindow;
+    Member<FrameView> m_view;
+    Member<LocalDOMWindow> m_domWindow;
     // Usually 0. Non-null if this is the top frame of PagePopup.
-    RefPtrWillBeMember<Element> m_pagePopupOwner;
+    Member<Element> m_pagePopupOwner;
 
-    const OwnPtrWillBeMember<ScriptController> m_script;
-    const OwnPtrWillBeMember<Editor> m_editor;
-    const OwnPtrWillBeMember<SpellChecker> m_spellChecker;
-    const OwnPtrWillBeMember<FrameSelection> m_selection;
-    const OwnPtrWillBeMember<EventHandler> m_eventHandler;
-    const OwnPtrWillBeMember<FrameConsole> m_console;
-    const OwnPtrWillBeMember<InputMethodController> m_inputMethodController;
-    OwnPtr<WebFrameScheduler> m_frameScheduler;
+    const Member<ScriptController> m_script;
+    const Member<Editor> m_editor;
+    const Member<SpellChecker> m_spellChecker;
+    const Member<FrameSelection> m_selection;
+    const Member<EventHandler> m_eventHandler;
+    const Member<FrameConsole> m_console;
+    const Member<InputMethodController> m_inputMethodController;
+    std::unique_ptr<WebFrameScheduler> m_frameScheduler;
 
     int m_navigationDisableCount;
 
@@ -226,7 +222,9 @@ private:
 
     bool m_inViewSourceMode;
 
-    RefPtrWillBeMember<InstrumentingAgents> m_instrumentingAgents;
+    Member<InstrumentingAgents> m_instrumentingAgents;
+
+    ServiceRegistry* const m_serviceRegistry;
 };
 
 inline void LocalFrame::init()
@@ -313,7 +311,31 @@ public:
     ~FrameNavigationDisabler();
 
 private:
-    RawPtrWillBeMember<LocalFrame> m_frame;
+    Member<LocalFrame> m_frame;
+};
+
+// A helper class for attributing cost inside a scope to a LocalFrame, with
+// output written to the trace log. The class is irrelevant to the core logic
+// of LocalFrame.  Sample usage:
+//
+// void foo(LocalFrame* frame)
+// {
+//     ScopedFrameBlamer frameBlamer(frame);
+//     TRACE_EVENT0("blink", "foo");
+//     // Do some real work...
+// }
+//
+// In Trace Viewer, we can find the cost of slice |foo| attributed to |frame|.
+// Design doc: https://docs.google.com/document/d/15BB-suCb9j-nFt55yCFJBJCGzLg2qUm3WaSOPb8APtI/edit?usp=sharing
+class ScopedFrameBlamer {
+    WTF_MAKE_NONCOPYABLE(ScopedFrameBlamer);
+    STACK_ALLOCATED();
+public:
+    explicit ScopedFrameBlamer(LocalFrame*);
+    ~ScopedFrameBlamer();
+
+private:
+    Member<LocalFrame> m_frame;
 };
 
 } // namespace blink

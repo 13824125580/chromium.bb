@@ -4,25 +4,47 @@
 
 #include "ui/views/mus/window_tree_host_mus.h"
 
+#include "base/memory/ptr_util.h"
+#include "components/mus/public/cpp/window.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/events/event.h"
+#include "ui/platform_window/stub/stub_window.h"
 #include "ui/views/mus/input_method_mus.h"
 #include "ui/views/mus/native_widget_mus.h"
-#include "ui/views/mus/platform_window_mus.h"
 
 namespace views {
+
+namespace {
+static uint32_t accelerated_widget_count = 1;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHostMus, public:
 
-WindowTreeHostMus::WindowTreeHostMus(mojo::Connector* connector,
-                                     NativeWidgetMus* native_widget,
+WindowTreeHostMus::WindowTreeHostMus(NativeWidgetMus* native_widget,
                                      mus::Window* window)
-    : native_widget_(native_widget),
-      show_state_(ui::PLATFORM_WINDOW_STATE_UNKNOWN) {
-  SetPlatformWindow(
-      make_scoped_ptr(new PlatformWindowMus(this, connector, window)));
+    : native_widget_(native_widget) {
+// We need accelerated widget numbers to be different for each
+// window and fit in the smallest sizeof(AcceleratedWidget) uint32_t
+// has this property.
+#if defined(OS_WIN) || defined(OS_ANDROID)
+  gfx::AcceleratedWidget accelerated_widget =
+      reinterpret_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+#else
+  gfx::AcceleratedWidget accelerated_widget =
+      static_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+#endif
+  // TODO(markdittmer): Use correct device-scale-factor from |window|.
+  OnAcceleratedWidgetAvailable(accelerated_widget, 1.f);
+
+  SetPlatformWindow(base::WrapUnique(new ui::StubWindow(
+      this,
+      false)));  // Do not advertise accelerated widget; already set manually.
+
+  // Initialize the stub platform window bounds to those of the mus::Window.
+  platform_window()->SetBounds(window->bounds());
+
   // The location of events is already transformed, and there is no way to
   // correctly determine the reverse transform. So, don't attempt to transform
   // event locations, else the root location is wrong.
@@ -39,14 +61,9 @@ WindowTreeHostMus::~WindowTreeHostMus() {
   DestroyDispatcher();
 }
 
-PlatformWindowMus* WindowTreeHostMus::platform_window() {
-  return static_cast<PlatformWindowMus*>(
-      WindowTreeHostPlatform::platform_window());
-}
-
 void WindowTreeHostMus::DispatchEvent(ui::Event* event) {
   if (event->IsKeyEvent() && GetInputMethod()) {
-    GetInputMethod()->DispatchKeyEvent(static_cast<ui::KeyEvent*>(event));
+    GetInputMethod()->DispatchKeyEvent(event->AsKeyEvent());
     event->StopPropagation();
     return;
   }
@@ -56,10 +73,6 @@ void WindowTreeHostMus::DispatchEvent(ui::Event* event) {
 void WindowTreeHostMus::OnClosed() {
   if (native_widget_)
     native_widget_->OnPlatformWindowClosed();
-}
-
-void WindowTreeHostMus::OnWindowStateChanged(ui::PlatformWindowState state) {
-  show_state_ = state;
 }
 
 void WindowTreeHostMus::OnActivationChanged(bool active) {

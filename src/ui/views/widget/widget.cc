@@ -18,10 +18,10 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/focus/focus_manager.h"
@@ -135,8 +135,7 @@ Widget::InitParams::InitParams(Type type)
       context(nullptr),
       force_show_in_taskbar(false),
       force_software_compositing(false),
-      reroute_mouse_wheel_to_any_related_window(false) {
-}
+      reroute_mouse_wheel_to_any_related_window(false) {}
 
 Widget::InitParams::InitParams(const InitParams& other) = default;
 
@@ -154,7 +153,7 @@ Widget::Widget()
       ownership_(InitParams::NATIVE_WIDGET_OWNS_WIDGET),
       is_secondary_widget_(true),
       frame_type_(FRAME_TYPE_DEFAULT),
-      disable_inactive_rendering_(false),
+      always_render_as_active_(false),
       widget_closed_(false),
       saved_show_state_(ui::SHOW_STATE_DEFAULT),
       focus_on_creation_(true),
@@ -179,22 +178,6 @@ Widget::~Widget() {
         << "Destroying a widget with a live native widget. "
         << "Widget probably should use WIDGET_OWNS_NATIVE_WIDGET ownership.";
   }
-}
-
-// static
-Widget* Widget::CreateWindow(WidgetDelegate* delegate) {
-  return CreateWindowWithBounds(delegate, gfx::Rect());
-}
-
-// static
-Widget* Widget::CreateWindowWithBounds(WidgetDelegate* delegate,
-                                       const gfx::Rect& bounds) {
-  Widget* widget = new Widget;
-  Widget::InitParams params;
-  params.bounds = bounds;
-  params.delegate = delegate;
-  widget->Init(params);
-  return widget;
 }
 
 // static
@@ -257,7 +240,6 @@ Widget* Widget::GetTopLevelWidgetForNativeView(gfx::NativeView native_view) {
   return native_widget ? native_widget->GetWidget() : NULL;
 }
 
-
 // static
 void Widget::GetAllChildWidgets(gfx::NativeView native_view,
                                 Widgets* children) {
@@ -307,6 +289,12 @@ bool Widget::RequiresNonClientView(InitParams::Type type) {
 void Widget::Init(const InitParams& in_params) {
   TRACE_EVENT0("views", "Widget::Init");
   InitParams params = in_params;
+
+  // If an internal name was not provided the class name of the contents view
+  // is a reasonable default.
+  if (params.name.empty() && params.delegate &&
+      params.delegate->GetContentsView())
+    params.name = params.delegate->GetContentsView()->GetClassName();
 
   params.child |= (params.type == InitParams::TYPE_CONTROL);
   is_top_level_ = !params.child;
@@ -365,10 +353,12 @@ void Widget::Init(const InitParams& in_params) {
     UpdateWindowTitle();
     non_client_view_->ResetWindowControls();
     SetInitialBounds(params.bounds);
-    if (params.show_state == ui::SHOW_STATE_MAXIMIZED)
+    if (params.show_state == ui::SHOW_STATE_MAXIMIZED) {
       Maximize();
-    else if (params.show_state == ui::SHOW_STATE_MINIMIZED)
+    } else if (params.show_state == ui::SHOW_STATE_MINIMIZED) {
       Minimize();
+      saved_show_state_ = ui::SHOW_STATE_MINIMIZED;
+    }
   } else if (params.delegate) {
     SetContentsView(params.delegate->GetContentsView());
     SetInitialBoundsForFramelessWindow(params.bounds);
@@ -499,6 +489,10 @@ gfx::Rect Widget::GetRestoredBounds() const {
   return native_widget_->GetRestoredBounds();
 }
 
+std::string Widget::GetWorkspace() const {
+  return native_widget_->GetWorkspace();
+}
+
 void Widget::SetBounds(const gfx::Rect& bounds) {
   native_widget_->SetBounds(bounds);
 }
@@ -516,7 +510,7 @@ void Widget::CenterWindow(const gfx::Size& size) {
 }
 
 void Widget::SetBoundsConstrained(const gfx::Rect& bounds) {
-  gfx::Rect work_area = gfx::Screen::GetScreen()
+  gfx::Rect work_area = display::Screen::GetScreen()
                             ->GetDisplayNearestPoint(bounds.origin())
                             .work_area();
   if (work_area.IsEmpty()) {
@@ -622,10 +616,8 @@ void Widget::Show() {
         !IsFullscreen()) {
       native_widget_->ShowMaximizedWithBounds(initial_restored_bounds_);
     } else {
-      ui::WindowShowState show_state =
-          IsFullscreen() ? ui::SHOW_STATE_FULLSCREEN :
-          IsMinimized() ? ui::SHOW_STATE_MINIMIZED : saved_show_state_;
-      native_widget_->ShowWithWindowState(show_state);
+      native_widget_->ShowWithWindowState(
+          IsFullscreen() ? ui::SHOW_STATE_FULLSCREEN : saved_show_state_);
     }
     // |saved_show_state_| only applies the first time the window is shown.
     // If we don't reset the value the window may be shown maximized every time
@@ -665,10 +657,6 @@ void Widget::Deactivate() {
 
 bool Widget::IsActive() const {
   return native_widget_->IsActive();
-}
-
-void Widget::DisableInactiveRendering() {
-  SetInactiveRenderingDisabled(true);
 }
 
 void Widget::SetAlwaysOnTop(bool on_top) {
@@ -717,12 +705,8 @@ bool Widget::IsFullscreen() const {
   return native_widget_->IsFullscreen();
 }
 
-void Widget::SetOpacity(unsigned char opacity) {
+void Widget::SetOpacity(float opacity) {
   native_widget_->SetOpacity(opacity);
-}
-
-void Widget::SetUseDragFrame(bool use_drag_frame) {
-  native_widget_->SetUseDragFrame(use_drag_frame);
 }
 
 void Widget::FlashFrame(bool flash) {
@@ -1019,7 +1003,10 @@ void Widget::OnSizeConstraintsChanged() {
   non_client_view_->SizeConstraintsChanged();
 }
 
-void Widget::OnOwnerClosing() {
+void Widget::OnOwnerClosing() {}
+
+std::string Widget::GetName() const {
+  return native_widget_->GetName();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1037,12 +1024,8 @@ bool Widget::CanActivate() const {
   return widget_delegate_->CanActivate();
 }
 
-bool Widget::IsInactiveRenderingDisabled() const {
-  return disable_inactive_rendering_;
-}
-
-void Widget::EnableInactiveRendering() {
-  SetInactiveRenderingDisabled(false);
+bool Widget::IsAlwaysRenderAsActive() const {
+  return always_render_as_active_;
 }
 
 void Widget::OnNativeWidgetActivationChanged(bool active) {
@@ -1055,8 +1038,8 @@ void Widget::OnNativeWidgetActivationChanged(bool active) {
   FOR_EACH_OBSERVER(WidgetObserver, observers_,
                     OnWidgetActivationChanged(this, active));
 
-  if (IsVisible() && non_client_view())
-    non_client_view()->frame_view()->SchedulePaint();
+  if (non_client_view())
+    non_client_view()->frame_view()->ActivationChanged(active);
 }
 
 void Widget::OnNativeFocus() {
@@ -1094,7 +1077,7 @@ void Widget::OnNativeWidgetCreated(bool desktop_widget) {
 void Widget::OnNativeWidgetDestroying() {
   // Tell the focus manager (if any) that root_view is being removed
   // in case that the focused view is under this root view.
-  if (GetFocusManager())
+  if (GetFocusManager() && root_view_)
     GetFocusManager()->ViewRemoved(root_view_.get());
   FOR_EACH_OBSERVER(WidgetObserver, observers_, OnWidgetDestroying(this));
   if (non_client_view_)
@@ -1138,6 +1121,8 @@ void Widget::OnNativeWidgetSizeChanged(const gfx::Size& new_size) {
     this,
     GetWindowBoundsInScreen()));
 }
+
+void Widget::OnNativeWidgetWorkspaceChanged() {}
 
 void Widget::OnNativeWidgetWindowShowStateChanged() {
   SaveWindowPlacementIfInitialized();
@@ -1211,19 +1196,23 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
       // use an observer to make sure we are still alive.
       WidgetDeletionObserver widget_deletion_observer(this);
 
+      gfx::NativeView current_capture =
+          internal::NativeWidgetPrivate::GetGlobalCapture(
+              native_widget_->GetNativeView());
       // Make sure we're still visible before we attempt capture as the mouse
       // press processing may have made the window hide (as happens with menus).
-
-      // It is possible for a View to show a context menu on mouse-press. Since
-      // the menu does a capture and starts a nested message-loop, the release
-      // would go to the menu. The next click (i.e. both mouse-press and release
-      // events) also go to the menu. The menu (and the nested message-loop)
-      // gets closed after this second release event. The code then resumes from
-      // here. So make sure that the mouse-button is still down before doing a
-      // capture.
+      //
+      // It is possible that capture has changed as a result of a mouse-press.
+      // In these cases do not update internal state.
+      //
+      // A mouse-press may trigger a nested message-loop, and absorb the paired
+      // release. If so the code returns here. So make sure that that
+      // mouse-button is still down before attempting to do a capture.
       if (root_view && root_view->OnMousePressed(*event) &&
           widget_deletion_observer.IsWidgetAlive() && IsVisible() &&
-          internal::NativeWidgetPrivate::IsMouseButtonDown()) {
+          internal::NativeWidgetPrivate::IsMouseButtonDown() &&
+          current_capture == internal::NativeWidgetPrivate::GetGlobalCapture(
+                                 native_widget_->GetNativeView())) {
         is_mouse_button_pressed_ = true;
         if (!native_widget_->HasCapture())
           native_widget_->SetCapture();
@@ -1342,7 +1331,7 @@ bool Widget::SetInitialFocus(ui::WindowShowState show_state) {
       show_state == ui::SHOW_STATE_MINIMIZED) {
     // If not focusing the window now, tell the focus manager which view to
     // focus when the window is restored.
-    if (v)
+    if (v && focus_manager_.get())
       focus_manager_->SetStoredFocusView(v);
     return true;
   }
@@ -1405,22 +1394,24 @@ void Widget::DestroyRootView() {
   root_view_.reset();
 }
 
-void Widget::OnDragWillStart() {
-}
+void Widget::OnDragWillStart() {}
 
-void Widget::OnDragComplete() {
-}
+void Widget::OnDragComplete() {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Widget, private:
 
-void Widget::SetInactiveRenderingDisabled(bool value) {
-  if (value == disable_inactive_rendering_)
+void Widget::SetAlwaysRenderAsActive(bool always_render_as_active) {
+  if (always_render_as_active_ == always_render_as_active)
     return;
 
-  disable_inactive_rendering_ = value;
-  if (non_client_view_)
-    non_client_view_->SetInactiveRenderingDisabled(value);
+  always_render_as_active_ = always_render_as_active;
+
+  // If active, the frame should already be painted. Otherwise,
+  // |always_render_as_active_| just changed, and the widget is inactive, so
+  // schedule a repaint.
+  if (non_client_view_ && !IsActive())
+    non_client_view_->frame_view()->SchedulePaint();
 }
 
 void Widget::SaveWindowPlacement() {

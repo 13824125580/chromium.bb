@@ -16,11 +16,7 @@ public:
     friend class MarkingVisitorImpl<InlinedGlobalMarkingVisitor>;
     using Impl = MarkingVisitorImpl<InlinedGlobalMarkingVisitor>;
 
-    explicit InlinedGlobalMarkingVisitor(Visitor* visitor)
-        : m_visitor(visitor)
-    {
-        ASSERT(visitor->markingMode() == Visitor::GlobalMarking);
-    }
+    explicit InlinedGlobalMarkingVisitor(ThreadState* state) : VisitorHelper(state) { }
 
     // Hack to unify interface to visitor->trace().
     // Without this hack, we need to use visitor.trace() for
@@ -48,19 +44,18 @@ public:
         Helper::template registerWeakMembers<T, method>(obj);
     }
 
-    Visitor* getUninlined() { return m_visitor; }
 protected:
     // Methods to be called from MarkingVisitorImpl.
 
-    inline bool shouldMarkObject(const void*)
+    inline bool shouldMarkObject(const void*) const
     {
         // As this is global marking visitor, we need to mark all objects.
         return true;
     }
 
-    inline Visitor::MarkingMode markingMode() const
+    inline Visitor::MarkingMode getMarkingMode() const
     {
-        return m_visitor->markingMode();
+        return Visitor::GlobalMarking;
     }
 
 private:
@@ -68,8 +63,6 @@ private:
     {
         return *static_cast<InlinedGlobalMarkingVisitor*>(helper);
     }
-
-    Visitor* m_visitor;
 };
 
 inline void GarbageCollectedMixin::trace(InlinedGlobalMarkingVisitor)

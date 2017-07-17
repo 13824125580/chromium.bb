@@ -22,7 +22,6 @@
 namespace {
 
 struct JobTracker;
-struct PeerTracker;
 
 }  // namespace
 
@@ -50,12 +49,10 @@ class BrokerServicesBase final : public BrokerServices,
   ResultCode SpawnTarget(const wchar_t* exe_path,
                          const wchar_t* command_line,
                          TargetPolicy* policy,
+                         ResultCode* last_warning,
+                         DWORD* last_error,
                          PROCESS_INFORMATION* target) override;
   ResultCode WaitForAllTargets() override;
-  ResultCode AddTargetPeer(HANDLE peer_process) override;
-  ResultCode InstallAppContainer(const wchar_t* sid,
-                                 const wchar_t* name) override;
-  ResultCode UninstallAppContainer(const wchar_t* sid) override;
 
   // Checks if the supplied process ID matches one of the broker's active
   // target processes
@@ -65,14 +62,10 @@ class BrokerServicesBase final : public BrokerServices,
 
  private:
   typedef std::list<JobTracker*> JobTrackerList;
-  typedef std::map<DWORD, PeerTracker*> PeerTrackerMap;
 
   // The routine that the worker thread executes. It is in charge of
   // notifications and cleanup-related tasks.
   static DWORD WINAPI TargetEventsThread(PVOID param);
-
-  // Removes a target peer from the process list if it expires.
-  static VOID CALLBACK RemovePeer(PVOID parameter, BOOLEAN timeout);
 
   // The completion port used by the job objects to communicate events to
   // the worker thread.
@@ -94,10 +87,6 @@ class BrokerServicesBase final : public BrokerServices,
 
   // List of the trackers for closing and cleanup purposes.
   JobTrackerList tracker_list_;
-
-  // Maps peer process IDs to the saved handle and wait event.
-  // Prevents peer callbacks from accessing the broker after destruction.
-  PeerTrackerMap peer_map_;
 
   // Provides a fast lookup to identify sandboxed processes that belong to a
   // job. Consult |jobless_process_handles_| for handles of pocess without job.

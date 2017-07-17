@@ -21,6 +21,7 @@ component("gin") {
     "function_template.cc",
     "function_template.h",
     "gin_export.h",
+    "gin_features.cc",
     "handle.h",
     "interceptor.cc",
     "interceptor.h",
@@ -45,6 +46,7 @@ component("gin") {
     "public/context_holder.h",
     "public/debug.h",
     "public/gin_embedders.h",
+    "public/gin_features.h",
     "public/isolate_holder.h",
     "public/v8_idle_task_runner.h",
     "public/v8_platform.h",
@@ -90,6 +92,10 @@ component("gin") {
     defines += [ "V8_VERIFY_EXTERNAL_STARTUP_DATA" ]
   }
 
+  if (is_mac) {
+    libs = [ "CoreFoundation.framework" ]
+  }
+
   configs += [ "//v8:external_startup_data" ]
 }
 
@@ -133,6 +139,7 @@ executable("gin_shell") {
     "//base",
     "//base:i18n",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//v8",
   ]
 
@@ -152,6 +159,9 @@ source_set("gin_test") {
     "test/gtest.h",
     "test/v8_test.cc",
     "test/v8_test.h",
+  ]
+  data = [
+    "test/expect.js",
   ]
 
   public_deps = [
@@ -192,7 +202,6 @@ test("gin_unittests") {
   data = [
     "modules/module_registry_unittests.js",
     "shell/hello_world.js",
-    "test/expect.js",
     "test/file_unittests.js",
     "test/gtest_unittests.js",
     "../OWNERS",

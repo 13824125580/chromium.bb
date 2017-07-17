@@ -7,6 +7,7 @@
 
 #include "src/allocation.h"
 #include "src/objects.h"
+#include "src/typing-asm.h"
 #include "src/wasm/encoder.h"
 #include "src/zone.h"
 
@@ -20,14 +21,14 @@ namespace wasm {
 class AsmWasmBuilder {
  public:
   explicit AsmWasmBuilder(Isolate* isolate, Zone* zone, FunctionLiteral* root,
-                          Handle<Object> foreign);
-  WasmModuleIndex* Run();
+                          AsmTyper* typer);
+  ZoneBuffer* Run(Handle<FixedArray>* foreign_args);
 
  private:
   Isolate* isolate_;
   Zone* zone_;
   FunctionLiteral* literal_;
-  Handle<Object> foreign_;
+  AsmTyper* typer_;
 };
 }  // namespace wasm
 }  // namespace internal

@@ -9,7 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
-#include "content/browser/renderer_host/render_message_filter.h"
+#include "content/browser/frame_host/render_frame_message_filter.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
 #include "content/common/frame_messages.h"
@@ -17,6 +17,7 @@
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/drop_data.h"
 #include "content/public/common/url_constants.h"
@@ -25,7 +26,7 @@
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
 #include "net/base/filename_util.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 #include "ui/base/page_transition_types.h"
 
 namespace content {
@@ -84,7 +85,7 @@ TEST_F(RenderViewHostTest, CreateFullscreenWidget) {
 // Ensure we do not grant bindings to a process shared with unprivileged views.
 TEST_F(RenderViewHostTest, DontGrantBindingsToSharedProcess) {
   // Create another view in the same process.
-  scoped_ptr<TestWebContents> new_web_contents(
+  std::unique_ptr<TestWebContents> new_web_contents(
       TestWebContents::Create(browser_context(), rvh()->GetSiteInstance()));
 
   rvh()->AllowBindings(BINDINGS_POLICY_WEB_UI);
@@ -172,6 +173,7 @@ TEST_F(RenderViewHostTest, DragEnteredFileURLsStillBlocked) {
   dropped_data.filenames.push_back(
       ui::FileInfo(dragged_file_path, base::FilePath()));
 
+  rvh()->FilterDropData(&dropped_data);
   rvh()->DragTargetDragEnter(dropped_data, client_point, screen_point,
                               blink::WebDragOperationNone, 0);
 
@@ -179,10 +181,11 @@ TEST_F(RenderViewHostTest, DragEnteredFileURLsStillBlocked) {
   ChildProcessSecurityPolicyImpl* policy =
       ChildProcessSecurityPolicyImpl::GetInstance();
 
+  // Permissions are not granted at DragEnter.
   EXPECT_FALSE(policy->CanRequestURL(id, highlighted_file_url));
   EXPECT_FALSE(policy->CanReadFile(id, highlighted_file_path));
-  EXPECT_TRUE(policy->CanRequestURL(id, dragged_file_url));
-  EXPECT_TRUE(policy->CanReadFile(id, dragged_file_path));
+  EXPECT_FALSE(policy->CanRequestURL(id, dragged_file_url));
+  EXPECT_FALSE(policy->CanReadFile(id, dragged_file_path));
   EXPECT_FALSE(policy->CanRequestURL(id, sensitive_file_url));
   EXPECT_FALSE(policy->CanReadFile(id, sensitive_file_path));
 }
@@ -241,17 +244,15 @@ TEST_F(RenderViewHostTest, RoutingIdSane) {
   EXPECT_NE(test_rvh()->GetRoutingID(), root_rfh->routing_id());
 }
 
-class TestSaveImageFromDataURL : public RenderMessageFilter {
+class TestSaveImageFromDataURL : public RenderFrameMessageFilter {
  public:
-  TestSaveImageFromDataURL(
-      BrowserContext* context)
-      : RenderMessageFilter(
+  TestSaveImageFromDataURL(BrowserContext* context)
+      : RenderFrameMessageFilter(
             0,
+            nullptr,
             context,
-            context->GetRequestContext(),
-            nullptr,
-            nullptr,
-            nullptr,
+            BrowserContext::GetDefaultStoragePartition(context)
+                ->GetURLRequestContext(),
             nullptr) {
     Reset();
   }
@@ -270,7 +271,7 @@ class TestSaveImageFromDataURL : public RenderMessageFilter {
   }
 
   void Test(const std::string& url) {
-    OnMessageReceived(ViewHostMsg_SaveImageFromDataURL(0, 0, url));
+    OnMessageReceived(FrameHostMsg_SaveImageFromDataURL(0, 0, url));
   }
 
  protected:

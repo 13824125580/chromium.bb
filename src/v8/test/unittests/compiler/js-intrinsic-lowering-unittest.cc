@@ -43,39 +43,11 @@ class JSIntrinsicLoweringTest : public GraphTest {
     return reducer.Reduce(node);
   }
 
-  Node* EmptyFrameState() {
-    MachineOperatorBuilder machine(zone());
-    JSGraph jsgraph(isolate(), graph(), common(), javascript(), nullptr,
-                    &machine);
-    return jsgraph.EmptyFrameState();
-  }
-
   JSOperatorBuilder* javascript() { return &javascript_; }
 
  private:
   JSOperatorBuilder javascript_;
 };
-
-
-// -----------------------------------------------------------------------------
-// %_ConstructDouble
-
-
-TEST_F(JSIntrinsicLoweringTest, InlineOptimizedConstructDouble) {
-  Node* const input0 = Parameter(0);
-  Node* const input1 = Parameter(1);
-  Node* const context = Parameter(2);
-  Node* const effect = graph()->start();
-  Node* const control = graph()->start();
-  Reduction const r = Reduce(graph()->NewNode(
-      javascript()->CallRuntime(Runtime::kInlineConstructDouble, 2), input0,
-      input1, context, effect, control));
-  ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsFloat64InsertHighWord32(
-                                   IsFloat64InsertLowWord32(
-                                       IsNumberConstant(BitEq(0.0)), input1),
-                                   input0));
-}
 
 
 // -----------------------------------------------------------------------------
@@ -91,7 +63,8 @@ TEST_F(JSIntrinsicLoweringTest, InlineOptimizedDoubleLo) {
       graph()->NewNode(javascript()->CallRuntime(Runtime::kInlineDoubleLo, 1),
                        input, context, effect, control));
   ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsFloat64ExtractLowWord32(input));
+  EXPECT_THAT(r.replacement(),
+              IsFloat64ExtractLowWord32(IsTypeGuard(Type::Number(), input, _)));
 }
 
 
@@ -108,7 +81,8 @@ TEST_F(JSIntrinsicLoweringTest, InlineOptimizedDoubleHi) {
       graph()->NewNode(javascript()->CallRuntime(Runtime::kInlineDoubleHi, 1),
                        input, context, effect, control));
   ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsFloat64ExtractHighWord32(input));
+  EXPECT_THAT(r.replacement(), IsFloat64ExtractHighWord32(
+                                   IsTypeGuard(Type::Number(), input, _)));
 }
 
 
@@ -236,58 +210,6 @@ TEST_F(JSIntrinsicLoweringTest, InlineIsJSReceiver) {
       context, effect, control));
   ASSERT_TRUE(r.Changed());
   EXPECT_THAT(r.replacement(), IsObjectIsReceiver(input));
-}
-
-
-// -----------------------------------------------------------------------------
-// %_MathFloor
-
-
-TEST_F(JSIntrinsicLoweringTest, InlineMathFloor) {
-  Node* const input = Parameter(0);
-  Node* const context = Parameter(1);
-  Node* const effect = graph()->start();
-  Node* const control = graph()->start();
-  Reduction const r = Reduce(
-      graph()->NewNode(javascript()->CallRuntime(Runtime::kInlineMathFloor, 1),
-                       input, context, effect, control),
-      MachineOperatorBuilder::kFloat64RoundDown);
-  ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsFloat64RoundDown(input));
-}
-
-
-// -----------------------------------------------------------------------------
-// %_MathSqrt
-
-
-TEST_F(JSIntrinsicLoweringTest, InlineMathSqrt) {
-  Node* const input = Parameter(0);
-  Node* const context = Parameter(1);
-  Node* const effect = graph()->start();
-  Node* const control = graph()->start();
-  Reduction const r = Reduce(
-      graph()->NewNode(javascript()->CallRuntime(Runtime::kInlineMathSqrt, 1),
-                       input, context, effect, control));
-  ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsFloat64Sqrt(input));
-}
-
-
-// -----------------------------------------------------------------------------
-// %_MathClz32
-
-
-TEST_F(JSIntrinsicLoweringTest, InlineMathClz32) {
-  Node* const input = Parameter(0);
-  Node* const context = Parameter(1);
-  Node* const effect = graph()->start();
-  Node* const control = graph()->start();
-  Reduction const r = Reduce(
-      graph()->NewNode(javascript()->CallRuntime(Runtime::kInlineMathClz32, 1),
-                       input, context, effect, control));
-  ASSERT_TRUE(r.Changed());
-  EXPECT_THAT(r.replacement(), IsWord32Clz(input));
 }
 
 

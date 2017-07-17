@@ -4,13 +4,21 @@
 
 #include "platform/graphics/compositing/PaintArtifactCompositor.h"
 
+#include "base/test/test_simple_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/layers/layer.h"
+#include "cc/test/fake_output_surface.h"
+#include "cc/trees/layer_tree_host.h"
+#include "cc/trees/layer_tree_settings.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/paint/PaintArtifact.h"
 #include "platform/testing/PictureMatchers.h"
 #include "platform/testing/TestPaintArtifact.h"
+#include "platform/testing/WebLayerTreeViewImplForTesting.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 namespace {
@@ -31,7 +39,8 @@ protected:
         RuntimeEnabledFeatures::setSlimmingPaintV2Enabled(true);
 
         // Delay constructing the compositor until after the feature is set.
-        m_paintArtifactCompositor = adoptPtr(new PaintArtifactCompositor);
+        m_paintArtifactCompositor = wrapUnique(new PaintArtifactCompositor);
+        m_paintArtifactCompositor->enableExtraDataForTesting();
     }
 
     void TearDown() override
@@ -39,13 +48,23 @@ protected:
         m_featuresBackup.restore();
     }
 
-    PaintArtifactCompositor& paintArtifactCompositor() { return *m_paintArtifactCompositor; }
+    PaintArtifactCompositor& getPaintArtifactCompositor() { return *m_paintArtifactCompositor; }
     cc::Layer* rootLayer() { return m_paintArtifactCompositor->rootLayer(); }
     void update(const PaintArtifact& artifact) { m_paintArtifactCompositor->update(artifact); }
 
+    size_t contentLayerCount()
+    {
+        return m_paintArtifactCompositor->getExtraDataForTesting()->contentLayers.size();
+    }
+
+    cc::Layer* contentLayerAt(unsigned index)
+    {
+        return m_paintArtifactCompositor->getExtraDataForTesting()->contentLayers[index].get();
+    }
+
 private:
     RuntimeEnabledFeatures::Backup m_featuresBackup;
-    OwnPtr<PaintArtifactCompositor> m_paintArtifactCompositor;
+    std::unique_ptr<PaintArtifactCompositor> m_paintArtifactCompositor;
 };
 
 TEST_F(PaintArtifactCompositorTest, EmptyPaintArtifact)
@@ -142,6 +161,34 @@ TEST_F(PaintArtifactCompositorTest, TransformCombining)
         layer->transform().TransformRect(&mappedRect);
         EXPECT_EQ(gfx::RectF(0, 0, 600, 400), mappedRect);
     }
+}
+
+TEST_F(PaintArtifactCompositorTest, LayerOriginCancellation)
+{
+    RefPtr<ClipPaintPropertyNode> clip = ClipPaintPropertyNode::create(
+        nullptr, FloatRoundedRect(100, 100, 100, 100));
+    RefPtr<TransformPaintPropertyNode> transform = TransformPaintPropertyNode::create(
+        TransformationMatrix().scale(2), FloatPoint3D());
+
+    TestPaintArtifact artifact;
+    artifact.chunk(transform, clip, nullptr)
+        .rectDrawing(FloatRect(12, 34, 56, 78), Color::white);
+    update(artifact.build());
+
+    ASSERT_EQ(1u, rootLayer()->children().size());
+    cc::Layer* clipLayer = rootLayer()->child_at(0);
+    EXPECT_EQ(gfx::Size(100, 100), clipLayer->bounds());
+    EXPECT_EQ(translation(100, 100), clipLayer->transform());
+    EXPECT_TRUE(clipLayer->masks_to_bounds());
+
+    ASSERT_EQ(1u, clipLayer->children().size());
+    cc::Layer* layer = clipLayer->child_at(0);
+    EXPECT_EQ(gfx::Size(56, 78), layer->bounds());
+    gfx::Transform expectedTransform;
+    expectedTransform.Translate(-100, -100);
+    expectedTransform.Scale(2, 2);
+    expectedTransform.Translate(12, 34);
+    EXPECT_EQ(expectedTransform, layer->transform());
 }
 
 TEST_F(PaintArtifactCompositorTest, OneClip)
@@ -305,6 +352,172 @@ TEST_F(PaintArtifactCompositorTest, SiblingClips)
         EXPECT_EQ(translation(-400, 0), blackLayer->transform());
     }
 }
+
+TEST_F(PaintArtifactCompositorTest, ForeignLayerPassesThrough)
+{
+    scoped_refptr<cc::Layer> layer = cc::Layer::Create();
+
+    TestPaintArtifact artifact;
+    artifact.chunk(PaintChunkProperties())
+        .foreignLayer(FloatPoint(50, 100), IntSize(400, 300), layer);
+    update(artifact.build());
+
+    ASSERT_EQ(1u, rootLayer()->children().size());
+    EXPECT_EQ(layer, rootLayer()->child_at(0));
+    EXPECT_EQ(gfx::Size(400, 300), layer->bounds());
+    EXPECT_EQ(translation(50, 100), layer->transform());
+}
+
+// Similar to the above, but for the path where we build cc property trees
+// directly. This will eventually supersede the above.
+
+class WebLayerTreeViewWithOutputSurface : public WebLayerTreeViewImplForTesting {
+public:
+    WebLayerTreeViewWithOutputSurface(const cc::LayerTreeSettings& settings)
+        : WebLayerTreeViewImplForTesting(settings) {}
+
+    // cc::LayerTreeHostClient
+    void RequestNewOutputSurface() override
+    {
+        layerTreeHost()->SetOutputSurface(cc::FakeOutputSurface::CreateDelegating3d());
+    }
+};
+
+class PaintArtifactCompositorTestWithPropertyTrees : public PaintArtifactCompositorTest {
+protected:
+    PaintArtifactCompositorTestWithPropertyTrees()
+        : m_taskRunner(new base::TestSimpleTaskRunner)
+        , m_taskRunnerHandle(m_taskRunner)
+    {
+    }
+
+    void SetUp() override
+    {
+        PaintArtifactCompositorTest::SetUp();
+
+        cc::LayerTreeSettings settings = WebLayerTreeViewImplForTesting::defaultLayerTreeSettings();
+        settings.single_thread_proxy_scheduler = false;
+        settings.use_layer_lists = true;
+        m_webLayerTreeView = wrapUnique(new WebLayerTreeViewWithOutputSurface(settings));
+        m_webLayerTreeView->setRootLayer(*getPaintArtifactCompositor().getWebLayer());
+    }
+
+    const cc::PropertyTrees& propertyTrees()
+    {
+        return *m_webLayerTreeView->layerTreeHost()->property_trees();
+    }
+
+    void update(const PaintArtifact& artifact)
+    {
+        PaintArtifactCompositorTest::update(artifact);
+        m_webLayerTreeView->layerTreeHost()->LayoutAndUpdateLayers();
+    }
+
+private:
+    scoped_refptr<base::TestSimpleTaskRunner> m_taskRunner;
+    base::ThreadTaskRunnerHandle m_taskRunnerHandle;
+    std::unique_ptr<WebLayerTreeViewWithOutputSurface> m_webLayerTreeView;
+};
+
+TEST_F(PaintArtifactCompositorTestWithPropertyTrees, EmptyPaintArtifact)
+{
+    PaintArtifact emptyArtifact;
+    update(emptyArtifact);
+    EXPECT_TRUE(rootLayer()->children().empty());
+}
+
+TEST_F(PaintArtifactCompositorTestWithPropertyTrees, OneChunkWithAnOffset)
+{
+    TestPaintArtifact artifact;
+    artifact.chunk(PaintChunkProperties())
+        .rectDrawing(FloatRect(50, -50, 100, 100), Color::white);
+    update(artifact.build());
+
+    ASSERT_EQ(1u, contentLayerCount());
+    const cc::Layer* child = contentLayerAt(0);
+    EXPECT_THAT(child->GetPicture(),
+        Pointee(drawsRectangle(FloatRect(0, 0, 100, 100), Color::white)));
+    EXPECT_EQ(translation(50, -50), child->screen_space_transform());
+    EXPECT_EQ(gfx::Size(100, 100), child->bounds());
+}
+
+TEST_F(PaintArtifactCompositorTestWithPropertyTrees, OneTransform)
+{
+    // A 90 degree clockwise rotation about (100, 100).
+    RefPtr<TransformPaintPropertyNode> transform = TransformPaintPropertyNode::create(
+        TransformationMatrix().rotate(90), FloatPoint3D(100, 100, 0));
+
+    TestPaintArtifact artifact;
+    artifact.chunk(transform, nullptr, nullptr)
+        .rectDrawing(FloatRect(0, 0, 100, 100), Color::white);
+    artifact.chunk(nullptr, nullptr, nullptr)
+        .rectDrawing(FloatRect(0, 0, 100, 100), Color::gray);
+    artifact.chunk(transform, nullptr, nullptr)
+        .rectDrawing(FloatRect(100, 100, 200, 100), Color::black);
+    update(artifact.build());
+
+    ASSERT_EQ(3u, contentLayerCount());
+    {
+        const cc::Layer* layer = contentLayerAt(0);
+        EXPECT_THAT(layer->GetPicture(),
+            Pointee(drawsRectangle(FloatRect(0, 0, 100, 100), Color::white)));
+        gfx::RectF mappedRect(0, 0, 100, 100);
+        layer->screen_space_transform().TransformRect(&mappedRect);
+        EXPECT_EQ(gfx::RectF(100, 0, 100, 100), mappedRect);
+    }
+    {
+        const cc::Layer* layer = contentLayerAt(1);
+        EXPECT_THAT(layer->GetPicture(),
+            Pointee(drawsRectangle(FloatRect(0, 0, 100, 100), Color::gray)));
+        EXPECT_EQ(gfx::Transform(), layer->screen_space_transform());
+    }
+    {
+        const cc::Layer* layer = contentLayerAt(2);
+        EXPECT_THAT(layer->GetPicture(),
+            Pointee(drawsRectangle(FloatRect(0, 0, 200, 100), Color::black)));
+        gfx::RectF mappedRect(0, 0, 200, 100);
+        layer->screen_space_transform().TransformRect(&mappedRect);
+        EXPECT_EQ(gfx::RectF(0, 100, 100, 200), mappedRect);
+    }
+}
+
+TEST_F(PaintArtifactCompositorTestWithPropertyTrees, TransformCombining)
+{
+    // A translation by (5, 5) within a 2x scale about (10, 10).
+    RefPtr<TransformPaintPropertyNode> transform1 = TransformPaintPropertyNode::create(
+        TransformationMatrix().scale(2), FloatPoint3D(10, 10, 0));
+    RefPtr<TransformPaintPropertyNode> transform2 = TransformPaintPropertyNode::create(
+        TransformationMatrix().translate(5, 5), FloatPoint3D(), transform1);
+
+    TestPaintArtifact artifact;
+    artifact.chunk(transform1, nullptr, nullptr)
+        .rectDrawing(FloatRect(0, 0, 300, 200), Color::white);
+    artifact.chunk(transform2, nullptr, nullptr)
+        .rectDrawing(FloatRect(0, 0, 300, 200), Color::black);
+    update(artifact.build());
+
+    ASSERT_EQ(2u, contentLayerCount());
+    {
+        const cc::Layer* layer = contentLayerAt(0);
+        EXPECT_THAT(layer->GetPicture(),
+            Pointee(drawsRectangle(FloatRect(0, 0, 300, 200), Color::white)));
+        gfx::RectF mappedRect(0, 0, 300, 200);
+        layer->screen_space_transform().TransformRect(&mappedRect);
+        EXPECT_EQ(gfx::RectF(-10, -10, 600, 400), mappedRect);
+    }
+    {
+        const cc::Layer* layer = contentLayerAt(1);
+        EXPECT_THAT(layer->GetPicture(),
+            Pointee(drawsRectangle(FloatRect(0, 0, 300, 200), Color::black)));
+        gfx::RectF mappedRect(0, 0, 300, 200);
+        layer->screen_space_transform().TransformRect(&mappedRect);
+        EXPECT_EQ(gfx::RectF(0, 0, 600, 400), mappedRect);
+    }
+    EXPECT_NE(
+        contentLayerAt(0)->transform_tree_index(),
+        contentLayerAt(1)->transform_tree_index());
+}
+
 
 } // namespace
 } // namespace blink

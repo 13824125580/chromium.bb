@@ -14,12 +14,15 @@
 #ifndef WEBRTC_API_TEST_FAKEPERIODICVIDEOCAPTURER_H_
 #define WEBRTC_API_TEST_FAKEPERIODICVIDEOCAPTURER_H_
 
+#include <vector>
+
 #include "webrtc/base/thread.h"
 #include "webrtc/media/base/fakevideocapturer.h"
 
 namespace webrtc {
 
-class FakePeriodicVideoCapturer : public cricket::FakeVideoCapturer {
+class FakePeriodicVideoCapturer : public cricket::FakeVideoCapturer,
+                                  public rtc::MessageHandler {
  public:
   FakePeriodicVideoCapturer() {
     std::vector<cricket::VideoFormat> formats;
@@ -34,12 +37,12 @@ class FakePeriodicVideoCapturer : public cricket::FakeVideoCapturer {
     formats.push_back(cricket::VideoFormat(160, 120,
         cricket::VideoFormat::FpsToInterval(30), cricket::FOURCC_I420));
     ResetSupportedFormats(formats);
-  };
+  }
 
   virtual cricket::CaptureState Start(const cricket::VideoFormat& format) {
     cricket::CaptureState state = FakeVideoCapturer::Start(format);
     if (state != cricket::CS_FAILED) {
-      rtc::Thread::Current()->Post(this, MSG_CREATEFRAME);
+      rtc::Thread::Current()->Post(RTC_FROM_HERE, this, MSG_CREATEFRAME);
     }
     return state;
   }
@@ -51,12 +54,11 @@ class FakePeriodicVideoCapturer : public cricket::FakeVideoCapturer {
     if (msg->message_id == MSG_CREATEFRAME) {
       if (IsRunning()) {
         CaptureFrame();
-        rtc::Thread::Current()->PostDelayed(static_cast<int>(
-            GetCaptureFormat()->interval / rtc::kNumNanosecsPerMillisec),
+        rtc::Thread::Current()->PostDelayed(
+            RTC_FROM_HERE, static_cast<int>(GetCaptureFormat()->interval /
+                                            rtc::kNumNanosecsPerMillisec),
             this, MSG_CREATEFRAME);
         }
-    } else {
-      FakeVideoCapturer::OnMessage(msg);
     }
   }
 

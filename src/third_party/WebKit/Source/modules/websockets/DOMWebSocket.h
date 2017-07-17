@@ -31,6 +31,7 @@
 #ifndef DOMWebSocket_h
 #define DOMWebSocket_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ActiveDOMObject.h"
 #include "core/events/EventListener.h"
@@ -47,6 +48,7 @@
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 #include <stdint.h>
 
 namespace blink {
@@ -58,8 +60,7 @@ class ExceptionState;
 class ExecutionContext;
 class StringOrStringSequence;
 
-class MODULES_EXPORT DOMWebSocket : public RefCountedGarbageCollectedEventTargetWithInlineData<DOMWebSocket>, public ActiveDOMObject, public WebSocketChannelClient {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(DOMWebSocket);
+class MODULES_EXPORT DOMWebSocket : public EventTargetWithInlineData, public ActiveScriptWrappable, public ActiveDOMObject, public WebSocketChannelClient {
     DEFINE_WRAPPERTYPEINFO();
     USING_GARBAGE_COLLECTED_MIXIN(DOMWebSocket);
 public:
@@ -111,21 +112,23 @@ public:
 
     // EventTarget functions.
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
 
     // ActiveDOMObject functions.
     void contextDestroyed() override;
-    // Prevent this instance from being collected while it's not in CLOSED
-    // state.
-    bool hasPendingActivity() const override;
     void suspend() override;
     void resume() override;
     void stop() override;
 
+    // ActiveScriptWrappable
+    // Prevent this instance from being collected while it's not in CLOSED
+    // state.
+    bool hasPendingActivity() const final;
+
     // WebSocketChannelClient functions.
     void didConnect(const String& subprotocol, const String& extensions) override;
     void didReceiveTextMessage(const String& message) override;
-    void didReceiveBinaryMessage(PassOwnPtr<Vector<char>>) override;
+    void didReceiveBinaryMessage(std::unique_ptr<Vector<char>>) override;
     void didError() override;
     void didConsumeBufferedAmount(uint64_t) override;
     void didStartClosingHandshake() override;
@@ -151,7 +154,7 @@ private:
         // Dispatches the event if this queue is active.
         // Queues the event if this queue is suspended.
         // Does nothing otherwise.
-        void dispatch(PassRefPtrWillBeRawPtr<Event> /* event */);
+        void dispatch(Event* /* event */);
 
         bool isEmpty() const;
 
@@ -176,8 +179,8 @@ private:
         void resumeTimerFired(Timer<EventQueue>*);
 
         State m_state;
-        RawPtrWillBeMember<EventTarget> m_target;
-        WillBeHeapDeque<RefPtrWillBeMember<Event>> m_events;
+        Member<EventTarget> m_target;
+        HeapDeque<Member<Event>> m_events;
         Timer<EventQueue> m_resumeTimer;
     };
 

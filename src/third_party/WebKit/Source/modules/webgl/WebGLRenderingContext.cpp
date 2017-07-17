@@ -25,13 +25,14 @@
 
 #include "modules/webgl/WebGLRenderingContext.h"
 
+#include "bindings/modules/v8/OffscreenCanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContext.h"
+#include "bindings/modules/v8/RenderingContext.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
-#include "core/layout/LayoutBox.h"
 #include "core/loader/FrameLoader.h"
 #include "core/loader/FrameLoaderClient.h"
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "modules/webgl/ANGLEInstancedArrays.h"
-#include "modules/webgl/CHROMIUMSubscribeUniform.h"
 #include "modules/webgl/EXTBlendMinMax.h"
 #include "modules/webgl/EXTDisjointTimerQuery.h"
 #include "modules/webgl/EXTFragDepth.h"
@@ -60,34 +61,60 @@
 #include "platform/CheckedInt.h"
 #include "platform/graphics/gpu/DrawingBuffer.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebGraphicsContext3DProvider.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<CanvasRenderingContext> WebGLRenderingContext::Factory::create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document&)
+// An helper function for the two create() methods. The return value is an
+// indicate of whether the create() should return nullptr or not.
+static bool shouldCreateContext(WebGraphicsContext3DProvider* contextProvider)
+{
+    if (!contextProvider)
+        return false;
+    gpu::gles2::GLES2Interface* gl = contextProvider->contextGL();
+    std::unique_ptr<Extensions3DUtil> extensionsUtil = Extensions3DUtil::create(gl);
+    if (!extensionsUtil)
+        return false;
+    if (extensionsUtil->supportsExtension("GL_EXT_debug_marker")) {
+        String contextLabel(String::format("WebGLRenderingContext-%p", contextProvider));
+        gl->PushGroupMarkerEXT(0, contextLabel.ascii().data());
+    }
+    return true;
+}
+
+CanvasRenderingContext* WebGLRenderingContext::Factory::create(ScriptState* scriptState, OffscreenCanvas* offscreenCanvas, const CanvasContextCreationAttributes& attrs)
 {
     WebGLContextAttributes attributes = toWebGLContextAttributes(attrs);
-    OwnPtr<WebGraphicsContext3D> context(createWebGraphicsContext3D(canvas, attributes, 1));
-    if (!context)
+    std::unique_ptr<WebGraphicsContext3DProvider> contextProvider(createWebGraphicsContext3DProvider(scriptState, attributes, 1));
+    if (!shouldCreateContext(contextProvider.get()))
         return nullptr;
-    OwnPtr<Extensions3DUtil> extensionsUtil = Extensions3DUtil::create(context.get());
-    if (!extensionsUtil)
+
+    WebGLRenderingContext* renderingContext = new WebGLRenderingContext(offscreenCanvas, std::move(contextProvider), attributes);
+    if (!renderingContext->drawingBuffer())
         return nullptr;
-    if (extensionsUtil->supportsExtension("GL_EXT_debug_marker")) {
-        String contextLabel(String::format("WebGLRenderingContext-%p", context.get()));
-        context->pushGroupMarkerEXT(contextLabel.ascii().data());
-    }
+    renderingContext->initializeNewContext();
+    renderingContext->registerContextExtensions();
 
-    OwnPtrWillBeRawPtr<WebGLRenderingContext> renderingContext = adoptPtrWillBeNoop(new WebGLRenderingContext(canvas, context.release(), attributes));
+    return renderingContext;
+}
 
+CanvasRenderingContext* WebGLRenderingContext::Factory::create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document&)
+{
+    WebGLContextAttributes attributes = toWebGLContextAttributes(attrs);
+    std::unique_ptr<WebGraphicsContext3DProvider> contextProvider(createWebGraphicsContext3DProvider(canvas, attributes, 1));
+    if (!shouldCreateContext(contextProvider.get()))
+        return nullptr;
+
+    WebGLRenderingContext* renderingContext = new WebGLRenderingContext(canvas, std::move(contextProvider), attributes);
     if (!renderingContext->drawingBuffer()) {
         canvas->dispatchEvent(WebGLContextEvent::create(EventTypeNames::webglcontextcreationerror, false, true, "Could not create a WebGL context."));
         return nullptr;
     }
-
     renderingContext->initializeNewContext();
     renderingContext->registerContextExtensions();
 
-    return renderingContext.release();
+    return renderingContext;
 }
 
 void WebGLRenderingContext::Factory::onError(HTMLCanvasElement* canvas, const String& error)
@@ -95,13 +122,33 @@ void WebGLRenderingContext::Factory::onError(HTMLCanvasElement* canvas, const St
     canvas->dispatchEvent(WebGLContextEvent::create(EventTypeNames::webglcontextcreationerror, false, true, error));
 }
 
-WebGLRenderingContext::WebGLRenderingContext(HTMLCanvasElement* passedCanvas, PassOwnPtr<WebGraphicsContext3D> context, const WebGLContextAttributes& requestedAttributes)
-    : WebGLRenderingContextBase(passedCanvas, context, requestedAttributes)
+WebGLRenderingContext::WebGLRenderingContext(HTMLCanvasElement* passedCanvas, std::unique_ptr<WebGraphicsContext3DProvider> contextProvider, const WebGLContextAttributes& requestedAttributes)
+    : WebGLRenderingContextBase(passedCanvas, std::move(contextProvider), requestedAttributes)
+{
+}
+
+WebGLRenderingContext::WebGLRenderingContext(OffscreenCanvas* passedOffscreenCanvas, std::unique_ptr<WebGraphicsContext3DProvider> contextProvider, const WebGLContextAttributes& requestedAttributes)
+    : WebGLRenderingContextBase(passedOffscreenCanvas, std::move(contextProvider), requestedAttributes)
 {
 }
 
 WebGLRenderingContext::~WebGLRenderingContext()
 {
+}
+
+void WebGLRenderingContext::setCanvasGetContextResult(RenderingContext& result)
+{
+    result.setWebGLRenderingContext(this);
+}
+
+void WebGLRenderingContext::setOffscreenCanvasGetContextResult(OffscreenRenderingContext& result)
+{
+    result.setWebGLRenderingContext(this);
+}
+
+ImageBitmap* WebGLRenderingContext::transferToImageBitmap(ExceptionState& exceptionState)
+{
+    return transferToImageBitmapBase();
 }
 
 void WebGLRenderingContext::registerContextExtensions()
@@ -110,7 +157,6 @@ void WebGLRenderingContext::registerContextExtensions()
     static const char* const bothPrefixes[] = { "", "WEBKIT_", 0, };
 
     registerExtension<ANGLEInstancedArrays>(m_angleInstancedArrays);
-    registerExtension<CHROMIUMSubscribeUniform>(m_chromiumSubscribeUniform);
     registerExtension<EXTBlendMinMax>(m_extBlendMinMax);
     registerExtension<EXTDisjointTimerQuery>(m_extDisjointTimerQuery);
     registerExtension<EXTFragDepth>(m_extFragDepth);
@@ -139,7 +185,6 @@ void WebGLRenderingContext::registerContextExtensions()
 DEFINE_TRACE(WebGLRenderingContext)
 {
     visitor->trace(m_angleInstancedArrays);
-    visitor->trace(m_chromiumSubscribeUniform);
     visitor->trace(m_extBlendMinMax);
     visitor->trace(m_extDisjointTimerQuery);
     visitor->trace(m_extFragDepth);
@@ -166,4 +211,31 @@ DEFINE_TRACE(WebGLRenderingContext)
     WebGLRenderingContextBase::trace(visitor);
 }
 
+DEFINE_TRACE_WRAPPERS(WebGLRenderingContext)
+{
+    visitor->traceWrappers(m_angleInstancedArrays);
+    visitor->traceWrappers(m_extBlendMinMax);
+    visitor->traceWrappers(m_extDisjointTimerQuery);
+    visitor->traceWrappers(m_extFragDepth);
+    visitor->traceWrappers(m_extShaderTextureLOD);
+    visitor->traceWrappers(m_extsRGB);
+    visitor->traceWrappers(m_extTextureFilterAnisotropic);
+    visitor->traceWrappers(m_oesTextureFloat);
+    visitor->traceWrappers(m_oesTextureFloatLinear);
+    visitor->traceWrappers(m_oesTextureHalfFloat);
+    visitor->traceWrappers(m_oesTextureHalfFloatLinear);
+    visitor->traceWrappers(m_oesStandardDerivatives);
+    visitor->traceWrappers(m_oesVertexArrayObject);
+    visitor->traceWrappers(m_oesElementIndexUint);
+    visitor->traceWrappers(m_webglLoseContext);
+    visitor->traceWrappers(m_webglDebugRendererInfo);
+    visitor->traceWrappers(m_webglDebugShaders);
+    visitor->traceWrappers(m_webglDrawBuffers);
+    visitor->traceWrappers(m_webglCompressedTextureASTC);
+    visitor->traceWrappers(m_webglCompressedTextureATC);
+    visitor->traceWrappers(m_webglCompressedTextureETC1);
+    visitor->traceWrappers(m_webglCompressedTexturePVRTC);
+    visitor->traceWrappers(m_webglCompressedTextureS3TC);
+    visitor->traceWrappers(m_webglDepthTexture);
+}
 } // namespace blink

@@ -7,9 +7,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "gpu/command_buffer/service/in_process_command_buffer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -21,13 +23,10 @@ class CompositorFrameAck;
 }
 
 namespace gfx {
+class Point;
 class ScrollOffset;
 class Transform;
 };
-
-namespace gpu {
-class GLInProcessContext;
-}
 
 namespace content {
 
@@ -44,12 +43,24 @@ class CONTENT_EXPORT SynchronousCompositor {
   static void SetClientForWebContents(WebContents* contents,
                                       SynchronousCompositorClient* client);
 
-  static void SetGpuService(
-      scoped_refptr<gpu::InProcessCommandBuffer::Service> service);
+  struct Frame {
+    Frame();
+    ~Frame();
+
+    // Movable type.
+    Frame(Frame&& rhs);
+    Frame& operator=(Frame&& rhs);
+
+    uint32_t output_surface_id;
+    std::unique_ptr<cc::CompositorFrame> frame;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(Frame);
+  };
 
   // "On demand" hardware draw. The content is first clipped to |damage_area|,
   // then transformed through |transform|, and finally clipped to |view_size|.
-  virtual scoped_ptr<cc::CompositorFrame> DemandDrawHw(
+  virtual Frame DemandDrawHw(
       const gfx::Size& surface_size,
       const gfx::Transform& transform,
       const gfx::Rect& viewport,
@@ -59,7 +70,8 @@ class CONTENT_EXPORT SynchronousCompositor {
 
   // For delegated rendering, return resources from parent compositor to this.
   // Note that all resources must be returned before ReleaseHwDraw.
-  virtual void ReturnResources(const cc::CompositorFrameAck& frame_ack) = 0;
+  virtual void ReturnResources(uint32_t output_surface_id,
+                               const cc::CompositorFrameAck& frame_ack) = 0;
 
   // "On demand" SW draw, into the supplied canvas (observing the transform
   // and clip set there-in).
@@ -73,10 +85,10 @@ class CONTENT_EXPORT SynchronousCompositor {
   virtual void DidChangeRootLayerScrollOffset(
       const gfx::ScrollOffset& root_offset) = 0;
 
-  // Called by the embedder to notify that the compositor is active. The
-  // compositor won't ask for vsyncs when it's inactive. NOTE: The compositor
-  // starts off as inactive and needs a SetActive(true) call to begin.
-  virtual void SetIsActive(bool is_active) = 0;
+  // Allows embedder to synchronously update the zoom level, ie page scale
+  // factor, around the anchor point.
+  virtual void SynchronouslyZoomBy(float zoom_delta,
+                                   const gfx::Point& anchor) = 0;
 
   // Called by the embedder to notify that the OnComputeScroll step is happening
   // and if any input animation is active, it should tick now.

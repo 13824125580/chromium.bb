@@ -10,22 +10,25 @@
 
 #import <CoreGraphics/CoreGraphics.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/time/time.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/views/exclusive_access_bubble_views_context.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "ui/base/accelerators/accelerator.h"
 
 class Browser;
 class BrowserWindow;
 @class BrowserWindowController;
 class ExclusiveAccessBubbleViews;
-@class ExclusiveAccessBubbleWindowController;
 class GURL;
+class NewBackShortcutBubble;
 
 // Component placed into a browser window controller to manage communication
-// with the exclusive access bubble, which appears for events such as entering
+// with subtle notification bubbles, which appear for events such as entering
 // fullscreen.
 class ExclusiveAccessController : public ExclusiveAccessContext,
                                   public ui::AcceleratorProvider,
@@ -37,12 +40,13 @@ class ExclusiveAccessController : public ExclusiveAccessContext,
 
   const GURL& url() const { return url_; }
   ExclusiveAccessBubbleType bubble_type() const { return bubble_type_; }
-  ExclusiveAccessBubbleWindowController* cocoa_bubble() {
-    return cocoa_bubble_;
-  }
 
   // Shows the bubble once the NSWindow has received -windowDidEnterFullScreen:.
   void Show();
+
+  // See comments on BrowserWindow::{MaybeShow,Hide}NewBackShortcutBubble().
+  void MaybeShowNewBackShortcutBubble(bool forward);
+  void HideNewBackShortcutBubble();
 
   // Closes any open bubble.
   void Destroy();
@@ -53,13 +57,10 @@ class ExclusiveAccessController : public ExclusiveAccessContext,
   // ExclusiveAccessContext:
   Profile* GetProfile() override;
   bool IsFullscreen() const override;
-  bool SupportsFullscreenWithToolbar() const override;
-  void UpdateFullscreenWithToolbar(bool with_toolbar) override;
-  void ToggleFullscreenToolbar() override;
-  bool IsFullscreenWithToolbar() const override;
+  void UpdateUIForTabFullscreen(TabFullscreenState state) override;
+  void UpdateFullscreenToolbar() override;
   void EnterFullscreen(const GURL& url,
-                       ExclusiveAccessBubbleType type,
-                       bool with_toolbar) override;
+                       ExclusiveAccessBubbleType type) override;
   void ExitFullscreen() override;
   void UpdateExclusiveAccessExitBubbleContent(
       const GURL& url,
@@ -95,8 +96,15 @@ class ExclusiveAccessController : public ExclusiveAccessContext,
   GURL url_;
   ExclusiveAccessBubbleType bubble_type_;
 
-  scoped_ptr<ExclusiveAccessBubbleViews> views_bubble_;
-  base::scoped_nsobject<ExclusiveAccessBubbleWindowController> cocoa_bubble_;
+  std::unique_ptr<ExclusiveAccessBubbleViews> views_bubble_;
+
+  // This class also manages the new Back shortcut bubble (which functions the
+  // same way as ExclusiveAccessBubbleViews).
+  std::unique_ptr<NewBackShortcutBubble> new_back_shortcut_bubble_;
+  base::TimeTicks last_back_shortcut_press_time_;
+
+  // Used to keep track of the kShowFullscreenToolbar preference.
+  PrefChangeRegistrar pref_registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveAccessController);
 };

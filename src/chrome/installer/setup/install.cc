@@ -8,12 +8,13 @@
 #include <shlobj.h>
 #include <time.h>
 
+#include <memory>
 #include <string>
 
+#include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -37,6 +38,7 @@
 #include "chrome/installer/util/master_preferences.h"
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/set_reg_value_work_item.h"
+#include "chrome/installer/util/shell_util.h"
 #include "chrome/installer/util/util_constants.h"
 #include "chrome/installer/util/work_item.h"
 #include "chrome/installer/util/work_item_list.h"
@@ -132,7 +134,7 @@ void AddChromeToMediaPlayerList() {
   reg_path.push_back(base::FilePath::kSeparators[0]);
   reg_path.append(installer::kChromeExe);
   VLOG(1) << "Adding Chrome to Media player list at " << reg_path;
-  scoped_ptr<WorkItem> work_item(WorkItem::CreateCreateRegKeyWorkItem(
+  std::unique_ptr<WorkItem> work_item(WorkItem::CreateCreateRegKeyWorkItem(
       HKEY_LOCAL_MACHINE, reg_path, WorkItem::kWow64Default));
 
   // if the operation fails we log the error but still continue
@@ -182,7 +184,8 @@ installer::InstallStatus InstallNewVersion(
     const base::FilePath& src_path,
     const base::FilePath& temp_path,
     const Version& new_version,
-    scoped_ptr<Version>* current_version) {
+    std::unique_ptr<Version>* current_version,
+    bool is_downgrade_allowed) {
   DCHECK(current_version);
 
   installer_state.UpdateStage(installer::BUILDING);
@@ -190,7 +193,7 @@ installer::InstallStatus InstallNewVersion(
   current_version->reset(installer_state.GetCurrentVersion(original_state));
   installer::SetCurrentVersionCrashKey(current_version->get());
 
-  scoped_ptr<WorkItemList> install_list(WorkItem::CreateWorkItemList());
+  std::unique_ptr<WorkItemList> install_list(WorkItem::CreateWorkItemList());
 
   AddInstallWorkItems(original_state,
                       installer_state,
@@ -234,14 +237,25 @@ installer::InstallStatus InstallNewVersion(
     return installer::INSTALL_REPAIRED;
   }
 
+  bool new_chrome_exe_exists = base::PathExists(new_chrome_exe);
   if (new_version > **current_version) {
-    if (base::PathExists(new_chrome_exe)) {
+    if (new_chrome_exe_exists) {
       VLOG(1) << "Version updated to " << new_version
               << " while running " << **current_version;
       return installer::IN_USE_UPDATED;
     }
     VLOG(1) << "Version updated to " << new_version;
     return installer::NEW_VERSION_UPDATED;
+  }
+
+  if (is_downgrade_allowed) {
+    if (new_chrome_exe_exists) {
+      VLOG(1) << "Version downgrades to " << new_version << " while running "
+              << **current_version;
+      return installer::IN_USE_DOWNGRADE;
+    }
+    VLOG(1) << "Version downgrades to " << new_version;
+    return installer::OLD_VERSION_DOWNGRADE;
   }
 
   LOG(ERROR) << "Not sure how we got here while updating"
@@ -251,9 +265,98 @@ installer::InstallStatus InstallNewVersion(
   return installer::INSTALL_FAILED;
 }
 
-}  // end namespace
+// Returns the number of components in |file_path|.
+size_t GetNumPathComponents(const base::FilePath& file_path) {
+  std::vector<base::FilePath::StringType> components;
+  file_path.GetComponents(&components);
+  return components.size();
+}
+
+// Returns a path made with the |num_components| first components of
+// |file_path|. |file_path| is returned as-is if it contains less than
+// |num_components| components.
+base::FilePath TruncatePath(const base::FilePath& file_path,
+                            size_t num_components) {
+  std::vector<base::FilePath::StringType> components;
+  file_path.GetComponents(&components);
+  if (components.size() <= num_components)
+    return file_path;
+  base::FilePath truncated_file_path;
+  for (size_t i = 0; i < num_components; ++i)
+    truncated_file_path = truncated_file_path.Append(components[i]);
+  return truncated_file_path;
+}
+
+}  // namespace
 
 namespace installer {
+
+void UpdatePerUserShortcutsInLocation(
+    const ShellUtil::ShortcutLocation shortcut_location,
+    BrowserDistribution* dist,
+    const base::FilePath& old_target_dir,
+    const base::FilePath& old_target_name_suffix,
+    const base::FilePath& new_target_path) {
+  base::FilePath shortcut_path;
+  const bool get_shortcut_path_return = ShellUtil::GetShortcutPath(
+      shortcut_location, dist, ShellUtil::CURRENT_USER, &shortcut_path);
+  DCHECK(get_shortcut_path_return);
+
+  bool recursive = false;
+
+  // TODO(fdoray): Modify GetShortcutPath such that it returns
+  // ...\Quick Launch\User Pinned instead of
+  // ...\Quick Launch\User Pinned\TaskBar for SHORTCUT_LOCATION_TASKBAR_PINS.
+  if (shortcut_location == ShellUtil::SHORTCUT_LOCATION_TASKBAR_PINS) {
+    shortcut_path = shortcut_path.DirName();
+    recursive = true;
+  }
+
+  const size_t num_old_target_dir_components =
+      GetNumPathComponents(old_target_dir);
+  InstallUtil::ProgramCompare old_target_dir_comparator(
+      old_target_dir,
+      InstallUtil::ProgramCompare::ComparisonType::FILE_OR_DIRECTORY);
+
+  base::FileEnumerator shortcuts_enum(shortcut_path, recursive,
+                                      base::FileEnumerator::FILES);
+  for (base::FilePath shortcut = shortcuts_enum.Next(); !shortcut.empty();
+       shortcut = shortcuts_enum.Next()) {
+    base::win::ShortcutProperties shortcut_properties;
+    if (!base::win::ResolveShortcutProperties(
+            shortcut, (base::win::ShortcutProperties::PROPERTIES_TARGET |
+                       base::win::ShortcutProperties::PROPERTIES_ICON),
+            &shortcut_properties)) {
+      continue;
+    }
+
+    if (shortcut_properties.target.ReferencesParent() ||
+        shortcut_properties.icon.ReferencesParent()) {
+      continue;
+    }
+
+    // Skip shortcuts whose target isn't a file rooted at |old_target_dir| with
+    // a name ending in |old_target_name_suffix|. Except for shortcuts whose
+    // icon is rooted at |old_target_dir|. Note that there can be a false
+    // negative if the target path or the icon path is a symlink.
+    // TODO(fdoray): The second condition is only intended to fix Canary
+    // shortcuts broken by crbug.com/595374, remove it in May 2016.
+    if (!(old_target_dir_comparator.EvaluatePath(TruncatePath(
+              shortcut_properties.target, num_old_target_dir_components)) &&
+          base::EndsWith(shortcut_properties.target.BaseName().value(),
+                         old_target_name_suffix.value(),
+                         base::CompareCase::INSENSITIVE_ASCII)) &&
+        !old_target_dir_comparator.EvaluatePath(TruncatePath(
+            shortcut_properties.icon, num_old_target_dir_components))) {
+      continue;
+    }
+
+    base::win::ShortcutProperties updated_properties;
+    updated_properties.set_target(new_target_path);
+    base::win::CreateOrUpdateShortcutLink(shortcut, updated_properties,
+                                          base::win::SHORTCUT_UPDATE_EXISTING);
+  }
+}
 
 void EscapeXmlAttributeValueInSingleQuotes(base::string16* att_value) {
   base::ReplaceChars(*att_value, base::ASCIIToUTF16("&"),
@@ -289,8 +392,9 @@ bool CreateVisualElementsManifest(const base::FilePath& src_path,
         "      ShowNameOnSquare150x150Logo='on'\r\n"
         "      Square150x150Logo='%ls\\Logo.png'\r\n"
         "      Square70x70Logo='%ls\\SmallLogo.png'\r\n"
+        "      Square44x44Logo='%ls\\SmallLogo.png'\r\n"
         "      ForegroundText='light'\r\n"
-        "      BackgroundColor='#323232'/>\r\n"
+        "      BackgroundColor='#212121'/>\r\n"
         "</Application>\r\n";
 
     const base::string16 manifest_template(
@@ -304,8 +408,9 @@ bool CreateVisualElementsManifest(const base::FilePath& src_path,
     EscapeXmlAttributeValueInSingleQuotes(&display_name);
 
     // Fill the manifest with the desired values.
-    base::string16 manifest16(base::StringPrintf(
-        manifest_template.c_str(), elements_dir.c_str(), elements_dir.c_str()));
+    base::string16 manifest16(
+        base::StringPrintf(manifest_template.c_str(), elements_dir.c_str(),
+                           elements_dir.c_str(), elements_dir.c_str()));
 
     // Write the manifest to |src_path|.
     const std::string manifest(base::UTF16ToUTF8(manifest16));
@@ -418,6 +523,24 @@ void CreateOrUpdateShortcuts(
   ExecuteAndLogShortcutOperation(
       ShellUtil::SHORTCUT_LOCATION_START_MENU_ROOT, dist,
       start_menu_properties, shortcut_operation);
+
+  // Update the target path of existing per-user shortcuts. TODO(fdoray): This
+  // is only intended to fix Canary shortcuts broken by crbug.com/595374 and
+  // crbug.com/592040, remove it in May 2016.
+  if (InstallUtil::IsChromeSxSProcess() &&
+      install_operation == INSTALL_SHORTCUT_REPLACE_EXISTING) {
+    const base::FilePath updated_prefix = target.DirName().DirName();
+    const base::FilePath updated_suffix = target.BaseName();
+
+    UpdatePerUserShortcutsInLocation(ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist,
+                                     updated_prefix, updated_suffix, target);
+    UpdatePerUserShortcutsInLocation(ShellUtil::SHORTCUT_LOCATION_QUICK_LAUNCH,
+                                     dist, updated_prefix, updated_suffix,
+                                     target);
+    UpdatePerUserShortcutsInLocation(ShellUtil::SHORTCUT_LOCATION_TASKBAR_PINS,
+                                     dist, updated_prefix, updated_suffix,
+                                     target);
+  }
 }
 
 void RegisterChromeOnMachine(const installer::InstallerState& installer_state,
@@ -472,10 +595,11 @@ InstallStatus InstallOrUpdateProduct(
   installer_state.UpdateStage(installer::CREATING_VISUAL_MANIFEST);
   CreateVisualElementsManifest(src_path, new_version);
 
-  scoped_ptr<Version> existing_version;
-  InstallStatus result = InstallNewVersion(original_state, installer_state,
-      setup_path, archive_path, src_path, install_temp_path, new_version,
-      &existing_version);
+  std::unique_ptr<Version> existing_version;
+  InstallStatus result =
+      InstallNewVersion(original_state, installer_state, setup_path,
+                        archive_path, src_path, install_temp_path, new_version,
+                        &existing_version, IsDowngradeAllowed(prefs));
 
   // TODO(robertshield): Everything below this line should instead be captured
   // by WorkItems.
@@ -537,8 +661,8 @@ InstallStatus InstallOrUpdateProduct(
       // force it here because the master_preferences file will not get copied
       // into the build.
       bool force_chrome_default_for_user = false;
-      if (result == NEW_VERSION_UPDATED ||
-          result == INSTALL_REPAIRED) {
+      if (result == NEW_VERSION_UPDATED || result == INSTALL_REPAIRED ||
+          result == OLD_VERSION_DOWNGRADE || result == IN_USE_DOWNGRADE) {
         prefs.GetBool(master_preferences::kMakeChromeDefaultForUser,
                       &force_chrome_default_for_user);
       }
@@ -596,7 +720,7 @@ void HandleOsUpgradeForBrowser(const installer::InstallerState& installer_state,
   // TODO(gab): This should really perform all registry only update steps (i.e.,
   // something between InstallOrUpdateProduct and AddActiveSetupWorkItems, but
   // this takes care of what is most required for now).
-  scoped_ptr<WorkItemList> work_item_list(WorkItem::CreateWorkItemList());
+  std::unique_ptr<WorkItemList> work_item_list(WorkItem::CreateWorkItemList());
   AddActiveSetupWorkItems(installer_state, installed_version, chrome,
                           work_item_list.get());
   if (!work_item_list->Do()) {
@@ -634,9 +758,12 @@ void HandleActiveSetupForBrowser(const base::FilePath& installation_root,
                                  bool force) {
   DCHECK(chrome.is_chrome());
 
-  NoRollbackWorkItemList cleanup_list;
-  AddCleanupDeprecatedPerUserRegistrationsWorkItems(chrome, &cleanup_list);
-  cleanup_list.Do();
+  std::unique_ptr<WorkItemList> cleanup_list(WorkItem::CreateWorkItemList());
+  cleanup_list->set_log_message("Cleanup deprecated per-user registrations");
+  cleanup_list->set_rollback_enabled(false);
+  cleanup_list->set_best_effort(true);
+  AddCleanupDeprecatedPerUserRegistrationsWorkItems(chrome, cleanup_list.get());
+  cleanup_list->Do();
 
   // Only create shortcuts on Active Setup if the first run sentinel is not
   // present for this user (as some shortcuts used to be installed on first

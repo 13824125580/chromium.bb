@@ -35,11 +35,12 @@
 #include "core/fileapi/FileError.h"
 #include "core/loader/ThreadableLoaderClient.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/ArrayBufferBuilder.h"
 #include "wtf/Forward.h"
-#include "wtf/OwnPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/TextEncoding.h"
 #include "wtf/text/WTFString.h"
+#include "wtf/typed_arrays/ArrayBufferBuilder.h"
+#include <memory>
 
 namespace blink {
 
@@ -63,9 +64,9 @@ public:
     };
 
     // If client is given, do the loading asynchronously. Otherwise, load synchronously.
-    static PassOwnPtr<FileReaderLoader> create(ReadType readType, FileReaderLoaderClient* client)
+    static std::unique_ptr<FileReaderLoader> create(ReadType readType, FileReaderLoaderClient* client)
     {
-        return adoptPtr(new FileReaderLoader(readType, client));
+        return wrapUnique(new FileReaderLoader(readType, client));
     }
 
     FileReaderLoader(ReadType, FileReaderLoaderClient*);
@@ -76,13 +77,13 @@ public:
     void cancel();
 
     // ThreadableLoaderClient
-    void didReceiveResponse(unsigned long, const ResourceResponse&, PassOwnPtr<WebDataConsumerHandle>) override;
+    void didReceiveResponse(unsigned long, const ResourceResponse&, std::unique_ptr<WebDataConsumerHandle>) override;
     void didReceiveData(const char*, unsigned) override;
     void didFinishLoading(unsigned long, double) override;
     void didFail(const ResourceError&) override;
 
     String stringResult();
-    PassRefPtr<DOMArrayBuffer> arrayBufferResult() const;
+    DOMArrayBuffer* arrayBufferResult() const;
 
     // Returns the total bytes received. Bytes ignored by m_rawData won't be
     // counted.
@@ -122,15 +123,15 @@ private:
 
     KURL m_urlForReading;
     bool m_urlForReadingIsStream;
-    RefPtr<ThreadableLoader> m_loader;
+    std::unique_ptr<ThreadableLoader> m_loader;
 
-    OwnPtr<ArrayBufferBuilder> m_rawData;
+    std::unique_ptr<ArrayBufferBuilder> m_rawData;
     bool m_isRawDataConverted;
 
     String m_stringResult;
 
     // The decoder used to decode the text data.
-    OwnPtr<TextResourceDecoder> m_decoder;
+    std::unique_ptr<TextResourceDecoder> m_decoder;
 
     bool m_finishedLoading;
     long long m_bytesLoaded;

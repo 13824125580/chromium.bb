@@ -23,14 +23,14 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <queue>
-#include <set>
 #include <string>
 #include <vector>
 
+#include "base/containers/mru_cache.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/net/prediction_options.h"
 #include "chrome/browser/net/referrer.h"
@@ -38,6 +38,7 @@
 #include "chrome/browser/net/url_info.h"
 #include "components/network_hints/common/network_hints_common.h"
 #include "net/base/host_port_pair.h"
+#include "url/gurl.h"
 
 class IOThread;
 class PrefService;
@@ -63,8 +64,6 @@ class PrefRegistrySyncable;
 
 namespace chrome_browser_net {
 
-typedef network_hints::UrlList UrlList;
-typedef network_hints::NameList NameList;
 typedef std::map<GURL, UrlInfo> Results;
 
 // An observer for testing.
@@ -75,7 +74,11 @@ class PredictorObserver {
   virtual void OnPreconnectUrl(const GURL& original_url,
                                const GURL& first_party_for_cookies,
                                UrlInfo::ResolutionMotivation motivation,
-                               int count) = 0;
+                               int count) {}
+  virtual void OnLearnFromNavigation(const GURL& referring_url,
+                                     const GURL& target_url) {}
+
+  virtual void OnDnsLookupFinished(const GURL& url, bool found) {}
 };
 
 // Predictor is constructed during Profile construction (on the UI thread),
@@ -119,6 +122,9 @@ class Predictor {
   // TODO(jar): We should do a persistent field trial to validate/optimize this.
   static const int kMaxUnusedSocketLifetimeSecondsWithoutAGet;
 
+  // The maximum size of the MRU cache of referrers.
+  static const int kMaxReferrers;
+
   // |max_concurrent| specifies how many concurrent (parallel) prefetches will
   // be performed. Host lookups will be issued through |host_resolver|.
   explicit Predictor(bool preconnect_enabled, bool predictor_enabled);
@@ -149,7 +155,16 @@ class Predictor {
   void PreconnectUrlAndSubresources(const GURL& url,
                                     const GURL& first_party_for_cookies);
 
-  static UrlList GetPredictedUrlListAtStartup(PrefService* user_prefs);
+  static std::vector<GURL> GetPredictedUrlListAtStartup(
+      PrefService* user_prefs);
+
+  // Calls ClearPrefsOnUIThread and posts a task to the IO thread to
+  // DiscardAllResults.
+  void DiscardAllResultsAndClearPrefsOnUIThread();
+
+  // Clears the preferences used by the predictor. Must be called on the UI
+  // thread.
+  void ClearPrefsOnUIThread();
 
   static void set_max_queueing_delay(int max_queueing_delay_ms);
 
@@ -172,7 +187,7 @@ class Predictor {
   void DiscardAllResults();
 
   // Add hostname(s) to the queue for processing.
-  void ResolveList(const UrlList& urls,
+  void ResolveList(const std::vector<GURL>& urls,
                    UrlInfo::ResolutionMotivation motivation);
 
   void Resolve(const GURL& url, UrlInfo::ResolutionMotivation motivation);
@@ -193,14 +208,6 @@ class Predictor {
   // domains for about:dns.
   void GetHtmlInfo(std::string* output);
 
-  // Discards any referrer for which all the suggested host names are currently
-  // annotated with negligible expected-use.  Scales down (diminishes) the
-  // expected-use of those that remain, so that their use will go down by a
-  // factor each time we trim (moving the referrer closer to being discarded in
-  // a future call).
-  // The task is performed synchronously and completes before returing.
-  void TrimReferrersNow();
-
   // Construct a ListValue object that contains all the data in the referrers_
   // so that it can be persisted in a pref.
   void SerializeReferrers(base::ListValue* referral_list);
@@ -210,13 +217,11 @@ class Predictor {
   // values into the current referrer list.
   void DeserializeReferrers(const base::ListValue& referral_list);
 
-  void DeserializeReferrersThenDelete(base::ListValue* referral_list);
-
   void DiscardInitialNavigationHistory();
 
   void FinalizeInitializationOnIOThread(
       const std::vector<GURL>& urls_to_prefetch,
-      base::ListValue* referral_list,
+      std::unique_ptr<base::ListValue> referral_list,
       IOThread* io_thread,
       ProfileIOData* profile_io_data);
 
@@ -225,22 +230,21 @@ class Predictor {
   void LearnAboutInitialNavigation(const GURL& url);
 
   // Renderer bundles up list and sends to this browser API via IPC.
-  // TODO(jar): Use UrlList instead to include port and scheme.
-  void DnsPrefetchList(const NameList& hostnames);
+  // TODO(csharrison): Use a GURL vector instead to include port and scheme.
+  void DnsPrefetchList(const std::vector<std::string>& hostnames);
 
   // May be called from either the IO or UI thread and will PostTask
   // to the IO thread if necessary.
-  void DnsPrefetchMotivatedList(const UrlList& urls,
+  void DnsPrefetchMotivatedList(const std::vector<GURL>& urls,
                                 UrlInfo::ResolutionMotivation motivation);
 
   // May be called from either the IO or UI thread and will PostTask
   // to the IO thread if necessary.
-  void SaveStateForNextStartupAndTrim();
+  void SaveStateForNextStartup();
 
-  void SaveDnsPrefetchStateForNextStartupAndTrim(
-      base::ListValue* startup_list,
-      base::ListValue* referral_list,
-      base::WaitableEvent* completion);
+  void SaveDnsPrefetchStateForNextStartup(base::ListValue* startup_list,
+                                          base::ListValue* referral_list,
+                                          base::WaitableEvent* completion);
 
   // May be called from either the IO or UI thread and will PostTask
   // to the IO thread if necessary.
@@ -274,10 +278,6 @@ class Predictor {
   static GURL CanonicalizeUrl(const GURL& url);
 
   // Used for testing.
-  void SetHostResolver(net::HostResolver* host_resolver) {
-    host_resolver_ = host_resolver;
-  }
-  // Used for testing.
   void SetTransportSecurityState(
       net::TransportSecurityState* transport_security_state) {
     transport_security_state_ = transport_security_state;
@@ -299,21 +299,23 @@ class Predictor {
     return profile_io_data_;
   }
 
-  bool preconnect_enabled() const {
-    return preconnect_enabled_;
-  }
-
   bool predictor_enabled() const {
     return predictor_enabled_;
   }
 
+  bool PreconnectEnabled() const;
+
+  // Used only for testing. Overrides command line flag to disable preconnect,
+  // which is added in the browser test fixture.
+  void SetPreconnectEnabledForTest(bool preconnect_enabled);
+
+  net::URLRequestContextGetter* url_request_context_getter_for_test() {
+    return url_request_context_getter_.get();
+  }
+
+  TimedCache* timed_cache() { return timed_cache_.get(); }
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(PredictorTest, BenefitLookupTest);
-  FRIEND_TEST_ALL_PREFIXES(PredictorTest, ShutdownWhenResolutionIsPendingTest);
-  FRIEND_TEST_ALL_PREFIXES(PredictorTest, SingleLookupTest);
-  FRIEND_TEST_ALL_PREFIXES(PredictorTest, ConcurrentLookupTest);
-  FRIEND_TEST_ALL_PREFIXES(PredictorTest, MassiveConcurrentLookupTest);
   FRIEND_TEST_ALL_PREFIXES(PredictorTest, PriorityQueuePushPopTest);
   FRIEND_TEST_ALL_PREFIXES(PredictorTest, PriorityQueueReorderTest);
   FRIEND_TEST_ALL_PREFIXES(PredictorTest, ReferrerSerializationTrimTest);
@@ -325,8 +327,7 @@ class Predictor {
   FRIEND_TEST_ALL_PREFIXES(PredictorTest, ProxyDefinitelyNotEnabled);
   FRIEND_TEST_ALL_PREFIXES(PredictorTest, ProxyMaybeEnabled);
   friend class WaitForResolutionHelper;  // For testing.
-
-  class LookupRequest;
+  friend class PredictorBrowserTest;
 
   // A simple priority queue for handling host names.
   // Some names that are queued up have |motivation| that requires very rapid
@@ -390,49 +391,14 @@ class Predictor {
   // A map that is keyed with the host/port that we've learned were the cause
   // of loading additional URLs.  The list of additional targets is held
   // in a Referrer instance, which is a value in this map.
-  typedef std::map<GURL, Referrer> Referrers;
+  typedef base::MRUCache<GURL, Referrer> Referrers;
 
   // Depending on the expected_subresource_use_, we may either make a TCP/IP
   // preconnection, or merely pre-resolve the hostname via DNS (or even do
   // nothing).  The following are the threasholds for taking those actions.
   static const double kPreconnectWorthyExpectedValue;
   static const double kDNSPreresolutionWorthyExpectedValue;
-  // Referred hosts with a subresource_use_rate_ that are less than the
-  // following threshold will be discarded when we Trim() the list.
   static const double kDiscardableExpectedValue;
-  // During trimming operation to discard hosts for which we don't have likely
-  // subresources, we multiply the expected_subresource_use_ value by the
-  // following ratio until that value is less than kDiscardableExpectedValue.
-  // This number should always be less than 1, an more than 0.
-  static const double kReferrerTrimRatio;
-
-  // Interval between periodic trimming of our whole referrer list.
-  // We only do a major trimming about once an hour, and then only when the user
-  // is actively browsing.
-  static const int64_t kDurationBetweenTrimmingsHours;
-  // Interval between incremental trimmings (to avoid inducing Jank).
-  static const int64_t kDurationBetweenTrimmingIncrementsSeconds;
-  // Number of referring URLs processed in an incremental trimming.
-  static const size_t kUrlsTrimmedPerIncrement;
-
-  // Only for testing. Returns true if hostname has been successfully resolved
-  // (name found).
-  bool WasFound(const GURL& url) const {
-    Results::const_iterator it(results_.find(url));
-    return (it != results_.end()) &&
-            it->second.was_found();
-  }
-
-  // Only for testing. Return how long was the resolution
-  // or UrlInfo::NullDuration() if it hasn't been resolved yet.
-  base::TimeDelta GetResolutionDuration(const GURL& url) {
-    if (results_.find(url) == results_.end())
-      return UrlInfo::NullDuration();
-    return results_[url].resolve_duration();
-  }
-
-  // Only for testing;
-  size_t peak_pending_lookups() const { return peak_pending_lookups_; }
 
   // These two members call the appropriate global functions in
   // prediction_options.cc depending on which thread they are called on.
@@ -448,14 +414,13 @@ class Predictor {
                                 const GURL& first_party_for_cookies);
 
   // Access method for use by async lookup request to pass resolution result.
-  void OnLookupFinished(LookupRequest* request, const GURL& url, bool found);
+  void OnLookupFinished(const GURL& url, int result);
 
   // Underlying method for both async and synchronous lookup to update state.
-  void LookupFinished(LookupRequest* request,
-                      const GURL& url, bool found);
+  void LookupFinished(const GURL& url, bool found);
 
-  // Queue hostname for resolution.  If queueing was done, return the pointer
-  // to the queued instance, otherwise return NULL. If the proxy advisor is
+  // Queues hostname for resolution.  If queueing was done, return the pointer
+  // to the queued instance, otherwise return nullptr. If the proxy advisor is
   // enabled, and |url| is likely to be proxied, the hostname will not be
   // queued as the browser is not expected to fetch it directly.
   UrlInfo* AppendToResolutionQueue(const GURL& url,
@@ -479,21 +444,6 @@ class Predictor {
   // asynchronously, provided we don't exceed concurrent resolution limit.
   void StartSomeQueuedResolutions();
 
-  // Performs trimming similar to TrimReferrersNow(), except it does it as a
-  // series of short tasks by posting continuations again an again until done.
-  void TrimReferrers();
-
-  // Loads urls_being_trimmed_ from keys of current referrers_.
-  void LoadUrlsForTrimming();
-
-  // Posts a task to do additional incremental trimming of referrers_.
-  void PostIncrementalTrimTask();
-
-  // Calls Trim() on some or all of urls_being_trimmed_.
-  // If it does not process all the URLs in that vector, it posts a task to
-  // continue with them shortly (i.e., it yeilds and continues).
-  void IncrementalTrimReferrers(bool trim_all_now);
-
   // If we can determine immediately (i.e. synchronously) that requests to this
   // URL would likely go through a proxy, then return true.  Otherwise, return
   // false. This is used to avoid issuing DNS requests when a fixed proxy
@@ -504,9 +454,11 @@ class Predictor {
   // Applies the HSTS redirect for |url|, if any.
   GURL GetHSTSRedirectOnIOThread(const GURL& url);
 
+  void LogStartupMetrics();
+
   // ------------- End IO thread methods.
 
-  scoped_ptr<InitialObserver> initial_observer_;
+  std::unique_ptr<InitialObserver> initial_observer_;
 
   // Reference to URLRequestContextGetter from the Profile which owns the
   // predictor. Used by Preconnect.
@@ -530,7 +482,7 @@ class Predictor {
   // results_ contains information for existing/prior prefetches.
   Results results_;
 
-  std::set<LookupRequest*> pending_lookups_;
+  size_t num_pending_lookups_;
 
   // For testing, to verify that we don't exceed the limit.
   size_t peak_pending_lookups_;
@@ -548,9 +500,6 @@ class Predictor {
   // reduction mode, and discard all queued (but not yet assigned) resolutions.
   const base::TimeDelta max_dns_queue_delay_;
 
-  // The host resolver we warm DNS entries for.
-  net::HostResolver* host_resolver_;
-
   // The TransportSecurityState instance we query HSTS redirects from.
   net::TransportSecurityState* transport_security_state_;
 
@@ -562,9 +511,10 @@ class Predictor {
   net::ProxyService* proxy_service_;
 
   // Are we currently using preconnection, rather than just DNS resolution, for
-  // subresources and omni-box search URLs.
-  // This is false if and only if disabled by a command line switch.
-  const bool preconnect_enabled_;
+  // subresources and omni-box search URLs. This is false if and only if
+  // disabled by a command line switch. Protected by |preconnect_enabled_lock_|,
+  // which is used by tests to bypass the command line flags.
+  bool preconnect_enabled_;
 
   // Most recent suggestion from Omnibox provided via AnticipateOmniboxUrl().
   std::string last_omnibox_host_;
@@ -585,17 +535,15 @@ class Predictor {
   // orginial hostname.
   Referrers referrers_;
 
-  // List of URLs in referrers_ currently being trimmed (scaled down to
-  // eventually be aged out of use).
-  std::vector<GURL> urls_being_trimmed_;
-
-  // A time after which we need to do more trimming of referrers.
-  base::TimeTicks next_trim_time_;
-
   // An observer for testing.
   PredictorObserver* observer_;
 
-  scoped_ptr<base::WeakPtrFactory<Predictor> > weak_factory_;
+  std::unique_ptr<TimedCache> timed_cache_;
+
+  std::unique_ptr<base::WeakPtrFactory<Predictor>> weak_factory_;
+
+  // Protects |preconnect_enabled_|.
+  mutable base::Lock preconnect_enabled_lock_;
 
   DISALLOW_COPY_AND_ASSIGN(Predictor);
 };

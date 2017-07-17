@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -14,6 +15,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context.h"
@@ -26,10 +28,6 @@
 #include "url/gurl.h"
 
 class HttpBridgeTest;
-
-namespace base {
-class MessageLoop;
-}
 
 namespace net {
 class HttpResponseHeaders;
@@ -114,12 +112,12 @@ class SYNC_EXPORT HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
   // Helper method to abort the request if we timed out.
   void OnURLFetchTimedOut();
 
-  // The message loop of the thread we were created on. This is the thread that
-  // will block on MakeSynchronousPost while the IO thread fetches data from
-  // the network.
+  // Used to check whether a method runs on the thread that we were created on.
+  // This is the thread that will block on MakeSynchronousPost while the IO
+  // thread fetches data from the network.
   // This should be the main syncer thread (SyncerThread) which is what blocks
   // on network IO through curl_easy_perform.
-  base::MessageLoop* const created_on_loop_;
+  base::ThreadChecker thread_checker_;
 
   // The user agent for all requests.
   const std::string user_agent_;
@@ -142,7 +140,7 @@ class SYNC_EXPORT HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
     ~URLFetchState();
     // Our hook into the network layer is a URLFetcher. USED ONLY ON THE IO
     // LOOP, so we can block created_on_loop_ while the fetch is in progress.
-    // NOTE: This is not a scoped_ptr for a reason. It must be deleted on the
+    // NOTE: This is not a unique_ptr for a reason. It must be deleted on the
     // same thread that created it, which isn't the same thread |this| gets
     // deleted on. We must manually delete url_poster_ on the IO loop.
     net::URLFetcher* url_poster;
@@ -165,7 +163,7 @@ class SYNC_EXPORT HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
 
     // Timer to ensure http requests aren't stalled. Reset every time upload or
     // download progress is made.
-    scoped_ptr<base::Timer> http_request_timeout_timer;
+    std::unique_ptr<base::Timer> http_request_timeout_timer;
   };
 
   // This lock synchronizes use of state involved in the flow to fetch a URL

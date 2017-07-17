@@ -32,7 +32,6 @@
 #include "core/html/HTMLObjectElement.h"
 #include "core/html/PluginDocument.h"
 #include "core/html/parser/HTMLParserIdioms.h"
-#include "core/layout/LayoutEmbeddedObject.h"
 #include "core/layout/LayoutPart.h"
 
 namespace blink {
@@ -44,11 +43,11 @@ inline HTMLEmbedElement::HTMLEmbedElement(Document& document, bool createdByPars
 {
 }
 
-PassRefPtrWillBeRawPtr<HTMLEmbedElement> HTMLEmbedElement::create(Document& document, bool createdByParser)
+HTMLEmbedElement* HTMLEmbedElement::create(Document& document, bool createdByParser)
 {
-    RefPtrWillBeRawPtr<HTMLEmbedElement> element = adoptRefWillBeNoop(new HTMLEmbedElement(document, createdByParser));
+    HTMLEmbedElement* element = new HTMLEmbedElement(document, createdByParser);
     element->ensureUserAgentShadowRoot();
-    return element.release();
+    return element;
 }
 
 static inline LayoutPart* findPartLayoutObject(const Node* n)
@@ -117,8 +116,8 @@ void HTMLEmbedElement::parametersForPlugin(Vector<String>& paramNames, Vector<St
 {
     AttributeCollection attributes = this->attributes();
     for (const Attribute& attribute : attributes) {
-        paramNames.append(attribute.localName().string());
-        paramValues.append(attribute.value().string());
+        paramNames.append(attribute.localName().getString());
+        paramValues.append(attribute.value().getString());
     }
 }
 
@@ -126,7 +125,7 @@ void HTMLEmbedElement::parametersForPlugin(Vector<String>& paramNames, Vector<St
 // moved down into HTMLPluginElement.cpp
 void HTMLEmbedElement::updateWidgetInternal()
 {
-    ASSERT(!layoutEmbeddedObject()->showsUnavailablePluginIndicator());
+    ASSERT(!layoutEmbeddedItem().showsUnavailablePluginIndicator());
     ASSERT(needsWidgetUpdate());
     setNeedsWidgetUpdate(false);
 
@@ -143,8 +142,6 @@ void HTMLEmbedElement::updateWidgetInternal()
     Vector<String> paramValues;
     parametersForPlugin(paramNames, paramValues);
 
-    RefPtrWillBeRawPtr<HTMLEmbedElement> protect(this); // Loading the plugin might remove us from the document.
-
     // FIXME: Can we not have layoutObject here now that beforeload events are gone?
     if (!layoutObject())
         return;
@@ -157,8 +154,20 @@ bool HTMLEmbedElement::layoutObjectIsNeeded(const ComputedStyle& style)
     if (isImageType())
         return HTMLPlugInElement::layoutObjectIsNeeded(style);
 
-    // If my parent is an <object> and is not set to use fallback content, I
-    // should be ignored and not get a layoutObject.
+    // https://html.spec.whatwg.org/multipage/embedded-content.html#the-embed-element
+    // While any of the following conditions are occurring, any plugin
+    // instantiated for the element must be removed, and the embed element
+    // represents nothing:
+
+    // * The element has neither a src attribute nor a type attribute.
+    if (!fastHasAttribute(srcAttr) && !fastHasAttribute(typeAttr))
+        return false;
+
+    // * The element has a media element ancestor.
+    // -> It's realized by LayoutMedia::isChildAllowed.
+
+    // * The element has an ancestor object element that is not showing its
+    //   fallback content.
     ContainerNode* p = parentNode();
     if (isHTMLObjectElement(p)) {
         ASSERT(p->layoutObject());

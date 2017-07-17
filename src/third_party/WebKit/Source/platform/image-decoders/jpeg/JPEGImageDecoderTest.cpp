@@ -36,8 +36,9 @@
 #include "public/platform/WebData.h"
 #include "public/platform/WebSize.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include "wtf/typed_arrays/ArrayBuffer.h"
+#include <memory>
 
 namespace blink {
 
@@ -45,12 +46,12 @@ static const size_t LargeEnoughSize = 1000 * 1000;
 
 namespace {
 
-PassOwnPtr<ImageDecoder> createDecoder(size_t maxDecodedBytes)
+std::unique_ptr<ImageDecoder> createDecoder(size_t maxDecodedBytes)
 {
-    return adoptPtr(new JPEGImageDecoder(ImageDecoder::AlphaNotPremultiplied, ImageDecoder::GammaAndColorProfileApplied, maxDecodedBytes));
+    return wrapUnique(new JPEGImageDecoder(ImageDecoder::AlphaNotPremultiplied, ImageDecoder::GammaAndColorProfileApplied, maxDecodedBytes));
 }
 
-PassOwnPtr<ImageDecoder> createDecoder()
+std::unique_ptr<ImageDecoder> createDecoder()
 {
     return createDecoder(ImageDecoder::noDecodedImageByteLimit);
 }
@@ -62,13 +63,13 @@ void downsample(size_t maxDecodedBytes, unsigned* outputWidth, unsigned* outputH
     RefPtr<SharedBuffer> data = readFile(imageFilePath);
     ASSERT_TRUE(data);
 
-    OwnPtr<ImageDecoder> decoder = createDecoder(maxDecodedBytes);
+    std::unique_ptr<ImageDecoder> decoder = createDecoder(maxDecodedBytes);
     decoder->setData(data.get(), true);
 
     ImageFrame* frame = decoder->frameBufferAtIndex(0);
     ASSERT_TRUE(frame);
-    *outputWidth = frame->getSkBitmap().width();
-    *outputHeight = frame->getSkBitmap().height();
+    *outputWidth = frame->bitmap().width();
+    *outputHeight = frame->bitmap().height();
     EXPECT_EQ(IntSize(*outputWidth, *outputHeight), decoder->decodedSize());
 }
 
@@ -77,18 +78,20 @@ void readYUV(size_t maxDecodedBytes, unsigned* outputYWidth, unsigned* outputYHe
     RefPtr<SharedBuffer> data = readFile(imageFilePath);
     ASSERT_TRUE(data);
 
-    OwnPtr<ImageDecoder> decoder = createDecoder(maxDecodedBytes);
+    std::unique_ptr<ImageDecoder> decoder = createDecoder(maxDecodedBytes);
     decoder->setData(data.get(), true);
 
-    OwnPtr<ImagePlanes> imagePlanes = adoptPtr(new ImagePlanes());
-    decoder->setImagePlanes(imagePlanes.release());
+    // Setting a dummy ImagePlanes object signals to the decoder that we want to do YUV decoding.
+    std::unique_ptr<ImagePlanes> dummyImagePlanes = wrapUnique(new ImagePlanes());
+    decoder->setImagePlanes(std::move(dummyImagePlanes));
+
     bool sizeIsAvailable = decoder->isSizeAvailable();
     ASSERT_TRUE(sizeIsAvailable);
 
     IntSize size = decoder->decodedSize();
-    IntSize ySize = decoder->decodedYUVSize(0, ImageDecoder::ActualSize);
-    IntSize uSize = decoder->decodedYUVSize(1, ImageDecoder::ActualSize);
-    IntSize vSize = decoder->decodedYUVSize(2, ImageDecoder::ActualSize);
+    IntSize ySize = decoder->decodedYUVSize(0);
+    IntSize uSize = decoder->decodedYUVSize(1);
+    IntSize vSize = decoder->decodedYUVSize(2);
 
     ASSERT_TRUE(size.width() == ySize.width());
     ASSERT_TRUE(size.height() == ySize.height());
@@ -99,12 +102,28 @@ void readYUV(size_t maxDecodedBytes, unsigned* outputYWidth, unsigned* outputYHe
     *outputYHeight = ySize.height();
     *outputUVWidth = uSize.width();
     *outputUVHeight = uSize.height();
+
+    size_t rowBytes[3];
+    rowBytes[0] = decoder->decodedYUVWidthBytes(0);
+    rowBytes[1] = decoder->decodedYUVWidthBytes(1);
+    rowBytes[2] = decoder->decodedYUVWidthBytes(2);
+
+    RefPtr<ArrayBuffer> buffer(ArrayBuffer::create(rowBytes[0] * ySize.height() + rowBytes[1] * uSize.height() + rowBytes[2] * vSize.height(), 1));
+    void* planes[3];
+    planes[0] = buffer->data();
+    planes[1] = ((char*) planes[0]) + rowBytes[0] * ySize.height();
+    planes[2] = ((char*) planes[1]) + rowBytes[1] * uSize.height();
+
+    std::unique_ptr<ImagePlanes> imagePlanes = wrapUnique(new ImagePlanes(planes, rowBytes));
+    decoder->setImagePlanes(std::move(imagePlanes));
+
+    ASSERT_TRUE(decoder->decodeToYUV());
 }
 
 // Tests failure on a too big image.
 TEST(JPEGImageDecoderTest, tooBig)
 {
-    OwnPtr<ImageDecoder> decoder = createDecoder(100);
+    std::unique_ptr<ImageDecoder> decoder = createDecoder(100);
     EXPECT_FALSE(decoder->setSize(10000, 10000));
     EXPECT_TRUE(decoder->failed());
 }
@@ -216,16 +235,23 @@ TEST(JPEGImageDecoderTest, yuv)
     EXPECT_EQ(128u, outputUVWidth);
     EXPECT_EQ(128u, outputUVHeight);
 
+    const char* jpegFileImageSizeNotMultipleOf8 = "/LayoutTests/fast/images/resources/cropped_mandrill.jpg"; // 439x154
+    readYUV(LargeEnoughSize, &outputYWidth, &outputYHeight, &outputUVWidth, &outputUVHeight, jpegFileImageSizeNotMultipleOf8);
+    EXPECT_EQ(439u, outputYWidth);
+    EXPECT_EQ(154u, outputYHeight);
+    EXPECT_EQ(220u, outputUVWidth);
+    EXPECT_EQ(77u, outputUVHeight);
+
     // Make sure we revert to RGBA decoding when we're about to downscale,
     // which can occur on memory-constrained android devices.
     RefPtr<SharedBuffer> data = readFile(jpegFile);
     ASSERT_TRUE(data);
 
-    OwnPtr<ImageDecoder> decoder = createDecoder(230 * 230 * 4);
+    std::unique_ptr<ImageDecoder> decoder = createDecoder(230 * 230 * 4);
     decoder->setData(data.get(), true);
 
-    OwnPtr<ImagePlanes> imagePlanes = adoptPtr(new ImagePlanes());
-    decoder->setImagePlanes(imagePlanes.release());
+    std::unique_ptr<ImagePlanes> imagePlanes = wrapUnique(new ImagePlanes());
+    decoder->setImagePlanes(std::move(imagePlanes));
     ASSERT_TRUE(decoder->isSizeAvailable());
     ASSERT_FALSE(decoder->canDecodeToYUV());
 }

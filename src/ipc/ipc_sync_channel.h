@@ -6,6 +6,7 @@
 #define IPC_IPC_SYNC_CHANNEL_H_
 
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -67,7 +68,7 @@ class IPC_EXPORT SyncChannel : public ChannelProxy {
   // Creates and initializes a sync channel. If create_pipe_now is specified,
   // the channel will be initialized synchronously.
   // The naming pattern follows IPC::Channel.
-  static scoped_ptr<SyncChannel> Create(
+  static std::unique_ptr<SyncChannel> Create(
       const IPC::ChannelHandle& channel_handle,
       IPC::Channel::Mode mode,
       Listener* listener,
@@ -75,8 +76,8 @@ class IPC_EXPORT SyncChannel : public ChannelProxy {
       bool create_pipe_now,
       base::WaitableEvent* shutdown_event);
 
-  static scoped_ptr<SyncChannel> Create(
-      scoped_ptr<ChannelFactory> factory,
+  static std::unique_ptr<SyncChannel> Create(
+      std::unique_ptr<ChannelFactory> factory,
       Listener* listener,
       const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
       bool create_pipe_now,
@@ -85,7 +86,7 @@ class IPC_EXPORT SyncChannel : public ChannelProxy {
   // Creates an uninitialized sync channel. Call ChannelProxy::Init to
   // initialize the channel. This two-step setup allows message filters to be
   // added before any messages are sent or received.
-  static scoped_ptr<SyncChannel> Create(
+  static std::unique_ptr<SyncChannel> Create(
       Listener* listener,
       const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
       base::WaitableEvent* shutdown_event);
@@ -152,10 +153,6 @@ class IPC_EXPORT SyncChannel : public ChannelProxy {
     // synchronous send.  If it is, the thread is unblocked and true is
     // returned. Otherwise the function returns false.
     bool TryToUnblockListener(const Message* msg);
-
-    // Called on the IPC thread when a sync send that runs a nested message loop
-    // times out.
-    void OnSendTimeout(int message_id);
 
     // Called on the listener thread when a sync message is pushed and there
     // no outstanding sync messages.  It schedules OnPeekMessageTimeout to be

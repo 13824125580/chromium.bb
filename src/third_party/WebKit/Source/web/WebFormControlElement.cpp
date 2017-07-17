@@ -31,6 +31,7 @@
 #include "public/web/WebFormControlElement.h"
 
 #include "core/dom/NodeComputedStyle.h"
+#include "core/events/Event.h"
 #include "core/html/HTMLFormControlElement.h"
 #include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLInputElement.h"
@@ -95,6 +96,26 @@ void WebFormControlElement::setValue(const WebString& value, bool sendEvents)
         unwrap<HTMLTextAreaElement>()->setValue(value, sendEvents ? DispatchInputAndChangeEvent : DispatchNoEvent);
     else if (isHTMLSelectElement(*m_private))
         unwrap<HTMLSelectElement>()->setValue(value, sendEvents);
+}
+
+void WebFormControlElement::setAutofillValue(const WebString& value)
+{
+    // The input and change events will be sent in setValue.
+    if (isHTMLInputElement(*m_private) || isHTMLTextAreaElement(*m_private)) {
+        if (!focused())
+            unwrap<Element>()->dispatchFocusEvent(nullptr, WebFocusTypeForward, nullptr);
+        unwrap<Element>()->dispatchScopedEvent(Event::createBubble(EventTypeNames::keydown));
+        unwrap<HTMLTextFormControlElement>()->setValue(value, DispatchInputAndChangeEvent);
+        unwrap<Element>()->dispatchScopedEvent(Event::createBubble(EventTypeNames::keyup));
+        if (!focused())
+            unwrap<Element>()->dispatchBlurEvent(nullptr, WebFocusTypeForward, nullptr);
+    } else if (isHTMLSelectElement(*m_private)) {
+        if (!focused())
+            unwrap<Element>()->dispatchFocusEvent(nullptr, WebFocusTypeForward, nullptr);
+        unwrap<HTMLSelectElement>()->setValue(value, true);
+        if (!focused())
+            unwrap<Element>()->dispatchBlurEvent(nullptr, WebFocusTypeForward, nullptr);
+    }
 }
 
 WebString WebFormControlElement::value() const
@@ -176,20 +197,20 @@ WebFormElement WebFormControlElement::form() const
     return WebFormElement(constUnwrap<HTMLFormControlElement>()->form());
 }
 
-WebFormControlElement::WebFormControlElement(const PassRefPtrWillBeRawPtr<HTMLFormControlElement>& elem)
+WebFormControlElement::WebFormControlElement(HTMLFormControlElement*elem)
     : WebElement(elem)
 {
 }
 
 DEFINE_WEB_NODE_TYPE_CASTS(WebFormControlElement, isElementNode() && constUnwrap<Element>()->isFormControlElement());
 
-WebFormControlElement& WebFormControlElement::operator=(const PassRefPtrWillBeRawPtr<HTMLFormControlElement>& elem)
+WebFormControlElement& WebFormControlElement::operator=(HTMLFormControlElement*elem)
 {
     m_private = elem;
     return *this;
 }
 
-WebFormControlElement::operator PassRefPtrWillBeRawPtr<HTMLFormControlElement>() const
+WebFormControlElement::operator HTMLFormControlElement*() const
 {
     return toHTMLFormControlElement(m_private.get());
 }

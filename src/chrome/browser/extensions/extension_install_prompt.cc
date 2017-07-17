@@ -8,11 +8,12 @@
 
 #include "base/callback_helpers.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
-#include "chrome/browser/extensions/bundle_installer.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/permissions_updater.h"
@@ -45,7 +46,6 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/image/image_skia.h"
 
-using extensions::BundleInstaller;
 using extensions::Extension;
 using extensions::Manifest;
 using extensions::PermissionMessage;
@@ -63,7 +63,7 @@ bool AllowWebstoreData(ExtensionInstallPrompt::PromptType type) {
 static const int kTitleIds[ExtensionInstallPrompt::NUM_PROMPT_TYPES] = {
     IDS_EXTENSION_INSTALL_PROMPT_TITLE,
     IDS_EXTENSION_INSTALL_PROMPT_TITLE,
-    0,  // Heading for bundle installs depends on the bundle contents.
+    0,  // Deprecated.
     IDS_EXTENSION_RE_ENABLE_PROMPT_TITLE,
     IDS_EXTENSION_PERMISSIONS_PROMPT_TITLE,
     0,  // External installs use different strings for extensions/apps/themes.
@@ -72,7 +72,7 @@ static const int kTitleIds[ExtensionInstallPrompt::NUM_PROMPT_TYPES] = {
     IDS_EXTENSION_REMOTE_INSTALL_PROMPT_TITLE,
     IDS_EXTENSION_REPAIR_PROMPT_TITLE,
     IDS_EXTENSION_DELEGATED_INSTALL_PROMPT_TITLE,
-    0,  // Heading for delegated bundle installs depends on the bundle contents.
+    0,  // Deprecated.
 };
 static const int kButtons[ExtensionInstallPrompt::NUM_PROMPT_TYPES] = {
     ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL,
@@ -102,7 +102,7 @@ static const int kAcceptButtonIds[ExtensionInstallPrompt::NUM_PROMPT_TYPES] = {
     IDS_EXTENSION_PROMPT_LAUNCH_BUTTON,
     0,  // Remote installs use different strings for extensions/apps.
     0,  // Repairs use different strings for extensions/apps.
-    0,  // Delegated installs use different strings for extensions/apps/themes.
+    IDS_EXTENSION_PROMPT_INSTALL_BUTTON,
     IDS_EXTENSION_PROMPT_INSTALL_BUTTON,
 };
 static const int kAbortButtonIds[ExtensionInstallPrompt::NUM_PROMPT_TYPES] = {
@@ -155,7 +155,7 @@ bool AutoConfirmPrompt(ExtensionInstallPrompt::DoneCallback* callback) {
     // the real implementations it's highly likely the message loop will be
     // pumping a few times before the user clicks accept or cancel.
     case extensions::ScopedTestDialogAutoConfirm::ACCEPT:
-      base::MessageLoop::current()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE, base::Bind(base::ResetAndReturn(callback),
                                 ExtensionInstallPrompt::Result::ACCEPTED));
       return true;
@@ -196,8 +196,6 @@ std::string ExtensionInstallPrompt::PromptTypeToString(PromptType type) {
       return "INSTALL_PROMPT";
     case ExtensionInstallPrompt::INLINE_INSTALL_PROMPT:
       return "INLINE_INSTALL_PROMPT";
-    case ExtensionInstallPrompt::BUNDLE_INSTALL_PROMPT:
-      return "BUNDLE_INSTALL_PROMPT";
     case ExtensionInstallPrompt::RE_ENABLE_PROMPT:
       return "RE_ENABLE_PROMPT";
     case ExtensionInstallPrompt::PERMISSIONS_PROMPT:
@@ -212,9 +210,9 @@ std::string ExtensionInstallPrompt::PromptTypeToString(PromptType type) {
       return "REPAIR_PROMPT";
     case ExtensionInstallPrompt::DELEGATED_PERMISSIONS_PROMPT:
       return "DELEGATED_PERMISSIONS_PROMPT";
-    case ExtensionInstallPrompt::DELEGATED_BUNDLE_PERMISSIONS_PROMPT:
-      return "DELEGATED_BUNDLE_PERMISSIONS_PROMPT";
     case ExtensionInstallPrompt::LAUNCH_PROMPT_DEPRECATED:
+    case ExtensionInstallPrompt::BUNDLE_INSTALL_PROMPT_DEPRECATED:
+    case ExtensionInstallPrompt::DELEGATED_BUNDLE_PERMISSIONS_PROMPT_DEPRECATED:
       NOTREACHED();
       // fall through:
     case ExtensionInstallPrompt::UNSET_PROMPT_TYPE:
@@ -229,7 +227,6 @@ ExtensionInstallPrompt::Prompt::Prompt(PromptType type)
       is_showing_details_for_retained_files_(false),
       is_showing_details_for_retained_devices_(false),
       extension_(NULL),
-      bundle_(NULL),
       average_rating_(0.0),
       rating_count_(0),
       show_user_count_(false),
@@ -304,10 +301,6 @@ void ExtensionInstallPrompt::Prompt::SetWebstoreData(
 
 base::string16 ExtensionInstallPrompt::Prompt::GetDialogTitle() const {
   int id = kTitleIds[type_];
-  if (type_ == BUNDLE_INSTALL_PROMPT ||
-      type_ == DELEGATED_BUNDLE_PERMISSIONS_PROMPT) {
-    return bundle_->GetHeadingTextFor(BundleInstaller::Item::STATE_PENDING);
-  }
   if (type_ == DELEGATED_PERMISSIONS_PROMPT) {
     return l10n_util::GetStringFUTF16(id, base::UTF8ToUTF16(extension_->name()),
                                       base::UTF8ToUTF16(delegated_username_));
@@ -334,8 +327,7 @@ int ExtensionInstallPrompt::Prompt::GetDialogButtons() const {
 base::string16 ExtensionInstallPrompt::Prompt::GetAcceptButtonLabel() const {
   int id = kAcceptButtonIds[type_];
 
-  if (type_ == INSTALL_PROMPT || type_ == INLINE_INSTALL_PROMPT ||
-      type_ == DELEGATED_PERMISSIONS_PROMPT) {
+  if (type_ == INSTALL_PROMPT || type_ == INLINE_INSTALL_PROMPT) {
     if (extension_->is_app())
       id = IDS_EXTENSION_INSTALL_PROMPT_ACCEPT_BUTTON_APP;
     else if (extension_->is_theme())
@@ -593,7 +585,7 @@ scoped_refptr<Extension>
     const std::string& localized_name,
     const std::string& localized_description,
     std::string* error) {
-  scoped_ptr<base::DictionaryValue> localized_manifest;
+  std::unique_ptr<base::DictionaryValue> localized_manifest;
   if (!localized_name.empty() || !localized_description.empty()) {
     localized_manifest.reset(manifest->DeepCopy());
     if (!localized_name.empty()) {
@@ -617,7 +609,6 @@ scoped_refptr<Extension>
 
 ExtensionInstallPrompt::ExtensionInstallPrompt(content::WebContents* contents)
     : profile_(ProfileForWebContents(contents)),
-      ui_loop_(base::MessageLoop::current()),
       extension_(NULL),
       install_ui_(extensions::CreateExtensionInstallUI(
           ProfileForWebContents(contents))),
@@ -629,7 +620,6 @@ ExtensionInstallPrompt::ExtensionInstallPrompt(content::WebContents* contents)
 ExtensionInstallPrompt::ExtensionInstallPrompt(Profile* profile,
                                                gfx::NativeWindow native_window)
     : profile_(profile),
-      ui_loop_(base::MessageLoop::current()),
       extension_(NULL),
       install_ui_(extensions::CreateExtensionInstallUI(profile)),
       show_params_(
@@ -647,14 +637,15 @@ void ExtensionInstallPrompt::ShowDialog(
     const SkBitmap* icon,
     const ShowDialogCallback& show_dialog_callback) {
   ShowDialog(done_callback, extension, icon,
-             make_scoped_ptr(new Prompt(INSTALL_PROMPT)), show_dialog_callback);
+             base::WrapUnique(new Prompt(INSTALL_PROMPT)),
+             show_dialog_callback);
 }
 
 void ExtensionInstallPrompt::ShowDialog(
     const DoneCallback& done_callback,
     const Extension* extension,
     const SkBitmap* icon,
-    scoped_ptr<Prompt> prompt,
+    std::unique_ptr<Prompt> prompt,
     const ShowDialogCallback& show_dialog_callback) {
   ShowDialog(done_callback, extension, icon, std::move(prompt), nullptr,
              show_dialog_callback);
@@ -664,10 +655,10 @@ void ExtensionInstallPrompt::ShowDialog(
     const DoneCallback& done_callback,
     const Extension* extension,
     const SkBitmap* icon,
-    scoped_ptr<Prompt> prompt,
-    scoped_ptr<const PermissionSet> custom_permissions,
+    std::unique_ptr<Prompt> prompt,
+    std::unique_ptr<const PermissionSet> custom_permissions,
     const ShowDialogCallback& show_dialog_callback) {
-  DCHECK(ui_loop_ == base::MessageLoop::current());
+  DCHECK(ui_thread_checker_.CalledOnValidThread());
   DCHECK(prompt);
   extension_ = extension;
   done_callback_ = done_callback;
@@ -728,9 +719,9 @@ void ExtensionInstallPrompt::OnImageLoaded(const gfx::Image& image) {
 }
 
 void ExtensionInstallPrompt::LoadImageIfNeeded() {
-  // Don't override an icon that was passed in. Also, bundle installs don't have
-  // an icon (or a specific extension), and profile_| can be null in unit tests.
-  if (!extension_ || !icon_.empty() || !profile_) {
+  // Don't override an icon that was passed in. Also, |profile_| can be null in
+  // unit tests.
+  if (!icon_.empty() || !profile_) {
     ShowConfirmation();
     return;
   }
@@ -757,7 +748,7 @@ void ExtensionInstallPrompt::LoadImageIfNeeded() {
 }
 
 void ExtensionInstallPrompt::ShowConfirmation() {
-  scoped_ptr<const PermissionSet> permissions_wrapper;
+  std::unique_ptr<const PermissionSet> permissions_wrapper;
   const PermissionSet* permissions_to_display = nullptr;
   if (custom_permissions_.get()) {
     permissions_to_display = custom_permissions_.get();
@@ -771,8 +762,7 @@ void ExtensionInstallPrompt::ShowConfirmation() {
         &extension_->permissions_data()->active_permissions();
     // For delegated installs, all optional permissions are pre-approved by the
     // person who triggers the install, so add them to the list.
-    if (prompt_->type() == DELEGATED_PERMISSIONS_PROMPT ||
-        prompt_->type() == DELEGATED_BUNDLE_PERMISSIONS_PROMPT) {
+    if (prompt_->type() == DELEGATED_PERMISSIONS_PROMPT) {
       const PermissionSet& optional_permissions =
           extensions::PermissionsParser::GetOptionalPermissions(extension_);
       permissions_wrapper = PermissionSet::CreateUnion(*permissions_to_display,
@@ -817,11 +807,6 @@ void ExtensionInstallPrompt::ShowConfirmation() {
     case REPAIR_PROMPT:
     case DELEGATED_PERMISSIONS_PROMPT: {
       prompt_->set_extension(extension_);
-      break;
-    }
-    case BUNDLE_INSTALL_PROMPT:
-    case DELEGATED_BUNDLE_PERMISSIONS_PROMPT: {
-      DCHECK(prompt_->bundle());
       break;
     }
     case LAUNCH_PROMPT_DEPRECATED:

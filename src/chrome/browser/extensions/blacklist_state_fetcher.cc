@@ -6,7 +6,7 @@
 
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/safe_browsing/protocol_manager_helper.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -115,7 +115,7 @@ void BlacklistStateFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
     return;
   }
 
-  scoped_ptr<const net::URLFetcher> fetcher;
+  std::unique_ptr<const net::URLFetcher> fetcher;
 
   fetcher.reset(it->first);
   std::string id = it->second;

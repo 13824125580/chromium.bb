@@ -5,10 +5,10 @@
 #ifndef IPC_IPC_TEST_BASE_H_
 #define IPC_IPC_TEST_BASE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/process.h"
 #include "base/test/multiprocess_test.h"
 #include "build/build_config.h"
@@ -48,8 +48,9 @@ class IPCTestBase : public base::MultiProcessTest {
   // message loop on the main thread. As IPCTestBase creates IO message loop by
   // default, such tests need to provide a custom message loop for the main
   // thread.
-  void InitWithCustomMessageLoop(const std::string& test_client_name,
-                                 scoped_ptr<base::MessageLoop> message_loop);
+  virtual void InitWithCustomMessageLoop(
+      const std::string& test_client_name,
+      std::unique_ptr<base::MessageLoop> message_loop);
 
   // Creates a channel with the given listener and connects to the channel
   // (returning true if successful), respectively. Use these to use a channel
@@ -61,8 +62,8 @@ class IPCTestBase : public base::MultiProcessTest {
 
   // Releases or replaces existing channel.
   // These are useful for testing specific types of channel subclasses.
-  scoped_ptr<IPC::Channel> ReleaseChannel();
-  void SetChannel(scoped_ptr<IPC::Channel> channel);
+  std::unique_ptr<IPC::Channel> ReleaseChannel();
+  void SetChannel(std::unique_ptr<IPC::Channel> channel);
 
   // Use this instead of CreateChannel() if you want to use some different
   // channel specification (then use ConnectChannel() as usual).
@@ -80,7 +81,7 @@ class IPCTestBase : public base::MultiProcessTest {
 
   // Starts the client process, returning true if successful; this should be
   // done after connecting to the channel.
-  bool StartClient();
+  virtual bool StartClient();
 
 #if defined(OS_POSIX)
   // A StartClient() variant that allows caller to pass the FD of IPC pipe
@@ -91,7 +92,7 @@ class IPCTestBase : public base::MultiProcessTest {
   // this does not initiate client shutdown; that must be done by the test
   // (somehow). This must be called before the end of the test whenever
   // StartClient() was called successfully.
-  bool WaitForClientShutdown();
+  virtual bool WaitForClientShutdown();
 
   IPC::ChannelHandle GetTestChannelHandle();
 
@@ -104,12 +105,17 @@ class IPCTestBase : public base::MultiProcessTest {
 
   IPC::Channel* channel() { return channel_.get(); }
   IPC::ChannelProxy* channel_proxy() { return channel_proxy_.get(); }
+  void set_channel_proxy(std::unique_ptr<IPC::ChannelProxy> proxy) {
+    DCHECK(!channel_proxy_);
+    channel_proxy_.swap(proxy);
+  }
 
   const base::Process& client_process() const { return client_process_; }
   scoped_refptr<base::SequencedTaskRunner> task_runner();
 
-  virtual scoped_ptr<IPC::ChannelFactory> CreateChannelFactory(
-      const IPC::ChannelHandle& handle, base::SequencedTaskRunner* runner);
+  virtual std::unique_ptr<IPC::ChannelFactory> CreateChannelFactory(
+      const IPC::ChannelHandle& handle,
+      base::SequencedTaskRunner* runner);
 
   virtual bool DidStartClient();
 
@@ -117,10 +123,10 @@ class IPCTestBase : public base::MultiProcessTest {
   std::string GetTestMainName() const;
 
   std::string test_client_name_;
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
 
-  scoped_ptr<IPC::Channel> channel_;
-  scoped_ptr<IPC::ChannelProxy> channel_proxy_;
+  std::unique_ptr<IPC::Channel> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_proxy_;
 
   base::Process client_process_;
 

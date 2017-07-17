@@ -29,36 +29,25 @@
 #include "core/html/parser/NestingLevelIncrementer.h"
 #include "platform/scheduler/CancellableTaskFactory.h"
 #include "wtf/Allocator.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
-class Document;
 class HTMLDocumentParser;
 class WebTaskRunner;
 
-class ActiveParserSession : public NestingLevelIncrementer {
+class PumpSession : public NestingLevelIncrementer {
     STACK_ALLOCATED();
 public:
-    ActiveParserSession(unsigned& nestingLevel, Document*);
-    ~ActiveParserSession();
-
-private:
-    RefPtrWillBeMember<Document> m_document;
-};
-
-class PumpSession : public ActiveParserSession {
-    STACK_ALLOCATED();
-public:
-    PumpSession(unsigned& nestingLevel, Document*);
+    PumpSession(unsigned& nestingLevel);
     ~PumpSession();
 };
 
-class SpeculationsPumpSession : public ActiveParserSession {
+class SpeculationsPumpSession : public NestingLevelIncrementer {
     STACK_ALLOCATED();
 public:
-    SpeculationsPumpSession(unsigned& nestingLevel, Document*);
+    SpeculationsPumpSession(unsigned& nestingLevel);
     ~SpeculationsPumpSession();
 
     double elapsedTime() const;
@@ -70,13 +59,12 @@ private:
     size_t m_processedElementTokens;
 };
 
-class HTMLParserScheduler final : public NoBaseWillBeGarbageCollectedFinalized<HTMLParserScheduler> {
+class HTMLParserScheduler final : public GarbageCollectedFinalized<HTMLParserScheduler> {
     WTF_MAKE_NONCOPYABLE(HTMLParserScheduler);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(HTMLParserScheduler);
 public:
-    static PassOwnPtrWillBeRawPtr<HTMLParserScheduler> create(HTMLDocumentParser* parser, WebTaskRunner* loadingTaskRunner)
+    static HTMLParserScheduler* create(HTMLDocumentParser* parser, WebTaskRunner* loadingTaskRunner)
     {
-        return adoptPtrWillBeNoop(new HTMLParserScheduler(parser, loadingTaskRunner));
+        return new HTMLParserScheduler(parser, loadingTaskRunner);
     }
     ~HTMLParserScheduler();
 
@@ -107,10 +95,10 @@ private:
     bool shouldYield(const SpeculationsPumpSession&, bool startingScript) const;
     void continueParsing();
 
-    RawPtrWillBeMember<HTMLDocumentParser> m_parser;
-    OwnPtr<WebTaskRunner> m_loadingTaskRunner;
+    Member<HTMLDocumentParser> m_parser;
+    std::unique_ptr<WebTaskRunner> m_loadingTaskRunner;
 
-    OwnPtr<CancellableTaskFactory> m_cancellableContinueParse;
+    std::unique_ptr<CancellableTaskFactory> m_cancellableContinueParse;
     bool m_isSuspendedWithActiveTimer;
 };
 

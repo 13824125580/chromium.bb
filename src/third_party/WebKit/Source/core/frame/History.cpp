@@ -27,7 +27,6 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/Document.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/frame/LocalFrame.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
@@ -38,7 +37,6 @@
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
-#include "wtf/MainThread.h"
 
 namespace blink {
 
@@ -52,8 +50,25 @@ bool equalIgnoringPathQueryAndFragment(const KURL& a, const KURL& b)
     if (aLength != bLength)
         return false;
 
-    const String& aString = a.string();
-    const String& bString = b.string();
+    const String& aString = a.getString();
+    const String& bString = b.getString();
+    for (int i = 0; i < aLength; ++i) {
+        if (aString[i] != bString[i])
+            return false;
+    }
+    return true;
+}
+
+bool equalIgnoringQueryAndFragment(const KURL& a, const KURL& b)
+{
+    int aLength = a.pathEnd();
+    int bLength = b.pathEnd();
+
+    if (aLength != bLength)
+        return false;
+
+    const String& aString = a.getString();
+    const String& bString = b.getString();
     for (int i = 0; i < aLength; ++i) {
         if (aString[i] != bString[i])
             return false;
@@ -164,10 +179,14 @@ void History::go(ExecutionContext* context, int delta)
     if (!NavigationDisablerForBeforeUnload::isNavigationAllowed())
         return;
 
+    // We intentionally call reload() for the current frame if delta is zero.
+    // Otherwise, navigation happens on the root frame.
+    // This behavior is designed in the following spec.
+    // https://html.spec.whatwg.org/multipage/browsers.html#dom-history-go
     if (delta)
         m_frame->loader().client()->navigateBackForward(delta);
     else
-        m_frame->reload(FrameLoadTypeReload, ClientRedirect);
+        m_frame->reload(FrameLoadTypeReload, ClientRedirectPolicy::ClientRedirect);
 }
 
 KURL History::urlForState(const String& urlString)
@@ -194,7 +213,7 @@ bool History::canChangeToUrl(const KURL& url, SecurityOrigin* documentOrigin, co
     // 'pushState'/'replaceState' to modify the URL fragment: see
     // https://crbug.com/528681 for the compatibility concerns.
     if (documentOrigin->isUnique() || documentOrigin->isLocal())
-        return equalIgnoringFragmentIdentifier(url, documentURL);
+        return equalIgnoringQueryAndFragment(url, documentURL);
 
     if (!equalIgnoringPathQueryAndFragment(url, documentURL))
         return false;
@@ -212,13 +231,13 @@ void History::stateObjectAdded(PassRefPtr<SerializedScriptValue> data, const Str
         return;
 
     KURL fullURL = urlForState(urlString);
-    if (!canChangeToUrl(fullURL, m_frame->document()->securityOrigin(), m_frame->document()->url())) {
+    if (!canChangeToUrl(fullURL, m_frame->document()->getSecurityOrigin(), m_frame->document()->url())) {
         // We can safely expose the URL to JavaScript, as a) no redirection takes place: JavaScript already had this URL, b) JavaScript can only access a same-origin History object.
-        exceptionState.throwSecurityError("A history state object with URL '" + fullURL.elidedString() + "' cannot be created in a document with origin '" + m_frame->document()->securityOrigin()->toString() + "' and URL '" + m_frame->document()->url().elidedString() + "'.");
+        exceptionState.throwSecurityError("A history state object with URL '" + fullURL.elidedString() + "' cannot be created in a document with origin '" + m_frame->document()->getSecurityOrigin()->toString() + "' and URL '" + m_frame->document()->url().elidedString() + "'.");
         return;
     }
 
-    m_frame->loader().updateForSameDocumentNavigation(fullURL, SameDocumentNavigationHistoryApi, data, restorationType, type);
+    m_frame->loader().updateForSameDocumentNavigation(fullURL, SameDocumentNavigationHistoryApi, data, restorationType, type, m_frame->document());
 }
 
 } // namespace blink

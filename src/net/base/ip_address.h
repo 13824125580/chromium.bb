@@ -13,21 +13,20 @@
 
 #include "base/compiler_specific.h"
 #include "base/strings/string_piece.h"
-#include "net/base/ip_address_number.h"
 #include "net/base/net_export.h"
 
 namespace net {
 
 class NET_EXPORT IPAddress {
  public:
-  static const size_t kIPv4AddressSize;
-  static const size_t kIPv6AddressSize;
+  enum : size_t { kIPv4AddressSize = 4, kIPv6AddressSize = 16 };
 
   // Creates a zero-sized, invalid address.
   IPAddress();
 
-  // Creates an IP address from a deprecated IPAddressNumber.
-  explicit IPAddress(const IPAddressNumber& address);
+  // Copies the input address to |ip_address_|. The input is expected to be in
+  // network byte order.
+  explicit IPAddress(const std::vector<uint8_t>& address);
 
   IPAddress(const IPAddress& other);
 
@@ -41,9 +40,28 @@ class NET_EXPORT IPAddress {
   // parameter. The input is expected to be in network byte order.
   IPAddress(const uint8_t* address, size_t address_len);
 
-  // Initializes |ip_address_| from the 4 bX bytes. The bytes are expected to be
-  // in network byte order.
+  // Initializes |ip_address_| from the 4 bX bytes to form an IPv4 address.
+  // The bytes are expected to be in network byte order.
   IPAddress(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3);
+
+  // Initializes |ip_address_| from the 16 bX bytes to form an IPv6 address.
+  // The bytes are expected to be in network byte order.
+  IPAddress(uint8_t b0,
+            uint8_t b1,
+            uint8_t b2,
+            uint8_t b3,
+            uint8_t b4,
+            uint8_t b5,
+            uint8_t b6,
+            uint8_t b7,
+            uint8_t b8,
+            uint8_t b9,
+            uint8_t b10,
+            uint8_t b11,
+            uint8_t b12,
+            uint8_t b13,
+            uint8_t b14,
+            uint8_t b15);
 
   ~IPAddress();
 
@@ -57,7 +75,7 @@ class NET_EXPORT IPAddress {
   // only checks the address length.
   bool IsValid() const;
 
-  // Returns true if an IP address hostname is in a range reserved by the IANA.
+  // Returns true if the IP is in a range reserved by the IANA.
   // Works with both IPv4 and IPv6 addresses, and only compares against a given
   // protocols's reserved ranges.
   bool IsReserved() const;
@@ -87,6 +105,21 @@ class NET_EXPORT IPAddress {
   // Returns the underlying byte vector.
   const std::vector<uint8_t>& bytes() const { return ip_address_; };
 
+  // Returns an IPAddress instance representing the 127.0.0.1 address.
+  static IPAddress IPv4Localhost();
+
+  // Returns an IPAddress instance representing the ::1 address.
+  static IPAddress IPv6Localhost();
+
+  // Returns an IPAddress made up of |num_zero_bytes| zeros.
+  static IPAddress AllZeros(size_t num_zero_bytes);
+
+  // Returns an IPAddress instance representing the 0.0.0.0 address.
+  static IPAddress IPv4AllZeros();
+
+  // Returns an IPAddress instance representing the :: address.
+  static IPAddress IPv6AllZeros();
+
   bool operator==(const IPAddress& that) const;
   bool operator!=(const IPAddress& that) const;
   bool operator<(const IPAddress& that) const;
@@ -99,9 +132,7 @@ class NET_EXPORT IPAddress {
   // This class is copyable and assignable.
 };
 
-// TODO(Martijnc): These utility functions currently forward the calls to
-// the IPAddressNumber implementations. Move the implementations over when
-// the IPAddressNumber migration is complete. https://crbug.com/496258.
+using IPAddressList = std::vector<IPAddress>;
 
 // Returns the canonical string representation of an IP address along with its
 // port. For example: "192.168.0.1:99" or "[::1]:80".
@@ -132,6 +163,45 @@ NET_EXPORT IPAddress ConvertIPv4MappedIPv6ToIPv4(const IPAddress& address);
 NET_EXPORT bool IPAddressMatchesPrefix(const IPAddress& ip_address,
                                        const IPAddress& ip_prefix,
                                        size_t prefix_length_in_bits);
+
+// Parses an IP block specifier from CIDR notation to an
+// (IP address, prefix length) pair. Returns true on success and fills
+// |*ip_address| with the numeric value of the IP address and sets
+// |*prefix_length_in_bits| with the length of the prefix.
+//
+// CIDR notation literals can use either IPv4 or IPv6 literals. Some examples:
+//
+//    10.10.3.1/20
+//    a:b:c::/46
+//    ::1/128
+NET_EXPORT bool ParseCIDRBlock(const std::string& cidr_literal,
+                               IPAddress* ip_address,
+                               size_t* prefix_length_in_bits);
+
+// Parses a URL-safe IP literal (see RFC 3986, Sec 3.2.2) to its numeric value.
+// Returns true on success, and fills |ip_address| with the numeric value.
+// In other words, |hostname| must be an IPv4 literal, or an IPv6 literal
+// surrounded by brackets as in [::1].
+NET_EXPORT bool ParseURLHostnameToAddress(const base::StringPiece& hostname,
+                                          IPAddress* ip_address)
+    WARN_UNUSED_RESULT;
+
+// Returns number of matching initial bits between the addresses |a1| and |a2|.
+NET_EXPORT unsigned CommonPrefixLength(const IPAddress& a1,
+                                       const IPAddress& a2);
+
+// Computes the number of leading 1-bits in |mask|.
+NET_EXPORT unsigned MaskPrefixLength(const IPAddress& mask);
+
+// Checks whether |address| starts with |prefix|. This provides similar
+// functionality as IPAddressMatchesPrefix() but doesn't perform automatic IPv4
+// to IPv4MappedIPv6 conversions and only checks against full bytes.
+template <size_t N>
+bool IPAddressStartsWith(const IPAddress& address, const uint8_t (&prefix)[N]) {
+  if (address.size() < N)
+    return false;
+  return std::equal(prefix, prefix + N, address.bytes().begin());
+}
 
 }  // namespace net
 

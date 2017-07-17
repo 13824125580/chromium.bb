@@ -14,8 +14,32 @@ namespace page_load_metrics {
 bool WasStartedInForegroundEventInForeground(base::TimeDelta event,
                                              const PageLoadExtraInfo& info) {
   return info.started_in_foreground && !event.is_zero() &&
-         (info.first_background_time.is_zero() ||
-          event < info.first_background_time);
+         (!info.first_background_time ||
+          event <= info.first_background_time.value());
 }
 
+// TODO (shivanisha) The above function is used for TimeDeltas coming over IPC.
+// Merge these two when page_load_metrics only handles Optional TimeDelta
+// values in the browser process.
+bool WasStartedInForegroundOptionalEventInForeground(
+    const base::Optional<base::TimeDelta>& event,
+    const PageLoadExtraInfo& info) {
+  return info.started_in_foreground && event &&
+         (!info.first_background_time ||
+          event.value() <= info.first_background_time.value());
+}
+
+bool WasParseInForeground(base::TimeDelta parse_start,
+                          base::TimeDelta parse_stop,
+                          const PageLoadExtraInfo& info) {
+  if (parse_start.is_zero()) {
+    return false;
+  }
+  const bool incomplete_parse_in_foreground = parse_stop.is_zero() &&
+                                              info.started_in_foreground &&
+                                              !info.first_background_time;
+
+  return incomplete_parse_in_foreground ||
+         WasStartedInForegroundEventInForeground(parse_stop, info);
+}
 }  // namespace page_load_metrics

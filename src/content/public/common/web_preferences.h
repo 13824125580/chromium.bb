@@ -52,6 +52,19 @@ enum ImageAnimationPolicy {
   IMAGE_ANIMATION_POLICY_NO_ANIMATION
 };
 
+enum class ViewportStyle { DEFAULT, MOBILE, TELEVISION, LAST = TELEVISION };
+
+// Controls when the progress bar reports itself as complete. See
+// third_party/WebKit/Source/core/loader/ProgressTracker.cpp for most of its
+// effects.
+enum class ProgressBarCompletion {
+  LOAD_EVENT,
+  RESOURCES_BEFORE_DCL,
+  DOM_CONTENT_LOADED,
+  RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES,
+  LAST = RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES
+};
+
 // The ISO 15924 script code for undetermined script aka Common. It's the
 // default used on WebKit's side to get/set a font setting when no script is
 // specified.
@@ -112,7 +125,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool flash_3d_enabled;
   bool flash_stage3d_enabled;
   bool flash_stage3d_baseline_enabled;
-  bool gl_multisampling_enabled;
   bool privileged_webgl_extensions_enabled;
   bool webgl_errors_to_console_enabled;
   bool mock_scrollbars_enabled;
@@ -167,6 +179,9 @@ struct CONTENT_EXPORT WebPreferences {
   bool supports_multiple_windows;
   bool viewport_enabled;
   bool viewport_meta_enabled;
+  bool shrinks_viewport_contents_to_fit;
+  ViewportStyle viewport_style;
+  bool always_show_context_menu_on_touch;
   bool main_frame_resizes_are_orientation_changes;
   bool initialize_at_minimum_page_scale;
   bool smart_insert_delete_enabled;
@@ -176,6 +191,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool navigate_on_drag_drop;
   V8CacheOptions v8_cache_options;
   bool inert_visual_viewport;
+  bool record_whole_document;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
   // only controls whether or not the "document.cookie" field is properly
@@ -191,6 +207,11 @@ struct CONTENT_EXPORT WebPreferences {
   ImageAnimationPolicy animation_policy;
 
   bool user_gesture_required_for_presentation;
+
+  // Specifies the margin for WebVTT text tracks as a percentage of media
+  // element height/width (for horizontal/vertical text respectively).
+  // Cues will not be placed in this margin area.
+  float text_track_margin_percentage;
 
 #if defined(OS_ANDROID)
   bool text_autosizing_enabled;
@@ -213,9 +234,16 @@ struct CONTENT_EXPORT WebPreferences {
   bool clobber_user_agent_initial_scale_quirk;
   bool ignore_main_frame_overflow_hidden_quirk;
   bool report_screen_size_in_physical_pixels_quirk;
-  bool record_whole_document;
-  std::string autoplay_experiment_mode;
+  // Used by Android_WebView only to support legacy apps that inject script into
+  // a top-level initial empty document and expect it to persist on navigation.
+  bool resue_global_for_unowned_main_frame;
+  bool autoplay_muted_videos_enabled;
+  ProgressBarCompletion progress_bar_completion;
 #endif
+
+  // String that describes how media element autoplay behavior should be
+  // affected by experiment.
+  std::string autoplay_experiment_mode;
 
   // Default (used if the page or UA doesn't override these) values for page
   // scale limits. These are set directly on the WebView so there's no analogue

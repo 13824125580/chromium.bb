@@ -4,12 +4,14 @@
 
 #include "chrome/browser/chromeos/app_mode/kiosk_profile_loader.h"
 
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/auth/chrome_login_performer.h"
 #include "chrome/browser/chromeos/login/demo_mode/demo_app_launcher.h"
@@ -67,28 +69,42 @@ class KioskProfileLoader::CryptohomedChecker
   ~CryptohomedChecker() {}
 
   void StartCheck() {
-    chromeos::DBusThreadManager::Get()->GetCryptohomeClient()->IsMounted(
-        base::Bind(&CryptohomedChecker::OnCryptohomeIsMounted,
-                   AsWeakPtr()));
+    DBusThreadManager::Get()
+        ->GetCryptohomeClient()
+        ->WaitForServiceToBeAvailable(base::Bind(
+            &CryptohomedChecker::OnServiceAvailibityChecked, AsWeakPtr()));
   }
 
  private:
+  void Retry() {
+    const int kMaxRetryTimes = 5;
+    ++retry_count_;
+    if (retry_count_ > kMaxRetryTimes) {
+      LOG(ERROR) << "Could not talk to cryptohomed for launching kiosk app.";
+      ReportCheckResult(KioskAppLaunchError::CRYPTOHOMED_NOT_RUNNING);
+      return;
+    }
+
+    const int retry_delay_in_milliseconds = 500 * (1 << retry_count_);
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, base::Bind(&CryptohomedChecker::StartCheck, AsWeakPtr()),
+        base::TimeDelta::FromMilliseconds(retry_delay_in_milliseconds));
+  }
+
+  void OnServiceAvailibityChecked(bool service_is_ready) {
+    if (!service_is_ready) {
+      Retry();
+      return;
+    }
+
+    DBusThreadManager::Get()->GetCryptohomeClient()->IsMounted(
+        base::Bind(&CryptohomedChecker::OnCryptohomeIsMounted, AsWeakPtr()));
+  }
+
   void OnCryptohomeIsMounted(chromeos::DBusMethodCallStatus call_status,
                              bool is_mounted) {
     if (call_status != chromeos::DBUS_METHOD_CALL_SUCCESS) {
-      const int kMaxRetryTimes = 5;
-      ++retry_count_;
-      if (retry_count_ > kMaxRetryTimes) {
-        LOG(ERROR) << "Could not talk to cryptohomed for launching kiosk app.";
-        ReportCheckResult(KioskAppLaunchError::CRYPTOHOMED_NOT_RUNNING);
-        return;
-      }
-
-      const int retry_delay_in_milliseconds = 500 * (1 << retry_count_);
-      base::MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
-          base::Bind(&CryptohomedChecker::StartCheck, AsWeakPtr()),
-          base::TimeDelta::FromMilliseconds(retry_delay_in_milliseconds));
+      Retry();
       return;
     }
 
@@ -119,10 +135,10 @@ class KioskProfileLoader::CryptohomedChecker
 ////////////////////////////////////////////////////////////////////////////////
 // KioskProfileLoader
 
-KioskProfileLoader::KioskProfileLoader(const std::string& app_user_id,
+KioskProfileLoader::KioskProfileLoader(const AccountId& app_account_id,
                                        bool use_guest_mount,
                                        Delegate* delegate)
-    : user_id_(app_user_id),
+    : account_id_(app_account_id),
       use_guest_mount_(use_guest_mount),
       delegate_(delegate) {}
 
@@ -137,7 +153,7 @@ void KioskProfileLoader::Start() {
 
 void KioskProfileLoader::LoginAsKioskAccount() {
   login_performer_.reset(new ChromeLoginPerformer(this));
-  login_performer_->LoginAsKioskAccount(user_id_, use_guest_mount_);
+  login_performer_->LoginAsKioskAccount(account_id_, use_guest_mount_);
 }
 
 void KioskProfileLoader::ReportLaunchResult(KioskAppLaunchError::Error error) {
@@ -160,7 +176,7 @@ void KioskProfileLoader::OnAuthSuccess(const UserContext& user_context) {
   // user as a demo user.
   UserContext context = user_context;
   if (context.GetAccountId() == login::GuestAccountId())
-    context.SetUserID(login::DemoAccountId().GetUserEmail());
+    context.SetAccountId(login::DemoAccountId());
   UserSessionManager::GetInstance()->StartSession(
       context, UserSessionManager::PRIMARY_USER_SESSION,
       false,  // has_auth_cookies

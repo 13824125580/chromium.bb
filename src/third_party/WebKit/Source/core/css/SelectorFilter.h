@@ -32,12 +32,14 @@
 #include "core/dom/Element.h"
 #include "wtf/BloomFilter.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
 class CSSSelector;
 
 class SelectorFilter {
+    WTF_MAKE_NONCOPYABLE(SelectorFilter);
     DISALLOW_NEW();
 public:
     class ParentStackFrame {
@@ -48,9 +50,11 @@ public:
 
         DECLARE_TRACE();
 
-        RawPtrWillBeMember<Element> element;
+        Member<Element> element;
         Vector<unsigned, 4> identifierHashes;
     };
+
+    SelectorFilter() {}
 
     void pushParent(Element& parent);
     void popParent(Element& parent);
@@ -67,11 +71,11 @@ private:
     void pushParentStackFrame(Element& parent);
     void popParentStackFrame();
 
-    WillBeHeapVector<ParentStackFrame> m_parentStack;
+    HeapVector<ParentStackFrame> m_parentStack;
 
     // With 100 unique strings in the filter, 2^12 slot table has false positive rate of ~0.2%.
     using IdentifierFilter = BloomFilter<12>;
-    OwnPtr<IdentifierFilter> m_ancestorIdentifierFilter;
+    std::unique_ptr<IdentifierFilter> m_ancestorIdentifierFilter;
 };
 
 template <unsigned maximumIdentifierCount>

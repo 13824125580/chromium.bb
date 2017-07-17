@@ -4,15 +4,12 @@
 
 """Monitor tracing events on chrome via chrome remote debugging."""
 
-import bisect
 import itertools
 import logging
 import operator
 
+import clovis_constants
 import devtools_monitor
-
-
-DEFAULT_CATEGORIES = None
 
 
 class TracingTrack(devtools_monitor.Track):
@@ -20,16 +17,14 @@ class TracingTrack(devtools_monitor.Track):
 
   See https://goo.gl/Qabkqk for details on the protocol.
   """
-  def __init__(self, connection,
-               categories=DEFAULT_CATEGORIES,
-               fetch_stream=False):
+  def __init__(self, connection, categories, fetch_stream=False):
     """Initialize this TracingTrack.
 
     Args:
       connection: a DevToolsConnection.
-      categories: None, or a string, or list of strings, of tracing categories
-        to filter.
-
+      categories: ([str] or None) If set, a list of categories to enable or
+                  disable in Chrome tracing. Categories prefixed with '-' are
+                  disabled.
       fetch_stream: if true, use a websocket stream to fetch tracing data rather
         than dataCollected events. It appears based on very limited testing that
         a stream is slower than the default reporting as dataCollected events.
@@ -37,10 +32,10 @@ class TracingTrack(devtools_monitor.Track):
     super(TracingTrack, self).__init__(connection)
     if connection:
       connection.RegisterListener('Tracing.dataCollected', self)
+
+    self._categories = set(categories)
     params = {}
-    if categories:
-      params['categories'] = (categories if type(categories) is str
-                              else ','.join(categories))
+    params['categories'] = ','.join(self._categories)
     if fetch_stream:
       params['transferMode'] = 'ReturnAsStream'
 
@@ -50,6 +45,7 @@ class TracingTrack(devtools_monitor.Track):
     self._events = []
     self._base_msec = None
     self._interval_tree = None
+    self._main_frame_id = None
 
   def Handle(self, method, event):
     for e in event['params']['value']:
@@ -61,6 +57,10 @@ class TracingTrack(devtools_monitor.Track):
     # update.
     self._interval_tree = None
 
+  def Categories(self):
+    """Returns the set of categories in this trace."""
+    return self._categories
+
   def GetFirstEventMillis(self):
     """Find the canonical start time for this track.
 
@@ -70,7 +70,42 @@ class TracingTrack(devtools_monitor.Track):
     return self._base_msec
 
   def GetEvents(self):
+    """Returns a list of tracing.Event. Not sorted."""
     return self._events
+
+  def GetMatchingEvents(self, category, name):
+    """Gets events matching |category| and |name|."""
+    return [e for e in self.GetEvents() if e.Matches(category, name)]
+
+  def GetMatchingMainFrameEvents(self, category, name):
+    """Gets events matching |category| and |name| that occur in the main frame.
+
+    Events without a 'frame' key in their |args| are discarded.
+    """
+    matching_events = self.GetMatchingEvents(category, name)
+    return [e for e in matching_events
+        if 'frame' in e.args and e.args['frame'] == self.GetMainFrameID()]
+
+  def GetMainFrameRoutingID(self):
+    """Returns the main frame routing ID."""
+    for event in self.GetMatchingEvents(
+        'navigation', 'RenderFrameImpl::OnNavigate'):
+      return event.args['id']
+    assert False
+
+  def GetMainFrameID(self):
+    """Returns the main frame ID."""
+    if not self._main_frame_id:
+      navigation_start_events = self.GetMatchingEvents(
+          'blink.user_timing', 'navigationStart')
+      first_event = min(navigation_start_events, key=lambda e: e.start_msec)
+      self._main_frame_id = first_event.args['frame']
+
+    return self._main_frame_id
+
+  def SetMainFrameID(self, frame_id):
+    """Set the main frame ID. Normally this is used only for testing."""
+    self._main_frame_id = frame_id
 
   def EventsAt(self, msec):
     """Gets events active at a timestamp.
@@ -88,31 +123,43 @@ class TracingTrack(devtools_monitor.Track):
     self._IndexEvents()
     return self._interval_tree.EventsAt(msec)
 
-  def ToJsonDict(self):
-    return {'events': [e.ToJsonDict() for e in self._events]}
-
-  def TracingTrackForThread(self, pid_tid):
-    """Returns a new TracingTrack with only the events from a given thread.
+  def Filter(self, pid=None, tid=None, categories=None):
+    """Returns a new TracingTrack with a subset of the events.
 
     Args:
-      pid_tid: ((int, int) PID and TID.
-
-    Returns:
-      A new instance of TracingTrack.
+      pid: (int or None) Selects events from this PID.
+      tid: (int or None) Selects events from this TID.
+      categories: (set([str]) or None) Selects events belonging to one of the
+                  categories.
     """
-    (pid, tid) = pid_tid
-    events = [e for e in self._events
-              if (e.tracing_event['pid'] == pid
-                  and e.tracing_event['tid'] == tid)]
-    tracing_track = TracingTrack(None)
+    events = self._events
+    if pid is not None:
+      events = filter(lambda e : e.tracing_event['pid'] == pid, events)
+    if tid is not None:
+      events = filter(lambda e : e.tracing_event['tid'] == tid, events)
+    if categories is not None:
+      events = filter(
+          lambda e : set(e.category.split(',')).intersection(categories),
+          events)
+    tracing_track = TracingTrack(None, clovis_constants.DEFAULT_CATEGORIES)
     tracing_track._events = events
+    tracing_track._categories = self._categories
+    if categories is not None:
+      tracing_track._categories = self._categories.intersection(categories)
     return tracing_track
+
+  def ToJsonDict(self):
+    return {'categories': list(self._categories),
+            'events': [e.ToJsonDict() for e in self._events]}
 
   @classmethod
   def FromJsonDict(cls, json_dict):
+    if not json_dict:
+      return None
     assert 'events' in json_dict
     events = [Event(e) for e in json_dict['events']]
-    tracing_track = TracingTrack(None)
+    tracing_track = TracingTrack(None, clovis_constants.DEFAULT_CATEGORIES)
+    tracing_track._categories = set(json_dict.get('categories', []))
     tracing_track._events = events
     tracing_track._base_msec = events[0].start_msec if events else 0
     for e in events[1:]:
@@ -122,6 +169,43 @@ class TracingTrack(devtools_monitor.Track):
       if e.start_msec < tracing_track._base_msec:
         tracing_track._base_msec = e.start_msec
     return tracing_track
+
+  def OverlappingEvents(self, start_msec, end_msec):
+    self._IndexEvents()
+    return self._interval_tree.OverlappingEvents(start_msec, end_msec)
+
+  def EventsEndingBetween(self, start_msec, end_msec):
+    """Gets the list of events ending within an interval.
+
+    Args:
+      start_msec: the start of the range to query, in milliseconds, inclusive.
+      end_msec: the end of the range to query, in milliseconds, inclusive.
+
+    Returns:
+      See OverlappingEvents() above.
+    """
+    overlapping_events = self.OverlappingEvents(start_msec, end_msec)
+    return [e for e in overlapping_events
+            if start_msec <= e.end_msec <= end_msec]
+
+  def EventFromStep(self, step_event):
+    """Returns the Event associated with a step event, or None.
+
+    Args:
+      step_event: (Event) Step event.
+
+    Returns:
+      an Event that matches the step event, or None.
+    """
+    self._IndexEvents()
+    assert 'step' in step_event.args and step_event.tracing_event['ph'] == 'T'
+    candidates = self._interval_tree.EventsAt(step_event.start_msec)
+    for event in candidates:
+      # IDs are only unique within a process (often they are pointers).
+      if (event.pid == step_event.pid and event.tracing_event['ph'] != 'T'
+          and event.name == step_event.name and event.id == step_event.id):
+        return event
+    return None
 
   def _IndexEvents(self, strict=False):
     if self._interval_tree:
@@ -144,27 +228,22 @@ class TracingTrack(devtools_monitor.Track):
           'Pending spanning events: %s' %
           '\n'.join([str(e) for e in spanning_events.PendingEvents()]))
 
-  def OverlappingEvents(self, start_msec, end_msec):
-    self._IndexEvents()
-    return self._interval_tree.OverlappingEvents(start_msec, end_msec)
-
-  def EventsEndingBetween(self, start_msec, end_msec):
-    """Gets the list of events ending within an interval.
-
-    Args:
-      start_msec: the start of the range to query, in milliseconds, inclusive.
-      end_msec: the end of the range to query, in milliseconds, inclusive.
-
-    Returns:
-      See OverlappingEvents() above.
-    """
-    overlapping_events = self.OverlappingEvents(start_msec, end_msec)
-    return [e for e in overlapping_events
-            if start_msec <= e.end_msec <= end_msec]
-
   def _GetEvents(self):
     self._IndexEvents()
     return self._interval_tree.GetEvents()
+
+  def HasLoadingSucceeded(self):
+    """Returns whether the loading has succeed at recording time."""
+    main_frame_id = self.GetMainFrameRoutingID()
+    for event in self.GetMatchingEvents(
+        'navigation', 'RenderFrameImpl::didFailProvisionalLoad'):
+      if event.args['id'] == main_frame_id:
+        return False
+    for event in self.GetMatchingEvents(
+        'navigation', 'RenderFrameImpl::didFailLoad'):
+      if event.args['id'] == main_frame_id:
+        return False
+    return True
 
   class _SpanningEvents(object):
     def __init__(self):
@@ -183,6 +262,9 @@ class TracingTrack(devtools_monitor.Track):
           'M': self._Ignore,
           'X': self._Ignore,
           'R': self._Ignore,
+          'p': self._Ignore,
+          '(': self._Ignore, # Context events.
+          ')': self._Ignore, # Ditto.
           None: self._Ignore,
           }
 
@@ -287,9 +369,6 @@ class Event(object):
     if not synthetic and tracing_event['ph'] in ['s', 't', 'f']:
       raise devtools_monitor.DevToolsConnectionException(
           'Unsupported event: %s' % tracing_event)
-    if not synthetic and tracing_event['ph'] in ['p']:
-      raise devtools_monitor.DevToolsConnectionException(
-          'Deprecated event: %s' % tracing_event)
 
     self._tracing_event = tracing_event
     # Note tracing event times are in microseconds.
@@ -339,6 +418,21 @@ class Event(object):
   def __str__(self):
     return ''.join([str(self._tracing_event),
                     '[%s,%s]' % (self.start_msec, self.end_msec)])
+
+  def Matches(self, category, name):
+    """Match tracing events.
+
+    Args:
+      category: a tracing category (event['cat']).
+      name: the tracing event name (event['name']).
+
+    Returns:
+      True if the event matches and False otherwise.
+    """
+    if name != self.name:
+      return False
+    categories = self.category.split(',')
+    return category in categories
 
   def IsIndexable(self):
     """True iff the event can be indexed by time."""

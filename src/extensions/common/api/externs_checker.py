@@ -12,9 +12,14 @@ class ExternsChecker(object):
     self._output_api = output_api
     self._api_pairs = api_pairs
 
+    for path in api_pairs.keys() + api_pairs.values():
+      if not input_api.os_path.exists(path):
+        raise OSError('Path Not Found: %s' % path)
+
   def RunChecks(self):
     bad_files = []
-    affected = [f.AbsoluteLocalPath() for f in self._input_api.AffectedFiles()]
+    affected = [f.AbsoluteLocalPath() for f in
+                   self._input_api.change.AffectedFiles()]
     for path in affected:
       pair = self._api_pairs.get(path)
       if pair != None and pair not in affected:

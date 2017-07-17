@@ -40,12 +40,13 @@ component("ash") {
     "//skia",
     "//third_party/icu",
     "//ui/accessibility",
-    "//ui/app_list",
+    "//ui/app_list/presenter",
     "//ui/aura",
     "//ui/base",
     "//ui/base:ui_data_pack",
     "//ui/base/ime",
     "//ui/compositor",
+    "//ui/display",
     "//ui/display/types",
     "//ui/events",
     "//ui/events:events_base",
@@ -81,6 +82,7 @@ component("ash") {
       "//build/config/linux:xfixes",
     ]
     deps += [
+      "//ui/events/devices/x11",
       "//ui/events/platform",
       "//ui/gfx/x",
     ]
@@ -105,6 +107,7 @@ component("ash") {
     deps += [
       "//chromeos",
       "//chromeos:power_manager_proto",
+      "//components/quirks",
       "//device/bluetooth",
 
       # TODO(msw): Remove this; only ash_with_content should depend on webkit.
@@ -113,8 +116,11 @@ component("ash") {
       "//ui/chromeos:ui_chromeos",
       "//ui/chromeos/resources",
       "//ui/chromeos/strings",
-      "//ui/display",
       "//ui/display/util",
+    ]
+
+    data = [
+      "display/test_data/",
     ]
   } else {
     sources -= [
@@ -126,9 +132,6 @@ component("ash") {
       "accelerators/spoken_feedback_toggler.h",
       "display/resolution_notification_controller.cc",
       "display/resolution_notification_controller.h",
-      "system/tray/media_security/media_capture_observer.h",
-      "system/tray/media_security/multi_profile_media_tray_item.cc",
-      "system/tray/media_security/multi_profile_media_tray_item.h",
       "touch/touch_transformer_controller.cc",
       "touch/touch_transformer_controller.h",
       "touch/touchscreen_util.cc",
@@ -199,8 +202,8 @@ source_set("test_support") {
     "//skia",
     "//testing/gtest",
     "//ui/accessibility",
-    "//ui/app_list",
     "//ui/app_list:test_support",
+    "//ui/app_list/presenter",
     "//ui/aura",
     "//ui/aura:test_support",
     "//ui/base:test_support",
@@ -285,7 +288,7 @@ static_library("ash_shell_lib") {
     "//net",
     "//skia",
     "//third_party/icu",
-    "//ui/app_list",
+    "//ui/app_list/presenter",
     "//ui/aura",
     "//ui/base",
     "//ui/base/ime",
@@ -323,6 +326,7 @@ static_library("ash_shell_lib_with_content") {
     "//ui/aura",
     "//ui/base",
     "//ui/compositor",
+    "//ui/display",
     "//ui/events/devices",
     "//ui/message_center",
     "//ui/views:test_support",
@@ -351,11 +355,12 @@ test("ash_unittests") {
     "//components/user_manager",
     "//content/public/browser",
     "//content/test:test_support",
+    "//mojo/edk/system",
     "//skia",
     "//testing/gtest",
     "//third_party/icu",
     "//ui/accessibility",
-    "//ui/app_list",
+    "//ui/app_list/presenter",
     "//ui/aura",
     "//ui/aura:test_support",
     "//ui/base",
@@ -381,6 +386,7 @@ test("ash_unittests") {
     "//ui/views/controls/webview:test_support",
     "//ui/web_dialogs:test_support",
     "//ui/wm",
+    "//ui/wm:test_support",
     "//url",
   ]
 
@@ -398,19 +404,16 @@ test("ash_unittests") {
       # All tests for multiple displays: not supported on Windows Ash.
       "wm/drag_window_resizer_unittest.cc",
 
-      # Accelerometer is only available on Chrome OS.
+      # Maximize mode is only available on Chrome OS.
       "wm/maximize_mode/maximize_mode_controller_unittest.cc",
+      "wm/maximize_mode/maximize_mode_window_manager_unittest.cc",
 
       # Can't resize on Windows Ash. http://crbug.com/165962
       "autoclick/autoclick_unittest.cc",
       "magnifier/magnification_controller_unittest.cc",
       "sticky_keys/sticky_keys_overlay_unittest.cc",
-      "system/tray/media_security/multi_profile_media_tray_item_unittest.cc",
       "virtual_keyboard_controller_unittest.cc",
       "wm/workspace/workspace_window_resizer_unittest.cc",
-    ]
-    sources += [
-      #'<(SHARED_INTERMEDIATE_DIR)/ui/resources/ui_unscaled_resources.rc',  TODO(GYP)
     ]
   }
 
@@ -425,7 +428,9 @@ test("ash_unittests") {
       "//chromeos",
       "//chromeos:power_manager_proto",
       "//chromeos:test_support_without_gmock",
+      "//components/quirks",
       "//device/bluetooth",
+      "//net:net",
       "//ui/chromeos:ui_chromeos",
       "//ui/display",
       "//ui/display:test_support",
@@ -459,6 +464,7 @@ executable("ash_shell_with_content") {
     ":ash_shell_lib_with_content",
     "//base",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//components/user_manager",
     "//content",
     "//content/public/app:both",

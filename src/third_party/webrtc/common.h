@@ -14,6 +14,7 @@
 #include <map>
 
 #include "webrtc/base/basictypes.h"
+#include "webrtc/base/constructormagic.h"
 
 namespace webrtc {
 
@@ -32,7 +33,7 @@ enum class ConfigOptionID {
   kExperimentalNs,
   kBeamforming,
   kIntelligibility,
-  kNextGenerationAec,
+  kEchoCanceller3,
   kAecRefinedAdaptiveFilter
 };
 

@@ -12,11 +12,17 @@
 #include "base/memory/ref_counted.h"
 #include "base/task_runner_util.h"
 #include "base/values.h"
-#include "chrome/browser/android/popular_sites.h"
+#include "chrome/browser/android/ntp/popular_sites.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "components/ntp_tiles/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_fixer.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_ui.h"
+
+using ntp_tiles::PopularSites;
 
 namespace {
 
@@ -26,7 +32,8 @@ std::string ReadFileToString(const base::FilePath& path) {
     result.clear();
   return result;
 }
-}
+
+}  // namespace
 
 PopularSitesInternalsMessageHandler::PopularSitesInternalsMessageHandler()
     : weak_ptr_factory_(this) {}
@@ -38,8 +45,8 @@ void PopularSitesInternalsMessageHandler::RegisterMessages() {
       base::Bind(&PopularSitesInternalsMessageHandler::HandleRegisterForEvents,
                  base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback("download",
-      base::Bind(&PopularSitesInternalsMessageHandler::HandleDownload,
+  web_ui()->RegisterMessageCallback("update",
+      base::Bind(&PopularSitesInternalsMessageHandler::HandleUpdate,
                  base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
@@ -52,35 +59,55 @@ void PopularSitesInternalsMessageHandler::HandleRegisterForEvents(
     const base::ListValue* args) {
   DCHECK(args->empty());
 
-  std::string country;
-  std::string version;
+  SendOverrides();
+
+  Profile* profile = Profile::FromWebUI(web_ui());
   popular_sites_.reset(new PopularSites(
-      Profile::FromWebUI(web_ui()), country, version, false,
+      content::BrowserThread::GetBlockingPool(), profile->GetPrefs(),
+      TemplateURLServiceFactory::GetForProfile(profile),
+      g_browser_process->variations_service(), profile->GetRequestContext(),
+      ChromePopularSites::GetDirectory(), false,
       base::Bind(&PopularSitesInternalsMessageHandler::OnPopularSitesAvailable,
                  base::Unretained(this), false)));
 }
 
-void PopularSitesInternalsMessageHandler::HandleDownload(
+void PopularSitesInternalsMessageHandler::HandleUpdate(
     const base::ListValue* args) {
   DCHECK_EQ(3u, args->GetSize());
+  Profile* profile = Profile::FromWebUI(web_ui());
   auto callback =
       base::Bind(&PopularSitesInternalsMessageHandler::OnPopularSitesAvailable,
                  base::Unretained(this), true);
 
+  PrefService* prefs = profile->GetPrefs();
+
   std::string url;
   args->GetString(0, &url);
-  if (!url.empty()) {
-    popular_sites_.reset(new PopularSites(
-        Profile::FromWebUI(web_ui()),
-        url_formatter::FixupURL(url, std::string()), callback));
-    return;
-  }
+  if (url.empty())
+    prefs->ClearPref(ntp_tiles::prefs::kPopularSitesOverrideURL);
+  else
+    prefs->SetString(ntp_tiles::prefs::kPopularSitesOverrideURL,
+                     url_formatter::FixupURL(url, std::string()).spec());
+
   std::string country;
   args->GetString(1, &country);
+  if (country.empty())
+    prefs->ClearPref(ntp_tiles::prefs::kPopularSitesOverrideCountry);
+  else
+    prefs->SetString(ntp_tiles::prefs::kPopularSitesOverrideCountry, country);
+
   std::string version;
   args->GetString(2, &version);
-  popular_sites_.reset(new PopularSites(Profile::FromWebUI(web_ui()), country,
-                                        version, true, callback));
+  if (version.empty())
+    prefs->ClearPref(ntp_tiles::prefs::kPopularSitesOverrideVersion);
+  else
+    prefs->SetString(ntp_tiles::prefs::kPopularSitesOverrideVersion, version);
+
+  popular_sites_.reset(new PopularSites(
+      content::BrowserThread::GetBlockingPool(), prefs,
+      TemplateURLServiceFactory::GetForProfile(profile),
+      g_browser_process->variations_service(), profile->GetRequestContext(),
+      ChromePopularSites::GetDirectory(), true, callback));
 }
 
 void PopularSitesInternalsMessageHandler::HandleViewJson(
@@ -98,16 +125,29 @@ void PopularSitesInternalsMessageHandler::HandleViewJson(
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
+void PopularSitesInternalsMessageHandler::SendOverrides() {
+  PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
+  std::string url =
+      prefs->GetString(ntp_tiles::prefs::kPopularSitesOverrideURL);
+  std::string country =
+      prefs->GetString(ntp_tiles::prefs::kPopularSitesOverrideCountry);
+  std::string version =
+      prefs->GetString(ntp_tiles::prefs::kPopularSitesOverrideVersion);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "chrome.popular_sites_internals.receiveOverrides", base::StringValue(url),
+      base::StringValue(country), base::StringValue(version));
+}
+
 void PopularSitesInternalsMessageHandler::SendDownloadResult(bool success) {
   base::StringValue result(success ? "Success" : "Fail");
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "chrome.popular_sites_internals.receiveDownloadResult", result);
 }
 
 void PopularSitesInternalsMessageHandler::SendSites() {
-  scoped_ptr<base::ListValue> sites_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> sites_list(new base::ListValue);
   for (const PopularSites::Site& site : popular_sites_->sites()) {
-    scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
     entry->SetString("title", site.title);
     entry->SetString("url", site.url.spec());
     sites_list->Append(std::move(entry));
@@ -115,13 +155,14 @@ void PopularSitesInternalsMessageHandler::SendSites() {
 
   base::DictionaryValue result;
   result.Set("sites", std::move(sites_list));
-  web_ui()->CallJavascriptFunction(
+  result.SetString("url", popular_sites_->LastURL().spec());
+  web_ui()->CallJavascriptFunctionUnsafe(
       "chrome.popular_sites_internals.receiveSites", result);
 }
 
 void PopularSitesInternalsMessageHandler::SendJson(const std::string& json) {
-  web_ui()->CallJavascriptFunction("chrome.popular_sites_internals.receiveJson",
-                                   base::StringValue(json));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "chrome.popular_sites_internals.receiveJson", base::StringValue(json));
 }
 
 void PopularSitesInternalsMessageHandler::OnPopularSitesAvailable(

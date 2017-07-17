@@ -7,11 +7,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
+#include "components/signin/core/browser/signin_metrics.h"
 
 @class ReauthDialogWindowController;
 @class UserManagerWindowController;
@@ -48,7 +50,8 @@ class UserManagerMac {
   void LogTimeToOpen();
 
   void ShowReauthDialog(content::BrowserContext* browser_context,
-                        const std::string& email);
+                        const std::string& email,
+                        signin_metrics::Reason reason);
   void CloseReauthDialog();
 
  private:

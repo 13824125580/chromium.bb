@@ -6,6 +6,7 @@
 
 #include "core/dom/ElementTraversal.h"
 #include "core/layout/svg/LayoutSVGResourceClipper.h"
+#include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/SVGResources.h"
 #include "core/layout/svg/SVGResourcesCache.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
@@ -15,6 +16,7 @@
 #include "platform/graphics/paint/CompositingRecorder.h"
 #include "platform/graphics/paint/DrawingDisplayItem.h"
 #include "platform/graphics/paint/PaintController.h"
+#include "platform/graphics/paint/SkPictureBuilder.h"
 
 namespace blink {
 
@@ -31,7 +33,7 @@ private:
 } // namespace
 
 bool SVGClipPainter::prepareEffect(const LayoutObject& target, const FloatRect& targetBoundingBox,
-    const FloatRect& paintInvalidationRect, GraphicsContext& context, ClipperState& clipperState)
+    const FloatRect& paintInvalidationRect, const FloatPoint& layerPositionOffset, GraphicsContext& context, ClipperState& clipperState)
 {
     ASSERT(clipperState == ClipperNotApplied);
     ASSERT_WITH_SECURITY_IMPLICATION(!m_clip.needsLayout());
@@ -55,8 +57,11 @@ bool SVGClipPainter::prepareEffect(const LayoutObject& target, const FloatRect& 
     // First, try to apply the clip as a clipPath.
     Path clipPath;
     if (m_clip.asPath(animatedLocalTransform, targetBoundingBox, clipPath)) {
+        AffineTransform positionTransform;
+        positionTransform.translate(layerPositionOffset.x(), layerPositionOffset.y());
+        clipPath.transform(positionTransform);
         clipperState = ClipperAppliedPath;
-        context.paintController().createAndAppend<BeginClipPathDisplayItem>(target, clipPath);
+        context.getPaintController().createAndAppend<BeginClipPathDisplayItem>(target, clipPath);
         return true;
     }
 
@@ -66,22 +71,11 @@ bool SVGClipPainter::prepareEffect(const LayoutObject& target, const FloatRect& 
     // Begin compositing the clip mask.
     CompositingRecorder::beginCompositing(context, target, SkXfermode::kSrcOver_Mode, 1, &paintInvalidationRect);
     {
-        TransformRecorder recorder(context, target, animatedLocalTransform);
-
-        // clipPath can also be clipped by another clipPath.
-        SVGResources* resources = SVGResourcesCache::cachedResourcesForLayoutObject(&m_clip);
-        LayoutSVGResourceClipper* clipPathClipper = resources ? resources->clipper() : 0;
-        ClipperState clipPathClipperState = ClipperNotApplied;
-        if (clipPathClipper && !SVGClipPainter(*clipPathClipper).prepareEffect(m_clip, targetBoundingBox, paintInvalidationRect, context, clipPathClipperState)) {
+        if (!drawClipAsMask(context, target, targetBoundingBox, paintInvalidationRect, animatedLocalTransform, layerPositionOffset)) {
             // End the clip mask's compositor.
             CompositingRecorder::endCompositing(context, target);
             return false;
         }
-
-        drawClipMaskContent(context, target, targetBoundingBox, paintInvalidationRect);
-
-        if (clipPathClipper)
-            SVGClipPainter(*clipPathClipper).finishEffect(m_clip, context, clipPathClipperState);
     }
 
     // Masked content layer start.
@@ -95,7 +89,7 @@ void SVGClipPainter::finishEffect(const LayoutObject& target, GraphicsContext& c
     switch (clipperState) {
     case ClipperAppliedPath:
         // Path-only clipping, no layers to restore but we need to emit an end to the clip path display item.
-        context.paintController().endItem<EndClipPathDisplayItem>(target);
+        context.getPaintController().endItem<EndClipPathDisplayItem>(target);
         break;
     case ClipperAppliedMask:
         // Transfer content -> clip mask (SrcIn)
@@ -109,19 +103,45 @@ void SVGClipPainter::finishEffect(const LayoutObject& target, GraphicsContext& c
     }
 }
 
-void SVGClipPainter::drawClipMaskContent(GraphicsContext& context, const LayoutObject& layoutObject, const FloatRect& targetBoundingBox, const FloatRect& targetPaintInvalidationRect)
+bool SVGClipPainter::drawClipAsMask(GraphicsContext& context, const LayoutObject& layoutObject, const FloatRect& targetBoundingBox,
+    const FloatRect& targetPaintInvalidationRect, const AffineTransform& localTransform, const FloatPoint& layerPositionOffset)
 {
-    AffineTransform contentTransformation;
-    RefPtr<const SkPicture> clipContentPicture = m_clip.createContentPicture(contentTransformation, targetBoundingBox, context);
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, layoutObject, DisplayItem::SVGClip))
+        return true;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, layoutObject, DisplayItem::SVGClip, LayoutPoint()))
-        return;
+    SkPictureBuilder maskPictureBuilder(targetPaintInvalidationRect, nullptr, &context);
+    GraphicsContext& maskContext = maskPictureBuilder.context();
+    {
+        TransformRecorder recorder(maskContext, layoutObject, localTransform);
 
-    LayoutObjectDrawingRecorder drawingRecorder(context, layoutObject, DisplayItem::SVGClip, targetPaintInvalidationRect, LayoutPoint());
-    context.save();
-    context.concatCTM(contentTransformation);
-    context.drawPicture(clipContentPicture.get());
-    context.restore();
+        // Create a clipPathClipper if this clipPath is clipped by another clipPath.
+        SVGResources* resources = SVGResourcesCache::cachedResourcesForLayoutObject(&m_clip);
+        LayoutSVGResourceClipper* clipPathClipper = resources ? resources->clipper() : nullptr;
+        ClipperState clipPathClipperState = ClipperNotApplied;
+        if (clipPathClipper && !SVGClipPainter(*clipPathClipper).prepareEffect(m_clip, targetBoundingBox, targetPaintInvalidationRect, layerPositionOffset, maskContext, clipPathClipperState))
+            return false;
+
+        {
+            AffineTransform contentTransform;
+            if (m_clip.clipPathUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
+                contentTransform.translate(targetBoundingBox.x(), targetBoundingBox.y());
+                contentTransform.scaleNonUniform(targetBoundingBox.width(), targetBoundingBox.height());
+            }
+            SubtreeContentTransformScope contentTransformScope(contentTransform);
+
+            TransformRecorder contentTransformRecorder(maskContext, layoutObject, contentTransform);
+            RefPtr<const SkPicture> clipContentPicture = m_clip.createContentPicture();
+            maskContext.getPaintController().createAndAppend<DrawingDisplayItem>(layoutObject, DisplayItem::SVGClip, clipContentPicture.get());
+        }
+
+        if (clipPathClipper)
+            SVGClipPainter(*clipPathClipper).finishEffect(m_clip, maskContext, clipPathClipperState);
+    }
+
+    LayoutObjectDrawingRecorder drawingRecorder(context, layoutObject, DisplayItem::SVGClip, targetPaintInvalidationRect);
+    RefPtr<SkPicture> maskPicture = maskPictureBuilder.endRecording();
+    context.drawPicture(maskPicture.get());
+    return true;
 }
 
 } // namespace blink

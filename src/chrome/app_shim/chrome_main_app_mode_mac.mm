@@ -141,7 +141,7 @@ class AppShimController : public IPC::Listener {
   void Close();
 
   base::FilePath user_data_dir_;
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
   base::scoped_nsobject<AppShimDelegate> delegate_;
   bool launch_app_done_;
   bool ping_chrome_reply_received_;
@@ -188,8 +188,7 @@ void AppShimController::Init() {
   SetUpMenu();
 
   // Chrome will relaunch shims when relaunching apps.
-  if (base::mac::IsOSLionOrLater())
-    [NSApp disableRelaunchOnLogin];
+  [NSApp disableRelaunchOnLogin];
 
   // The user_data_dir for shims actually contains the app_data_path.
   // I.e. <user_data_dir>/<profile_dir>/Web Applications/_crx_extensionid/
@@ -648,7 +647,6 @@ int ChromeAppModeStart_v4(const app_mode::ChromeAppModeInfo* info) {
 
   AppShimController controller;
   base::MessageLoopForUI main_message_loop;
-  main_message_loop.set_thread_name("MainThread");
   base::PlatformThread::SetName("CrAppShimMain");
 
   // In tests, launching Chrome does nothing, and we won't get a ping response,

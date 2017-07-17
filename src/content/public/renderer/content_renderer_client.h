@@ -8,13 +8,14 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/public/common/content_client.h"
 #include "third_party/WebKit/public/platform/WebPageVisibilityState.h"
 #include "third_party/WebKit/public/web/WebNavigationPolicy.h"
@@ -61,9 +62,13 @@ class ImageSerializationProcessor;
 
 namespace media {
 class GpuVideoAcceleratorFactories;
+class KeySystemProperties;
 class MediaLog;
 class RendererFactory;
-struct KeySystemInfo;
+}
+
+namespace shell {
+class InterfaceRegistry;
 }
 
 namespace content {
@@ -110,6 +115,8 @@ class CONTENT_EXPORT ContentRendererClient {
 
   // Creates a replacement plugin that is shown when the plugin at |file_path|
   // couldn't be loaded. This allows the embedder to show a custom placeholder.
+  // This may return nullptr. However, if it does return a WebPlugin, it must
+  // never fail to initialize.
   virtual blink::WebPlugin* CreatePluginReplacement(
       RenderFrame* render_frame,
       const base::FilePath& plugin_path);
@@ -206,7 +213,7 @@ class CONTENT_EXPORT ContentRendererClient {
   // Returns true if a popup window should be allowed.
   virtual bool AllowPopup();
 
-#ifdef OS_ANDROID
+#if defined(OS_ANDROID)
   // TODO(sgurun) This callback is deprecated and will be removed as soon
   // as android webview completes implementation of a resource throttle based
   // shouldoverrideurl implementation. See crbug.com/325351
@@ -221,6 +228,10 @@ class CONTENT_EXPORT ContentRendererClient {
                                 blink::WebNavigationType type,
                                 blink::WebNavigationPolicy default_policy,
                                 bool is_redirect);
+
+  // Indicates if the Android MediaPlayer should be used instead of Chrome's
+  // built in media player for the given |url|. Defaults to false.
+  virtual bool ShouldUseMediaPlayerForURL(const GURL& url);
 #endif
 
   // Returns true if we should fork a new process for the given navigation.
@@ -259,13 +270,13 @@ class CONTENT_EXPORT ContentRendererClient {
   virtual bool AllowPepperMediaStreamAPI(const GURL& url);
 
   // Allows an embedder to provide a media::RendererFactory.
-  virtual scoped_ptr<media::RendererFactory> CreateMediaRendererFactory(
+  virtual std::unique_ptr<media::RendererFactory> CreateMediaRendererFactory(
       RenderFrame* render_frame,
       media::GpuVideoAcceleratorFactories* gpu_factories,
       const scoped_refptr<media::MediaLog>& media_log);
 
   // Allows an embedder to provide a MediaStreamRendererFactory.
-  virtual scoped_ptr<MediaStreamRendererFactory>
+  virtual std::unique_ptr<MediaStreamRendererFactory>
   CreateMediaStreamRendererFactory();
 
   // Allows an embedder to provde a cc::ImageSerializationProcessor.
@@ -273,7 +284,8 @@ class CONTENT_EXPORT ContentRendererClient {
 
   // Gives the embedder a chance to register the key system(s) it supports by
   // populating |key_systems|.
-  virtual void AddKeySystems(std::vector<media::KeySystemInfo>* key_systems);
+  virtual void AddSupportedKeySystems(
+      std::vector<std::unique_ptr<media::KeySystemProperties>>* key_systems);
 
   // Returns true if we should report a detailed message (including a stack
   // trace) for console [logs|errors|exceptions]. |source| is the WebKit-
@@ -311,7 +323,7 @@ class CONTENT_EXPORT ContentRendererClient {
   virtual void RecordRapporURL(const std::string& metric, const GURL& url) {}
 
   // Allows an embedder to provide a blink::WebAppBannerClient.
-  virtual scoped_ptr<blink::WebAppBannerClient> CreateAppBannerClient(
+  virtual std::unique_ptr<blink::WebAppBannerClient> CreateAppBannerClient(
       RenderFrame* render_frame);
 
   // Gives the embedder a chance to add properties to the context menu.
@@ -333,21 +345,29 @@ class CONTENT_EXPORT ContentRendererClient {
   // is called from the worker thread.
   virtual void DidInitializeServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
+      int embedded_worker_id,
       const GURL& url) {}
 
   // Notifies that a service worker context will be destroyed. This function
   // is called from the worker thread.
   virtual void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
+      int embedded_worker_id,
       const GURL& url) {}
 
   // Whether this renderer should enforce preferences related to the WebRTC
   // routing logic, i.e. allowing multiple routes and non-proxied UDP.
   virtual bool ShouldEnforceWebRTCRoutingPreferences();
 
-  // Returns the public key to be used for origin trials, or an empty string if
-  // origin trials are not enabled in this context.
-  virtual base::StringPiece GetOriginTrialPublicKey();
+  // Notifies that a worker context has been created. This function is called
+  // from the worker thread.
+  virtual void DidInitializeWorkerContextOnWorkerThread(
+      v8::Local<v8::Context> context) {}
+
+  // Allows the client to expose interfaces from the renderer process to the
+  // browser process via |registry|.
+  virtual void ExposeInterfacesToBrowser(
+      shell::InterfaceRegistry* interface_registry) {}
 };
 
 }  // namespace content

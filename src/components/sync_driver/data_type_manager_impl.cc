@@ -63,6 +63,7 @@ DataTypeManagerImpl::DataTypeManagerImpl(
       observer_(observer),
       encryption_handler_(encryption_handler),
       catch_up_in_progress_(false),
+      download_started_(false),
       weak_ptr_factory_(this) {
   DCHECK(configurer_);
   DCHECK(observer_);
@@ -169,6 +170,15 @@ void DataTypeManagerImpl::ConfigureImpl(
   }
 
   Restart(reason);
+}
+
+void DataTypeManagerImpl::RegisterTypesWithBackend() {
+  for (syncer::ModelTypeSet::Iterator type_iter = last_requested_types_.First();
+       type_iter.Good(); type_iter.Inc()) {
+    const auto& dtc_iter = controllers_->find(type_iter.Get());
+    if (dtc_iter != controllers_->end())
+      dtc_iter->second->RegisterWithBackend(configurer_);
+  }
 }
 
 BackendDataTypeConfigurer::DataTypeConfigStateMap
@@ -299,8 +309,19 @@ void DataTypeManagerImpl::Restart(syncer::ConfigureReason reason) {
   // call to Initialize triggers model association.
   if (catch_up_in_progress_)
     model_association_manager_.Stop();
+  download_started_ = false;
   model_association_manager_.Initialize(enabled_types);
+}
 
+void DataTypeManagerImpl::OnAllDataTypesReadyForConfigure() {
+  DCHECK(!download_started_);
+  download_started_ = true;
+  UMA_HISTOGRAM_LONG_TIMES("Sync.USSLoadModelsTime",
+                           base::Time::Now() - last_restart_time_);
+  // TODO(pavely): By now some of datatypes in download_types_queue_ could have
+  // failed loading and should be excluded from configuration. I need to adjust
+  // download_types_queue_ for such types.
+  RegisterTypesWithBackend();
   StartNextDownload(syncer::ModelTypeSet());
 }
 
@@ -483,7 +504,6 @@ void DataTypeManagerImpl::StartNextAssociation(AssociationGroup group) {
     types_to_associate = association_types_queue_.front().types;
   }
 
-
   DVLOG(1) << "Associating "
            << syncer::ModelTypeSetToString(types_to_associate);
   model_association_manager_.StartAssociationAsync(types_to_associate);
@@ -579,7 +599,7 @@ void DataTypeManagerImpl::OnModelAssociationDone(
   // If this model association was for the full set of types, then this priority
   // set is done. Otherwise it was just the ready types and the unready types
   // still need to be associated.
-  if (result.requested_types.Equals(association_types_queue_.front().types)) {
+  if (result.requested_types == association_types_queue_.front().types) {
     association_types_queue_.pop();
     if (!association_types_queue_.empty()) {
       StartNextAssociation(READY_AT_CONFIG);
@@ -588,8 +608,8 @@ void DataTypeManagerImpl::OnModelAssociationDone(
       NotifyDone(result);
     }
   } else {
-    DCHECK(result.requested_types.Equals(
-        association_types_queue_.front().ready_types));
+    DCHECK_EQ(association_types_queue_.front().ready_types,
+              result.requested_types);
     // Will do nothing if the types are still downloading.
     StartNextAssociation(UNREADY_AT_CONFIG);
   }

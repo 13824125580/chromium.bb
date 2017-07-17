@@ -16,7 +16,6 @@
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebFileChooserCompletion.h"
@@ -155,9 +154,10 @@ int32_t PepperFileChooserHost::OnShow(
   params.requestor = renderer_ppapi_host_->GetDocumentURL(pp_instance());
 
   handler_ = new CompletionHandler(AsWeakPtr());
-  RenderViewImpl* render_view = static_cast<RenderViewImpl*>(
-      renderer_ppapi_host_->GetRenderViewForInstance(pp_instance()));
-  if (!render_view || !render_view->runFileChooser(params, handler_)) {
+  RenderFrameImpl* render_frame = static_cast<RenderFrameImpl*>(
+      renderer_ppapi_host_->GetRenderFrameForInstance(pp_instance()));
+
+  if (!render_frame || !render_frame->runFileChooser(params, handler_)) {
     delete handler_;
     handler_ = NULL;
     return PP_ERROR_NOACCESS;
@@ -180,7 +180,7 @@ void PepperFileChooserHost::DidCreateResourceHosts(
         renderer_ppapi_host_, pp_instance(), 0, file_paths[i]);
     int renderer_id =
         renderer_ppapi_host_->GetPpapiHost()->AddPendingResourceHost(
-            scoped_ptr<ppapi::host::ResourceHost>(renderer_host));
+            std::unique_ptr<ppapi::host::ResourceHost>(renderer_host));
     ppapi::FileRefCreateInfo info = ppapi::MakeExternalFileRefCreateInfo(
         file_paths[i], display_names[i], browser_ids[i], renderer_id);
     chosen_files.push_back(info);

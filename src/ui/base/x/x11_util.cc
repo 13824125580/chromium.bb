@@ -11,29 +11,31 @@
 #include <ctype.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
-
-#include <list>
-#include <map>
-#include <utility>
-#include <vector>
-
 #include <X11/extensions/shape.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/Xcursor/Xcursor.h>
 
+#include <list>
+#include <map>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "skia/ext/image_operations.h"
@@ -72,7 +74,7 @@ namespace {
 
 int DefaultX11ErrorHandler(XDisplay* d, XErrorEvent* e) {
   if (base::MessageLoop::current()) {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&LogErrorEventDescription, d, *e));
   } else {
     LOG(ERROR)
@@ -874,7 +876,7 @@ bool SetIntArrayProperty(XID window,
   XAtom type_atom = GetAtom(type.c_str());
 
   // XChangeProperty() expects values of type 32 to be longs.
-  scoped_ptr<long[]> data(new long[value.size()]);
+  std::unique_ptr<long[]> data(new long[value.size()]);
   for (size_t i = 0; i < value.size(); ++i)
     data[i] = value[i];
 
@@ -907,7 +909,7 @@ bool SetAtomArrayProperty(XID window,
   XAtom type_atom = GetAtom(type.c_str());
 
   // XChangeProperty() expects values of type 32 to be longs.
-  scoped_ptr<XAtom[]> data(new XAtom[value.size()]);
+  std::unique_ptr<XAtom[]> data(new XAtom[value.size()]);
   for (size_t i = 0; i < value.size(); ++i)
     data[i] = value[i];
 
@@ -1129,7 +1131,7 @@ bool CopyAreaToCanvas(XID drawable,
                       gfx::Rect source_bounds,
                       gfx::Point dest_offset,
                       gfx::Canvas* canvas) {
-  scoped_ptr<XImage, XImageDeleter> image(XGetImage(
+  std::unique_ptr<XImage, XImageDeleter> image(XGetImage(
       gfx::GetXDisplay(), drawable, source_bounds.x(), source_bounds.y(),
       source_bounds.width(), source_bounds.height(), AllPlanes, ZPixmap));
   if (!image) {
@@ -1252,7 +1254,7 @@ bool IsX11WindowFullScreen(XID window) {
   if (!ui::GetOuterWindowBounds(window, &window_rect))
     return false;
 
-  // We can't use gfx::Screen here because we don't have an aura::Window. So
+  // We can't use display::Screen here because we don't have an aura::Window. So
   // instead just look at the size of the default display.
   //
   // TODO(erg): Actually doing this correctly would require pulling out xrandr,

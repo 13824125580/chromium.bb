@@ -16,13 +16,19 @@
 #import "chrome/browser/ui/cocoa/content_settings/content_setting_bubble_cocoa.h"
 #include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/themed_window.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "grit/theme_resources.h"
+#include "skia/ext/skia_utils_mac.h"
 #include "ui/base/cocoa/appkit_utils.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
+#import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
@@ -55,6 +61,21 @@ const double kInMotionMultiplier = 1.0 / kInMotionInterval;
 const CGFloat kTextMarginPadding = 4;
 const CGFloat kIconMarginPadding = 2;
 const CGFloat kBorderPadding = 3;
+
+// Padding between the divider between the omnibox text and the divider. The
+// desired value for each side is 8px. We get 5px on the left side by
+// subtracting kBorderPadding from 8px.
+const CGFloat kRightDividerPadding = 8.0;
+const CGFloat kLeftDividerPadding = 5.0;
+CGFloat DividerPadding() {
+  return ui::MaterialDesignController::IsModeMaterial()
+             ? kLeftDividerPadding + kRightDividerPadding
+             : 0.0;
+}
+
+// Color of the vector graphic icons. Used when the location is not dark.
+// SkColorSetARGB(0xCC, 0xFF, 0xFF 0xFF);
+const SkColor kVectorIconColor = 0xCCFFFFFF;
 
 // Different states in which the animation can be. In |kOpening|, the text
 // is getting larger. In |kOpen|, the text should be displayed at full size.
@@ -176,14 +197,16 @@ ContentSettingDecoration::~ContentSettingDecoration() {
 bool ContentSettingDecoration::UpdateFromWebContents(
     WebContents* web_contents) {
   bool was_visible = IsVisible();
-  int old_icon = content_setting_image_model_->raster_icon_id();
-  content_setting_image_model_->UpdateFromWebContents(web_contents);
+  bool did_icon_change =
+      content_setting_image_model_->UpdateFromWebContentsAndCheckIfIconChanged(
+          web_contents);
   SetVisible(content_setting_image_model_->is_visible());
-  bool decoration_changed =
-      was_visible != IsVisible() ||
-      old_icon != content_setting_image_model_->raster_icon_id();
+  bool decoration_changed = was_visible != IsVisible() || did_icon_change;
   if (IsVisible()) {
-    SetImage(content_setting_image_model_->raster_icon().ToNSImage());
+    SkColor icon_color =
+        owner_->IsLocationBarDark() ? kVectorIconColor : gfx::kChromeIconGrey;
+    SetImage(content_setting_image_model_->GetIcon(icon_color).ToNSImage());
+
     SetToolTip(
         base::SysUTF16ToNSString(content_setting_image_model_->get_tooltip()));
 
@@ -230,8 +253,16 @@ ContentSettingDecoration::CreateAnimatedText() {
   // Set line break mode to clip the text, otherwise drawInRect: won't draw a
   // word if it doesn't fit in the bounding box.
   [style setLineBreakMode:NSLineBreakByClipping];
-  NSDictionary* attributes = @{ NSFontAttributeName : GetFont(),
-                                NSParagraphStyleAttributeName : style };
+
+  SkColor text_color = owner_->IsLocationBarDark() ? kMaterialDarkModeTextColor
+                                                   : gfx::kChromeIconGrey;
+  NSDictionary* attributes = @{
+    NSFontAttributeName : GetFont(),
+    NSParagraphStyleAttributeName : style,
+    NSForegroundColorAttributeName :
+        skia::SkColorToCalibratedNSColor(text_color)
+  };
+
   return base::scoped_nsobject<NSAttributedString>(
       [[NSAttributedString alloc] initWithString:text attributes:attributes]);
 }
@@ -268,7 +299,7 @@ bool ContentSettingDecoration::OnMousePressed(NSRect frame, NSPoint location) {
   AutocompleteTextField* field = owner_->GetAutocompleteTextField();
   NSPoint anchor = GetBubblePointInFrame(frame);
   anchor = [field convertPoint:anchor toView:nil];
-  anchor = [[field window] convertBaseToScreen:anchor];
+  anchor = ui::ConvertPointFromWindowToScreen([field window], anchor);
 
   // Open bubble.
   ContentSettingBubbleModel* model =
@@ -310,16 +341,18 @@ CGFloat ContentSettingDecoration::GetWidthForSpace(CGFloat width) {
       CGFloat progress = [animation_ progress];
       // Add the margins, fixed for all animation states.
       preferred_width += kIconMarginPadding + kTextMarginPadding;
+
       // Add the width of the text based on the state of the animation.
+      CGFloat text_width = text_width_ + DividerPadding();
       switch (state) {
         case kOpening:
-          preferred_width += text_width_ * kInMotionMultiplier * progress;
+          preferred_width += text_width * kInMotionMultiplier * progress;
           break;
         case kOpen:
-          preferred_width += text_width_;
+          preferred_width += text_width;
           break;
         case kClosing:
-          preferred_width += text_width_ * kInMotionMultiplier * (1 - progress);
+          preferred_width += text_width * kInMotionMultiplier * (1 - progress);
           break;
         default:
           // Do nothing.
@@ -333,10 +366,21 @@ CGFloat ContentSettingDecoration::GetWidthForSpace(CGFloat width) {
 void ContentSettingDecoration::DrawInFrame(NSRect frame, NSView* control_view) {
   if ([animation_ animationState] != kNoAnimation) {
     NSRect background_rect = NSInsetRect(frame, 0.0, kBorderPadding);
-    const ui::NinePartImageIds image_ids =
-        IMAGE_GRID(IDR_OMNIBOX_CONTENT_SETTING_BUBBLE);
-    ui::DrawNinePartImage(
-        background_rect, image_ids, NSCompositeSourceOver, 1.0, true);
+    // This code is almost identical to code that appears in BubbleDecoration.
+    // Unfortunately ContentSettingDecoration does not descend from
+    // BubbleDecoration. Even if we move the code to LocationBarDecoration (the
+    // common ancestor) the semantics here are slightly different: there's a
+    // general DrawBackgroundInFrame() method for LocationBarDecorations that
+    // draws the background and then calls DrawInFrame(), but for some reason
+    // this ContentSettingDecoration's DrawInFrame() also draws the background.
+    // In short, moving this code upstream to a common parent requires a non-
+    // trivial bit of refactoring.
+    if (!ui::MaterialDesignController::IsModeMaterial()) {
+      const ui::NinePartImageIds image_ids =
+          IMAGE_GRID(IDR_OMNIBOX_CONTENT_SETTING_BUBBLE);
+      ui::DrawNinePartImage(
+          background_rect, image_ids, NSCompositeSourceOver, 1.0, true);
+    }
 
     // Draw the icon.
     NSImage* icon = GetImage();
@@ -348,9 +392,23 @@ void ContentSettingDecoration::DrawInFrame(NSRect frame, NSView* control_view) {
     }
 
     NSRect remainder = frame;
-    remainder.origin.x = NSMaxX(icon_rect);
-    remainder.size.width = NSMaxX(background_rect) - NSMinX(remainder);
+    remainder.origin.x = NSMaxX(icon_rect) + kTextMarginPadding;
+    remainder.size.width =
+        NSMaxX(background_rect) - NSMinX(remainder) - kLeftDividerPadding;
     DrawAttributedString(animated_text_, remainder);
+
+    if (ui::MaterialDesignController::IsModeMaterial()) {
+      NSBezierPath* line = [NSBezierPath bezierPath];
+      [line setLineWidth:1];
+      [line
+          moveToPoint:NSMakePoint(NSMaxX(background_rect) - kLeftDividerPadding,
+                                  NSMinY(background_rect))];
+      [line
+          lineToPoint:NSMakePoint(NSMaxX(background_rect) - kLeftDividerPadding,
+                                  NSMaxY(background_rect))];
+      [GetDividerColor(owner_->IsLocationBarDark()) set];
+      [line stroke];
+    }
   } else {
     // No animation, draw the image as normal.
     ImageDecoration::DrawInFrame(frame, control_view);

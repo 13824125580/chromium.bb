@@ -14,7 +14,7 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -280,15 +280,23 @@ void AccountReconcilor::StartReconcile() {
   is_reconcile_started_ = true;
   error_during_last_reconcile_ = false;
 
+  // ListAccounts() also gets signed out accounts but this class doesn't use
+  // them.
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+
   // Rely on the GCMS to manage calls to and responses from ListAccounts.
-  if (cookie_manager_service_->ListAccounts(&gaia_accounts_)) {
+  if (cookie_manager_service_->ListAccounts(&gaia_accounts_,
+                                            &signed_out_accounts)) {
     OnGaiaAccountsInCookieUpdated(
-        gaia_accounts_, GoogleServiceAuthError(GoogleServiceAuthError::NONE));
+        gaia_accounts_,
+        signed_out_accounts,
+        GoogleServiceAuthError(GoogleServiceAuthError::NONE));
   }
 }
 
 void AccountReconcilor::OnGaiaAccountsInCookieUpdated(
         const std::vector<gaia::ListedAccount>& accounts,
+        const std::vector<gaia::ListedAccount>& signed_out_accounts,
         const GoogleServiceAuthError& error) {
   VLOG(1) << "AccountReconcilor::OnGaiaAccountsInCookieUpdated: "
           << "CookieJar " << accounts.size() << " accounts, "

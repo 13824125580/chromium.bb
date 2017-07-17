@@ -27,9 +27,6 @@
 #define ExternalDateTimeChooser_h
 
 #include "core/html/forms/DateTimeChooser.h"
-#include "wtf/build_config.h"
-
-#if !ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 
 namespace blink {
 
@@ -40,7 +37,7 @@ class WebViewClient;
 
 class ExternalDateTimeChooser final : public DateTimeChooser {
 public:
-    static PassRefPtrWillBeRawPtr<ExternalDateTimeChooser> create(ChromeClientImpl*, WebViewClient*, DateTimeChooserClient*, const DateTimeChooserParameters&);
+    static ExternalDateTimeChooser* create(ChromeClientImpl*, WebViewClient*, DateTimeChooserClient*, const DateTimeChooserParameters&);
     ~ExternalDateTimeChooser() override;
     DECLARE_VIRTUAL_TRACE();
 
@@ -57,10 +54,8 @@ private:
     void endChooser() override;
     AXObject* rootAXObject() override;
 
-    RawPtrWillBeMember<DateTimeChooserClient> m_client;
+    Member<DateTimeChooserClient> m_client;
 };
 
 }
-#endif
-
 #endif

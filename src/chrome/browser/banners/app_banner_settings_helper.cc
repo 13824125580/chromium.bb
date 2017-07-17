@@ -5,11 +5,13 @@
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <string>
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -17,7 +19,6 @@
 #include "chrome/browser/banners/app_banner_metrics.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -71,9 +72,8 @@ const char kBannerParamsDirectKey[] = "direct";
 const char kBannerParamsIndirectKey[] = "indirect";
 const char kBannerParamsTotalKey[] = "total";
 const char kBannerParamsMinutesKey[] = "minutes";
-const char kBannerSiteEngagementParamsKey[] = "app_banner_triggering";
-const char kBannerSiteEngagementParamsTotalKey[] =
-    "app_banner_triggering_total";
+const char kBannerParamsEngagementTotalKey[] = "site_engagement_total";
+const char kBannerSiteEngagementParamsKey[] = "use_site_engagement";
 
 // Engagement weight assigned to direct and indirect navigations.
 // By default, a direct navigation is a page visit via ui::PAGE_TRANSITION_TYPED
@@ -88,18 +88,18 @@ unsigned int gMinimumMinutesBetweenVisits = kNumberOfMinutesInADay;
 // Total engagement score required before a banner will actually be triggered.
 double gTotalEngagementToTrigger = kDefaultTotalEngagementToTrigger;
 
-scoped_ptr<base::DictionaryValue> GetOriginDict(
+std::unique_ptr<base::DictionaryValue> GetOriginDict(
     HostContentSettingsMap* settings,
     const GURL& origin_url) {
   if (!settings)
-    return make_scoped_ptr(new base::DictionaryValue());
+    return base::WrapUnique(new base::DictionaryValue());
 
-  scoped_ptr<base::DictionaryValue> dict =
+  std::unique_ptr<base::DictionaryValue> dict =
       base::DictionaryValue::From(settings->GetWebsiteSetting(
           origin_url, origin_url, CONTENT_SETTINGS_TYPE_APP_BANNER,
           std::string(), NULL));
   if (!dict)
-    return make_scoped_ptr(new base::DictionaryValue());
+    return base::WrapUnique(new base::DictionaryValue());
 
   return dict;
 }
@@ -111,7 +111,8 @@ base::DictionaryValue* GetAppDict(base::DictionaryValue* origin_dict,
     // Don't allow more than kMaxAppsPerSite dictionaries.
     if (origin_dict->size() < kMaxAppsPerSite) {
       app_dict = new base::DictionaryValue();
-      origin_dict->SetWithoutPathExpansion(key_name, make_scoped_ptr(app_dict));
+      origin_dict->SetWithoutPathExpansion(key_name,
+                                           base::WrapUnique(app_dict));
     }
   }
 
@@ -133,8 +134,7 @@ double GetEventEngagement(ui::PageTransition transition_type) {
 // the banner showing.
 void UpdateSiteEngagementToTrigger() {
   std::string total_param = variations::GetVariationParamValue(
-      SiteEngagementService::kEngagementParams,
-      kBannerSiteEngagementParamsTotalKey);
+      kBannerParamsKey, kBannerParamsEngagementTotalKey);
 
   if (!total_param.empty()) {
     double total_engagement = -1;
@@ -188,16 +188,6 @@ void UpdateMinutesBetweenVisits() {
     if (base::StringToInt(param, &minimum_minutes))
       AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(minimum_minutes);
   }
-}
-
-// Returns the site engagement karma score for the given origin URL under the
-// current profile.
-double GetSiteEngagementScoreForOrigin(
-    content::WebContents* web_contents,
-    const GURL& origin_url) {
-  SiteEngagementService* service = SiteEngagementService::Get(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()));
-  return service ? service->GetScore(origin_url) : 0;
 }
 
 }  // namespace
@@ -268,7 +258,7 @@ void AppBannerSettingsHelper::RecordBannerEvent(
 
   HostContentSettingsMap* settings =
       HostContentSettingsMapFactory::GetForProfile(profile);
-  scoped_ptr<base::DictionaryValue> origin_dict =
+  std::unique_ptr<base::DictionaryValue> origin_dict =
       GetOriginDict(settings, origin_url);
   if (!origin_dict)
     return;
@@ -283,9 +273,9 @@ void AppBannerSettingsHelper::RecordBannerEvent(
   std::string event_key(kBannerEventKeys[event]);
   app_dict->SetDouble(event_key, time.ToInternalValue());
 
-  settings->SetWebsiteSettingDefaultScope(origin_url, GURL(),
-                                          CONTENT_SETTINGS_TYPE_APP_BANNER,
-                                          std::string(), origin_dict.release());
+  settings->SetWebsiteSettingDefaultScope(
+      origin_url, GURL(), CONTENT_SETTINGS_TYPE_APP_BANNER, std::string(),
+      std::move(origin_dict));
 
   // App banner content settings are lossy, meaning they will not cause the
   // prefs to become dirty. This is fine for most events, as if they are lost it
@@ -309,7 +299,7 @@ void AppBannerSettingsHelper::RecordBannerCouldShowEvent(
 
   HostContentSettingsMap* settings =
       HostContentSettingsMapFactory::GetForProfile(profile);
-  scoped_ptr<base::DictionaryValue> origin_dict =
+  std::unique_ptr<base::DictionaryValue> origin_dict =
       GetOriginDict(settings, origin_url);
   if (!origin_dict)
     return;
@@ -325,14 +315,13 @@ void AppBannerSettingsHelper::RecordBannerCouldShowEvent(
   base::ListValue* could_show_list = nullptr;
   if (!app_dict->GetList(event_key, &could_show_list)) {
     could_show_list = new base::ListValue();
-    app_dict->Set(event_key, make_scoped_ptr(could_show_list));
+    app_dict->Set(event_key, base::WrapUnique(could_show_list));
   }
 
   // Trim any items that are older than we should care about. For comparisons
   // the times are converted to local dates.
   base::Time date = BucketTimeToResolution(time, gMinimumMinutesBetweenVisits);
-  base::ValueVector::iterator it = could_show_list->begin();
-  while (it != could_show_list->end()) {
+  for (auto it = could_show_list->begin(); it != could_show_list->end();) {
     if ((*it)->IsType(base::Value::TYPE_DICTIONARY)) {
       base::DictionaryValue* internal_value;
       double internal_date;
@@ -371,14 +360,14 @@ void AppBannerSettingsHelper::RecordBannerCouldShowEvent(
 
   // Dates are stored in their raw form (i.e. not local dates) to be resilient
   // to time zone changes.
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   value->SetDouble(kBannerTimeKey, time.ToInternalValue());
   value->SetDouble(kBannerEngagementKey, engagement);
   could_show_list->Append(std::move(value));
 
-  settings->SetWebsiteSettingDefaultScope(origin_url, GURL(),
-                                          CONTENT_SETTINGS_TYPE_APP_BANNER,
-                                          std::string(), origin_dict.release());
+  settings->SetWebsiteSettingDefaultScope(
+      origin_url, GURL(), CONTENT_SETTINGS_TYPE_APP_BANNER, std::string(),
+      std::move(origin_dict));
 }
 
 bool AppBannerSettingsHelper::ShouldShowBanner(
@@ -426,19 +415,24 @@ bool AppBannerSettingsHelper::ShouldShowBanner(
     return false;
   }
 
+  // If we have gotten this far and want to use site engagement, the banner flow
+  // was triggered by the site engagement service informing the banner manager
+  // that sufficient engagement has been accumulated. Hence there is no need to
+  // check the total amount of engagement.
+  // TODO(dominickn): just return true here and remove all of the following code
+  // in this method when app banners have fully migrated to using site
+  // engagement as a trigger condition. See crbug.com/616322.
+  if (ShouldUseSiteEngagementScore())
+    return true;
+
   double total_engagement = 0;
-  if (ShouldUseSiteEngagementScore()) {
-    total_engagement =
-        GetSiteEngagementScoreForOrigin(web_contents, origin_url);
-  } else {
-    std::vector<BannerEvent> could_show_events = GetCouldShowBannerEvents(
-        web_contents, origin_url, package_name_or_start_url);
+  std::vector<BannerEvent> could_show_events = GetCouldShowBannerEvents(
+      web_contents, origin_url, package_name_or_start_url);
 
-    for (const auto& event : could_show_events)
-      total_engagement += event.engagement;
-  }
+  for (const auto& event : could_show_events)
+    total_engagement += event.engagement;
 
-  if (total_engagement < gTotalEngagementToTrigger) {
+  if (!HasSufficientEngagement(total_engagement)) {
     banners::TrackDisplayEvent(banners::DISPLAY_EVENT_NOT_VISITED_ENOUGH);
     return false;
   }
@@ -457,7 +451,7 @@ AppBannerSettingsHelper::GetCouldShowBannerEvents(
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   HostContentSettingsMap* settings =
       HostContentSettingsMapFactory::GetForProfile(profile);
-  scoped_ptr<base::DictionaryValue> origin_dict =
+  std::unique_ptr<base::DictionaryValue> origin_dict =
       GetOriginDict(settings, origin_url);
 
   if (!origin_dict)
@@ -473,7 +467,7 @@ AppBannerSettingsHelper::GetCouldShowBannerEvents(
   if (!app_dict->GetList(event_key, &could_show_list))
     return result;
 
-  for (auto value : *could_show_list) {
+  for (const auto& value : *could_show_list) {
     if (value->IsType(base::Value::TYPE_DICTIONARY)) {
       base::DictionaryValue* internal_value;
       double internal_date = 0;
@@ -503,7 +497,7 @@ base::Time AppBannerSettingsHelper::GetSingleBannerEvent(
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   HostContentSettingsMap* settings =
       HostContentSettingsMapFactory::GetForProfile(profile);
-  scoped_ptr<base::DictionaryValue> origin_dict =
+  std::unique_ptr<base::DictionaryValue> origin_dict =
       GetOriginDict(settings, origin_url);
 
   if (!origin_dict)
@@ -520,6 +514,12 @@ base::Time AppBannerSettingsHelper::GetSingleBannerEvent(
     return base::Time();
 
   return base::Time::FromInternalValue(internal_time);
+}
+
+bool AppBannerSettingsHelper::HasSufficientEngagement(double total_engagement) {
+  return (base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kBypassAppBannerEngagementChecks)) ||
+         (total_engagement >= gTotalEngagementToTrigger);
 }
 
 void AppBannerSettingsHelper::RecordMinutesFromFirstVisitToShow(
@@ -603,16 +603,10 @@ bool AppBannerSettingsHelper::ShouldUseSiteEngagementScore() {
     return true;
   }
 
-  // This experiment is controlled under the same key as the broader site
-  // engagement experiment rather than the banner experiment. This avoids cross
-  // pollution with other site engagement experiments. However, this experiment
-  // must only be active when there is one singular group under the banner
-  // experiment, otherwise the banner and site engagement banner experiments
-  // will conflict.
-  //
-  // Making the experiment active when a variations key is present allows us
-  // to have experiments which enable multiple features under site engagement.
+  // Assume any value which is not "0" or "false" indicates that we should use
+  // site engagement.
   std::string param = variations::GetVariationParamValue(
-      SiteEngagementService::kEngagementParams, kBannerSiteEngagementParamsKey);
-  return !param.empty();
+      kBannerParamsKey, kBannerSiteEngagementParamsKey);
+
+  return (!param.empty() && param != "0" && param != "false");
 }

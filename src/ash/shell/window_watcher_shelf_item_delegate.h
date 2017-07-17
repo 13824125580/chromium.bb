@@ -5,8 +5,8 @@
 #ifndef ASH_SHELL_WINDOW_WATCHER_SHELF_ITEM_DELEGATE_H_
 #define ASH_SHELL_WINDOW_WATCHER_SHELF_ITEM_DELEGATE_H_
 
-#include "ash/shelf/shelf_item_delegate.h"
-#include "ash/shelf/shelf_item_types.h"
+#include "ash/common/shelf/shelf_item_delegate.h"
+#include "ash/common/shelf/shelf_item_types.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 
@@ -25,7 +25,6 @@ class WindowWatcherShelfItemDelegate : public ShelfItemDelegate {
   ShelfItemDelegate::PerformedAction ItemSelected(
       const ui::Event& event) override;
   base::string16 GetTitle() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root_window) override;
   ShelfMenuModel* CreateApplicationMenu(int event_flags) override;
   bool IsDraggable() override;
   bool CanPin() const override;

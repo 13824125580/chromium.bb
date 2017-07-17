@@ -31,6 +31,9 @@ class TextInputClientObserver : public RenderViewObserver {
   bool OnMessageReceived(const IPC::Message& message) override;
 
  private:
+  // RenderViewObserver implementation.
+  void OnDestruct() override;
+
   // Returns the WebView of the RenderView.
   blink::WebView* webview();
 
@@ -40,7 +43,9 @@ class TextInputClientObserver : public RenderViewObserver {
   void OnFirstRectForCharacterRange(gfx::Range range);
   void OnStringForRange(gfx::Range range);
 
+#if defined(ENABLE_PLUGINS)
   RenderViewImpl* const render_view_impl_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(TextInputClientObserver);
 };

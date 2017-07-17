@@ -5,7 +5,6 @@
 #include "media/base/mock_filters.h"
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 
 using ::testing::_;
 using ::testing::Invoke;
@@ -13,6 +12,25 @@ using ::testing::NotNull;
 using ::testing::Return;
 
 namespace media {
+
+MockPipelineClient::MockPipelineClient() {}
+MockPipelineClient::~MockPipelineClient() {}
+
+MockPipeline::MockPipeline() {}
+MockPipeline::~MockPipeline() {}
+
+void MockPipeline::Start(Demuxer* demuxer,
+                         std::unique_ptr<Renderer> renderer,
+                         Client* client,
+                         const PipelineStatusCB& seek_cb) {
+  Start(demuxer, &renderer, client, seek_cb);
+}
+
+void MockPipeline::Resume(std::unique_ptr<Renderer> renderer,
+                          base::TimeDelta timestamp,
+                          const PipelineStatusCB& seek_cb) {
+  Resume(&renderer, timestamp, seek_cb);
+}
 
 MockDemuxer::MockDemuxer() {}
 
@@ -84,6 +102,10 @@ MockAudioDecoder::MockAudioDecoder() {}
 
 MockAudioDecoder::~MockAudioDecoder() {}
 
+MockRendererClient::MockRendererClient() {}
+
+MockRendererClient::~MockRendererClient() {}
+
 MockVideoRenderer::MockVideoRenderer() {}
 
 MockVideoRenderer::~MockVideoRenderer() {}
@@ -113,7 +135,11 @@ MockCdmContext::MockCdmContext() {}
 MockCdmContext::~MockCdmContext() {}
 
 int MockCdmContext::GetCdmId() const {
-  return CdmContext::kInvalidCdmId;
+  return cdm_id_;
+}
+
+void MockCdmContext::set_cdm_id(int cdm_id) {
+  cdm_id_ = cdm_id;
 }
 
 }  // namespace media

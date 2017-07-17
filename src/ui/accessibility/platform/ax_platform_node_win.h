@@ -54,11 +54,11 @@ AXPlatformNodeWin
   ~AXPlatformNodeWin() override;
 
   // AXPlatformNode overrides.
-  void Destroy() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void NotifyAccessibilityEvent(ui::AXEvent event_type) override;
 
   // AXPlatformNodeBase overrides.
+  void Destroy() override;
   int GetIndexInParent() override;
 
   //
@@ -267,6 +267,9 @@ AXPlatformNodeWin
  protected:
   AXPlatformNodeWin();
 
+  // AXPlatformNodeBase overrides.
+  void Dispose() override;
+
  private:
   bool IsValidId(const VARIANT& child) const;
   int MSAARole();
@@ -297,16 +300,6 @@ AXPlatformNodeWin
                     IA2TextBoundaryType ia2_boundary,
                     LONG start_offset,
                     ui::TextBoundaryDirection direction);
-
-  // A windows-specific unique ID for this object. It's returned in
-  // IAccessible2::get_uniqueID, but more importantly it's used for
-  // firing events. On Windows, we fire events on the nearest parent HWND
-  // and pass the unique ID as the child id parameter. When the client
-  // wants to retrieve the object the event was fired on, it calls
-  // get_accChild and passes the child ID. We use negative IDs for the unique
-  // ID so we can distinguish a request for an arbitrary child from a request
-  // for an immediate child of an object by its 0-based index.
-  LONG unique_id_win_;
 };
 
 }  // namespace ui

@@ -33,9 +33,7 @@
 
 #include "core/html/forms/DateTimeChooser.h"
 #include "core/page/PagePopupClient.h"
-#include "wtf/build_config.h"
-
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
+#include <memory>
 
 namespace blink {
 
@@ -45,7 +43,7 @@ class PagePopup;
 
 class DateTimeChooserImpl final : public DateTimeChooser, public PagePopupClient {
 public:
-    static PassRefPtrWillBeRawPtr<DateTimeChooserImpl> create(ChromeClientImpl*, DateTimeChooserClient*, const DateTimeChooserParameters&);
+    static DateTimeChooserImpl* create(ChromeClientImpl*, DateTimeChooserClient*, const DateTimeChooserParameters&);
     ~DateTimeChooserImpl() override;
 
     // DateTimeChooser functions:
@@ -66,15 +64,13 @@ private:
     Element& ownerElement() override;
     void didClosePopup() override;
 
-    RawPtrWillBeMember<ChromeClientImpl> m_chromeClient;
-    RawPtrWillBeMember<DateTimeChooserClient> m_client;
+    Member<ChromeClientImpl> m_chromeClient;
+    Member<DateTimeChooserClient> m_client;
     PagePopup* m_popup;
     DateTimeChooserParameters m_parameters;
-    OwnPtr<Locale> m_locale;
+    std::unique_ptr<Locale> m_locale;
 };
 
 } // namespace blink
-
-#endif // ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 
 #endif // DateTimeChooserImpl_h

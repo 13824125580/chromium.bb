@@ -5,9 +5,9 @@
 #ifndef BaseRenderingContext2D_h
 #define BaseRenderingContext2D_h
 
-#include "bindings/core/v8/UnionTypesCore.h"
-#include "bindings/modules/v8/UnionTypesModules.h"
-#include "core/html/canvas/CanvasRenderingContext.h"
+#include "bindings/modules/v8/HTMLImageElementOrHTMLVideoElementOrHTMLCanvasElementOrImageBitmap.h"
+#include "bindings/modules/v8/StringOrCanvasGradientOrCanvasPattern.h"
+#include "core/html/ImageData.h"
 #include "modules/ModulesExport.h"
 #include "modules/canvas2d/CanvasGradient.h"
 #include "modules/canvas2d/CanvasPathMethods.h"
@@ -26,7 +26,7 @@ class SVGMatrixTearOff;
 
 typedef HTMLImageElementOrHTMLVideoElementOrHTMLCanvasElementOrImageBitmap CanvasImageSourceUnion;
 
-class MODULES_EXPORT BaseRenderingContext2D : public WillBeGarbageCollectedMixin, public CanvasPathMethods {
+class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin, public CanvasPathMethods {
     WTF_MAKE_NONCOPYABLE(BaseRenderingContext2D);
 public:
     ~BaseRenderingContext2D() override;
@@ -79,8 +79,8 @@ public:
     void save();
     void restore();
 
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> currentTransform() const;
-    void setCurrentTransform(PassRefPtrWillBeRawPtr<SVGMatrixTearOff>);
+    SVGMatrixTearOff* currentTransform() const;
+    void setCurrentTransform(SVGMatrixTearOff*);
 
     void scale(double sx, double sy);
     void rotate(double angleInRadians);
@@ -107,16 +107,17 @@ public:
     void fillRect(double x, double y, double width, double height);
     void strokeRect(double x, double y, double width, double height);
 
-    void drawImage(const CanvasImageSourceUnion&, double x, double y, ExceptionState&);
-    void drawImage(const CanvasImageSourceUnion&, double x, double y, double width, double height, ExceptionState&);
-    void drawImage(const CanvasImageSourceUnion&, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh, ExceptionState&);
-    void drawImage(CanvasImageSource*, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh, ExceptionState&);
+    void drawImage(ExecutionContext*, const CanvasImageSourceUnion&, double x, double y, ExceptionState&);
+    void drawImage(ExecutionContext*, const CanvasImageSourceUnion&, double x, double y, double width, double height, ExceptionState&);
+    void drawImage(ExecutionContext*, const CanvasImageSourceUnion&, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh, ExceptionState&);
+    void drawImage(ExecutionContext*, CanvasImageSource*, double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh, ExceptionState&);
 
     CanvasGradient* createLinearGradient(double x0, double y0, double x1, double y1);
     CanvasGradient* createRadialGradient(double x0, double y0, double r0, double x1, double y1, double r1, ExceptionState&);
-    CanvasPattern* createPattern(const CanvasImageSourceUnion&, const String& repetitionType, ExceptionState&);
+    CanvasPattern* createPattern(ExecutionContext*, const CanvasImageSourceUnion&, const String& repetitionType, ExceptionState&);
+    CanvasPattern* createPattern(ExecutionContext*, CanvasImageSource*, const String& repetitionType, ExceptionState&);
 
-    ImageData* createImageData(ImageData*) const;
+    ImageData* createImageData(ImageData*, ExceptionState&) const;
     ImageData* createImageData(double width, double height, ExceptionState&) const;
     ImageData* getImageData(double sx, double sy, double sw, double sh, ExceptionState&) const;
     void putImageData(ImageData*, double dx, double dy, ExceptionState&);
@@ -129,7 +130,7 @@ public:
 
     virtual bool originClean() const = 0;
     virtual void setOriginTainted() = 0;
-    virtual bool wouldTaintOrigin(CanvasImageSource*) = 0;
+    virtual bool wouldTaintOrigin(CanvasImageSource*, ExecutionContext*) = 0;
 
     virtual int width() const = 0;
     virtual int height() const = 0;
@@ -149,6 +150,7 @@ public:
 
     virtual bool stateHasFilter() = 0;
     virtual SkImageFilter* stateGetFilter() = 0;
+    virtual void snapshotStateForFilter() = 0;
 
     virtual void validateStateStack() = 0;
 
@@ -156,7 +158,37 @@ public:
 
     virtual bool isContextLost() const = 0;
 
+    void restoreMatrixClipStack(SkCanvas*) const;
+
     DECLARE_VIRTUAL_TRACE();
+
+    struct UsageCounters {
+        int numDrawCalls[7]; // use DrawCallType enum as index
+        int numNonConvexFillPathCalls;
+        int numGradients;
+        int numPatterns;
+        int numDrawWithComplexClips;
+        int numBlurredShadows;
+        int numFilters;
+        int numGetImageDataCalls;
+        int numPutImageDataCalls;
+        int numClearRectCalls;
+        int numDrawFocusCalls;
+
+        UsageCounters();
+    };
+
+    enum DrawCallType {
+        StrokePath = 0,
+        FillPath,
+        DrawImage,
+        FillText,
+        StrokeText,
+        FillRect,
+        StrokeRect
+    };
+
+    const UsageCounters& getUsage();
 
 protected:
     BaseRenderingContext2D();
@@ -179,8 +211,12 @@ protected:
 
     void checkOverdraw(const SkRect&, const SkPaint*, CanvasRenderingContext2DState::ImageType, DrawType);
 
-    WillBeHeapVector<OwnPtrWillBeMember<CanvasRenderingContext2DState>> m_stateStack;
+    HeapVector<Member<CanvasRenderingContext2DState>> m_stateStack;
     AntiAliasingMode m_clipAntialiasing;
+
+    void trackDrawCall(DrawCallType, Path2D* path2d = nullptr);
+
+    mutable UsageCounters m_usageCounters;
 
 private:
     void realizeSaves();
@@ -216,8 +252,8 @@ bool BaseRenderingContext2D::draw(const DrawFunc& drawFunc, const ContainsFunc& 
     // If gradient size is zero, then paint nothing.
     CanvasStyle* style = state().style(paintType);
     if (style) {
-        CanvasGradient* gradient = style->canvasGradient();
-        if (gradient && gradient->gradient()->isZeroSize())
+        CanvasGradient* gradient = style->getCanvasGradient();
+        if (gradient && gradient->getGradient()->isZeroSize())
             return false;
     }
 

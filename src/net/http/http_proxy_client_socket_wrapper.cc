@@ -55,8 +55,6 @@ HttpProxyClientSocketWrapper::HttpProxyClientSocketWrapper(
       ssl_params_(ssl_params),
       user_agent_(user_agent),
       endpoint_(endpoint),
-      http_auth_cache_(http_auth_cache),
-      http_auth_handler_factory_(http_auth_handler_factory),
       spdy_session_pool_(spdy_session_pool),
       tunnel_(tunnel),
       proxy_delegate_(proxy_delegate),
@@ -108,7 +106,7 @@ LoadState HttpProxyClientSocketWrapper::GetConnectLoadState() const {
   return LOAD_STATE_IDLE;
 }
 
-scoped_ptr<HttpResponseInfo>
+std::unique_ptr<HttpResponseInfo>
 HttpProxyClientSocketWrapper::GetAdditionalErrorState() {
   return std::move(error_response_info_);
 }
@@ -229,12 +227,6 @@ bool HttpProxyClientSocketWrapper::WasEverUsed() const {
   // be done.
   if (transport_socket_)
     return transport_socket_->WasEverUsed();
-  return false;
-}
-
-bool HttpProxyClientSocketWrapper::UsingTCPFastOpen() const {
-  if (transport_socket_)
-    return transport_socket_->UsingTCPFastOpen();
   return false;
 }
 
@@ -428,7 +420,7 @@ int HttpProxyClientSocketWrapper::DoSSLConnect() {
   if (tunnel_) {
     SpdySessionKey key(GetDestination().host_port_pair(), ProxyServer::Direct(),
                        PRIVACY_MODE_DISABLED);
-    if (spdy_session_pool_->FindAvailableSession(key, net_log_)) {
+    if (spdy_session_pool_->FindAvailableSession(key, GURL(), net_log_)) {
       using_spdy_ = true;
       next_state_ = STATE_SPDY_PROXY_CREATE_STREAM;
       return OK;
@@ -526,7 +518,7 @@ int HttpProxyClientSocketWrapper::DoSpdyProxyCreateStream() {
   SpdySessionKey key(GetDestination().host_port_pair(), ProxyServer::Direct(),
                      PRIVACY_MODE_DISABLED);
   base::WeakPtr<SpdySession> spdy_session =
-      spdy_session_pool_->FindAvailableSession(key, net_log_);
+      spdy_session_pool_->FindAvailableSession(key, GURL(), net_log_);
   // It's possible that a session to the proxy has recently been created
   if (spdy_session) {
     if (transport_socket_handle_.get()) {

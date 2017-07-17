@@ -10,7 +10,9 @@
 #include <vector>
 
 #include "base/strings/stringprintf.h"
+#include "cc/output/output_surface.h"
 #include "cc/output/renderer.h"
+#include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
 #include "cc/resources/platform_color.h"
 #include "cc/resources/scoped_resource.h"
@@ -41,7 +43,7 @@ TextureLayerImpl::~TextureLayerImpl() { FreeTextureMailbox(); }
 
 void TextureLayerImpl::SetTextureMailbox(
     const TextureMailbox& mailbox,
-    scoped_ptr<SingleReleaseCallbackImpl> release_callback) {
+    std::unique_ptr<SingleReleaseCallbackImpl> release_callback) {
   DCHECK_EQ(mailbox.IsValid(), !!release_callback);
   FreeTextureMailbox();
   texture_mailbox_ = mailbox;
@@ -51,7 +53,7 @@ void TextureLayerImpl::SetTextureMailbox(
   SetNeedsPushProperties();
 }
 
-scoped_ptr<LayerImpl> TextureLayerImpl::CreateLayerImpl(
+std::unique_ptr<LayerImpl> TextureLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return TextureLayerImpl::Create(tree_impl, id());
 }
@@ -163,22 +165,18 @@ void TextureLayerImpl::AppendQuads(RenderPass* render_pass,
   if (visible_quad_rect.IsEmpty())
     return;
 
+  if (!vertex_opacity_[0] && !vertex_opacity_[1] && !vertex_opacity_[2] &&
+      !vertex_opacity_[3])
+    return;
+
   TextureDrawQuad* quad =
       render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
   ResourceId id =
       valid_texture_copy_ ? texture_copy_->id() : external_texture_resource_;
-  quad->SetNew(shared_quad_state,
-               quad_rect,
-               opaque_rect,
-               visible_quad_rect,
-               id,
-               premultiplied_alpha_,
-               uv_top_left_,
-               uv_bottom_right_,
-               bg_color,
-               vertex_opacity_,
-               flipped_,
-               nearest_neighbor_);
+  quad->SetNew(shared_quad_state, quad_rect, opaque_rect, visible_quad_rect, id,
+               premultiplied_alpha_, uv_top_left_, uv_bottom_right_, bg_color,
+               vertex_opacity_, flipped_, nearest_neighbor_,
+               texture_mailbox_.secure_output_only());
   if (!valid_texture_copy_) {
     quad->set_resource_size_in_pixels(texture_mailbox_.size_in_pixels());
   }

@@ -10,12 +10,14 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/test/begin_frame_args_test.h"
+#include "cc/test/fake_external_begin_frame_source.h"
 #include "cc/test/ordered_simple_task_runner.h"
 #include "cc/test/scheduler_test_common.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -50,7 +52,8 @@ namespace {
 base::TimeDelta kSlowDuration = base::TimeDelta::FromSeconds(1);
 base::TimeDelta kFastDuration = base::TimeDelta::FromMilliseconds(1);
 
-class FakeSchedulerClient : public SchedulerClient {
+class FakeSchedulerClient : public SchedulerClient,
+                            public FakeExternalBeginFrameSource::Client {
  public:
   FakeSchedulerClient()
       : automatic_swap_ack_(true),
@@ -66,7 +69,6 @@ class FakeSchedulerClient : public SchedulerClient {
     draw_will_happen_ = true;
     swap_will_happen_if_draw_happens_ = true;
     num_draws_ = 0;
-    begin_frame_args_sent_to_children_ = BeginFrameArgs();
     last_begin_main_frame_args_ = BeginFrameArgs();
   }
 
@@ -165,10 +167,6 @@ class FakeSchedulerClient : public SchedulerClient {
     states_.push_back(scheduler_->AsValue());
   }
 
-  void SendBeginFramesToChildren(const BeginFrameArgs& args) override {
-    begin_frame_args_sent_to_children_ = args;
-  }
-
   void SendBeginMainFrameNotExpectedSoon() override {
     PushAction("SendBeginMainFrameNotExpectedSoon");
   }
@@ -179,17 +177,17 @@ class FakeSchedulerClient : public SchedulerClient {
                       state);
   }
 
-  bool begin_frame_is_sent_to_children() const {
-    return begin_frame_args_sent_to_children_.IsValid();
-  }
-
-  const BeginFrameArgs& begin_frame_args_sent_to_children() const {
-    return begin_frame_args_sent_to_children_;
-  }
-
   void PushAction(const char* description) {
     actions_.push_back(description);
     states_.push_back(scheduler_->AsValue());
+  }
+
+  // FakeExternalBeginFrameSource::Client implementation.
+  void OnAddObserver(BeginFrameObserver* obs) override {
+    PushAction("AddObserver(this)");
+  }
+  void OnRemoveObserver(BeginFrameObserver* obs) override {
+    PushAction("RemoveObserver(this)");
   }
 
  protected:
@@ -203,40 +201,12 @@ class FakeSchedulerClient : public SchedulerClient {
   bool swap_will_happen_if_draw_happens_;
   bool automatic_swap_ack_;
   int num_draws_;
-  BeginFrameArgs begin_frame_args_sent_to_children_;
   BeginFrameArgs last_begin_main_frame_args_;
   base::TimeTicks posted_begin_impl_frame_deadline_;
   std::vector<const char*> actions_;
-  std::vector<scoped_refptr<base::trace_event::ConvertableToTraceFormat>>
+  std::vector<std::unique_ptr<base::trace_event::ConvertableToTraceFormat>>
       states_;
   TestScheduler* scheduler_;
-};
-
-class FakeExternalBeginFrameSource : public BeginFrameSourceBase {
- public:
-  explicit FakeExternalBeginFrameSource(FakeSchedulerClient* client)
-      : client_(client) {}
-  ~FakeExternalBeginFrameSource() override {}
-
-  void AddObserver(BeginFrameObserver* obs) override {
-    client_->PushAction("AddObserver(this)");
-    BeginFrameSourceBase::AddObserver(obs);
-  }
-
-  void RemoveObserver(BeginFrameObserver* obs) override {
-    client_->PushAction("RemoveObserver(this)");
-    BeginFrameSourceBase::RemoveObserver(obs);
-  }
-
-  // TODO(sunnyps): Use using CallOnBeginFrame, SetBeginFrameSourcePaused.
-  void TestOnBeginFrame(const BeginFrameArgs& args) {
-    return CallOnBeginFrame(args);
-  }
-
-  void SetPaused(bool paused) { SetBeginFrameSourcePaused(paused); }
-
- private:
-  FakeSchedulerClient* client_;
 };
 
 class SchedulerTest : public testing::Test {
@@ -257,20 +227,33 @@ class SchedulerTest : public testing::Test {
 
  protected:
   TestScheduler* CreateScheduler() {
-    if (scheduler_settings_.use_external_begin_frame_source) {
-      fake_external_begin_frame_source_.reset(
-          new FakeExternalBeginFrameSource(client_.get()));
+    BeginFrameSource* frame_source;
+    unthrottled_frame_source_.reset(new BackToBackBeginFrameSource(
+        base::MakeUnique<TestDelayBasedTimeSource>(now_src_.get(),
+                                                   task_runner_.get())));
+    fake_external_begin_frame_source_.reset(
+        new FakeExternalBeginFrameSource(0.f, false));
+    fake_external_begin_frame_source_->SetClient(client_.get());
+    synthetic_frame_source_.reset(new DelayBasedBeginFrameSource(
+        base::MakeUnique<TestDelayBasedTimeSource>(now_src_.get(),
+                                                   task_runner_.get())));
+    if (!scheduler_settings_.throttle_frame_production) {
+      frame_source = unthrottled_frame_source_.get();
+    } else if (scheduler_settings_.use_external_begin_frame_source) {
+      frame_source = fake_external_begin_frame_source_.get();
+    } else {
+      frame_source = synthetic_frame_source_.get();
     }
 
-    scoped_ptr<FakeCompositorTimingHistory> fake_compositor_timing_history =
-        FakeCompositorTimingHistory::Create(
+    std::unique_ptr<FakeCompositorTimingHistory>
+        fake_compositor_timing_history = FakeCompositorTimingHistory::Create(
             scheduler_settings_.using_synchronous_renderer_compositor);
     fake_compositor_timing_history_ = fake_compositor_timing_history.get();
 
-    scheduler_ = TestScheduler::Create(
-        now_src_.get(), client_.get(), scheduler_settings_, 0,
-        task_runner_.get(), fake_external_begin_frame_source_.get(),
-        std::move(fake_compositor_timing_history));
+    scheduler_.reset(
+        new TestScheduler(now_src_.get(), client_.get(), scheduler_settings_, 0,
+                          task_runner_.get(), frame_source,
+                          std::move(fake_compositor_timing_history)));
     DCHECK(scheduler_);
     client_->set_scheduler(scheduler_.get());
 
@@ -286,10 +269,10 @@ class SchedulerTest : public testing::Test {
   }
 
   void SetUpScheduler(bool initSurface) {
-    SetUpScheduler(make_scoped_ptr(new FakeSchedulerClient), initSurface);
+    SetUpScheduler(base::WrapUnique(new FakeSchedulerClient), initSurface);
   }
 
-  void SetUpScheduler(scoped_ptr<FakeSchedulerClient> client,
+  void SetUpScheduler(std::unique_ptr<FakeSchedulerClient> client,
                       bool initSurface) {
     client_ = std::move(client);
     if (initSurface)
@@ -386,8 +369,8 @@ class SchedulerTest : public testing::Test {
 
     // Send the next BeginFrame message if using an external source, otherwise
     // it will be already in the task queue.
-    if (scheduler_->settings().use_external_begin_frame_source &&
-        scheduler_->FrameProductionThrottled()) {
+    if (scheduler_->begin_frame_source() ==
+        fake_external_begin_frame_source_.get()) {
       EXPECT_TRUE(scheduler_->begin_frames_expected());
       SendNextBeginFrame();
     }
@@ -401,7 +384,8 @@ class SchedulerTest : public testing::Test {
   }
 
   BeginFrameArgs SendNextBeginFrame() {
-    DCHECK(scheduler_->settings().use_external_begin_frame_source);
+    DCHECK_EQ(scheduler_->begin_frame_source(),
+              fake_external_begin_frame_source_.get());
     // Creep the time forward so that any BeginFrameArgs is not equal to the
     // last one otherwise we violate the BeginFrameSource contract.
     now_src_->Advance(BeginFrameArgs::DefaultInterval());
@@ -427,12 +411,15 @@ class SchedulerTest : public testing::Test {
                                     ScrollHandlerState scroll_handler_state,
                                     base::TimeDelta durations);
 
-  scoped_ptr<base::SimpleTestTickClock> now_src_;
+  std::unique_ptr<base::SimpleTestTickClock> now_src_;
   scoped_refptr<OrderedSimpleTaskRunner> task_runner_;
-  scoped_ptr<FakeExternalBeginFrameSource> fake_external_begin_frame_source_;
+  std::unique_ptr<FakeExternalBeginFrameSource>
+      fake_external_begin_frame_source_;
+  std::unique_ptr<SyntheticBeginFrameSource> synthetic_frame_source_;
+  std::unique_ptr<SyntheticBeginFrameSource> unthrottled_frame_source_;
   SchedulerSettings scheduler_settings_;
-  scoped_ptr<FakeSchedulerClient> client_;
-  scoped_ptr<TestScheduler> scheduler_;
+  std::unique_ptr<FakeSchedulerClient> client_;
+  std::unique_ptr<TestScheduler> scheduler_;
   FakeCompositorTimingHistory* fake_compositor_timing_history_;
 };
 
@@ -446,69 +433,6 @@ TEST_F(SchedulerTest, InitializeOutputSurfaceDoesNotBeginImplFrame) {
   client_->Reset();
   scheduler_->DidCreateAndInitializeOutputSurface();
   EXPECT_NO_ACTION(client_);
-}
-
-TEST_F(SchedulerTest, SendBeginFramesToChildren) {
-  scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(true);
-
-  EXPECT_FALSE(client_->begin_frame_is_sent_to_children());
-  scheduler_->SetNeedsBeginMainFrame();
-  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
-  EXPECT_TRUE(scheduler_->begin_frames_expected());
-
-  scheduler_->SetChildrenNeedBeginFrames(true);
-
-  client_->Reset();
-  EXPECT_SCOPED(AdvanceFrame());
-  EXPECT_TRUE(client_->begin_frame_is_sent_to_children());
-  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
-  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
-  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
-  EXPECT_TRUE(scheduler_->begin_frames_expected());
-}
-
-TEST_F(SchedulerTest, SendBeginFramesToChildrenWithoutCommit) {
-  scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(true);
-
-  EXPECT_FALSE(scheduler_->begin_frames_expected());
-  scheduler_->SetChildrenNeedBeginFrames(true);
-  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
-  EXPECT_TRUE(scheduler_->begin_frames_expected());
-
-  client_->Reset();
-  EXPECT_SCOPED(AdvanceFrame());
-  EXPECT_TRUE(client_->begin_frame_is_sent_to_children());
-}
-
-TEST_F(SchedulerTest, SendBeginFramesToChildrenDeadlineNotAdjusted) {
-  // Set up client with specified estimates.
-  scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(true);
-
-  fake_compositor_timing_history_
-      ->SetBeginMainFrameStartToCommitDurationEstimate(
-          base::TimeDelta::FromMilliseconds(2));
-  fake_compositor_timing_history_->SetCommitToReadyToActivateDurationEstimate(
-      base::TimeDelta::FromMilliseconds(4));
-  fake_compositor_timing_history_->SetDrawDurationEstimate(
-      base::TimeDelta::FromMilliseconds(1));
-
-  EXPECT_FALSE(scheduler_->begin_frames_expected());
-  scheduler_->SetChildrenNeedBeginFrames(true);
-  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
-  EXPECT_TRUE(scheduler_->begin_frames_expected());
-
-  client_->Reset();
-
-  BeginFrameArgs frame_args =
-      CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, now_src());
-  fake_external_begin_frame_source()->TestOnBeginFrame(frame_args);
-
-  EXPECT_TRUE(client_->begin_frame_is_sent_to_children());
-  EXPECT_EQ(client_->begin_frame_args_sent_to_children().deadline,
-            frame_args.deadline);
 }
 
 TEST_F(SchedulerTest, VideoNeedsBeginFrames) {
@@ -772,7 +696,7 @@ TEST_F(SchedulerTest, RequestRedrawInsideDraw) {
   SchedulerClientThatsetNeedsDrawInsideDraw* client =
       new SchedulerClientThatsetNeedsDrawInsideDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
   client->SetRequestRedrawsInsideDraw(true);
 
   scheduler_->SetNeedsRedraw();
@@ -808,7 +732,7 @@ TEST_F(SchedulerTest, RequestRedrawInsideFailedDraw) {
   SchedulerClientThatsetNeedsDrawInsideDraw* client =
       new SchedulerClientThatsetNeedsDrawInsideDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   client->SetRequestRedrawsInsideDraw(true);
   client->SetDrawWillHappen(false);
@@ -884,7 +808,7 @@ TEST_F(SchedulerTest, RequestCommitInsideDraw) {
       new SchedulerClientThatSetNeedsBeginMainFrameInsideDraw;
 
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   EXPECT_FALSE(client->needs_begin_frames());
   scheduler_->SetNeedsRedraw();
@@ -926,7 +850,7 @@ TEST_F(SchedulerTest, RequestCommitInsideFailedDraw) {
   SchedulerClientThatsetNeedsDrawInsideDraw* client =
       new SchedulerClientThatsetNeedsDrawInsideDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   client->SetDrawWillHappen(false);
 
@@ -969,7 +893,7 @@ TEST_F(SchedulerTest, NoSwapWhenDrawFails) {
   SchedulerClientThatSetNeedsBeginMainFrameInsideDraw* client =
       new SchedulerClientThatSetNeedsBeginMainFrameInsideDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   scheduler_->SetNeedsRedraw();
   EXPECT_TRUE(scheduler_->RedrawPending());
@@ -1007,7 +931,7 @@ TEST_F(SchedulerTest, PrepareTiles) {
   SchedulerClientNeedsPrepareTilesInDraw* client =
       new SchedulerClientNeedsPrepareTilesInDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   // Request both draw and prepare tiles. PrepareTiles shouldn't
   // be trigged until BeginImplFrame.
@@ -1028,7 +952,7 @@ TEST_F(SchedulerTest, PrepareTiles) {
   EXPECT_ACTION("WillBeginImplFrame", client, 0, 1);
   EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
 
-  // On the deadline, he actions should have occured in the right order.
+  // On the deadline, the actions should have occured in the right order.
   client->Reset();
   task_runner().RunPendingTasks();  // Run posted deadline.
   EXPECT_EQ(1, client->num_draws());
@@ -1217,8 +1141,8 @@ TEST_F(SchedulerTest, PrepareTilesOncePerFrame) {
 }
 
 TEST_F(SchedulerTest, PrepareTilesFunnelResetOnVisibilityChange) {
-  scoped_ptr<SchedulerClientNeedsPrepareTilesInDraw> client =
-      make_scoped_ptr(new SchedulerClientNeedsPrepareTilesInDraw);
+  std::unique_ptr<SchedulerClientNeedsPrepareTilesInDraw> client =
+      base::WrapUnique(new SchedulerClientNeedsPrepareTilesInDraw);
   scheduler_settings_.use_external_begin_frame_source = true;
   SetUpScheduler(std::move(client), true);
 
@@ -1253,7 +1177,7 @@ TEST_F(SchedulerTest, TriggerBeginFrameDeadlineEarly) {
   SchedulerClientNeedsPrepareTilesInDraw* client =
       new SchedulerClientNeedsPrepareTilesInDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   scheduler_->SetNeedsRedraw();
   EXPECT_SCOPED(AdvanceFrame());
@@ -1268,7 +1192,7 @@ TEST_F(SchedulerTest, WaitForReadyToDrawDoNotPostDeadline) {
       new SchedulerClientNeedsPrepareTilesInDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
   scheduler_settings_.commit_to_active_tree = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   // SetNeedsBeginMainFrame should begin the frame on the next BeginImplFrame.
   scheduler_->SetNeedsBeginMainFrame();
@@ -1308,7 +1232,7 @@ TEST_F(SchedulerTest, WaitForReadyToDrawCancelledWhenLostOutputSurface) {
       new SchedulerClientNeedsPrepareTilesInDraw;
   scheduler_settings_.use_external_begin_frame_source = true;
   scheduler_settings_.commit_to_active_tree = true;
-  SetUpScheduler(make_scoped_ptr(client), true);
+  SetUpScheduler(base::WrapUnique(client), true);
 
   // SetNeedsBeginMainFrame should begin the frame on the next BeginImplFrame.
   scheduler_->SetNeedsBeginMainFrame();
@@ -2032,84 +1956,6 @@ TEST_F(
 
   // Make sure we do not send a BeginMainFrame while swap throttled and
   // we have both a pending tree and an active tree.
-  client_->Reset();
-  EXPECT_FALSE(scheduler_->CommitPending());
-  scheduler_->SetNeedsBeginMainFrame();
-  EXPECT_SCOPED(AdvanceFrame());
-  EXPECT_FALSE(scheduler_->CommitPending());
-  task_runner().RunPendingTasks();  // Run posted deadline.
-  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 1);
-}
-
-TEST_F(SchedulerTest,
-       Deadlock_NoBeginMainFrameWhileSwapTrottledAndPipelineFull) {
-  // NPAPI plugins on Windows block the Browser UI thread on the Renderer main
-  // thread. This prevents the scheduler from receiving any pending swap acks.
-
-  // This particular test makes sure we do not send a BeginMainFrame while
-  // swap trottled and we have a pending tree and active tree that
-  // still needs to be drawn for the first time.
-
-  scheduler_settings_.use_external_begin_frame_source = true;
-  scheduler_settings_.main_frame_while_swap_throttled_enabled = true;
-  scheduler_settings_.main_frame_before_activation_enabled = true;
-  SetUpScheduler(true);
-
-  // Disables automatic swap acks so this test can force swap ack throttling
-  // to simulate a blocked Browser ui thread.
-  client_->SetAutomaticSwapAck(false);
-
-  // Start a new commit in main-thread high latency mode and hold off on
-  // activation.
-  client_->Reset();
-  EXPECT_FALSE(scheduler_->CommitPending());
-  scheduler_->SetNeedsBeginMainFrame();
-  scheduler_->SetNeedsRedraw();
-  EXPECT_SCOPED(AdvanceFrame());
-  EXPECT_TRUE(scheduler_->CommitPending());
-  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
-  task_runner().RunTasksWhile(client_->ImplFrameDeadlinePending(true));
-  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
-  scheduler_->DidSwapBuffersComplete();
-  scheduler_->NotifyBeginMainFrameStarted(base::TimeTicks());
-  scheduler_->NotifyReadyToCommit();
-  EXPECT_FALSE(scheduler_->CommitPending());
-  EXPECT_ACTION("AddObserver(this)", client_, 0, 5);
-  EXPECT_ACTION("WillBeginImplFrame", client_, 1, 5);
-  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 2, 5);
-  EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 3, 5);
-  EXPECT_ACTION("ScheduledActionCommit", client_, 4, 5);
-
-  // Start another commit while we still have aa pending tree.
-  // Enter a swap throttled state.
-  client_->Reset();
-  EXPECT_FALSE(scheduler_->CommitPending());
-  scheduler_->SetNeedsBeginMainFrame();
-  scheduler_->SetNeedsRedraw();
-  EXPECT_SCOPED(AdvanceFrame());
-  EXPECT_TRUE(scheduler_->CommitPending());
-  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
-  task_runner().RunTasksWhile(client_->ImplFrameDeadlinePending(true));
-  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
-  scheduler_->NotifyBeginMainFrameStarted(base::TimeTicks());
-  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 3);
-  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 3);
-  EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 2, 3);
-
-  // Can't commit yet because there's still a pending tree.
-  client_->Reset();
-  scheduler_->NotifyReadyToCommit();
-  EXPECT_NO_ACTION(client_);
-
-  // Activate the pending tree, which also unblocks the commit immediately.
-  client_->Reset();
-  scheduler_->NotifyReadyToActivate();
-  EXPECT_ACTION("ScheduledActionActivateSyncTree", client_, 0, 2);
-  EXPECT_ACTION("ScheduledActionCommit", client_, 1, 2);
-
-  // Make sure we do not send a BeginMainFrame while swap throttled and
-  // we have both a pending tree and an active tree that still needs
-  // it's first draw.
   client_->Reset();
   EXPECT_FALSE(scheduler_->CommitPending());
   scheduler_->SetNeedsBeginMainFrame();
@@ -2909,7 +2755,7 @@ TEST_F(SchedulerTest, DidLoseOutputSurfaceDuringBeginRetroFrameRunning) {
   EXPECT_NO_ACTION(client_);
 }
 
-TEST_F(SchedulerTest, DidLoseOutputSurfaceWithSyntheticBeginFrameSource) {
+TEST_F(SchedulerTest, DidLoseOutputSurfaceWithDelayBasedBeginFrameSource) {
   SetUpScheduler(true);
 
   // SetNeedsBeginMainFrame should begin the frame on the next BeginImplFrame.
@@ -3063,7 +2909,7 @@ TEST_F(SchedulerTest, SwitchFrameSourceToUnthrottled) {
   scheduler_->SetNeedsRedraw();
 
   // Switch to an unthrottled frame source.
-  scheduler_->SetThrottleFrameProduction(false);
+  scheduler_->SetBeginFrameSource(unthrottled_frame_source_.get());
   client_->Reset();
 
   // Unthrottled frame source will immediately begin a new frame.
@@ -3094,7 +2940,7 @@ TEST_F(SchedulerTest, SwitchFrameSourceToUnthrottledBeforeDeadline) {
   EXPECT_SINGLE_ACTION("WillBeginImplFrame", client_);
 
   // Switch to an unthrottled frame source before the frame deadline is hit.
-  scheduler_->SetThrottleFrameProduction(false);
+  scheduler_->SetBeginFrameSource(unthrottled_frame_source_.get());
   client_->Reset();
 
   EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
@@ -3102,12 +2948,9 @@ TEST_F(SchedulerTest, SwitchFrameSourceToUnthrottledBeforeDeadline) {
   client_->Reset();
 
   task_runner().RunPendingTasks();  // Run posted deadline.
-  EXPECT_SINGLE_ACTION("ScheduledActionDrawAndSwapIfPossible", client_);
-  client_->Reset();
-
+  EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 0, 2);
   // Unthrottled frame source will immediately begin a new frame.
-  task_runner().RunPendingTasks();  // Run BeginFrame.
-  EXPECT_SINGLE_ACTION("WillBeginImplFrame", client_);
+  EXPECT_ACTION("WillBeginImplFrame", client_, 1, 2);
   scheduler_->SetNeedsRedraw();
   client_->Reset();
 
@@ -3139,7 +2982,7 @@ TEST_F(SchedulerTest, SwitchFrameSourceToThrottled) {
   client_->Reset();
 
   // Switch to a throttled frame source.
-  scheduler_->SetThrottleFrameProduction(true);
+  scheduler_->SetBeginFrameSource(fake_external_begin_frame_source_.get());
   client_->Reset();
 
   // SetNeedsRedraw should begin the frame on the next BeginImplFrame.
@@ -3155,6 +2998,111 @@ TEST_F(SchedulerTest, SwitchFrameSourceToThrottled) {
   client_->Reset();
   task_runner().RunPendingTasks();  // Run posted deadline.
   EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 0, 1);
+}
+
+TEST_F(SchedulerTest, SwitchFrameSourceToNullInsideDeadline) {
+  scheduler_settings_.use_external_begin_frame_source = true;
+  SetUpScheduler(true);
+
+  scheduler_->SetNeedsRedraw();
+  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
+  client_->Reset();
+
+  EXPECT_SCOPED(AdvanceFrame());
+  EXPECT_SINGLE_ACTION("WillBeginImplFrame", client_);
+  client_->Reset();
+
+  // Switch to a null frame source.
+  scheduler_->SetBeginFrameSource(nullptr);
+  EXPECT_SINGLE_ACTION("RemoveObserver(this)", client_);
+  client_->Reset();
+
+  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
+  task_runner().RunPendingTasks();  // Run posted deadline.
+  EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 0, 1);
+  EXPECT_FALSE(scheduler_->begin_frames_expected());
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  client_->Reset();
+
+  // AdvanceFrame helper can't be used here because there's no deadline posted.
+  scheduler_->SetNeedsRedraw();
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_NO_ACTION(client_);
+  client_->Reset();
+
+  scheduler_->SetNeedsBeginMainFrame();
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_NO_ACTION(client_);
+  client_->Reset();
+
+  // Switch back to the same source, make sure frames continue to be produced.
+  scheduler_->SetBeginFrameSource(fake_external_begin_frame_source_.get());
+  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  client_->Reset();
+
+  EXPECT_SCOPED(AdvanceFrame());
+  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
+  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
+  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
+  client_->Reset();
+
+  task_runner().RunPendingTasks();
+  EXPECT_ACTION("ScheduledActionDrawAndSwapIfPossible", client_, 0, 1);
+}
+
+// This test maskes sure that switching a frame source when not observing
+// such as when not visible also works.
+TEST_F(SchedulerTest, SwitchFrameSourceWhenNotObserving) {
+  scheduler_settings_.use_external_begin_frame_source = true;
+  SetUpScheduler(true);
+
+  // SetNeedsBeginMainFrame should begin the frame on the next BeginImplFrame.
+  scheduler_->SetNeedsBeginMainFrame();
+  EXPECT_SINGLE_ACTION("AddObserver(this)", client_);
+  client_->Reset();
+
+  // Begin new frame.
+  EXPECT_SCOPED(AdvanceFrame());
+  scheduler_->NotifyBeginMainFrameStarted(base::TimeTicks());
+  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
+  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
+
+  client_->Reset();
+  scheduler_->NotifyReadyToCommit();
+  EXPECT_SINGLE_ACTION("ScheduledActionCommit", client_);
+
+  client_->Reset();
+  scheduler_->NotifyReadyToActivate();
+  EXPECT_SINGLE_ACTION("ScheduledActionActivateSyncTree", client_);
+
+  // Scheduler loses output surface, and stops waiting for ready to draw signal.
+  client_->Reset();
+  scheduler_->DidLoseOutputSurface();
+  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
+  task_runner().RunPendingTasks();
+  EXPECT_ACTION("ScheduledActionBeginOutputSurfaceCreation", client_, 0, 3);
+  EXPECT_ACTION("RemoveObserver(this)", client_, 1, 3);
+  EXPECT_ACTION("SendBeginMainFrameNotExpectedSoon", client_, 2, 3);
+
+  // Changing begin frame source doesn't do anything.
+  // The unthrottled source doesn't print Add/RemoveObserver like the fake one.
+  client_->Reset();
+  scheduler_->SetBeginFrameSource(unthrottled_frame_source_.get());
+  EXPECT_NO_ACTION(client_);
+
+  client_->Reset();
+  scheduler_->DidCreateAndInitializeOutputSurface();
+  EXPECT_NO_ACTION(client_);
+
+  client_->Reset();
+  scheduler_->SetNeedsBeginMainFrame();
+  EXPECT_NO_ACTION(client_);
+
+  client_->Reset();
+  EXPECT_SCOPED(AdvanceFrame());
+  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
+  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
 }
 
 // Tests to ensure that we send a BeginMainFrameNotExpectedSoon when expected.
@@ -3427,8 +3375,8 @@ TEST_F(SchedulerTest, SynchronousCompositorPrepareTilesOnDraw) {
   scheduler_settings_.using_synchronous_renderer_compositor = true;
   scheduler_settings_.use_external_begin_frame_source = true;
 
-  scoped_ptr<FakeSchedulerClient> client =
-      make_scoped_ptr(new SchedulerClientSetNeedsPrepareTilesOnDraw);
+  std::unique_ptr<FakeSchedulerClient> client =
+      base::WrapUnique(new SchedulerClientSetNeedsPrepareTilesOnDraw);
   SetUpScheduler(std::move(client), true);
 
   scheduler_->SetNeedsRedraw();
@@ -3561,7 +3509,9 @@ TEST_F(SchedulerTest, AuthoritativeVSyncInterval) {
   scheduler_->NotifyReadyToActivate();
   task_runner().RunTasksWhile(client_->ImplFrameDeadlinePending(true));
 
-  scheduler_->SetAuthoritativeVSyncInterval(authoritative_interval);
+  // Test changing the interval on the frame source external to the scheduler.
+  synthetic_frame_source_->OnUpdateVSyncParameters(now_src_->NowTicks(),
+                                                   authoritative_interval);
 
   EXPECT_SCOPED(AdvanceFrame());
 
@@ -3605,6 +3555,61 @@ TEST_F(SchedulerTest, ImplLatencyTakesPriority) {
   EXPECT_FALSE(scheduler_->ImplLatencyTakesPriority());
   scheduler_->SetCriticalBeginMainFrameToActivateIsFast(false);
   EXPECT_FALSE(scheduler_->ImplLatencyTakesPriority());
+}
+
+TEST_F(SchedulerTest, NoOutputSurfaceCreationWhileCommitPending) {
+  SetUpScheduler(true);
+
+  // SetNeedsBeginMainFrame should begin the frame.
+  scheduler_->SetNeedsBeginMainFrame();
+  client_->Reset();
+  EXPECT_SCOPED(AdvanceFrame());
+  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
+  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
+
+  // Lose the output surface and trigger the deadline.
+  client_->Reset();
+  scheduler_->DidLoseOutputSurface();
+  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_NO_ACTION(client_);
+
+  // The scheduler should not trigger the output surface creation till the
+  // commit is aborted.
+  task_runner_->RunTasksWhile(client_->ImplFrameDeadlinePending(true));
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_SINGLE_ACTION("SendBeginMainFrameNotExpectedSoon", client_);
+
+  // Abort the commit.
+  client_->Reset();
+  scheduler_->NotifyBeginMainFrameStarted(base::TimeTicks::Now());
+  scheduler_->BeginMainFrameAborted(
+      CommitEarlyOutReason::ABORTED_OUTPUT_SURFACE_LOST);
+  EXPECT_SINGLE_ACTION("ScheduledActionBeginOutputSurfaceCreation", client_);
+}
+
+TEST_F(SchedulerTest, OutputSurfaceCreationWhileCommitPending) {
+  scheduler_settings_.abort_commit_before_output_surface_creation = false;
+  SetUpScheduler(true);
+
+  // SetNeedsBeginMainFrame should begin the frame.
+  scheduler_->SetNeedsBeginMainFrame();
+  client_->Reset();
+  EXPECT_SCOPED(AdvanceFrame());
+  EXPECT_ACTION("WillBeginImplFrame", client_, 0, 2);
+  EXPECT_ACTION("ScheduledActionSendBeginMainFrame", client_, 1, 2);
+
+  // Lose the output surface and trigger the deadline.
+  client_->Reset();
+  scheduler_->DidLoseOutputSurface();
+  EXPECT_TRUE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_NO_ACTION(client_);
+
+  // The scheduler should trigger the output surface creation immediately after
+  // the begin_impl_frame_state_ is cleared.
+  task_runner_->RunTasksWhile(client_->ImplFrameDeadlinePending(true));
+  EXPECT_FALSE(scheduler_->BeginImplFrameDeadlinePending());
+  EXPECT_ACTION("ScheduledActionBeginOutputSurfaceCreation", client_, 0, 2);
+  EXPECT_ACTION("SendBeginMainFrameNotExpectedSoon", client_, 1, 2);
 }
 
 // The three letters appeneded to each version of this test mean the following:s

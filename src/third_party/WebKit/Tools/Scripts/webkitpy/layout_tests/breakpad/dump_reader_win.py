@@ -26,6 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import errno
 import logging
 import os
 import shlex
@@ -75,7 +76,7 @@ class DumpReaderWin(DumpReader):
 
     def _check_cdb_available(self):
         """Checks whether we can use cdb to symbolize minidumps."""
-        if self._cdb_available != None:
+        if self._cdb_available is not None:
             return self._cdb_available
 
         CDB_LOCATION_TEMPLATES = [
@@ -86,6 +87,8 @@ class DumpReaderWin(DumpReader):
             '%s\\Windows Kits\\8.0\\Debuggers\\x64',
             '%s\\Windows Kits\\8.1\\Debuggers\\x86',
             '%s\\Windows Kits\\8.1\\Debuggers\\x64',
+            '%s\\Windows Kits\\10\\Debuggers\\x86',
+            '%s\\Windows Kits\\10\\Debuggers\\x64',
         ]
 
         program_files_directories = ['C:\\Program Files']
@@ -113,11 +116,17 @@ class DumpReaderWin(DumpReader):
         # Look in depot_tools win_toolchain too.
         depot_tools = self._find_depot_tools_path()
         if depot_tools:
-            win_sdk = os.path.join(depot_tools, 'win_toolchain', 'vs2013_files', 'win_sdk')
-            possible_cdb_locations.extend([
-                '%s\\Debuggers\\x86' % win_sdk,
-                '%s\\Debuggers\\x64' % win_sdk,
-            ])
+            try:
+                vs_files = os.path.join(depot_tools, 'win_toolchain', 'vs_files')
+                for path in os.listdir(vs_files):
+                    win_sdk = os.path.join(vs_files, path, 'win_sdk')
+                    possible_cdb_locations.extend([
+                        '%s\\Debuggers\\x86' % win_sdk,
+                        '%s\\Debuggers\\x64' % win_sdk,
+                    ])
+            except OSError as e:
+                if e.errno != errno.ENOENT:
+                    raise
 
         for cdb_path in possible_cdb_locations:
             cdb = self._host.filesystem.join(cdb_path, 'cdb.exe')

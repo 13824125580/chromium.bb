@@ -6,6 +6,7 @@
 
 #include "platform/graphics/GraphicsContext.h"
 #include "public/platform/WebDisplayItemList.h"
+#include "third_party/skia/include/core/SkPictureAnalyzer.h"
 
 #if ENABLE(ASSERT)
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -25,12 +26,17 @@ void DrawingDisplayItem::replay(GraphicsContext& context) const
 void DrawingDisplayItem::appendToWebDisplayItemList(const IntRect& visualRect, WebDisplayItemList* list) const
 {
     if (m_picture)
-        list->appendDrawingItem(visualRect, m_picture.get());
+        list->appendDrawingItem(visualRect, toSkSp(m_picture));
 }
 
 bool DrawingDisplayItem::drawsContent() const
 {
-    return m_picture;
+    return m_picture.get();
+}
+
+void DrawingDisplayItem::analyzeForGpuRasterization(SkPictureGpuAnalyzer& analyzer) const
+{
+    analyzer.analyzePicture(m_picture.get());
 }
 
 #ifndef NDEBUG
@@ -38,7 +44,7 @@ void DrawingDisplayItem::dumpPropertiesAsDebugString(WTF::StringBuilder& stringB
 {
     DisplayItem::dumpPropertiesAsDebugString(stringBuilder);
     if (m_picture) {
-        stringBuilder.append(WTF::String::format(", rect: [%f,%f,%f,%f]",
+        stringBuilder.append(WTF::String::format(", rect: [%f,%f %fx%f]",
             m_picture->cullRect().x(), m_picture->cullRect().y(),
             m_picture->cullRect().width(), m_picture->cullRect().height()));
     }
@@ -75,7 +81,7 @@ bool DrawingDisplayItem::equals(const DisplayItem& other) const
     if (!picture || !otherPicture)
         return false;
 
-    switch (underInvalidationCheckingMode()) {
+    switch (getUnderInvalidationCheckingMode()) {
     case DrawingDisplayItem::CheckPicture: {
         if (picture->approximateOpCount() != otherPicture->approximateOpCount())
             return false;

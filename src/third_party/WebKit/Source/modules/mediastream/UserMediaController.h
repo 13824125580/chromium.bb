@@ -27,19 +27,17 @@
 
 #include "core/frame/LocalFrame.h"
 #include "modules/mediastream/UserMediaClient.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
+class MediaDevices;
 class MediaDevicesRequest;
 class UserMediaRequest;
 
-class UserMediaController final : public NoBaseWillBeGarbageCollected<UserMediaController>, public WillBeHeapSupplement<LocalFrame> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(UserMediaController);
-    DECLARE_EMPTY_VIRTUAL_DESTRUCTOR_WILL_BE_REMOVED(UserMediaController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(UserMediaController);
+class UserMediaController final : public GarbageCollected<UserMediaController>, public Supplement<LocalFrame> {
+    USING_GARBAGE_COLLECTED_MIXIN(UserMediaController);
 public:
-    static PassOwnPtrWillBeRawPtr<UserMediaController> create(UserMediaClient*);
+    static UserMediaController* create(UserMediaClient*);
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -53,8 +51,10 @@ public:
 
     void requestSources(MediaStreamTrackSourcesRequest*);
 
+    void setMediaDeviceChangeObserver(MediaDevices*);
+
     static const char* supplementName();
-    static UserMediaController* from(LocalFrame* frame) { return static_cast<UserMediaController*>(WillBeHeapSupplement<LocalFrame>::from(frame, supplementName())); }
+    static UserMediaController* from(LocalFrame* frame) { return static_cast<UserMediaController*>(Supplement<LocalFrame>::from(frame, supplementName())); }
 
 private:
     explicit UserMediaController(UserMediaClient*);
@@ -85,6 +85,11 @@ inline void UserMediaController::cancelMediaDevicesRequest(MediaDevicesRequest* 
 inline void UserMediaController::requestSources(MediaStreamTrackSourcesRequest* request)
 {
     m_client->requestSources(request);
+}
+
+inline void UserMediaController::setMediaDeviceChangeObserver(MediaDevices* observer)
+{
+    m_client->setMediaDeviceChangeObserver(observer);
 }
 
 } // namespace blink

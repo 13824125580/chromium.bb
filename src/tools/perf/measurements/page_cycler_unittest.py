@@ -8,6 +8,7 @@ import unittest
 from telemetry.internal.browser import browser_options
 from telemetry.internal.results import page_test_results
 from telemetry.internal import story_runner
+from telemetry import page as page_module
 from telemetry.testing import simple_mock
 
 from measurements import page_cycler
@@ -37,12 +38,15 @@ class MockMemoryMetric(object):
     pass
 
 
-class FakePage(object):
+class FakePage(page_module.Page):
   """Used to mock loading a page."""
 
   def __init__(self, url):
-    self.url = url
-    self.is_file = url.startswith('file://')
+    super(FakePage, self).__init__(url=url)
+
+  @property
+  def is_file(self):
+    return self._url.startswith('file://')
 
 
 class FakeTab(object):
@@ -206,7 +210,7 @@ class PageCyclerUnitTest(unittest.TestCase):
 
       self.assertEqual(values[0].page, page)
       chart_name = 'cold_times' if i == 0 or i > 2 else 'warm_times'
-      self.assertEqual(values[0].name, '%s.page_load_time' % chart_name)
+      self.assertEqual(values[0].name, '%s-page_load_time' % chart_name)
       self.assertEqual(values[0].units, 'ms')
 
       cycler.DidNavigateToPage(page, tab)
@@ -229,7 +233,7 @@ class PageCyclerUnitTest(unittest.TestCase):
         self.assertEqual(values[0].page, page)
 
         chart_name = 'cold_times' if i == 0 or i > 1 else 'warm_times'
-        self.assertEqual(values[0].name, '%s.page_load_time' % chart_name)
+        self.assertEqual(values[0].name, '%s-page_load_time' % chart_name)
         self.assertEqual(values[0].units, 'ms')
 
         cycler.DidNavigateToPage(page, tab)
@@ -252,18 +256,20 @@ class PageCyclerUnitTest(unittest.TestCase):
 
         # On Mac, there is an additional measurement: the number of keychain
         # accesses.
-        value_count = 3
+        value_count = 6
         if sys.platform == 'darwin':
           value_count += 1
         self.assertEqual(value_count, len(values))
 
         self.assertEqual(values[0].page, page)
         chart_name = 'cold_times' if i == 0 else 'warm_times'
-        self.assertEqual(values[0].name, '%s.page_load_time' % chart_name)
+        self.assertEqual(values[0].name, '%s-page_load_time' % chart_name)
         self.assertEqual(values[0].units, 'ms')
+        self.assertEqual(values[1].name, '%s-time_to_onload' % chart_name)
+        self.assertEqual(values[1].units, 'ms')
 
         expected_values = ['gpu', 'browser']
-        for value, expected in zip(values[1:len(expected_values) + 1],
+        for value, expected in zip(values[4:len(expected_values) + 1],
                                    expected_values):
           self.assertEqual(value.page, page)
           self.assertEqual(value.name,

@@ -29,10 +29,12 @@
 import StringIO
 import unittest
 
-from webkitpy.common.system.outputtee import Tee, OutputTee
+from webkitpy.common.system.outputtee import OutputTee
+from webkitpy.common.system.outputtee import Tee
 
 
 class SimpleTeeTest(unittest.TestCase):
+
     def test_simple_tee(self):
         file1, file2 = StringIO.StringIO(), StringIO.StringIO()
         tee = Tee(file1, file2)

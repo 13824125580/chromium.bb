@@ -22,6 +22,7 @@
 #include "components/infobars/core/simple_alert_infobar_delegate.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/nacl/common/nacl_switches.h"
+#include "components/network_session_configurator/switches.h"
 #include "components/startup_metric_utils/browser/startup_metric_utils.h"
 #include "components/translate/core/common/translate_switches.h"
 #include "content/public/common/content_switches.h"
@@ -65,7 +66,6 @@ void ShowBadFlagsPrompt(Browser* browser) {
     invalidation::switches::kSyncAllowInsecureXmppConnection,
 
     // These flags change the URLs that handle PII.
-    autofill::switches::kWalletSecureServiceUrl,
     switches::kGaiaUrl,
     translate::switches::kTranslateScriptURL,
 
@@ -92,6 +92,12 @@ void ShowBadFlagsPrompt(Browser* browser) {
     // without the users knowledge, so we need to show a warning for when
     // the flag is enabled.
     switches::kEnableWebBluetooth,
+
+    // This flag disables WebUSB's CORS-like checks for origin to device
+    // communication, allowing any origin to ask the user for permission to
+    // connect to a device. It is intended for manufacturers testing their
+    // existing devices until https://crbug.com/598766 is implemented.
+    switches::kDisableWebUsbSecurity,
 
     NULL
   };
@@ -128,7 +134,7 @@ void MaybeShowInvalidUserDataDirWarningDialog() {
     if (locale.empty())
       locale = kUserDataDirDialogFallbackLocale;
     ui::ResourceBundle::InitSharedInstanceWithLocale(
-        locale, NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
+        locale, NULL, ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
   }
 
   const base::string16& title =
@@ -141,7 +147,7 @@ void MaybeShowInvalidUserDataDirWarningDialog() {
     ResourceBundle::CleanupSharedInstance();
 
   // More complex dialogs cannot be shown before the earliest calls here.
-  ShowMessageBox(NULL, title, message, chrome::MESSAGE_BOX_TYPE_WARNING);
+  ShowWarningMessageBox(NULL, title, message);
 }
 
 }  // namespace chrome

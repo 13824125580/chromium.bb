@@ -28,7 +28,7 @@
 
 using content::OpenURLParams;
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 
 namespace memory {
 
@@ -38,7 +38,7 @@ class TabManagerTest : public InProcessBrowserTest {
   // by turning on the corresponding experiment as some tests assume this
   // behavior it turned on.
   void SetUpCommandLine(base::CommandLine* command_line) override {
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_LINUX)
     command_line->AppendSwitchASCII(switches::kEnableFeatures,
                                     features::kAutomaticTabDiscarding.name);
 #endif
@@ -105,7 +105,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
 
   // Discard a tab.  It should kill the first tab, since it was the oldest
   // and was not selected.
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
   EXPECT_EQ(3, tsm->count());
   EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(0)));
   EXPECT_FALSE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(1)));
@@ -113,7 +113,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   EXPECT_TRUE(tab_manager->recent_tab_discard());
 
   // Run discard again, make sure it kills the second tab.
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
   EXPECT_EQ(3, tsm->count());
   EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(0)));
   EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(1)));
@@ -121,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
 
   // Kill the third tab. It should not kill the last tab, since it is active
   // tab.
-  EXPECT_FALSE(tab_manager->DiscardTab());
+  EXPECT_FALSE(tab_manager->DiscardTabImpl());
   EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(0)));
   EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(1)));
   EXPECT_FALSE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(2)));
@@ -181,6 +181,9 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   EXPECT_TRUE(chrome::CanGoForward(browser()));
 }
 
+// On Linux, memory pressure listener is not implemented yet.
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
+
 // Test that the MemoryPressureListener event is properly triggering a tab
 // discard upon |MEMORY_PRESSURE_LEVEL_CRITICAL| event.
 IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
@@ -231,6 +234,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
   EXPECT_TRUE(tab_manager->recent_tab_discard());
 }
 
+#endif
+
 IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
   TabManager* tab_manager = g_browser_process->GetTabManager();
   ASSERT_TRUE(tab_manager);
@@ -259,11 +264,11 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
 
   // This shouldn't be able to discard a tab as the background tab has not yet
   // started loading (its URL is not committed).
-  EXPECT_FALSE(tab_manager->DiscardTab());
+  EXPECT_FALSE(tab_manager->DiscardTabImpl());
 
   // Wait for the background tab to load which then allows it to be discarded.
   load2.Wait();
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
 }
 
 // Makes sure that PDF pages are protected.
@@ -287,7 +292,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectPDFPages) {
 
   // No discarding should be possible as the only background tab is displaying a
   // PDF page, hence protected.
-  EXPECT_FALSE(tab_manager->DiscardTab());
+  EXPECT_FALSE(tab_manager->DiscardTabImpl());
 }
 
 // Makes sure that recently opened or used tabs are protected, depending on the
@@ -320,13 +325,13 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectRecentlyUsedTabs) {
   test_clock_.Advance(base::TimeDelta::FromMinutes(kProtectionTime / 2));
 
   // Should not be able to discard a tab.
-  ASSERT_FALSE(tab_manager->DiscardTab());
+  ASSERT_FALSE(tab_manager->DiscardTabImpl());
 
   // Advance the clock for more than the protection time.
   test_clock_.Advance(base::TimeDelta::FromMinutes(kProtectionTime / 2 + 2));
 
   // Should be able to discard the background tab now.
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
 
   // Activate the 2nd tab.
   tsm->ActivateTabAt(1, true);
@@ -336,13 +341,13 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectRecentlyUsedTabs) {
   test_clock_.Advance(base::TimeDelta::FromMinutes(kProtectionTime / 2));
 
   // Should not be able to discard a tab.
-  ASSERT_FALSE(tab_manager->DiscardTab());
+  ASSERT_FALSE(tab_manager->DiscardTabImpl());
 
   // Advance the clock for more than the protection time.
   test_clock_.Advance(base::TimeDelta::FromMinutes(kProtectionTime / 2 + 2));
 
   // Should be able to discard the background tab now.
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
 
   // This is necessary otherwise the test crashes in
   // WebContentsData::WebContentsDestroyed.
@@ -373,21 +378,21 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectVideoTabs) {
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   dispatcher->SetTestVideoCaptureDevices(video_devices);
-  scoped_ptr<content::MediaStreamUI> video_stream_ui =
+  std::unique_ptr<content::MediaStreamUI> video_stream_ui =
       dispatcher->GetMediaStreamCaptureIndicator()->RegisterMediaStream(
           tab, video_devices);
   video_stream_ui->OnStarted(base::Closure());
 
   // Should not be able to discard a tab.
-  ASSERT_FALSE(tab_manager->DiscardTab());
+  ASSERT_FALSE(tab_manager->DiscardTabImpl());
 
   // Remove the video stream.
   video_stream_ui.reset();
 
   // Should be able to discard the background tab now.
-  EXPECT_TRUE(tab_manager->DiscardTab());
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
 }
 
 }  // namespace memory
 
-#endif  // OS_WIN || OS_CHROMEOS
+#endif  // OS_WIN || OS_MAXOSX || OS_LINUX

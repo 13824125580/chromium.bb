@@ -24,6 +24,7 @@
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/HTMLNames.h"
 #include "core/InputTypeNames.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/events/Event.h"
 #include "core/fileapi/File.h"
@@ -39,7 +40,6 @@
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/UserGestureIndicator.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
 
@@ -49,20 +49,27 @@ using blink::WebLocalizedString;
 using namespace HTMLNames;
 
 inline FileInputType::FileInputType(HTMLInputElement& element)
-    : BaseClickableWithKeyInputType(element)
+    : InputType(element)
+    , KeyboardClickableInputTypeView(element)
     , m_fileList(FileList::create())
 {
 }
 
-PassRefPtrWillBeRawPtr<InputType> FileInputType::create(HTMLInputElement& element)
+InputType* FileInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new FileInputType(element));
+    return new FileInputType(element);
 }
 
 DEFINE_TRACE(FileInputType)
 {
     visitor->trace(m_fileList);
-    BaseClickableWithKeyInputType::trace(visitor);
+    KeyboardClickableInputTypeView::trace(visitor);
+    InputType::trace(visitor);
+}
+
+InputTypeView* FileInputType::createView()
+{
+    return this;
 }
 
 Vector<FileChooserFileInfo> FileInputType::filesFromFormControlState(const FormControlState& state)
@@ -133,7 +140,7 @@ void FileInputType::handleDOMActivateEvent(Event* event)
     if (element().isDisabledFormControl())
         return;
 
-    if (!UserGestureIndicator::processingUserGesture())
+    if (!UserGestureIndicator::utilizeUserGesture())
         return;
 
     if (ChromeClient* chromeClient = this->chromeClient()) {
@@ -217,7 +224,7 @@ FileList* FileInputType::createFileList(const Vector<FileChooserFileInfo>& files
                 rootPath = directoryName(rootPath);
         }
         rootPath = directoryName(rootPath);
-        ASSERT(rootPath.length());
+        DCHECK(rootPath.length());
         int rootLength = rootPath.length();
         if (rootPath[rootLength - 1] != '\\' && rootPath[rootLength - 1] != '/')
             rootLength += 1;
@@ -250,24 +257,24 @@ void FileInputType::countUsage()
 
 void FileInputType::createShadowSubtree()
 {
-    ASSERT(element().shadow());
-    RefPtrWillBeRawPtr<HTMLInputElement> button = HTMLInputElement::create(element().document(), 0, false);
+    DCHECK(element().shadow());
+    HTMLInputElement* button = HTMLInputElement::create(element().document(), 0, false);
     button->setType(InputTypeNames::button);
     button->setAttribute(valueAttr, AtomicString(locale().queryString(element().multiple() ? WebLocalizedString::FileButtonChooseMultipleFilesLabel : WebLocalizedString::FileButtonChooseFileLabel)));
-    button->setShadowPseudoId(AtomicString("-webkit-file-upload-button", AtomicString::ConstructFromLiteral));
-    element().userAgentShadowRoot()->appendChild(button.release());
+    button->setShadowPseudoId(AtomicString("-webkit-file-upload-button"));
+    element().userAgentShadowRoot()->appendChild(button);
 }
 
 void FileInputType::disabledAttributeChanged()
 {
-    ASSERT(element().shadow());
+    DCHECK(element().shadow());
     if (Element* button = toElement(element().userAgentShadowRoot()->firstChild()))
         button->setBooleanAttribute(disabledAttr, element().isDisabledFormControl());
 }
 
 void FileInputType::multipleAttributeChanged()
 {
-    ASSERT(element().shadow());
+    DCHECK(element().shadow());
     if (Element* button = toElement(element().userAgentShadowRoot()->firstChild()))
         button->setAttribute(valueAttr, AtomicString(locale().queryString(element().multiple() ? WebLocalizedString::FileButtonChooseMultipleFilesLabel : WebLocalizedString::FileButtonChooseFileLabel)));
 }
@@ -276,8 +283,6 @@ void FileInputType::setFiles(FileList* files)
 {
     if (!files)
         return;
-
-    RefPtrWillBeRawPtr<HTMLInputElement> input(element());
 
     bool filesChanged = false;
     if (files->length() != m_fileList->length()) {
@@ -293,18 +298,18 @@ void FileInputType::setFiles(FileList* files)
 
     m_fileList = files;
 
-    input->notifyFormStateChanged();
-    input->setNeedsValidityCheck();
+    element().notifyFormStateChanged();
+    element().setNeedsValidityCheck();
 
-    if (input->layoutObject())
-        input->layoutObject()->setShouldDoFullPaintInvalidation();
+    if (element().layoutObject())
+        element().layoutObject()->setShouldDoFullPaintInvalidation();
 
     if (filesChanged) {
         // This call may cause destruction of this instance.
         // input instance is safe since it is ref-counted.
-        input->dispatchChangeEvent();
+        element().dispatchChangeEvent();
     }
-    input->setChangedSinceLastFormControlChangeEvent(false);
+    element().setChangedSinceLastFormControlChangeEvent(false);
 }
 
 void FileInputType::filesChosen(const Vector<FileChooserFileInfo>& files)
@@ -360,7 +365,7 @@ String FileInputType::droppedFileSystemId()
     return m_droppedFileSystemId;
 }
 
-String FileInputType::defaultToolTip() const
+String FileInputType::defaultToolTip(const InputTypeView&) const
 {
     FileList* fileList = m_fileList.get();
     unsigned listSize = fileList->length();

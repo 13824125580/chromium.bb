@@ -26,12 +26,18 @@
 #ifndef MockImageDecoder_h
 
 #include "platform/image-decoders/ImageDecoder.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 class MockImageDecoderClient {
 public:
+    MockImageDecoderClient()
+        : m_firstFrameForcedToBeEmpty(false)
+    {
+    }
+
     virtual void decoderBeingDestroyed() = 0;
     virtual void decodeRequested() = 0;
     virtual ImageFrame::Status status() = 0;
@@ -46,11 +52,21 @@ public:
     // MockImageDecoder::size(). See the precise implementation of
     // MockImageDecoder::decodedSize() below.
     virtual IntSize decodedSize() const { return IntSize(); }
+
+    void forceFirstFrameToBeEmpty()
+    {
+        m_firstFrameForcedToBeEmpty = true;
+    };
+
+    bool firstFrameForcedToBeEmpty() const { return m_firstFrameForcedToBeEmpty; }
+
+private:
+    bool m_firstFrameForcedToBeEmpty;
 };
 
 class MockImageDecoder : public ImageDecoder {
 public:
-    static PassOwnPtr<MockImageDecoder> create(MockImageDecoderClient* client) { return adoptPtr(new MockImageDecoder(client)); }
+    static std::unique_ptr<MockImageDecoder> create(MockImageDecoderClient* client) { return wrapUnique(new MockImageDecoder(client)); }
 
     MockImageDecoder(MockImageDecoderClient* client)
         : ImageDecoder(AlphaPremultiplied, GammaAndColorProfileApplied, noDecodedImageByteLimit)
@@ -93,6 +109,13 @@ public:
         return 0;
     }
 
+    size_t frameBytesAtIndex(size_t index) const override
+    {
+        if (m_client->firstFrameForcedToBeEmpty() && index == 0)
+            return 0;
+        return ImageDecoder::frameBytesAtIndex(index);
+    }
+
 private:
     void decodeSize() override { }
 
@@ -115,21 +138,21 @@ private:
 
 class MockImageDecoderFactory : public ImageDecoderFactory {
 public:
-    static PassOwnPtr<MockImageDecoderFactory> create(MockImageDecoderClient* client, const SkISize& decodedSize)
+    static std::unique_ptr<MockImageDecoderFactory> create(MockImageDecoderClient* client, const SkISize& decodedSize)
     {
-        return adoptPtr(new MockImageDecoderFactory(client, IntSize(decodedSize.width(), decodedSize.height())));
+        return wrapUnique(new MockImageDecoderFactory(client, IntSize(decodedSize.width(), decodedSize.height())));
     }
 
-    static PassOwnPtr<MockImageDecoderFactory> create(MockImageDecoderClient* client, const IntSize& decodedSize)
+    static std::unique_ptr<MockImageDecoderFactory> create(MockImageDecoderClient* client, const IntSize& decodedSize)
     {
-        return adoptPtr(new MockImageDecoderFactory(client, decodedSize));
+        return wrapUnique(new MockImageDecoderFactory(client, decodedSize));
     }
 
-    PassOwnPtr<ImageDecoder> create() override
+    std::unique_ptr<ImageDecoder> create() override
     {
-        OwnPtr<MockImageDecoder> decoder = MockImageDecoder::create(m_client);
+        std::unique_ptr<MockImageDecoder> decoder = MockImageDecoder::create(m_client);
         decoder->setSize(m_decodedSize.width(), m_decodedSize.height());
-        return decoder.release();
+        return std::move(decoder);
     }
 
 private:

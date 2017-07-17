@@ -33,7 +33,7 @@ class Builder : public base::RefCountedThreadSafe<Builder> {
 
   Loader* loader() const { return loader_; }
 
-  void ItemDefined(scoped_ptr<Item> item);
+  void ItemDefined(std::unique_ptr<Item> item);
 
   // Returns NULL if there is not a thing with the corresponding label.
   const Item* GetItem(const Label& label) const;
@@ -119,6 +119,7 @@ class Builder : public base::RefCountedThreadSafe<Builder> {
   bool ResolveDeps(LabelTargetVector* deps, Err* err);
   bool ResolveConfigs(UniqueVector<LabelConfigPair>* configs, Err* err);
   bool ResolveToolchain(Target* target, Err* err);
+  bool ResolvePools(Toolchain* toolchain, Err* err);
 
   // Given a list of unresolved records, tries to find any circular
   // dependencies and returns the string describing the problem. If no circular

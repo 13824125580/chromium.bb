@@ -42,8 +42,8 @@ namespace internal {
 //   Array < Object
 //   Function < Object
 //   RegExp < Object
-//   Undetectable < Object
-//   Detectable = Receiver \/ Number \/ Name - Undetectable
+//   OtherUndetectable < Object
+//   DetectableReceiver = Receiver - OtherUndetectable
 //
 //   Class(map) < T   iff instance_type(map) < T
 //   Constant(x) < T  iff instance_type(map(x)) < T
@@ -195,8 +195,8 @@ namespace internal {
   V(InternalizedString,  1u << 13 | REPRESENTATION(kTaggedPointer)) \
   V(OtherString,         1u << 14 | REPRESENTATION(kTaggedPointer)) \
   V(Simd,                1u << 15 | REPRESENTATION(kTaggedPointer)) \
-  V(Undetectable,        1u << 16 | REPRESENTATION(kTaggedPointer)) \
   V(OtherObject,         1u << 17 | REPRESENTATION(kTaggedPointer)) \
+  V(OtherUndetectable,   1u << 16 | REPRESENTATION(kTaggedPointer)) \
   V(Proxy,               1u << 18 | REPRESENTATION(kTaggedPointer)) \
   V(Function,            1u << 19 | REPRESENTATION(kTaggedPointer)) \
   V(Internal,            1u << 20 | REPRESENTATION(kTagged | kUntagged)) \
@@ -218,17 +218,20 @@ namespace internal {
   V(BooleanOrNumber,          kBoolean | kNumber) \
   V(BooleanOrNullOrUndefined, kBoolean | kNull | kUndefined) \
   V(NullOrUndefined,          kNull | kUndefined) \
+  V(Undetectable,             kNullOrUndefined | kOtherUndetectable) \
+  V(NumberOrOddball,          kNumber | kNullOrUndefined | kBoolean) \
+  V(NumberOrSimdOrString,     kNumber | kSimd | kString) \
   V(NumberOrString,           kNumber | kString) \
   V(NumberOrUndefined,        kNumber | kUndefined) \
   V(PlainPrimitive,           kNumberOrString | kBoolean | kNullOrUndefined) \
   V(Primitive,                kSymbol | kSimd | kPlainPrimitive) \
   V(DetectableReceiver,       kFunction | kOtherObject | kProxy) \
-  V(Detectable,               kDetectableReceiver | kNumber | kName) \
-  V(Object,                   kFunction | kOtherObject | kUndetectable) \
+  V(Object,                   kFunction | kOtherObject | kOtherUndetectable) \
   V(Receiver,                 kObject | kProxy) \
   V(StringOrReceiver,         kString | kReceiver) \
   V(Unique,                   kBoolean | kUniqueName | kNull | kUndefined | \
                               kReceiver) \
+  V(NonInternal,              kPrimitive | kReceiver) \
   V(NonNumber,                kUnique | kString | kInternal) \
   V(Any,                      0xfffffffeu)
 
@@ -740,8 +743,8 @@ class Type {
   SIMD128_TYPES(CONSTRUCT_SIMD_TYPE)
 #undef CONSTRUCT_SIMD_TYPE
 
-  static Type* Union(Type* type1, Type* type2, Zone* reg);
-  static Type* Intersect(Type* type1, Type* type2, Zone* reg);
+  static Type* Union(Type* type1, Type* type2, Zone* zone);
+  static Type* Intersect(Type* type1, Type* type2, Zone* zone);
 
   static Type* Of(double value, Zone* zone) {
     return BitsetType::New(BitsetType::ExpandInternals(BitsetType::Lub(value)));

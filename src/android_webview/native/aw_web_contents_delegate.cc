@@ -14,9 +14,13 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -88,8 +92,9 @@ void AwWebContentsDelegate::CanDownload(
   callback.Run(false);
 }
 
-void AwWebContentsDelegate::RunFileChooser(WebContents* web_contents,
-                                           const FileChooserParams& params) {
+void AwWebContentsDelegate::RunFileChooser(
+    content::RenderFrameHost* render_frame_host,
+    const FileChooserParams& params) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> java_delegate = GetJavaDelegate(env);
   if (!java_delegate.obj())
@@ -103,24 +108,24 @@ void AwWebContentsDelegate::RunFileChooser(WebContents* web_contents,
     mode_flags |= kFileChooserModeOpenMultiple | kFileChooserModeOpenFolder;
   } else if (params.mode == FileChooserParams::Save) {
     // Save not supported, so cancel it.
-    web_contents->GetRenderViewHost()->FilesSelectedInChooser(
-         std::vector<content::FileChooserFileInfo>(),
-         params.mode);
+    render_frame_host->FilesSelectedInChooser(
+        std::vector<content::FileChooserFileInfo>(), params.mode);
     return;
   } else {
     DCHECK_EQ(FileChooserParams::Open, params.mode);
   }
-  Java_AwWebContentsDelegate_runFileChooser(env,
-      java_delegate.obj(),
-      web_contents->GetRenderProcessHost()->GetID(),
-      web_contents->GetRenderViewHost()->GetRoutingID(),
-      mode_flags,
-      ConvertUTF16ToJavaString(env,
-          base::JoinString(params.accept_types, base::ASCIIToUTF16(","))).obj(),
-      params.title.empty() ? NULL :
-          ConvertUTF16ToJavaString(env, params.title).obj(),
-      params.default_file_name.empty() ? NULL :
-          ConvertUTF8ToJavaString(env, params.default_file_name.value()).obj(),
+  Java_AwWebContentsDelegate_runFileChooser(
+      env, java_delegate.obj(), render_frame_host->GetProcess()->GetID(),
+      render_frame_host->GetRoutingID(), mode_flags,
+      ConvertUTF16ToJavaString(
+          env, base::JoinString(params.accept_types, base::ASCIIToUTF16(",")))
+          .obj(),
+      params.title.empty() ? NULL
+                           : ConvertUTF16ToJavaString(env, params.title).obj(),
+      params.default_file_name.empty()
+          ? NULL
+          : ConvertUTF8ToJavaString(env, params.default_file_name.value())
+                .obj(),
       params.capture);
 }
 
@@ -148,7 +153,7 @@ void AwWebContentsDelegate::AddNewContents(WebContents* source,
     // until then, and when the callback is made we will swap the WebContents
     // out into the new AwContents.
     AwContents::FromWebContents(source)->SetPendingWebContentsForPopup(
-        make_scoped_ptr(new_contents));
+        base::WrapUnique(new_contents));
     // Hide the WebContents for the pop up now, we will show it again
     // when the user calls us back with an AwContents to use to show it.
     new_contents->WasHidden();
@@ -157,7 +162,7 @@ void AwWebContentsDelegate::AddNewContents(WebContents* source,
     // window, so we're done with the WebContents now. We use
     // DeleteSoon as WebContentsImpl may call methods on |new_contents|
     // after this method returns.
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, new_contents);
+    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, new_contents);
   }
 
   if (was_blocked) {
@@ -233,11 +238,11 @@ void AwWebContentsDelegate::RequestMediaAccessPermission(
   if (!aw_contents) {
     callback.Run(content::MediaStreamDevices(),
                  content::MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN,
-                 scoped_ptr<content::MediaStreamUI>());
+                 std::unique_ptr<content::MediaStreamUI>());
     return;
   }
   aw_contents->GetPermissionRequestHandler()->SendRequest(
-      scoped_ptr<AwPermissionRequestDelegate>(
+      std::unique_ptr<AwPermissionRequestDelegate>(
           new MediaAccessPermissionRequest(request, callback)));
 }
 
@@ -268,9 +273,9 @@ static void FilesSelectedInChooser(
     jint mode_flags,
     const JavaParamRef<jobjectArray>& file_paths,
     const JavaParamRef<jobjectArray>& display_names) {
-  content::RenderViewHost* rvh = content::RenderViewHost::FromID(process_id,
-                                                                 render_id);
-  if (!rvh)
+  content::RenderFrameHost* rfh =
+      content::RenderFrameHost::FromID(process_id, render_id);
+  if (!rfh)
     return;
 
   std::vector<std::string> file_path_str;
@@ -287,9 +292,10 @@ static void FilesSelectedInChooser(
     if (!url.is_valid())
       continue;
     base::FilePath path(url.SchemeIsFile() ?
-      net::UnescapeURLComponent(url.path(),
-        net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS) :
-        file_path_str[i]);
+        net::UnescapeURLComponent(url.path(),
+            net::UnescapeRule::SPACES |
+            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS) :
+            file_path_str[i]);
     content::FileChooserFileInfo file_info;
     file_info.file_path = path;
     if (!display_name_str[i].empty())
@@ -306,7 +312,7 @@ static void FilesSelectedInChooser(
   }
   DVLOG(0) << "File Chooser result: mode = " << mode
            << ", file paths = " << base::JoinString(file_path_str, ":");
-  rvh->FilesSelectedInChooser(files, mode);
+  rfh->FilesSelectedInChooser(files, mode);
 }
 
 bool RegisterAwWebContentsDelegate(JNIEnv* env) {

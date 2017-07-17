@@ -28,33 +28,29 @@
 
 #include "core/fetch/FetchRequest.h"
 #include "core/fetch/IntegrityMetadata.h"
-#include "core/fetch/ResourceClientWalker.h"
+#include "core/fetch/ResourceClientOrObserverWalker.h"
 #include "core/fetch/ResourceFetcher.h"
 #include "platform/MIMETypeRegistry.h"
 #include "platform/SharedBuffer.h"
-#include "public/platform/WebProcessMemoryDump.h"
+#include "platform/web_memory_allocator_dump.h"
+#include "platform/web_process_memory_dump.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<ScriptResource> ScriptResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
+ScriptResource* ScriptResource::fetch(FetchRequest& request, ResourceFetcher* fetcher)
 {
     ASSERT(request.resourceRequest().frameType() == WebURLRequest::FrameTypeNone);
     request.mutableResourceRequest().setRequestContext(WebURLRequest::RequestContextScript);
-    RefPtrWillBeRawPtr<ScriptResource> resource = toScriptResource(fetcher->requestResource(request, ScriptResourceFactory()));
+    ScriptResource* resource = toScriptResource(fetcher->requestResource(request, ScriptResourceFactory()));
     if (resource && !request.integrityMetadata().isEmpty())
         resource->setIntegrityMetadata(request.integrityMetadata());
-    return resource.release();
+    return resource;
 }
 
-ScriptResource::ScriptResource(const ResourceRequest& resourceRequest, const String& charset)
-    : TextResource(resourceRequest, Script, "application/javascript", charset), m_integrityDisposition(ScriptIntegrityDisposition::NotChecked)
+ScriptResource::ScriptResource(const ResourceRequest& resourceRequest, const ResourceLoaderOptions& options, const String& charset)
+    : TextResource(resourceRequest, Script, options, "application/javascript", charset)
+    , m_integrityDisposition(ScriptIntegrityDisposition::NotChecked)
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, acceptScript, ("*/*", AtomicString::ConstructFromLiteral));
-
-    // It's javascript we want.
-    // But some websites think their scripts are <some wrong mimetype here>
-    // and refuse to serve them if we only accept application/x-javascript.
-    setAccept(acceptScript);
 }
 
 ScriptResource::~ScriptResource()

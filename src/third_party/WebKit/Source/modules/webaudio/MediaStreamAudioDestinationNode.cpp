@@ -43,11 +43,11 @@ MediaStreamAudioDestinationHandler::MediaStreamAudioDestinationHandler(AudioNode
     : AudioBasicInspectorHandler(NodeTypeMediaStreamAudioDestination, node, node.context()->sampleRate(), numberOfChannels)
     , m_mixBus(AudioBus::create(numberOfChannels, ProcessingSizeInFrames))
 {
-    m_source = MediaStreamSource::create("WebAudio-" + createCanonicalUUIDString(), MediaStreamSource::TypeAudio, "MediaStreamAudioDestinationNode", false, true, MediaStreamSource::ReadyStateLive, true);
+    m_source = MediaStreamSource::create("WebAudio-" + createCanonicalUUIDString(), MediaStreamSource::TypeAudio, "MediaStreamAudioDestinationNode", false, MediaStreamSource::ReadyStateLive, true);
     MediaStreamSourceVector audioSources;
     audioSources.append(m_source.get());
     MediaStreamSourceVector videoSources;
-    m_stream = MediaStream::create(node.context()->executionContext(), MediaStreamDescriptor::create(audioSources, videoSources));
+    m_stream = MediaStream::create(node.context()->getExecutionContext(), MediaStreamDescriptor::create(audioSources, videoSources));
     MediaStreamCenter::instance().didCreateMediaStreamAndTracks(m_stream->descriptor());
 
     m_source->setAudioFormat(numberOfChannels, node.context()->sampleRate());
@@ -122,8 +122,15 @@ MediaStreamAudioDestinationNode::MediaStreamAudioDestinationNode(AbstractAudioCo
     setHandler(MediaStreamAudioDestinationHandler::create(*this, numberOfChannels));
 }
 
-MediaStreamAudioDestinationNode* MediaStreamAudioDestinationNode::create(AbstractAudioContext& context, size_t numberOfChannels)
+MediaStreamAudioDestinationNode* MediaStreamAudioDestinationNode::create(AbstractAudioContext& context, size_t numberOfChannels, ExceptionState& exceptionState)
 {
+    DCHECK(isMainThread());
+
+    if (context.isContextClosed()) {
+        context.throwExceptionForClosedState(exceptionState);
+        return nullptr;
+    }
+
     return new MediaStreamAudioDestinationNode(context, numberOfChannels);
 }
 

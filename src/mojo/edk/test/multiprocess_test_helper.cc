@@ -19,7 +19,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
@@ -27,6 +27,8 @@
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#include "base/mac/mach_port_broker.h"
 #endif
 
 namespace mojo {
@@ -114,13 +116,16 @@ ScopedMessagePipeHandle MultiprocessTestHelper::StartChildWithExtraSwitch(
 #error "Not supported yet."
 #endif
 
-  ScopedMessagePipeHandle pipe = CreateParentMessagePipe(pipe_token);
+  std::string child_token = mojo::edk::GenerateRandomToken();
+  ScopedMessagePipeHandle pipe = CreateParentMessagePipe(pipe_token,
+                                                         child_token);
 
   test_child_ =
       base::SpawnMultiProcessTestChild(test_child_main, command_line, options);
   channel.ChildProcessLaunched();
 
-  ChildProcessLaunched(test_child_.Handle(), channel.PassServerHandle());
+  ChildProcessLaunched(test_child_.Handle(), channel.PassServerHandle(),
+                       child_token, process_error_callback_);
   CHECK(test_child_.IsValid());
 
   return pipe;
@@ -130,8 +135,14 @@ int MultiprocessTestHelper::WaitForChildShutdown() {
   CHECK(test_child_.IsValid());
 
   int rv = -1;
+#if defined(OS_ANDROID)
+  // On Android, we need to use a special function to wait for the child.
+  CHECK(AndroidWaitForChildExitWithTimeout(
+      test_child_, TestTimeouts::action_timeout(), &rv));
+#else
   CHECK(
       test_child_.WaitForExitWithTimeout(TestTimeouts::action_timeout(), &rv));
+#endif
   test_child_.Close();
   return rv;
 }
@@ -147,6 +158,10 @@ void MultiprocessTestHelper::ChildSetup() {
   primordial_pipe_token = base::CommandLine::ForCurrentProcess()
       ->GetSwitchValueASCII(kMojoPrimordialPipeToken);
   CHECK(!primordial_pipe_token.empty());
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  CHECK(base::MachPortBroker::ChildSendTaskPortToParent("mojo_test"));
+#endif
 
   SetParentPipeHandle(
       PlatformChannelPair::PassClientHandleFromParentProcess(

@@ -8,16 +8,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/address_family.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
 #include "net/base/prioritized_dispatcher.h"
 #include "net/base/request_priority.h"
+#include "net/dns/host_cache.h"
 
 namespace base {
 class Value;
@@ -27,7 +28,6 @@ namespace net {
 
 class AddressList;
 class BoundNetLog;
-class HostCache;
 class HostResolverProc;
 class NetLog;
 
@@ -155,6 +155,18 @@ class NET_EXPORT HostResolver {
                       RequestHandle* out_req,
                       const BoundNetLog& net_log) = 0;
 
+  // Changes the priority of the specified request. |req| is the handle returned
+  // by Resolve(). ChangeRequestPriority must NOT be called after the request's
+  // completion callback has already run or the request was canceled.
+  virtual void ChangeRequestPriority(RequestHandle req,
+                                     RequestPriority priority);
+
+  // Cancels the specified request. |req| is the handle returned by Resolve().
+  // After a request is canceled, its completion callback will not be called.
+  // CancelRequest must NOT be called after the request's completion callback
+  // has already run or the request was canceled.
+  virtual void CancelRequest(RequestHandle req) = 0;
+
   // Resolves the given hostname (or IP address literal) out of cache or HOSTS
   // file (if enabled) only. This is guaranteed to complete synchronously.
   // This acts like |Resolve()| if the hostname is IP literal, or cached value
@@ -162,12 +174,6 @@ class NET_EXPORT HostResolver {
   virtual int ResolveFromCache(const RequestInfo& info,
                                AddressList* addresses,
                                const BoundNetLog& net_log) = 0;
-
-  // Cancels the specified request. |req| is the handle returned by Resolve().
-  // After a request is canceled, its completion callback will not be called.
-  // CancelRequest must NOT be called after the request's completion callback
-  // has already run or the request was canceled.
-  virtual void CancelRequest(RequestHandle req) = 0;
 
   // Enable or disable the built-in asynchronous DnsClient.
   virtual void SetDnsClientEnabled(bool enabled);
@@ -178,17 +184,17 @@ class NET_EXPORT HostResolver {
 
   // Returns the current DNS configuration |this| is using, as a Value, or
   // nullptr if it's configured to always use the system host resolver.
-  virtual scoped_ptr<base::Value> GetDnsConfigAsValue() const;
+  virtual std::unique_ptr<base::Value> GetDnsConfigAsValue() const;
 
   // Creates a HostResolver implementation that queries the underlying system.
   // (Except if a unit-test has changed the global HostResolverProc using
   // ScopedHostResolverProc to intercept requests to the system).
-  static scoped_ptr<HostResolver> CreateSystemResolver(
+  static std::unique_ptr<HostResolver> CreateSystemResolver(
       const Options& options,
       NetLog* net_log);
 
   // As above, but uses default parameters.
-  static scoped_ptr<HostResolver> CreateDefaultResolver(NetLog* net_log);
+  static std::unique_ptr<HostResolver> CreateDefaultResolver(NetLog* net_log);
 
  protected:
   HostResolver();

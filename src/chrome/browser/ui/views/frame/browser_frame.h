@@ -19,7 +19,6 @@ class BrowserView;
 class NativeBrowserFrame;
 class NonClientFrameView;
 class SystemMenuModelBuilder;
-class ThemeService;
 
 namespace gfx {
 class FontList;
@@ -81,7 +80,7 @@ class BrowserFrame
   views::View* GetLocationIconView() const;
 
   // Returns the NonClientFrameView of this frame.
-  views::View* GetFrameView() const;
+  BrowserNonClientFrameView* GetFrameView() const;
 
   // Returns |true| if we should use the custom frame.
   bool UseCustomFrame() const;
@@ -105,13 +104,13 @@ class BrowserFrame
   const ui::NativeTheme* GetNativeTheme() const override;
   void SchedulePaintInRect(const gfx::Rect& rect) override;
   void OnNativeWidgetActivationChanged(bool active) override;
+  void OnNativeWidgetWorkspaceChanged() override;
 
   // Overridden from views::ContextMenuController:
   void ShowContextMenuForView(views::View* source,
                               const gfx::Point& p,
                               ui::MenuSourceType source_type) override;
 
-  AvatarMenuButton* GetAvatarMenuButton();
   views::View* GetNewAvatarMenuButton();
 
   // Returns the menu model. BrowserFrame owns the returned model.
@@ -132,15 +131,13 @@ class BrowserFrame
   // The BrowserView is our ClientView. This is a pointer to it.
   BrowserView* browser_view_;
 
-  scoped_ptr<SystemMenuModelBuilder> menu_model_builder_;
+  std::unique_ptr<SystemMenuModelBuilder> menu_model_builder_;
 
   // Used to show the system menu. Only used if
   // NativeBrowserFrame::UsesNativeSystemMenu() returns false.
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
-  const ThemeService* theme_service_;
-
-  scoped_ptr<ui::EventHandler> browser_command_handler_;
+  std::unique_ptr<ui::EventHandler> browser_command_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserFrame);
 };

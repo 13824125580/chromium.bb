@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/guid.h"
@@ -1134,10 +1135,10 @@ void Directory::CollectMetaHandleCounts(
   }
 }
 
-scoped_ptr<base::ListValue> Directory::GetNodeDetailsForType(
+std::unique_ptr<base::ListValue> Directory::GetNodeDetailsForType(
     BaseTransaction* trans,
     ModelType type) {
-  scoped_ptr<base::ListValue> nodes(new base::ListValue());
+  std::unique_ptr<base::ListValue> nodes(new base::ListValue());
 
   ScopedKernelLock lock(this);
   for (MetahandlesMap::iterator it = kernel_->metahandles_map.begin();
@@ -1147,7 +1148,7 @@ scoped_ptr<base::ListValue> Directory::GetNodeDetailsForType(
     }
 
     EntryKernel* kernel = it->second;
-    scoped_ptr<base::DictionaryValue> node(
+    std::unique_ptr<base::DictionaryValue> node(
         kernel->ToValue(GetCryptographer(trans)));
 
     // Add the position index if appropriate.  This must be done here (and not
@@ -1157,7 +1158,7 @@ scoped_ptr<base::ListValue> Directory::GetNodeDetailsForType(
       node->SetInteger("positionIndex", GetPositionIndex(trans, kernel));
     }
 
-    nodes->Append(node.release());
+    nodes->Append(std::move(node));
   }
 
   return nodes;

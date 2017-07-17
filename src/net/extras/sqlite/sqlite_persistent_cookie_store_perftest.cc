@@ -34,8 +34,10 @@ class SQLitePersistentCookieStorePerfTest : public testing::Test {
  public:
   SQLitePersistentCookieStorePerfTest()
       : pool_owner_(new base::SequencedWorkerPoolOwner(1, "Background Pool")),
-        loaded_event_(false, false),
-        key_loaded_event_(false, false) {}
+        loaded_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
+        key_loaded_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                          base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void OnLoaded(const std::vector<CanonicalCookie*>& cookies) {
     cookies_ = cookies;
@@ -75,12 +77,13 @@ class SQLitePersistentCookieStorePerfTest : public testing::Test {
     base::Time t = base::Time::Now();
     for (int domain_num = 0; domain_num < 300; domain_num++) {
       std::string domain_name(base::StringPrintf(".domain_%d.com", domain_num));
-      GURL gurl("www" + domain_name);
+      GURL gurl("http://www" + domain_name);
       for (int cookie_num = 0; cookie_num < 50; ++cookie_num) {
         t += base::TimeDelta::FromInternalValue(10);
-        store_->AddCookie(CanonicalCookie(
+        store_->AddCookie(*CanonicalCookie::Create(
             gurl, base::StringPrintf("Cookie_%d", cookie_num), "1", domain_name,
-            "/", t, t, t, false, false, false, COOKIE_PRIORITY_DEFAULT));
+            "/", t, t, false, false, CookieSameSite::DEFAULT_MODE, false,
+            COOKIE_PRIORITY_DEFAULT));
       }
     }
     // Replace the store effectively destroying the current one and forcing it
@@ -103,7 +106,7 @@ class SQLitePersistentCookieStorePerfTest : public testing::Test {
 
  protected:
   base::MessageLoop main_loop_;
-  scoped_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
   base::WaitableEvent loaded_event_;
   base::WaitableEvent key_loaded_event_;
   std::vector<CanonicalCookie*> cookies_;

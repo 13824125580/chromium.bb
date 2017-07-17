@@ -5,8 +5,8 @@
 #ifndef NET_QUIC_QUIC_CRYPTO_CLIENT_STREAM_H_
 #define NET_QUIC_QUIC_CRYPTO_CLIENT_STREAM_H_
 
-#include <stdint.h>
-
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -37,6 +37,11 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStreamBase : public QuicCryptoStream {
   // have been sent. If the handshake has completed then this is one greater
   // than the number of round-trips needed for the handshake.
   virtual int num_sent_client_hellos() const = 0;
+
+  // The number of server config update messages received by the
+  // client.  Does not count update messages that were received prior
+  // to handshake confirmation.
+  virtual int num_scup_messages_received() const = 0;
 };
 
 class NET_EXPORT_PRIVATE QuicCryptoClientStream
@@ -81,6 +86,8 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
   void CryptoConnect() override;
   int num_sent_client_hellos() const override;
 
+  int num_scup_messages_received() const override;
+
   // CryptoFramerVisitorInterface implementation
   void OnHandshakeMessage(const CryptoHandshakeMessage& message) override;
 
@@ -101,7 +108,7 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
     ~ChannelIDSourceCallbackImpl() override;
 
     // ChannelIDSourceCallback interface.
-    void Run(scoped_ptr<ChannelIDKey>* channel_id_key) override;
+    void Run(std::unique_ptr<ChannelIDKey>* channel_id_key) override;
 
     // Cancel causes any future callbacks to be ignored. It must be called on
     // the same thread as the callback will be made on.
@@ -122,7 +129,7 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
     // ProofVerifierCallback interface.
     void Run(bool ok,
              const std::string& error_details,
-             scoped_ptr<ProofVerifyDetails>* details) override;
+             std::unique_ptr<ProofVerifyDetails>* details) override;
 
     // Cancel causes any future callbacks to be ignored. It must be called on
     // the same thread as the callback will be made on.
@@ -209,8 +216,9 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
 
   QuicCryptoClientConfig* const crypto_config_;
 
-  // Client's connection nonce (4-byte timestamp + 28 random bytes)
-  std::string nonce_;
+  // SHA-256 hash of the most recently sent CHLO.
+  std::string chlo_hash_;
+
   // Server's (hostname, port, is_https, privacy_mode) tuple.
   const QuicServerId server_id_;
 
@@ -231,11 +239,11 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
   // These members are used to store the result of an asynchronous channel ID
   // lookup. These members must not be used after
   // STATE_GET_CHANNEL_ID_COMPLETE.
-  scoped_ptr<ChannelIDKey> channel_id_key_;
+  std::unique_ptr<ChannelIDKey> channel_id_key_;
 
   // verify_context_ contains the context object that we pass to asynchronous
   // proof verifications.
-  scoped_ptr<ProofVerifyContext> verify_context_;
+  std::unique_ptr<ProofVerifyContext> verify_context_;
 
   // proof_verify_callback_ contains the callback object that we passed to an
   // asynchronous proof verification. The ProofVerifier owns this object.
@@ -249,7 +257,7 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
   // STATE_VERIFY_PROOF_COMPLETE.
   bool verify_ok_;
   std::string verify_error_details_;
-  scoped_ptr<ProofVerifyDetails> verify_details_;
+  std::unique_ptr<ProofVerifyDetails> verify_details_;
 
   // True if the server responded to a previous CHLO with a stateless
   // reject.  Used for book-keeping between the STATE_RECV_REJ,
@@ -257,6 +265,8 @@ class NET_EXPORT_PRIVATE QuicCryptoClientStream
   bool stateless_reject_received_;
 
   base::TimeTicks proof_verify_start_time_;
+
+  int num_scup_messages_received_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicCryptoClientStream);
 };

@@ -525,7 +525,7 @@ WebInspector.HeapSnapshotViewportDataGrid.prototype = {
 
     /**
      * @param {!WebInspector.DataGridNode} parent
-     * @param {!WebInspector.DataGridNode} node
+     * @param {!WebInspector.HeapSnapshotGridNode} node
      */
     appendNode: function(parent, node)
     {
@@ -540,7 +540,7 @@ WebInspector.HeapSnapshotViewportDataGrid.prototype = {
      */
     insertChild: function(parent, node, index)
     {
-        this.allChildren(parent).splice(index, 0, node);
+        this.allChildren(parent).splice(index, 0, /** @type {!WebInspector.HeapSnapshotGridNode} */(node));
     },
 
     removeChildByIndex: function(parent, index)
@@ -1032,8 +1032,8 @@ WebInspector.AllocationDataGrid.prototype = {
     /**
      * @return {function(!Object, !Object):number}
      */
-     _createComparator: function()
-     {
+    _createComparator: function()
+    {
         var fieldName = this.sortColumnIdentifier();
         var compareResult = (this.sortOrder() === WebInspector.DataGrid.Order.Ascending) ? +1 : -1;
         /**
@@ -1050,7 +1050,7 @@ WebInspector.AllocationDataGrid.prototype = {
             return 0;
         }
         return compare;
-     },
+    },
 
     __proto__: WebInspector.HeapSnapshotViewportDataGrid.prototype
 }

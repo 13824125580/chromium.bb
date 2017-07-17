@@ -9,7 +9,7 @@ from core import perf_benchmark
 
 from telemetry import benchmark
 from telemetry import page as page_module
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.page import shared_page_state
 from telemetry import story
 from telemetry.value import list_of_scalar_values
@@ -71,7 +71,7 @@ def CreateStorySetFromPath(path, skipped_file,
   return ps
 
 
-class _BlinkPerfMeasurement(page_test.PageTest):
+class _BlinkPerfMeasurement(legacy_page_test.LegacyPageTest):
   """Tuns a blink performance test and reports the results."""
 
   def __init__(self):
@@ -81,6 +81,7 @@ class _BlinkPerfMeasurement(page_test.PageTest):
       self._blink_perf_js = f.read()
 
   def WillNavigateToPage(self, page, tab):
+    del tab  # unused
     page.script_to_evaluate_on_commit = self._blink_perf_js
 
   def CustomizeBrowserOptions(self, options):
@@ -88,7 +89,9 @@ class _BlinkPerfMeasurement(page_test.PageTest):
         '--js-flags=--expose_gc',
         '--enable-experimental-web-platform-features',
         '--disable-gesture-requirement-for-media-playback',
-        '--enable-experimental-canvas-features'
+        '--enable-experimental-canvas-features',
+        # TODO(qinmin): After fixing crbug.com/592017, remove this command line.
+        '--reduce-security-for-testing'
     ])
     if 'content-shell' in options.browser_type:
       options.AppendExtraBrowserArgs('--expose-internals-for-testing')
@@ -99,6 +102,9 @@ class _BlinkPerfMeasurement(page_test.PageTest):
     log = tab.EvaluateJavaScript('document.getElementById("log").innerHTML')
 
     for line in log.splitlines():
+      if line.startswith("FATAL: "):
+        print line
+        continue
       if not line.startswith('values '):
         continue
       parts = line.split()
@@ -166,11 +172,15 @@ class BlinkPerfCSS(perf_benchmark.PerfBenchmark):
     return CreateStorySetFromPath(path, SKIPPED_FILE)
 
 
-@benchmark.Disabled('android',  # http://crbug.com/496707
+@benchmark.Disabled('android-webview', # http://crbug.com/593200
                     'reference')  # http://crbug.com/576779
 class BlinkPerfCanvas(perf_benchmark.PerfBenchmark):
   tag = 'canvas'
   test = _BlinkPerfMeasurement
+
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+    return cls.IsSvelte(possible_browser)  # http://crbug.com/593973.
 
   @classmethod
   def Name(cls):
@@ -307,8 +317,7 @@ class BlinkPerfXMLHttpRequest(perf_benchmark.PerfBenchmark):
 
 
 # Disabled on Windows and ChromeOS due to https://crbug.com/521887
-# Disabled on reference builds due to https://crbug.com/530374
-@benchmark.Disabled('win', 'chromeos', 'reference')
+@benchmark.Disabled('win', 'chromeos')
 class BlinkPerfPywebsocket(perf_benchmark.PerfBenchmark):
   """The blink_perf.pywebsocket tests measure turn-around-time of 10MB
   send/receive for XHR, Fetch API and WebSocket. We might ignore < 10%

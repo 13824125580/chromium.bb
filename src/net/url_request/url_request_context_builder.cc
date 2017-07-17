@@ -11,18 +11,23 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/cache_type.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate_impl.h"
 #include "net/base/sdch_manager.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/ct_known_logs.h"
+#include "net/cert/ct_log_verifier.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/ct_verifier.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/dns/host_resolver.h"
-#include "net/ftp/ftp_network_layer.h"
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_network_layer.h"
@@ -45,11 +50,12 @@
 #include "net/url_request/url_request_throttler_manager.h"
 
 #if !defined(DISABLE_FILE_SUPPORT)
-#include "net/url_request/file_protocol_handler.h"
+#include "net/url_request/file_protocol_handler.h"  // nogncheck
 #endif
 
 #if !defined(DISABLE_FTP_SUPPORT)
-#include "net/url_request/ftp_protocol_handler.h"
+#include "net/ftp/ftp_network_layer.h"             // nogncheck
+#include "net/url_request/ftp_protocol_handler.h"  // nogncheck
 #endif
 
 namespace net {
@@ -68,14 +74,14 @@ class BasicNetworkDelegate : public NetworkDelegateImpl {
     return OK;
   }
 
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override {
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override {
     return OK;
   }
 
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override {}
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override {}
 
   int OnHeadersReceived(
       URLRequest* request,
@@ -151,17 +157,18 @@ class ContainerURLRequestContext : public URLRequestContext {
   }
 
   void set_transport_security_persister(
-      scoped_ptr<TransportSecurityPersister> transport_security_persister) {
+      std::unique_ptr<TransportSecurityPersister>
+          transport_security_persister) {
     transport_security_persister_ = std::move(transport_security_persister);
   }
 
  private:
   // The thread should be torn down last.
-  scoped_ptr<base::Thread> file_thread_;
+  std::unique_ptr<base::Thread> file_thread_;
   scoped_refptr<base::SingleThreadTaskRunner> file_task_runner_;
 
   URLRequestContextStorage storage_;
-  scoped_ptr<TransportSecurityPersister> transport_security_persister_;
+  std::unique_ptr<TransportSecurityPersister> transport_security_persister_;
 
   DISALLOW_COPY_AND_ASSIGN(ContainerURLRequestContext);
 };
@@ -178,20 +185,19 @@ URLRequestContextBuilder::HttpNetworkSessionParams::HttpNetworkSessionParams()
       host_mapping_rules(NULL),
       testing_fixed_http_port(0),
       testing_fixed_https_port(0),
-      enable_spdy31(true),
+      enable_spdy31(false),
       enable_http2(true),
-      parse_alternative_services(false),
-      enable_alternative_service_with_different_host(false),
       enable_quic(false),
       quic_max_server_configs_stored_in_properties(0),
-      quic_delay_tcp_race(false),
+      quic_delay_tcp_race(true),
       quic_max_number_of_lossy_connections(0),
       quic_prefer_aes(false),
       quic_packet_loss_threshold(1.0f),
       quic_idle_connection_timeout_seconds(kIdleConnectionTimeoutSeconds),
       quic_close_sessions_on_ip_change(false),
       quic_migrate_sessions_on_network_change(false),
-      quic_migrate_sessions_early(false) {}
+      quic_migrate_sessions_early(false),
+      quic_disable_bidirectional_streams(false) {}
 
 URLRequestContextBuilder::HttpNetworkSessionParams::~HttpNetworkSessionParams()
 {}
@@ -208,7 +214,9 @@ URLRequestContextBuilder::URLRequestContextBuilder()
       throttling_enabled_(false),
       backoff_enabled_(false),
       sdch_enabled_(false),
-      net_log_(nullptr) {
+      cookie_store_set_by_client_(false),
+      net_log_(nullptr),
+      socket_performance_watcher_factory_(nullptr) {
 }
 
 URLRequestContextBuilder::~URLRequestContextBuilder() {}
@@ -220,10 +228,10 @@ void URLRequestContextBuilder::SetHttpNetworkSessionComponents(
   params->cert_verifier = context->cert_verifier();
   params->transport_security_state = context->transport_security_state();
   params->cert_transparency_verifier = context->cert_transparency_verifier();
+  params->ct_policy_enforcer = context->ct_policy_enforcer();
   params->proxy_service = context->proxy_service();
   params->ssl_config_service = context->ssl_config_service();
   params->http_auth_handler_factory = context->http_auth_handler_factory();
-  params->network_delegate = context->network_delegate();
   params->http_server_properties = context->http_server_properties();
   params->net_log = context->net_log();
   params->channel_id_service = context->channel_id_service();
@@ -246,21 +254,29 @@ void URLRequestContextBuilder::SetSpdyAndQuicEnabled(bool spdy_enabled,
   http_network_session_params_.enable_quic = quic_enabled;
 }
 
+void URLRequestContextBuilder::set_ct_verifier(
+    std::unique_ptr<CTVerifier> ct_verifier) {
+  ct_verifier_ = std::move(ct_verifier);
+}
+
 void URLRequestContextBuilder::SetCertVerifier(
-    scoped_ptr<CertVerifier> cert_verifier) {
+    std::unique_ptr<CertVerifier> cert_verifier) {
   cert_verifier_ = std::move(cert_verifier);
 }
 
 void URLRequestContextBuilder::SetInterceptors(
-    std::vector<scoped_ptr<URLRequestInterceptor>> url_request_interceptors) {
+    std::vector<std::unique_ptr<URLRequestInterceptor>>
+        url_request_interceptors) {
   url_request_interceptors_ = std::move(url_request_interceptors);
 }
 
 void URLRequestContextBuilder::SetCookieAndChannelIdStores(
-      const scoped_refptr<CookieStore>& cookie_store,
-      scoped_ptr<ChannelIDService> channel_id_service) {
-  DCHECK(cookie_store);
-  cookie_store_ = cookie_store;
+    std::unique_ptr<CookieStore> cookie_store,
+    std::unique_ptr<ChannelIDService> channel_id_service) {
+  cookie_store_set_by_client_ = true;
+  // If |cookie_store| is NULL, |channel_id_service| must be NULL too.
+  DCHECK(cookie_store || !channel_id_service);
+  cookie_store_ = std::move(cookie_store);
   channel_id_service_ = std::move(channel_id_service);
 }
 
@@ -269,22 +285,29 @@ void URLRequestContextBuilder::SetFileTaskRunner(
   file_task_runner_ = task_runner;
 }
 
+void URLRequestContextBuilder::SetProtocolHandler(
+    const std::string& scheme,
+    std::unique_ptr<URLRequestJobFactory::ProtocolHandler> protocol_handler) {
+  DCHECK(protocol_handler);
+  protocol_handlers_[scheme] = std::move(protocol_handler);
+}
+
 void URLRequestContextBuilder::SetHttpAuthHandlerFactory(
-    scoped_ptr<HttpAuthHandlerFactory> factory) {
+    std::unique_ptr<HttpAuthHandlerFactory> factory) {
   http_auth_handler_factory_ = std::move(factory);
 }
 
 void URLRequestContextBuilder::SetHttpServerProperties(
-    scoped_ptr<HttpServerProperties> http_server_properties) {
+    std::unique_ptr<HttpServerProperties> http_server_properties) {
   http_server_properties_ = std::move(http_server_properties);
 }
 
-scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
-  scoped_ptr<ContainerURLRequestContext> context(
+std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
+  std::unique_ptr<ContainerURLRequestContext> context(
       new ContainerURLRequestContext(file_task_runner_));
   URLRequestContextStorage* storage = context->storage();
 
-  storage->set_http_user_agent_settings(make_scoped_ptr(
+  storage->set_http_user_agent_settings(base::WrapUnique(
       new StaticHttpUserAgentSettings(accept_language_, user_agent_)));
 
   if (!network_delegate_)
@@ -296,7 +319,7 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
     // builder or resulting context.
     context->set_net_log(net_log_);
   } else {
-    storage->set_net_log(make_scoped_ptr(new NetLog));
+    storage->set_net_log(base::WrapUnique(new NetLog));
   }
 
   if (!host_resolver_) {
@@ -330,26 +353,31 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
 
   storage->set_http_auth_handler_factory(std::move(http_auth_handler_factory_));
 
-  if (cookie_store_) {
-    storage->set_cookie_store(cookie_store_.get());
+  if (cookie_store_set_by_client_) {
+    storage->set_cookie_store(std::move(cookie_store_));
     storage->set_channel_id_service(std::move(channel_id_service_));
   } else {
-    storage->set_cookie_store(new CookieMonster(NULL, NULL));
+    std::unique_ptr<CookieStore> cookie_store(
+        new CookieMonster(nullptr, nullptr));
     // TODO(mmenke):  This always creates a file thread, even when it ends up
     // not being used.  Consider lazily creating the thread.
-    storage->set_channel_id_service(make_scoped_ptr(new ChannelIDService(
-        new DefaultChannelIDStore(NULL), context->GetFileTaskRunner())));
+    std::unique_ptr<ChannelIDService> channel_id_service(new ChannelIDService(
+        new DefaultChannelIDStore(NULL), context->GetFileTaskRunner()));
+    cookie_store->SetChannelIDServiceID(channel_id_service->GetUniqueID());
+    storage->set_cookie_store(std::move(cookie_store));
+    storage->set_channel_id_service(std::move(channel_id_service));
   }
 
   if (sdch_enabled_) {
-    storage->set_sdch_manager(scoped_ptr<net::SdchManager>(new SdchManager()));
+    storage->set_sdch_manager(
+        std::unique_ptr<net::SdchManager>(new SdchManager()));
   }
 
   storage->set_transport_security_state(
-      make_scoped_ptr(new TransportSecurityState()));
+      base::WrapUnique(new TransportSecurityState()));
   if (!transport_security_persister_path_.empty()) {
     context->set_transport_security_persister(
-        make_scoped_ptr<TransportSecurityPersister>(
+        base::WrapUnique<TransportSecurityPersister>(
             new TransportSecurityPersister(context->transport_security_state(),
                                            transport_security_persister_path_,
                                            context->GetFileTaskRunner(),
@@ -360,7 +388,7 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
     storage->set_http_server_properties(std::move(http_server_properties_));
   } else {
     storage->set_http_server_properties(
-        scoped_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
+        std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
   }
 
   if (cert_verifier_) {
@@ -369,14 +397,24 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
     storage->set_cert_verifier(CertVerifier::CreateDefault());
   }
 
+  if (ct_verifier_) {
+    storage->set_cert_transparency_verifier(std::move(ct_verifier_));
+  } else {
+    std::unique_ptr<MultiLogCTVerifier> ct_verifier =
+        base::MakeUnique<MultiLogCTVerifier>();
+    ct_verifier->AddLogs(ct::CreateLogVerifiersForKnownLogs());
+    storage->set_cert_transparency_verifier(std::move(ct_verifier));
+  }
+  storage->set_ct_policy_enforcer(base::MakeUnique<CTPolicyEnforcer>());
+
   if (throttling_enabled_) {
     storage->set_throttler_manager(
-        make_scoped_ptr(new URLRequestThrottlerManager()));
+        base::WrapUnique(new URLRequestThrottlerManager()));
   }
 
   if (backoff_enabled_) {
     storage->set_backoff_manager(
-        make_scoped_ptr(new URLRequestBackoffManager()));
+        base::WrapUnique(new URLRequestBackoffManager()));
   }
 
   HttpNetworkSession::Params network_session_params;
@@ -394,11 +432,6 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
       http_network_session_params_.enable_spdy31;
   network_session_params.enable_http2 =
       http_network_session_params_.enable_http2;
-  network_session_params.parse_alternative_services =
-      http_network_session_params_.parse_alternative_services;
-  network_session_params.enable_alternative_service_with_different_host =
-      http_network_session_params_
-          .enable_alternative_service_with_different_host;
   network_session_params.enable_quic = http_network_session_params_.enable_quic;
   network_session_params.quic_max_server_configs_stored_in_properties =
       http_network_session_params_.quic_max_server_configs_stored_in_properties;
@@ -424,13 +457,23 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
       http_network_session_params_.quic_prefer_aes;
   network_session_params.quic_migrate_sessions_early =
       http_network_session_params_.quic_migrate_sessions_early;
+  network_session_params.quic_disable_bidirectional_streams =
+      http_network_session_params_.quic_disable_bidirectional_streams;
+  if (proxy_delegate_) {
+    network_session_params.proxy_delegate = proxy_delegate_.get();
+    storage->set_proxy_delegate(std::move(proxy_delegate_));
+  }
+  if (socket_performance_watcher_factory_) {
+    network_session_params.socket_performance_watcher_factory =
+        socket_performance_watcher_factory_;
+  }
 
   storage->set_http_network_session(
-      make_scoped_ptr(new HttpNetworkSession(network_session_params)));
+      base::WrapUnique(new HttpNetworkSession(network_session_params)));
 
-  scoped_ptr<HttpTransactionFactory> http_transaction_factory;
+  std::unique_ptr<HttpTransactionFactory> http_transaction_factory;
   if (http_cache_enabled_) {
-    scoped_ptr<HttpCache::BackendFactory> http_cache_backend;
+    std::unique_ptr<HttpCache::BackendFactory> http_cache_backend;
     if (http_cache_params_.type != HttpCacheParams::IN_MEMORY) {
       BackendType backend_type =
           http_cache_params_.type == HttpCacheParams::DISK
@@ -453,15 +496,23 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   storage->set_http_transaction_factory(std::move(http_transaction_factory));
 
   URLRequestJobFactoryImpl* job_factory = new URLRequestJobFactoryImpl;
+  // Adds caller-provided protocol handlers first so that these handlers are
+  // used over data/file/ftp handlers below.
+  for (auto& scheme_handler : protocol_handlers_) {
+    job_factory->SetProtocolHandler(scheme_handler.first,
+                                    std::move(scheme_handler.second));
+  }
+  protocol_handlers_.clear();
+
   if (data_enabled_)
     job_factory->SetProtocolHandler("data",
-                                    make_scoped_ptr(new DataProtocolHandler));
+                                    base::WrapUnique(new DataProtocolHandler));
 
 #if !defined(DISABLE_FILE_SUPPORT)
   if (file_enabled_) {
     job_factory->SetProtocolHandler(
-        "file",
-        make_scoped_ptr(new FileProtocolHandler(context->GetFileTaskRunner())));
+        "file", base::WrapUnique(
+                    new FileProtocolHandler(context->GetFileTaskRunner())));
   }
 #endif  // !defined(DISABLE_FILE_SUPPORT)
 
@@ -470,12 +521,12 @@ scoped_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
     ftp_transaction_factory_.reset(
         new FtpNetworkLayer(context->host_resolver()));
     job_factory->SetProtocolHandler(
-        "ftp", make_scoped_ptr(
+        "ftp", base::WrapUnique(
                    new FtpProtocolHandler(ftp_transaction_factory_.get())));
   }
 #endif  // !defined(DISABLE_FTP_SUPPORT)
 
-  scoped_ptr<net::URLRequestJobFactory> top_job_factory(job_factory);
+  std::unique_ptr<net::URLRequestJobFactory> top_job_factory(job_factory);
   if (!url_request_interceptors_.empty()) {
     // Set up interceptors in the reverse order.
 

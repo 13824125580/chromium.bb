@@ -27,8 +27,7 @@ class LayerTreeHostDamageTestSetNeedsRedraw
     : public LayerTreeHostDamageTest {
   void SetupTree() override {
     // Viewport is 10x10.
-    scoped_refptr<FakePictureLayer> root =
-        FakePictureLayer::Create(layer_settings(), &client_);
+    scoped_refptr<FakePictureLayer> root = FakePictureLayer::Create(&client_);
     root->SetBounds(gfx::Size(10, 10));
 
     layer_tree_host()->SetRootLayer(root);
@@ -55,7 +54,7 @@ class LayerTreeHostDamageTestSetNeedsRedraw
     EXPECT_EQ(DRAW_SUCCESS, draw_result);
 
     RenderSurfaceImpl* root_surface =
-        impl->active_tree()->root_layer()->render_surface();
+        impl->active_tree()->root_layer_for_testing()->render_surface();
     gfx::Rect root_damage =
         root_surface->damage_tracker()->current_damage_rect();
 
@@ -90,8 +89,7 @@ class LayerTreeHostDamageTestSetViewportSize
     : public LayerTreeHostDamageTest {
   void SetupTree() override {
     // Viewport is 10x10.
-    scoped_refptr<FakePictureLayer> root =
-        FakePictureLayer::Create(layer_settings(), &client_);
+    scoped_refptr<FakePictureLayer> root = FakePictureLayer::Create(&client_);
     root->SetBounds(gfx::Size(10, 10));
 
     layer_tree_host()->SetRootLayer(root);
@@ -118,7 +116,7 @@ class LayerTreeHostDamageTestSetViewportSize
     EXPECT_EQ(DRAW_SUCCESS, draw_result);
 
     RenderSurfaceImpl* root_surface =
-        impl->active_tree()->root_layer()->render_surface();
+        impl->active_tree()->root_layer_for_testing()->render_surface();
     gfx::Rect root_damage =
         root_surface->damage_tracker()->current_damage_rect();
 
@@ -158,12 +156,11 @@ class LayerTreeHostDamageTestNoDamageDoesNotSwap
   }
 
   void SetupTree() override {
-    scoped_refptr<FakePictureLayer> root =
-        FakePictureLayer::Create(layer_settings(), &client_);
+    scoped_refptr<FakePictureLayer> root = FakePictureLayer::Create(&client_);
     root->SetBounds(gfx::Size(10, 10));
 
     // Most of the layer isn't visible.
-    content_ = FakePictureLayer::Create(layer_settings(), &client_);
+    content_ = FakePictureLayer::Create(&client_);
     content_->SetBounds(gfx::Size(2000, 100));
     root->AddChild(content_);
 
@@ -244,8 +241,8 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void SetupTree() override {
-    root_ = FakePictureLayer::Create(layer_settings(), &client_);
-    child_ = FakePictureLayer::Create(layer_settings(), &client_);
+    root_ = FakePictureLayer::Create(&client_);
+    child_ = FakePictureLayer::Create(&client_);
 
     root_->SetBounds(gfx::Size(500, 500));
     child_->SetPosition(gfx::PointF(100.f, 100.f));
@@ -263,7 +260,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
     EXPECT_EQ(DRAW_SUCCESS, draw_result);
 
     RenderSurfaceImpl* root_surface =
-        host_impl->active_tree()->root_layer()->render_surface();
+        host_impl->active_tree()->root_layer_for_testing()->render_surface();
     gfx::Rect root_damage =
         root_surface->damage_tracker()->current_damage_rect();
     root_damage.Intersect(root_surface->content_rect());
@@ -335,33 +332,32 @@ SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostDamageTestForcedFullDamage);
 
 class LayerTreeHostScrollbarDamageTest : public LayerTreeHostDamageTest {
   void SetupTree() override {
-    scoped_refptr<Layer> root_layer = Layer::Create(layer_settings());
+    scoped_refptr<Layer> root_layer = Layer::Create();
     root_layer->SetBounds(gfx::Size(400, 400));
     root_layer->SetMasksToBounds(true);
     layer_tree_host()->SetRootLayer(root_layer);
 
-    scoped_refptr<Layer> scroll_clip_layer = Layer::Create(layer_settings());
-    scoped_refptr<Layer> content_layer =
-        FakePictureLayer::Create(layer_settings(), &client_);
-    content_layer->SetScrollClipLayerId(scroll_clip_layer->id());
-    content_layer->SetScrollOffset(gfx::ScrollOffset(10, 20));
-    content_layer->SetBounds(gfx::Size(100, 200));
-    content_layer->SetIsDrawable(true);
+    scoped_refptr<Layer> scroll_clip_layer = Layer::Create();
+    content_layer_ = FakePictureLayer::Create(&client_);
+    content_layer_->SetScrollClipLayerId(scroll_clip_layer->id());
+    content_layer_->SetScrollOffset(gfx::ScrollOffset(10, 20));
+    content_layer_->SetBounds(gfx::Size(100, 200));
+    content_layer_->SetIsDrawable(true);
     scroll_clip_layer->SetBounds(
-        gfx::Size(content_layer->bounds().width() - 30,
-                  content_layer->bounds().height() - 50));
-    scroll_clip_layer->AddChild(content_layer);
+        gfx::Size(content_layer_->bounds().width() - 30,
+                  content_layer_->bounds().height() - 50));
+    scroll_clip_layer->AddChild(content_layer_);
     root_layer->AddChild(scroll_clip_layer);
 
-    scoped_refptr<Layer> scrollbar_layer = FakePaintedScrollbarLayer::Create(
-        layer_settings(), false, true, content_layer->id());
+    scoped_refptr<Layer> scrollbar_layer =
+        FakePaintedScrollbarLayer::Create(false, true, content_layer_->id());
     scrollbar_layer->SetPosition(gfx::PointF(300.f, 300.f));
     scrollbar_layer->SetBounds(gfx::Size(10, 100));
-    scrollbar_layer->ToScrollbarLayer()->SetScrollLayer(content_layer->id());
+    scrollbar_layer->ToScrollbarLayer()->SetScrollLayer(content_layer_->id());
     root_layer->AddChild(scrollbar_layer);
 
-    gfx::RectF content_rect(content_layer->position(),
-                            gfx::SizeF(content_layer->bounds()));
+    gfx::RectF content_rect(content_layer_->position(),
+                            gfx::SizeF(content_layer_->bounds()));
     gfx::RectF scrollbar_rect(scrollbar_layer->position(),
                               gfx::SizeF(scrollbar_layer->bounds()));
     EXPECT_FALSE(content_rect.Intersects(scrollbar_rect));
@@ -372,6 +368,9 @@ class LayerTreeHostScrollbarDamageTest : public LayerTreeHostDamageTest {
 
  private:
   FakeContentLayerClient client_;
+
+ protected:
+  scoped_refptr<Layer> content_layer_;
 };
 
 class LayerTreeHostDamageTestScrollbarDoesDamage
@@ -386,7 +385,7 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
                                    DrawResult draw_result) override {
     EXPECT_EQ(DRAW_SUCCESS, draw_result);
     RenderSurfaceImpl* root_surface =
-        host_impl->active_tree()->root_layer()->render_surface();
+        host_impl->active_tree()->root_layer_for_testing()->render_surface();
     gfx::Rect root_damage =
         root_surface->damage_tracker()->current_damage_rect();
     root_damage.Intersect(root_surface->content_rect());
@@ -414,9 +413,8 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
   void SwapBuffersOnThread(LayerTreeHostImpl* host_impl, bool result) override {
     ++did_swaps_;
     EXPECT_TRUE(result);
-    LayerImpl* root = host_impl->active_tree()->root_layer();
-    LayerImpl* scroll_clip_layer = root->children()[0].get();
-    LayerImpl* scroll_layer = scroll_clip_layer->children()[0].get();
+    LayerImpl* scroll_layer =
+        host_impl->active_tree()->LayerById(content_layer_->id());
     switch (did_swaps_) {
       case 1:
         // Test that modifying the position of the content layer (not
@@ -443,18 +441,13 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
 
   void ModifyContentLayerPosition() {
     EXPECT_EQ(1, did_swaps_);
-    Layer* root = layer_tree_host()->root_layer();
-    Layer* scroll_clip_layer = root->child_at(0);
-    Layer* scroll_layer = scroll_clip_layer->child_at(0);
-    scroll_layer->SetPosition(gfx::PointF(10.f, 10.f));
+    content_layer_->SetPosition(gfx::PointF(10.f, 10.f));
   }
 
   void ResizeScrollLayer() {
     EXPECT_EQ(3, did_swaps_);
     Layer* root = layer_tree_host()->root_layer();
-    Layer* scroll_clip_layer = root->child_at(0);
-    Layer* scroll_layer = scroll_clip_layer->child_at(0);
-    scroll_layer->SetBounds(
+    content_layer_->SetBounds(
         gfx::Size(root->bounds().width() + 60, root->bounds().height() + 100));
   }
 
@@ -477,7 +470,7 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
                                    DrawResult draw_result) override {
     EXPECT_EQ(DRAW_SUCCESS, draw_result);
     RenderSurfaceImpl* root_surface =
-        host_impl->active_tree()->root_layer()->render_surface();
+        host_impl->active_tree()->root_layer_for_testing()->render_surface();
     gfx::Rect root_damage =
         root_surface->damage_tracker()->current_damage_rect();
     root_damage.Intersect(root_surface->content_rect());
@@ -507,9 +500,8 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
   void SwapBuffersOnThread(LayerTreeHostImpl* host_impl, bool result) override {
     ++did_swaps_;
     EXPECT_TRUE(result);
-    LayerImpl* root = host_impl->active_tree()->root_layer();
-    LayerImpl* scroll_clip_layer = root->children()[0].get();
-    LayerImpl* scroll_layer = scroll_clip_layer->children()[0].get();
+    LayerImpl* scroll_layer =
+        host_impl->active_tree()->LayerById(content_layer_->id());
     switch (did_swaps_) {
       case 1:
         // Scroll on the thread.  This should damage the scrollbar for the

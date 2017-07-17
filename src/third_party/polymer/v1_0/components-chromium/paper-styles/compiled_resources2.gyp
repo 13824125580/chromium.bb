@@ -14,15 +14,17 @@
       'includes': ['../../../../closure_compiler/compile_js2.gypi'],
     },
     {
-      'target_name': 'demo-pages-extracted',
-      'includes': ['../../../../closure_compiler/compile_js2.gypi'],
-    },
-    {
       'target_name': 'paper-styles-classes-extracted',
+      'dependencies': [
+        '../iron-flex-layout/classes/compiled_resources2.gyp:iron-flex-layout-extracted',
+      ],
       'includes': ['../../../../closure_compiler/compile_js2.gypi'],
     },
     {
       'target_name': 'paper-styles-extracted',
+      'dependencies': [
+        '../iron-flex-layout/classes/compiled_resources2.gyp:iron-flex-layout-extracted',
+      ],
       'includes': ['../../../../closure_compiler/compile_js2.gypi'],
     },
     {

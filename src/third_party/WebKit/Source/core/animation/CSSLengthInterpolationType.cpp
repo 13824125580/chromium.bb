@@ -9,6 +9,8 @@
 #include "core/css/CSSCalculationValue.h"
 #include "core/css/resolver/StyleBuilder.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -16,7 +18,7 @@ namespace blink {
 // while nullptr represents the absence of any percentages.
 class CSSLengthNonInterpolableValue : public NonInterpolableValue {
 public:
-    ~CSSLengthNonInterpolableValue() final { ASSERT_NOT_REACHED(); }
+    ~CSSLengthNonInterpolableValue() final { NOTREACHED(); }
     static PassRefPtr<CSSLengthNonInterpolableValue> create(bool hasPercentage)
     {
         DEFINE_STATIC_REF(CSSLengthNonInterpolableValue, singleton, adoptRef(new CSSLengthNonInterpolableValue()));
@@ -44,7 +46,7 @@ DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSLengthNonInterpolableValue);
 
 CSSLengthInterpolationType::CSSLengthInterpolationType(CSSPropertyID property)
     : CSSInterpolationType(property)
-    , m_valueRange(LengthPropertyFunctions::valueRange(property))
+    , m_valueRange(LengthPropertyFunctions::getValueRange(property))
 { }
 
 float CSSLengthInterpolationType::effectiveZoom(const ComputedStyle& style) const
@@ -52,18 +54,18 @@ float CSSLengthInterpolationType::effectiveZoom(const ComputedStyle& style) cons
     return LengthPropertyFunctions::isZoomedLength(cssProperty()) ? style.effectiveZoom() : 1;
 }
 
-PassOwnPtr<InterpolableValue> CSSLengthInterpolationType::createInterpolablePixels(double pixels)
+std::unique_ptr<InterpolableValue> CSSLengthInterpolationType::createInterpolablePixels(double pixels)
 {
-    OwnPtr<InterpolableList> interpolableList = createNeutralInterpolableValue();
+    std::unique_ptr<InterpolableList> interpolableList = createNeutralInterpolableValue();
     interpolableList->set(CSSPrimitiveValue::UnitTypePixels, InterpolableNumber::create(pixels));
-    return interpolableList.release();
+    return std::move(interpolableList);
 }
 
 InterpolationValue CSSLengthInterpolationType::createInterpolablePercent(double percent)
 {
-    OwnPtr<InterpolableList> interpolableList = createNeutralInterpolableValue();
+    std::unique_ptr<InterpolableList> interpolableList = createNeutralInterpolableValue();
     interpolableList->set(CSSPrimitiveValue::UnitTypePercentage, InterpolableNumber::create(percent));
-    return InterpolationValue(interpolableList.release(), CSSLengthNonInterpolableValue::create(true));
+    return InterpolationValue(std::move(interpolableList), CSSLengthNonInterpolableValue::create(true));
 }
 
 InterpolationValue CSSLengthInterpolationType::maybeConvertLength(const Length& length, float zoom)
@@ -71,28 +73,28 @@ InterpolationValue CSSLengthInterpolationType::maybeConvertLength(const Length& 
     if (!length.isSpecified())
         return nullptr;
 
-    PixelsAndPercent pixelsAndPercent = length.pixelsAndPercent();
-    OwnPtr<InterpolableList> values = createNeutralInterpolableValue();
+    PixelsAndPercent pixelsAndPercent = length.getPixelsAndPercent();
+    std::unique_ptr<InterpolableList> values = createNeutralInterpolableValue();
     values->set(CSSPrimitiveValue::UnitTypePixels, InterpolableNumber::create(pixelsAndPercent.pixels / zoom));
     values->set(CSSPrimitiveValue::UnitTypePercentage, InterpolableNumber::create(pixelsAndPercent.percent));
 
-    return InterpolationValue(values.release(), CSSLengthNonInterpolableValue::create(length.hasPercent()));
+    return InterpolationValue(std::move(values), CSSLengthNonInterpolableValue::create(length.hasPercent()));
 }
 
-PassOwnPtr<InterpolableList> CSSLengthInterpolationType::createNeutralInterpolableValue()
+std::unique_ptr<InterpolableList> CSSLengthInterpolationType::createNeutralInterpolableValue()
 {
     const size_t length = CSSPrimitiveValue::LengthUnitTypeCount;
-    OwnPtr<InterpolableList> values = InterpolableList::create(length);
+    std::unique_ptr<InterpolableList> values = InterpolableList::create(length);
     for (size_t i = 0; i < length; i++)
         values->set(i, InterpolableNumber::create(0));
-    return values.release();
+    return values;
 }
 
-PairwiseInterpolationValue CSSLengthInterpolationType::staticMergeSingleConversions(InterpolationValue& start, InterpolationValue& end)
+PairwiseInterpolationValue CSSLengthInterpolationType::staticMergeSingleConversions(InterpolationValue&& start, InterpolationValue&& end)
 {
     return PairwiseInterpolationValue(
-        start.interpolableValue.release(),
-        end.interpolableValue.release(),
+        std::move(start.interpolableValue),
+        std::move(end.interpolableValue),
         CSSLengthNonInterpolableValue::merge(start.nonInterpolableValue.get(), end.nonInterpolableValue.get()));
 }
 
@@ -102,7 +104,7 @@ bool CSSLengthInterpolationType::nonInterpolableValuesAreCompatible(const NonInt
 }
 
 void CSSLengthInterpolationType::composite(
-    OwnPtr<InterpolableValue>& underlyingInterpolableValue,
+    std::unique_ptr<InterpolableValue>& underlyingInterpolableValue,
     RefPtr<NonInterpolableValue>& underlyingNonInterpolableValue,
     double underlyingFraction,
     const InterpolableValue& interpolableValue,
@@ -130,31 +132,25 @@ InterpolationValue CSSLengthInterpolationType::maybeConvertCSSValue(const CSSVal
         return nullptr;
 
     const CSSPrimitiveValue& primitiveValue = toCSSPrimitiveValue(value);
-
-    CSSLengthArray valueArray;
-    for (size_t i = 0; i < CSSPrimitiveValue::LengthUnitTypeCount; i++)
-        valueArray.append(0);
-    bool hasPercentage = false;
-
     if (!primitiveValue.isLength() && !primitiveValue.isPercentage() && !primitiveValue.isCalculatedPercentageWithLength())
         return nullptr;
-    CSSLengthTypeArray hasType;
-    hasType.ensureSize(CSSPrimitiveValue::LengthUnitTypeCount);
-    primitiveValue.accumulateLengthArray(valueArray, hasType);
-    hasPercentage = hasType.get(CSSPrimitiveValue::UnitTypePercentage);
 
-    OwnPtr<InterpolableList> values = InterpolableList::create(CSSPrimitiveValue::LengthUnitTypeCount);
+    CSSLengthArray lengthArray;
+    primitiveValue.accumulateLengthArray(lengthArray);
+
+    std::unique_ptr<InterpolableList> values = InterpolableList::create(CSSPrimitiveValue::LengthUnitTypeCount);
     for (size_t i = 0; i < CSSPrimitiveValue::LengthUnitTypeCount; i++)
-        values->set(i, InterpolableNumber::create(valueArray.at(i)));
+        values->set(i, InterpolableNumber::create(lengthArray.values[i]));
 
-    return InterpolationValue(values.release(), CSSLengthNonInterpolableValue::create(hasPercentage));
+    bool hasPercentage = lengthArray.typeFlags.get(CSSPrimitiveValue::UnitTypePercentage);
+    return InterpolationValue(std::move(values), CSSLengthNonInterpolableValue::create(hasPercentage));
 }
 
 class ParentLengthChecker : public InterpolationType::ConversionChecker {
 public:
-    static PassOwnPtr<ParentLengthChecker> create(CSSPropertyID property, const Length& length)
+    static std::unique_ptr<ParentLengthChecker> create(CSSPropertyID property, const Length& length)
     {
-        return adoptPtr(new ParentLengthChecker(property, length));
+        return wrapUnique(new ParentLengthChecker(property, length));
     }
 
 private:
@@ -180,7 +176,7 @@ InterpolationValue CSSLengthInterpolationType::maybeConvertNeutral(const Interpo
     return InterpolationValue(createNeutralInterpolableValue());
 }
 
-InterpolationValue CSSLengthInterpolationType::maybeConvertInitial() const
+InterpolationValue CSSLengthInterpolationType::maybeConvertInitial(const StyleResolverState&, ConversionCheckers& conversionCheckers) const
 {
     Length initialLength;
     if (!LengthPropertyFunctions::getInitialLength(cssProperty(), initialLength))
@@ -220,7 +216,7 @@ InterpolationValue CSSLengthInterpolationType::maybeConvertUnderlyingValue(const
     return maybeConvertLength(underlyingLength, effectiveZoom(*environment.state().style()));
 }
 
-void CSSLengthInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value) const
+void CSSLengthInterpolationType::composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value, double interpolationFraction) const
 {
     InterpolationValue& underlying = underlyingValueOwner.mutableValue();
     composite(underlying.interpolableValue, underlying.nonInterpolableValue,
@@ -286,23 +282,22 @@ static CSSPrimitiveValue::UnitType toUnitType(int lengthUnitType)
     return static_cast<CSSPrimitiveValue::UnitType>(CSSPrimitiveValue::lengthUnitTypeToUnitType(static_cast<CSSPrimitiveValue::LengthUnitType>(lengthUnitType)));
 }
 
-static PassRefPtrWillBeRawPtr<CSSCalcExpressionNode> createCalcExpression(const InterpolableList& values, bool hasPercentage)
+static CSSCalcExpressionNode* createCalcExpression(const InterpolableList& values, bool hasPercentage)
 {
-    RefPtrWillBeRawPtr<CSSCalcExpressionNode> result = nullptr;
+    CSSCalcExpressionNode* result = nullptr;
     for (size_t i = 0; i < CSSPrimitiveValue::LengthUnitTypeCount; i++) {
         double value = toInterpolableNumber(values.get(i))->value();
         if (value || (i == CSSPrimitiveValue::UnitTypePercentage && hasPercentage)) {
-            RefPtrWillBeRawPtr<CSSCalcExpressionNode> node = CSSCalcValue::createExpressionNode(CSSPrimitiveValue::create(value, toUnitType(i)));
-            result = result ? CSSCalcValue::createExpressionNode(result.release(), node.release(), CalcAdd) : node.release();
+            CSSCalcExpressionNode* node = CSSCalcValue::createExpressionNode(CSSPrimitiveValue::create(value, toUnitType(i)));
+            result = result ? CSSCalcValue::createExpressionNode(result, node, CalcAdd) : node;
         }
     }
     ASSERT(result);
-    return result.release();
+    return result;
 }
 
-static PassRefPtrWillBeRawPtr<CSSValue> createCSSValue(const InterpolableList& values, bool hasPercentage, ValueRange range)
+static CSSValue* createCSSValue(const InterpolableList& values, bool hasPercentage, ValueRange range)
 {
-    RefPtrWillBeRawPtr<CSSPrimitiveValue> result;
     size_t firstUnitIndex = CSSPrimitiveValue::LengthUnitTypeCount;
     size_t unitTypeCount = 0;
     for (size_t i = 0; i < CSSPrimitiveValue::LengthUnitTypeCount; i++) {
@@ -335,14 +330,14 @@ void CSSLengthInterpolationType::apply(const InterpolableValue& interpolableValu
 #if ENABLE(ASSERT)
             // Assert that setting the length on ComputedStyle directly is identical to the AnimatableValue code path.
             RefPtr<AnimatableValue> before = CSSAnimatableValueFactory::create(cssProperty(), *state.style());
-            StyleBuilder::applyProperty(cssProperty(), state, createCSSValue(values, hasPercentage, m_valueRange).get());
+            StyleBuilder::applyProperty(cssProperty(), state, *createCSSValue(values, hasPercentage, m_valueRange));
             RefPtr<AnimatableValue> after = CSSAnimatableValueFactory::create(cssProperty(), *state.style());
             ASSERT(before->equals(*after));
 #endif
             return;
         }
     }
-    StyleBuilder::applyProperty(cssProperty(), state, createCSSValue(values, hasPercentage, m_valueRange).get());
+    StyleBuilder::applyProperty(cssProperty(), state, *createCSSValue(values, hasPercentage, m_valueRange));
 }
 
 } // namespace blink

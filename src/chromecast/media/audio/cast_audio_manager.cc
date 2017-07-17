@@ -4,10 +4,11 @@
 
 #include "chromecast/media/audio/cast_audio_manager.h"
 
+#include <algorithm>
+#include <string>
+
 #include "chromecast/media/audio/cast_audio_output_stream.h"
-#include "chromecast/media/base/media_message_loop.h"
-#include "chromecast/public/cast_media_shlib.h"
-#include "chromecast/public/media/media_pipeline_backend.h"
+#include "chromecast/media/cma/backend/media_pipeline_backend_manager.h"
 
 namespace {
 // TODO(alokp): Query the preferred value from media backend.
@@ -24,8 +25,15 @@ static const int kDefaultOutputBufferSize = 2048;
 namespace chromecast {
 namespace media {
 
-CastAudioManager::CastAudioManager(::media::AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(audio_log_factory) {}
+CastAudioManager::CastAudioManager(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    ::media::AudioLogFactory* audio_log_factory,
+    MediaPipelineBackendManager* backend_manager)
+    : AudioManagerBase(std::move(task_runner),
+                       std::move(worker_task_runner),
+                       audio_log_factory),
+      backend_manager_(backend_manager) {}
 
 CastAudioManager::~CastAudioManager() {
   Shutdown();
@@ -58,37 +66,39 @@ void CastAudioManager::GetAudioInputDeviceNames(
       ::media::CHANNEL_LAYOUT_STEREO, 48000, 16, 1024);
 }
 
-scoped_ptr<MediaPipelineBackend> CastAudioManager::CreateMediaPipelineBackend(
+std::unique_ptr<MediaPipelineBackend>
+CastAudioManager::CreateMediaPipelineBackend(
     const MediaPipelineDeviceParams& params) {
-  DCHECK(media::MediaMessageLoop::GetTaskRunner()->BelongsToCurrentThread());
-
-  return scoped_ptr<MediaPipelineBackend>(
-      CastMediaShlib::CreateMediaPipelineBackend(params));
+  return backend_manager_->CreateMediaPipelineBackend(params);
 }
 
 ::media::AudioOutputStream* CastAudioManager::MakeLinearOutputStream(
-    const ::media::AudioParameters& params) {
+    const ::media::AudioParameters& params,
+    const ::media::AudioManager::LogCallback& log_callback) {
   DCHECK_EQ(::media::AudioParameters::AUDIO_PCM_LINEAR, params.format());
   return new CastAudioOutputStream(params, this);
 }
 
 ::media::AudioOutputStream* CastAudioManager::MakeLowLatencyOutputStream(
     const ::media::AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const ::media::AudioManager::LogCallback& log_callback) {
   DCHECK_EQ(::media::AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   return new CastAudioOutputStream(params, this);
 }
 
 ::media::AudioInputStream* CastAudioManager::MakeLinearInputStream(
     const ::media::AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const ::media::AudioManager::LogCallback& log_callback) {
   LOG(WARNING) << "No support for input audio devices";
   return nullptr;
 }
 
 ::media::AudioInputStream* CastAudioManager::MakeLowLatencyInputStream(
     const ::media::AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const ::media::AudioManager::LogCallback& log_callback) {
   LOG(WARNING) << "No support for input audio devices";
   return nullptr;
 }

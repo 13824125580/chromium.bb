@@ -5,13 +5,13 @@
 #import <Cocoa/Cocoa.h>
 #include <stdint.h>
 
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #include "base/bind.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chrome/browser/local_discovery/service_discovery_client.h"
 #include "chrome/browser/local_discovery/service_discovery_client_mac.h"
+#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/sockaddr_storage.h"
@@ -93,7 +93,7 @@ TEST_F(ServiceDiscoveryClientMacTest, ServiceWatcher) {
   const std::string test_service_type = "_testing._tcp.local";
   const std::string test_service_name = "Test.123";
 
-  scoped_ptr<ServiceWatcher> watcher = client_->CreateServiceWatcher(
+  std::unique_ptr<ServiceWatcher> watcher = client_->CreateServiceWatcher(
       test_service_type,
       base::Bind(&ServiceDiscoveryClientMacTest::OnServiceUpdated,
                  base::Unretained(this)));
@@ -115,7 +115,7 @@ TEST_F(ServiceDiscoveryClientMacTest, ServiceWatcher) {
 
 TEST_F(ServiceDiscoveryClientMacTest, ServiceResolver) {
   const std::string test_service_name = "Test.123._testing._tcp.local";
-  scoped_ptr<ServiceResolver> resolver = client_->CreateServiceResolver(
+  std::unique_ptr<ServiceResolver> resolver = client_->CreateServiceResolver(
       test_service_name,
       base::Bind(&ServiceDiscoveryClientMacTest::OnResolveComplete,
                  base::Unretained(this)));
@@ -140,13 +140,13 @@ TEST_F(ServiceDiscoveryClientMacTest, ServiceResolver) {
   ServiceResolverImplMac* resolver_impl =
       static_cast<ServiceResolverImplMac*>(resolver.get());
   resolver_impl->GetContainerForTesting()->SetServiceForTesting(
-      test_service.release());
+      base::scoped_nsobject<NSNetService>(test_service));
   resolver->StartResolving();
 
   resolver_impl->GetContainerForTesting()->OnResolveUpdate(
       ServiceResolver::STATUS_SUCCESS);
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, num_resolves_);
   EXPECT_EQ(2u, last_service_description_.metadata.size());

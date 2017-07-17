@@ -32,6 +32,8 @@
 # include "native_client/src/untrusted/irt/irt_private.h"
 #endif
 
+#define TDB_SIZE (sizeof(struct nc_combined_tdb))
+
 /*
  * ABI tables for underyling NaCl thread interfaces. This is declared to be
  * global so that a user will be able to override it using the irt_ext API.
@@ -85,15 +87,37 @@ pthread_t __nc_initial_thread_id;
 /* Number of threads currently running in this NaCl module. */
 static int __nc_running_threads_counter = 1;
 
-/* We have two queues of memory blocks - one for each type. */
-static STAILQ_HEAD(tailhead, entry) __nc_thread_memory_blocks[2];
-/* We need a counter for each queue to keep track of number of blocks. */
-static int __nc_memory_block_counter[2];
+/*
+ * This is a list of memory blocks that were allocated for use as thread
+ * stacks.  These correspond to threads that have either exited or are just
+ * about to exit.  We maintain this list for two reasons:
+ *
+ *  * The main reason is that pthread_exit() can't deallocate the stack
+ *    itself while it's running on that stack.  The stack can only be freed
+ *    or reused after the "is_used" field gets set to zero by
+ *    thread_exit().
+ *
+ *  * A secondary reason is that avoiding free()ing these blocks might be
+ *    faster or might prevent memory fragmentation.
+ */
+static STAILQ_HEAD(tailhead, entry) __nc_thread_stack_blocks;
+/* Number of entries in __nc_thread_stack_blocks. */
+static int __nc_thread_stack_blocks_count;
 
 /* Internal functions */
 
+static inline struct nc_thread_descriptor *nc_get_tdb(void) {
+  /*
+   * Fetch the thread-specific data pointer.  This is usually just
+   * a wrapper around __libnacl_irt_tls.tls_get() but we don't use
+   * that here so that the IRT build can override the definition.
+   */
+  return (void *) ((char *) __nacl_read_tp_inline()
+                   + __nacl_tp_tdb_offset(TDB_SIZE));
+}
+
 static void nc_thread_starter(void) {
-  nc_thread_descriptor_t *tdb = __nc_get_tdb();
+  nc_thread_descriptor_t *tdb = nc_get_tdb();
   __newlib_thread_init();
 #if defined(NACL_IN_IRT)
   g_is_irt_internal_thread = 1;
@@ -116,26 +140,11 @@ static void nc_thread_starter(void) {
 }
 
 static nc_thread_memory_block_t *nc_allocate_memory_block_mu(
-    nc_thread_memory_block_type_t type,
     int required_size) {
   struct tailhead *head;
   nc_thread_memory_block_t *node;
   /* Assume the lock is held!!! */
-  if (type >= MAX_MEMORY_TYPE)
-    return NULL;
-  head = &__nc_thread_memory_blocks[type];
-
-  /* We need to know the size even if we find a free node - to memset it to 0 */
-  switch (type) {
-     case THREAD_STACK_MEMORY:
-       required_size = required_size + kStackAlignment - 1;
-       break;
-     case TLS_AND_TDB_MEMORY:
-       break;
-     case MAX_MEMORY_TYPE:
-     default:
-       return NULL;
-  }
+  head = &__nc_thread_stack_blocks;
 
   if (!STAILQ_EMPTY(head)) {
     /* Try to get one from queue. */
@@ -156,7 +165,7 @@ static nc_thread_memory_block_t *nc_allocate_memory_block_mu(
        */
       int size = node->size;
       STAILQ_REMOVE_HEAD(head, entries);
-      --__nc_memory_block_counter[type];
+      --__nc_thread_stack_blocks_count;
 
       memset(node, 0,sizeof(*node));
       node->size = size;
@@ -164,7 +173,7 @@ static nc_thread_memory_block_t *nc_allocate_memory_block_mu(
       return node;
     }
 
-    while (__nc_memory_block_counter[type] > __nc_kMaxCachedMemoryBlocks) {
+    while (__nc_thread_stack_blocks_count > __nc_kMaxCachedMemoryBlocks) {
       /*
        * We have too many blocks in the queue - try to release some.
        * The maximum number of memory blocks to keep in the queue
@@ -178,7 +187,7 @@ static nc_thread_memory_block_t *nc_allocate_memory_block_mu(
       nc_thread_memory_block_t *tmp = STAILQ_FIRST(head);
       if (0 == tmp->is_used) {
         STAILQ_REMOVE_HEAD(head, entries);
-        --__nc_memory_block_counter[type];
+        --__nc_thread_stack_blocks_count;
         free(tmp);
       } else {
         /*
@@ -200,28 +209,26 @@ static nc_thread_memory_block_t *nc_allocate_memory_block_mu(
   return node;
 }
 
-static void nc_free_memory_block_mu(nc_thread_memory_block_type_t type,
-                                    nc_thread_memory_block_t *node) {
+static void nc_free_memory_block_mu(nc_thread_memory_block_t *node) {
   /* Assume the lock is held!!! */
-  struct tailhead *head = &__nc_thread_memory_blocks[type];
+  struct tailhead *head = &__nc_thread_stack_blocks;
   STAILQ_INSERT_TAIL(head, node, entries);
-  ++__nc_memory_block_counter[type];
+  ++__nc_thread_stack_blocks_count;
 }
 
 static void nc_release_basic_data_mu(nc_basic_thread_data_t *basic_data) {
-  /* join_condvar can be initialized only if tls_node exists. */
+  /* join_condvar can be initialized only if tls_allocation exists. */
   pthread_cond_destroy(&basic_data->join_condvar);
   free(basic_data);
 }
 
-static void nc_release_tls_node(nc_thread_memory_block_t *block,
-                                nc_thread_descriptor_t *tdb) {
-  if (block) {
+static void nc_release_tls_allocation(void *tls_allocation,
+                                      nc_thread_descriptor_t *tdb) {
+  if (tls_allocation) {
     if (NULL != tdb->basic_data) {
       tdb->basic_data->tdb = NULL;
     }
-    block->is_used = 0;
-    nc_free_memory_block_mu(TLS_AND_TDB_MEMORY, block);
+    free(tls_allocation);
   }
 }
 
@@ -231,9 +238,8 @@ static void nc_tdb_init(nc_thread_descriptor_t *tdb,
   tdb->tls_base = tdb;
   tdb->joinable = PTHREAD_CREATE_JOINABLE;
   tdb->join_waiting = 0;
-  tdb->rdlock_count = 0;
   tdb->stack_node = NULL;
-  tdb->tls_node = NULL;
+  tdb->tls_allocation = NULL;
   tdb->start_func = NULL;
   tdb->state = NULL;
   tdb->irt_thread_data = NULL;
@@ -261,8 +267,7 @@ void __nc_initialize_globals(void) {
    */
   ANNOTATE_NOT_HAPPENS_BEFORE_MUTEX(&__nc_thread_management_lock);
 
-  STAILQ_INIT(&__nc_thread_memory_blocks[0]);
-  STAILQ_INIT(&__nc_thread_memory_blocks[1]);
+  STAILQ_INIT(&__nc_thread_stack_blocks);
 
   __nc_thread_initialized = 1;
 }
@@ -286,7 +291,7 @@ void __nc_initialize_unjoinable_thread(struct nc_combined_tdb *tdb) {
 void __pthread_initialize(void) {
   __pthread_initialize_minimal(TDB_SIZE);
 
-  struct nc_combined_tdb *tdb = (struct nc_combined_tdb *) __nc_get_tdb();
+  struct nc_combined_tdb *tdb = (struct nc_combined_tdb *) nc_get_tdb();
   nc_tdb_init(&tdb->tdb, &tdb->basic_data);
   __nc_initial_thread_id = &tdb->basic_data;
 
@@ -309,7 +314,7 @@ int pthread_create(pthread_t *thread_id,
   char *thread_stack = NULL;
   nc_thread_descriptor_t *new_tdb = NULL;
   nc_basic_thread_data_t *new_basic_data = NULL;
-  nc_thread_memory_block_t *tls_node = NULL;
+  void *tls_allocation = NULL;
   size_t stacksize = PTHREAD_STACK_DEFAULT;
   void *new_tp;
 
@@ -319,22 +324,15 @@ int pthread_create(pthread_t *thread_id,
   do {
     /* Allocate the combined TLS + TDB block---see tls.h for explanation. */
 
-    tls_node = nc_allocate_memory_block_mu(TLS_AND_TDB_MEMORY,
-                                           __nacl_tls_combined_size(TDB_SIZE));
-    if (NULL == tls_node)
+    tls_allocation = malloc(__nacl_tls_combined_size(TDB_SIZE));
+    if (NULL == tls_allocation)
       break;
 
-    new_tp = __nacl_tls_initialize_memory(nc_memory_block_to_payload(tls_node),
-                                          TDB_SIZE);
+    new_tp = __nacl_tls_initialize_memory(tls_allocation, TDB_SIZE);
 
     new_tdb = (nc_thread_descriptor_t *)
               ((char *) new_tp + __nacl_tp_tdb_offset(TDB_SIZE));
 
-    /*
-     * TODO(gregoryd): consider creating a pool of basic_data structs,
-     * similar to stack and TLS+TDB (probably when adding the support for
-     * variable stack size).
-     */
     new_basic_data = malloc(sizeof(*new_basic_data));
     if (NULL == new_basic_data) {
       /*
@@ -346,7 +344,7 @@ int pthread_create(pthread_t *thread_id,
     }
 
     nc_tdb_init(new_tdb, new_basic_data);
-    new_tdb->tls_node = tls_node;
+    new_tdb->tls_allocation = tls_allocation;
 
     /*
      * All the required members of the tdb must be initialized before
@@ -361,7 +359,7 @@ int pthread_create(pthread_t *thread_id,
     }
 
     /* Allocate the stack for the thread. */
-    stack_node = nc_allocate_memory_block_mu(THREAD_STACK_MEMORY, stacksize);
+    stack_node = nc_allocate_memory_block_mu(stacksize + kStackAlignment - 1);
     if (NULL == stack_node) {
       retval = EAGAIN;
       break;
@@ -424,13 +422,13 @@ ret:
     /* Failed to create a thread. */
     pthread_mutex_lock(&__nc_thread_management_lock);
 
-    nc_release_tls_node(tls_node, new_tdb);
+    nc_release_tls_allocation(tls_allocation, new_tdb);
     if (new_basic_data) {
       nc_release_basic_data_mu(new_basic_data);
     }
     if (stack_node) {
       stack_node->is_used = 0;
-      nc_free_memory_block_mu(THREAD_STACK_MEMORY, stack_node);
+      nc_free_memory_block_mu(stack_node);
     }
 
     pthread_mutex_unlock(&__nc_thread_management_lock);
@@ -474,11 +472,10 @@ void pthread_cleanup_pop(int execute) {
 
 void pthread_exit(void *retval) {
   /* Get all we need from the tdb before releasing it. */
-  nc_thread_descriptor_t    *tdb = __nc_get_tdb();
+  nc_thread_descriptor_t    *tdb = nc_get_tdb();
   nc_thread_memory_block_t  *stack_node = tdb->stack_node;
   int32_t                   *is_used = &stack_node->is_used;
   nc_basic_thread_data_t    *basic_data = tdb->basic_data;
-  int                       joinable = tdb->joinable;
 
   /* Call cleanup handlers. */
   while (NULL != __nc_cleanup_handlers) {
@@ -504,6 +501,7 @@ void pthread_exit(void *retval) {
 
   basic_data->retval = retval;
 
+  int joinable = tdb->joinable;
   if (joinable) {
     /* If somebody is waiting for this thread, signal. */
     basic_data->status = THREAD_TERMINATED;
@@ -513,14 +511,14 @@ void pthread_exit(void *retval) {
    * We can release TLS+TDB - thread id and its return value are still
    * kept in basic_data.
    */
-  nc_release_tls_node(tdb->tls_node, tdb);
+  nc_release_tls_allocation(tdb->tls_allocation, tdb);
 
   if (!joinable) {
     nc_release_basic_data_mu(basic_data);
   }
 
   /* Now add the stack to the list but keep it marked as used. */
-  nc_free_memory_block_mu(THREAD_STACK_MEMORY, stack_node);
+  nc_free_memory_block_mu(stack_node);
 
   if (1 == __nc_running_threads_counter) {
     pthread_cond_signal(&__nc_last_thread_cond);
@@ -612,7 +610,7 @@ int pthread_kill(pthread_t thread_id,
 
 pthread_t pthread_self(void) {
   /* Get the tdb pointer from gs and use it to return the thread handle. */
-  nc_thread_descriptor_t *tdb = __nc_get_tdb();
+  nc_thread_descriptor_t *tdb = nc_get_tdb();
   return tdb->basic_data;
 }
 

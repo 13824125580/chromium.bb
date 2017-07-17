@@ -130,7 +130,7 @@ class ServerBase(object):
                 return
             if self._pid != actual_pid:
                 _log.warning('Failed to stop %s: pid file contains %d, not %d' %
-                            (self._name, actual_pid, self._pid))
+                             (self._name, actual_pid, self._pid))
                 # Try to kill the existing pid, anyway, in case it got orphaned.
                 self._executive.kill_process(self._pid)
                 self._pid = None
@@ -158,7 +158,7 @@ class ServerBase(object):
         for log_prefix in self._log_prefixes:
             try:
                 self._remove_log_files(self._output_dir, log_prefix)
-            except OSError, e:
+            except OSError as e:
                 _log.warning('Failed to remove old %s %s files' % (self._name, log_prefix))
 
     def _spawn_process(self):
@@ -254,7 +254,7 @@ class ServerBase(object):
             try:
                 s.connect(('localhost', port))
                 _log.debug("Server running on %d" % port)
-            except IOError, e:
+            except IOError as e:
                 if e.errno not in (errno.ECONNREFUSED, errno.ECONNRESET):
                     raise
                 _log.debug("Server NOT running on %d: %s" % (port, e))
@@ -271,7 +271,7 @@ class ServerBase(object):
             port = mapping['port']
             try:
                 s.bind(('localhost', port))
-            except IOError, e:
+            except IOError as e:
                 if e.errno in (errno.EALREADY, errno.EADDRINUSE):
                     raise ServerError('Port %d is already in use.' % port)
                 elif self._platform.is_win() and e.errno in (errno.WSAEACCES,):  # pylint: disable=E1101

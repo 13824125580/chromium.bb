@@ -14,11 +14,11 @@
 
 namespace ash {
 
-CursorManager::CursorManager(scoped_ptr<::wm::NativeCursorManager> delegate)
+CursorManager::CursorManager(
+    std::unique_ptr<::wm::NativeCursorManager> delegate)
     : ::wm::CursorManager(std::move(delegate)) {}
 
-CursorManager::~CursorManager() {
-}
+CursorManager::~CursorManager() {}
 
 bool CursorManager::ShouldHideCursorOnKeyEvent(
     const ui::KeyEvent& event) const {

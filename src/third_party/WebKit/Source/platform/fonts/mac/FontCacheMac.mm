@@ -41,8 +41,9 @@
 #include "public/platform/WebTaskRunner.h"
 #include "public/platform/WebTraceLocation.h"
 #include "wtf/Functional.h"
-#include "wtf/MainThread.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/StdLibExtras.h"
+#include <memory>
 
 // Forward declare Mac SPIs.
 // Request for public API: rdar://13803570
@@ -53,19 +54,12 @@
 
 namespace blink {
 
-// Unfortunately, these chosen font names require a bit of experimentation and
-// researching on the respective platforms as to what works best and is widely
-// available. They may require further tuning after OS updates. Mozilla's
-// choices in the gfxPlatformMac::GetCommonFallbackFonts method collects some of
-// the outcome of this experimentation.
-const char* kColorEmojiFontsMac[] = { "Apple Color Emoji" };
-const char* kTextEmojiFontsMac[] = { "Hiragino Kaku Gothic ProN", "Zapf Dingbats", "Apple Symbols" };
-const char* kSymbolsAndMathFontsMac[] = { "Menlo", "Arial Unicode MS" };
+const char* kColorEmojiFontMac = "Apple Color Emoji";
 
 static void invalidateFontCache()
 {
     if (!isMainThread()) {
-        Platform::current()->mainThread()->taskRunner()->postTask(BLINK_FROM_HERE, bind(&invalidateFontCache));
+        Platform::current()->mainThread()->getWebTaskRunner()->postTask(BLINK_FROM_HERE, WTF::bind(&invalidateFontCache));
         return;
     }
     FontCache::fontCache()->invalidate();
@@ -96,8 +90,19 @@ static inline bool isAppKitFontWeightBold(NSInteger appKitFontWeight)
     return appKitFontWeight >= 7;
 }
 
-PassRefPtr<SimpleFontData> FontCache::fallbackFontForCharacter(const FontDescription& fontDescription, UChar32 character, const SimpleFontData* fontDataToSubstitute)
+PassRefPtr<SimpleFontData> FontCache::fallbackFontForCharacter(
+    const FontDescription& fontDescription,
+    UChar32 character,
+    const SimpleFontData* fontDataToSubstitute,
+    FontFallbackPriority fallbackPriority)
 {
+
+    if (fallbackPriority == FontFallbackPriority::EmojiEmoji) {
+        RefPtr<SimpleFontData> emojiFont = getFontData(fontDescription, AtomicString(kColorEmojiFontMac));
+        if (emojiFont)
+            return emojiFont;
+    }
+
     // FIXME: We should fix getFallbackFamily to take a UChar32
     // and remove this split-to-UChar16 code.
     UChar codeUnits[2];
@@ -183,7 +188,7 @@ PassRefPtr<SimpleFontData> FontCache::fallbackFontForCharacter(const FontDescrip
 
 PassRefPtr<SimpleFontData> FontCache::getLastResortFallbackFont(const FontDescription& fontDescription, ShouldRetain shouldRetain)
 {
-    DEFINE_STATIC_LOCAL(AtomicString, timesStr, ("Times", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(AtomicString, timesStr, ("Times"));
 
     // FIXME: Would be even better to somehow get the user's default font here.  For now we'll pick
     // the default that the user would get without changing any prefs.
@@ -195,11 +200,11 @@ PassRefPtr<SimpleFontData> FontCache::getLastResortFallbackFont(const FontDescri
     // the user doesn't have it, we fall back on Lucida Grande because that's
     // guaranteed to be there, according to Nathan Taylor. This is good enough
     // to avoid a crash at least.
-    DEFINE_STATIC_LOCAL(AtomicString, lucidaGrandeStr, ("Lucida Grande", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(AtomicString, lucidaGrandeStr, ("Lucida Grande"));
     return getFontData(fontDescription, lucidaGrandeStr, false, shouldRetain);
 }
 
-PassOwnPtr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription,
+std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDescription& fontDescription,
     const FontFaceCreationParams& creationParams, float fontSize)
 {
     NSFontTraitMask traits = fontDescription.style() ? NSFontItalicTrait : 0;
@@ -229,34 +234,11 @@ PassOwnPtr<FontPlatformData> FontCache::createFontPlatformData(const FontDescrip
     // Out-of-process loading occurs for registered fonts stored in non-system locations.
     // When loading fails, we do not want to use the returned FontPlatformData since it will not have
     // a valid SkTypeface.
-    OwnPtr<FontPlatformData> platformData = adoptPtr(new FontPlatformData(platformFont, size, syntheticBold, syntheticItalic, fontDescription.orientation()));
+    std::unique_ptr<FontPlatformData> platformData = wrapUnique(new FontPlatformData(platformFont, size, syntheticBold, syntheticItalic, fontDescription.orientation()));
     if (!platformData->typeface()) {
         return nullptr;
     }
-    return platformData.release();
-}
-
-const Vector<AtomicString> FontCache::platformFontListForFallbackPriority(FontFallbackPriority fallbackPriority) const
-{
-    Vector<AtomicString> returnVector;
-    switch (fallbackPriority) {
-    case FontFallbackPriority::EmojiEmoji:
-        for (size_t i = 0; i < WTF_ARRAY_LENGTH(kColorEmojiFontsMac); ++i)
-            returnVector.append(kColorEmojiFontsMac[i]);
-        break;
-    case FontFallbackPriority::EmojiText:
-        for (size_t i = 0; i < WTF_ARRAY_LENGTH(kTextEmojiFontsMac); ++i)
-            returnVector.append(kTextEmojiFontsMac[i]);
-        break;
-    case FontFallbackPriority::Math:
-    case FontFallbackPriority::Symbols:
-        for (size_t i = 0; i < WTF_ARRAY_LENGTH(kSymbolsAndMathFontsMac); ++i)
-            returnVector.append(kSymbolsAndMathFontsMac[i]);
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
-    return returnVector;
+    return platformData;
 }
 
 } // namespace blink

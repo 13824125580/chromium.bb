@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_api_unittest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
@@ -110,12 +111,12 @@ class CopresenceApiUnittest : public ExtensionApiUnittest {
         CopresenceService::GetFactoryInstance()->Get(profile());
     copresence_manager_ = new FakeCopresenceManager(service);
     service->set_manager_for_testing(
-        make_scoped_ptr<CopresenceManager>(copresence_manager_));
+        base::WrapUnique<CopresenceManager>(copresence_manager_));
   }
 
   // Takes ownership of the operation_list.
   bool ExecuteOperations(ListValue* operation_list) {
-    scoped_ptr<ListValue> args_list(new ListValue);
+    std::unique_ptr<ListValue> args_list(new ListValue);
     args_list->Append(operation_list);
 
     scoped_refptr<UIThreadExtensionFunction> function =
@@ -128,9 +129,9 @@ class CopresenceApiUnittest : public ExtensionApiUnittest {
     return function->GetResultList();
   }
 
-  bool ExecuteOperation(scoped_ptr<Operation> operation) {
+  bool ExecuteOperation(std::unique_ptr<Operation> operation) {
     ListValue* operation_list = new ListValue;
-    operation_list->Append(operation->ToValue().release());
+    operation_list->Append(operation->ToValue());
     return ExecuteOperations(operation_list);
   }
 
@@ -155,11 +156,11 @@ class CopresenceApiUnittest : public ExtensionApiUnittest {
 };
 
 TEST_F(CopresenceApiUnittest, Publish) {
-  scoped_ptr<PublishOperation> publish(CreatePublish("pub"));
+  std::unique_ptr<PublishOperation> publish(CreatePublish("pub"));
   publish->strategies.reset(new Strategy);
   publish->strategies->only_broadcast.reset(new bool(true));  // Default
 
-  scoped_ptr<Operation> operation(new Operation);
+  std::unique_ptr<Operation> operation(new Operation);
   operation->publish = std::move(publish);
 
   clear_app_id();
@@ -181,12 +182,12 @@ TEST_F(CopresenceApiUnittest, Publish) {
 }
 
 TEST_F(CopresenceApiUnittest, Subscribe) {
-  scoped_ptr<SubscribeOperation> subscribe(CreateSubscribe("sub"));
+  std::unique_ptr<SubscribeOperation> subscribe(CreateSubscribe("sub"));
   subscribe->strategies.reset(new Strategy);
   subscribe->strategies->only_broadcast.reset(new bool(true));  // Not default
   subscribe->strategies->audible.reset(new bool(true));  // Not default
 
-  scoped_ptr<Operation> operation(new Operation);
+  std::unique_ptr<Operation> operation(new Operation);
   operation->subscribe = std::move(subscribe);
 
   clear_app_id();
@@ -208,15 +209,15 @@ TEST_F(CopresenceApiUnittest, Subscribe) {
 }
 
 TEST_F(CopresenceApiUnittest, DefaultStrategies) {
-  scoped_ptr<Operation> publish_operation(new Operation);
+  std::unique_ptr<Operation> publish_operation(new Operation);
   publish_operation->publish.reset(CreatePublish("pub"));
 
-  scoped_ptr<Operation> subscribe_operation(new Operation);
+  std::unique_ptr<Operation> subscribe_operation(new Operation);
   subscribe_operation->subscribe.reset(CreateSubscribe("sub"));
 
   ListValue* operation_list = new ListValue;
-  operation_list->Append(publish_operation->ToValue().release());
-  operation_list->Append(subscribe_operation->ToValue().release());
+  operation_list->Append(publish_operation->ToValue());
+  operation_list->Append(subscribe_operation->ToValue());
   EXPECT_TRUE(ExecuteOperations(operation_list));
 
   EXPECT_EQ(BROADCAST_ONLY,
@@ -228,13 +229,13 @@ TEST_F(CopresenceApiUnittest, DefaultStrategies) {
 }
 
 TEST_F(CopresenceApiUnittest, LowPowerStrategy) {
-  scoped_ptr<Operation> subscribe_operation(new Operation);
+  std::unique_ptr<Operation> subscribe_operation(new Operation);
   subscribe_operation->subscribe.reset(CreateSubscribe("sub"));
   subscribe_operation->subscribe->strategies.reset(new Strategy);
   subscribe_operation->subscribe->strategies->low_power.reset(new bool(true));
 
   ListValue* operation_list = new ListValue;
-  operation_list->Append(subscribe_operation->ToValue().release());
+  operation_list->Append(subscribe_operation->ToValue());
   EXPECT_TRUE(ExecuteOperations(operation_list));
 
   EXPECT_EQ(copresence::BROADCAST_SCAN_CONFIGURATION_UNKNOWN,
@@ -244,26 +245,26 @@ TEST_F(CopresenceApiUnittest, LowPowerStrategy) {
 
 TEST_F(CopresenceApiUnittest, UnPubSub) {
   // First we need to create a publish and a subscribe to cancel.
-  scoped_ptr<Operation> publish_operation(new Operation);
-  scoped_ptr<Operation> subscribe_operation(new Operation);
+  std::unique_ptr<Operation> publish_operation(new Operation);
+  std::unique_ptr<Operation> subscribe_operation(new Operation);
   publish_operation->publish.reset(CreatePublish("pub"));
   subscribe_operation->subscribe.reset(CreateSubscribe("sub"));
   ListValue* operation_list = new ListValue;
-  operation_list->Append(publish_operation->ToValue().release());
-  operation_list->Append(subscribe_operation->ToValue().release());
+  operation_list->Append(publish_operation->ToValue());
+  operation_list->Append(subscribe_operation->ToValue());
   EXPECT_TRUE(ExecuteOperations(operation_list));
 
-  scoped_ptr<Operation> unpublish_operation(new Operation);
+  std::unique_ptr<Operation> unpublish_operation(new Operation);
   unpublish_operation->unpublish.reset(new UnpublishOperation);
   unpublish_operation->unpublish->unpublish_id = "pub";
 
-  scoped_ptr<Operation> unsubscribe_operation(new Operation);
+  std::unique_ptr<Operation> unsubscribe_operation(new Operation);
   unsubscribe_operation->unsubscribe.reset(new UnsubscribeOperation);
   unsubscribe_operation->unsubscribe->unsubscribe_id = "sub";
 
   operation_list = new ListValue;
-  operation_list->Append(unpublish_operation->ToValue().release());
-  operation_list->Append(unsubscribe_operation->ToValue().release());
+  operation_list->Append(unpublish_operation->ToValue());
+  operation_list->Append(unsubscribe_operation->ToValue());
   EXPECT_TRUE(ExecuteOperations(operation_list));
 
   std::string unpublish_id;
@@ -280,7 +281,7 @@ TEST_F(CopresenceApiUnittest, UnPubSub) {
 }
 
 TEST_F(CopresenceApiUnittest, BadId) {
-  scoped_ptr<Operation> unsubscribe_operation(new Operation);
+  std::unique_ptr<Operation> unsubscribe_operation(new Operation);
   unsubscribe_operation->unsubscribe.reset(new UnsubscribeOperation);
   unsubscribe_operation->unsubscribe->unsubscribe_id = "invalid id";
 
@@ -288,7 +289,7 @@ TEST_F(CopresenceApiUnittest, BadId) {
 }
 
 TEST_F(CopresenceApiUnittest, MultipleOperations) {
-  scoped_ptr<Operation> multi_operation(new Operation);
+  std::unique_ptr<Operation> multi_operation(new Operation);
   multi_operation->publish.reset(CreatePublish("pub"));
   multi_operation->subscribe.reset(CreateSubscribe("sub"));
 

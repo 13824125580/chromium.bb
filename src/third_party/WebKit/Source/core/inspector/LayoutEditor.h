@@ -12,7 +12,6 @@
 #include "core/dom/Element.h"
 #include "platform/heap/Handle.h"
 #include "platform/inspector_protocol/Values.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
 
@@ -23,12 +22,11 @@ class InspectorCSSAgent;
 class InspectorDOMAgent;
 class ScriptController;
 
-class CORE_EXPORT LayoutEditor final : public NoBaseWillBeGarbageCollectedFinalized<LayoutEditor> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(LayoutEditor);
+class CORE_EXPORT LayoutEditor final : public GarbageCollectedFinalized<LayoutEditor> {
 public:
-    static PassOwnPtrWillBeRawPtr<LayoutEditor> create(Element* element, InspectorCSSAgent* cssAgent, InspectorDOMAgent* domAgent, ScriptController* scriptController)
+    static LayoutEditor* create(Element* element, InspectorCSSAgent* cssAgent, InspectorDOMAgent* domAgent, ScriptController* scriptController)
     {
-        return adoptPtrWillBeNoop(new LayoutEditor(element, cssAgent, domAgent, scriptController));
+        return new LayoutEditor(element, cssAgent, domAgent, scriptController);
     }
 
     ~LayoutEditor();
@@ -46,26 +44,26 @@ public:
 
 private:
     LayoutEditor(Element*, InspectorCSSAgent*, InspectorDOMAgent*, ScriptController*);
-    RefPtrWillBeRawPtr<CSSPrimitiveValue> getPropertyCSSValue(CSSPropertyID) const;
-    PassRefPtr<protocol::DictionaryValue> createValueDescription(const String&);
+    const CSSPrimitiveValue* getPropertyCSSValue(CSSPropertyID) const;
+    std::unique_ptr<protocol::DictionaryValue> createValueDescription(const String&);
     void appendAnchorFor(protocol::ListValue*, const String&, const String&);
     bool setCSSPropertyValueInCurrentRule(const String&);
     void editableSelectorUpdated(bool hasChanged) const;
-    void evaluateInOverlay(const String&, PassRefPtr<protocol::Value>) const;
-    PassRefPtr<protocol::DictionaryValue> currentSelectorInfo(CSSStyleDeclaration*) const;
-    bool growInside(String propertyName, CSSPrimitiveValue*);
+    void evaluateInOverlay(const String&, std::unique_ptr<protocol::Value>) const;
+    std::unique_ptr<protocol::DictionaryValue> currentSelectorInfo(CSSStyleDeclaration*) const;
+    bool growInside(String propertyName, const CSSPrimitiveValue*);
 
-    RefPtrWillBeMember<Element> m_element;
-    RawPtrWillBeMember<InspectorCSSAgent> m_cssAgent;
-    RawPtrWillBeMember<InspectorDOMAgent> m_domAgent;
-    RawPtrWillBeMember<ScriptController> m_scriptController;
+    Member<Element> m_element;
+    Member<InspectorCSSAgent> m_cssAgent;
+    Member<InspectorDOMAgent> m_domAgent;
+    Member<ScriptController> m_scriptController;
     CSSPropertyID m_changingProperty;
     float m_propertyInitialValue;
     float m_factor;
     CSSPrimitiveValue::UnitType m_valueUnitType;
     bool m_isDirty;
 
-    WillBeHeapVector<RefPtrWillBeMember<CSSStyleDeclaration>> m_matchedStyles;
+    HeapVector<Member<CSSStyleDeclaration>> m_matchedStyles;
     HashMap<String, bool> m_growsInside;
     unsigned m_currentRuleIndex;
 };

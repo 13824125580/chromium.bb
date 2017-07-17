@@ -47,13 +47,17 @@
 #include "platform/SharedBuffer.h"
 #include "platform/mhtml/MHTMLArchive.h"
 #include "platform/mhtml/MHTMLParser.h"
+#include "platform/network/ResourceRequest.h"
+#include "platform/network/ResourceResponse.h"
 #include "platform/weborigin/KURL.h"
-#include "public/platform/WebCString.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebURL.h"
+#include "public/platform/WebURLResponse.h"
 #include "public/platform/WebVector.h"
+#include "public/web/WebDataSource.h"
 #include "public/web/WebDocument.h"
 #include "public/web/WebFrame.h"
+#include "public/web/WebFrameSerializerCacheControlPolicy.h"
 #include "public/web/WebFrameSerializerClient.h"
 #include "web/WebFrameSerializerImpl.h"
 #include "web/WebLocalFrameImpl.h"
@@ -75,7 +79,8 @@ public:
     explicit MHTMLFrameSerializerDelegate(WebFrameSerializer::MHTMLPartsGenerationDelegate&);
     bool shouldIgnoreAttribute(const Attribute&) override;
     bool rewriteLink(const Element&, String& rewrittenLink) override;
-    bool shouldSkipResource(const KURL&) override;
+    bool shouldSkipResourceWithURL(const KURL&) override;
+    bool shouldSkipResource(const Resource&) override;
 
 private:
     WebFrameSerializer::MHTMLPartsGenerationDelegate& m_webDelegate;
@@ -112,10 +117,10 @@ bool MHTMLFrameSerializerDelegate::rewriteLink(
         return false;
 
     KURL cidURI = MHTMLParser::convertContentIDToURI(contentID);
-    ASSERT(cidURI.isValid());
+    DCHECK(cidURI.isValid());
 
     if (isHTMLFrameElementBase(&element)) {
-        rewrittenLink = cidURI.string();
+        rewrittenLink = cidURI.getString();
         return true;
     }
 
@@ -124,7 +129,7 @@ bool MHTMLFrameSerializerDelegate::rewriteLink(
         bool isHandledBySerializer = doc->isHTMLDocument()
             || doc->isXHTMLDocument() || doc->isImageDocument();
         if (isHandledBySerializer) {
-            rewrittenLink = cidURI.string();
+            rewrittenLink = cidURI.getString();
             return true;
         }
     }
@@ -132,17 +137,59 @@ bool MHTMLFrameSerializerDelegate::rewriteLink(
     return false;
 }
 
-bool MHTMLFrameSerializerDelegate::shouldSkipResource(const KURL& url)
+bool MHTMLFrameSerializerDelegate::shouldSkipResourceWithURL(const KURL& url)
 {
     return m_webDelegate.shouldSkipResource(url);
+}
+
+bool MHTMLFrameSerializerDelegate::shouldSkipResource(const Resource& resource)
+{
+    return m_webDelegate.cacheControlPolicy() == WebFrameSerializerCacheControlPolicy::SkipAnyFrameOrResourceMarkedNoStore
+        && resource.hasCacheControlNoStoreHeader();
+}
+
+bool cacheControlNoStoreHeaderPresent(const WebLocalFrameImpl& webLocalFrameImpl)
+{
+    const ResourceResponse& response = webLocalFrameImpl.dataSource()->response().toResourceResponse();
+    if (response.cacheControlContainsNoStore())
+        return true;
+
+    const ResourceRequest& request = webLocalFrameImpl.dataSource()->request().toResourceRequest();
+    return request.cacheControlContainsNoStore();
+}
+
+bool frameShouldBeSerializedAsMHTML(WebLocalFrame* frame, WebFrameSerializerCacheControlPolicy cacheControlPolicy)
+{
+    WebLocalFrameImpl* webLocalFrameImpl = toWebLocalFrameImpl(frame);
+    DCHECK(webLocalFrameImpl);
+
+    if (cacheControlPolicy == WebFrameSerializerCacheControlPolicy::None)
+        return true;
+
+    bool needToCheckNoStore = cacheControlPolicy == WebFrameSerializerCacheControlPolicy::SkipAnyFrameOrResourceMarkedNoStore
+        || (!frame->parent() && cacheControlPolicy == WebFrameSerializerCacheControlPolicy::FailForNoStoreMainFrame);
+
+    if (!needToCheckNoStore)
+        return true;
+
+    return !cacheControlNoStoreHeaderPresent(*webLocalFrameImpl);
 }
 
 } // namespace
 
 WebData WebFrameSerializer::generateMHTMLHeader(
-    const WebString& boundary, WebLocalFrame* frame)
+    const WebString& boundary, WebLocalFrame* frame, MHTMLPartsGenerationDelegate* delegate)
 {
-    Document* document = toWebLocalFrameImpl(frame)->frame()->document();
+    DCHECK(frame);
+    DCHECK(delegate);
+
+    if (!frameShouldBeSerializedAsMHTML(frame, delegate->cacheControlPolicy()))
+        return WebData();
+
+    WebLocalFrameImpl* webLocalFrameImpl = toWebLocalFrameImpl(frame);
+    DCHECK(webLocalFrameImpl);
+
+    Document* document = webLocalFrameImpl->frame()->document();
 
     RefPtr<SharedBuffer> buffer = SharedBuffer::create();
     MHTMLArchive::generateMHTMLHeader(
@@ -152,15 +199,17 @@ WebData WebFrameSerializer::generateMHTMLHeader(
 }
 
 WebData WebFrameSerializer::generateMHTMLParts(
-    const WebString& boundary, WebLocalFrame* webFrame, bool useBinaryEncoding,
-    MHTMLPartsGenerationDelegate* webDelegate)
+    const WebString& boundary, WebLocalFrame* webFrame, MHTMLPartsGenerationDelegate* webDelegate)
 {
-    ASSERT(webFrame);
-    ASSERT(webDelegate);
+    DCHECK(webFrame);
+    DCHECK(webDelegate);
+
+    if (!frameShouldBeSerializedAsMHTML(webFrame, webDelegate->cacheControlPolicy()))
+        return WebData();
 
     // Translate arguments from public to internal blink APIs.
     LocalFrame* frame = toWebLocalFrameImpl(webFrame)->frame();
-    MHTMLArchive::EncodingPolicy encodingPolicy = useBinaryEncoding
+    MHTMLArchive::EncodingPolicy encodingPolicy = webDelegate->useBinaryEncoding()
         ? MHTMLArchive::EncodingPolicy::UseBinaryEncoding
         : MHTMLArchive::EncodingPolicy::UseDefaultEncoding;
 

@@ -6,7 +6,7 @@
 
 #include <vector>
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/macros.h"
@@ -28,6 +28,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/login/user_names.h"
@@ -35,7 +36,7 @@
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/account_id/account_id.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
@@ -44,6 +45,7 @@
 #include "ui/app_list/app_list_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_switches.h"
+#include "ui/display/display_switches.h"
 #include "ui/events/event_switches.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_switches.h"
@@ -72,22 +74,23 @@ void DeriveCommandLine(const GURL& start_url,
 
   static const char* const kForwardSwitches[] = {
     ::switches::kBlinkSettings,
+    ::switches::kDisable2dCanvasImageChromium,
     ::switches::kDisableAccelerated2dCanvas,
     ::switches::kDisableAcceleratedJpegDecoding,
     ::switches::kDisableAcceleratedMjpegDecode,
     ::switches::kDisableAcceleratedVideoDecode,
     ::switches::kDisableBlinkFeatures,
     ::switches::kDisableCastStreamingHWEncoding,
-    ::switches::kDisableCompositorAnimationTimelines,
     ::switches::kDisableDistanceFieldText,
     ::switches::kDisableGpu,
+    ::switches::kDisableGpuAsyncWorkerContext,
     ::switches::kDisableGpuMemoryBufferVideoFrames,
     ::switches::kDisableGpuShaderDiskCache,
+    ::switches::kUsePassthroughCmdDecoder,
     ::switches::kDisableGpuWatchdog,
     ::switches::kDisableGpuCompositing,
     ::switches::kDisableGpuRasterization,
     ::switches::kDisableLowResTiling,
-    ::switches::kDisableMediaSource,
     ::switches::kDisablePreferCompositingToLCDText,
     ::switches::kDisablePanelFitting,
     ::switches::kDisableRGBA4444Textures,
@@ -100,14 +103,15 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kDisableDisplayList2dCanvas,
     ::switches::kEnableDisplayList2dCanvas,
     ::switches::kForceDisplayList2dCanvas,
-    ::switches::kDisableEncryptedMedia,
     ::switches::kDisableGpuSandbox,
     ::switches::kEnableDistanceFieldText,
+    ::switches::kEnableGpuAsyncWorkerContext,
     ::switches::kEnableGpuMemoryBufferVideoFrames,
     ::switches::kEnableGpuRasterization,
     ::switches::kEnableImageColorProfiles,
     ::switches::kEnableLogging,
     ::switches::kEnableLowResTiling,
+    ::switches::kDisablePartialRaster,
     ::switches::kEnablePartialRaster,
     ::switches::kEnablePinch,
     ::switches::kEnablePreferCompositingToLCDText,
@@ -137,18 +141,13 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kRendererStartupDialog,
     ::switches::kRootLayerScrolls,
     ::switches::kEnableShareGroupAsyncTextureUpload,
-    ::switches::kTabCaptureUpscaleQuality,
-    ::switches::kTabCaptureDownscaleQuality,
 #if defined(USE_X11) || defined(USE_OZONE)
     ::switches::kTouchCalibration,
 #endif
     ::switches::kTouchDevices,
     ::switches::kTouchEvents,
-#if defined(ENABLE_TOPCHROME_MD)
     ::switches::kTopChromeMD,
-#endif
     ::switches::kTraceToConsole,
-    ::switches::kUIDisableCompositorAnimationTimelines,
     ::switches::kUIDisablePartialSwap,
     ::switches::kUIPrioritizeInGpuProcess,
 #if defined(USE_CRAS)
@@ -159,6 +158,7 @@ void DeriveCommandLine(const GURL& start_url,
     ::switches::kV,
     ::switches::kVModule,
     ::switches::kEnableWebGLDraftExtensions,
+    ::switches::kDisableWebGLImageChromium,
     ::switches::kEnableWebGLImageChromium,
     ::switches::kEnableWebVR,
 #if defined(ENABLE_WEBRTC)
@@ -193,6 +193,7 @@ void DeriveCommandLine(const GURL& start_url,
     cc::switches::kDisableThreadedAnimation,
     cc::switches::kEnableBeginFrameScheduling,
     cc::switches::kEnableGpuBenchmarking,
+    cc::switches::kEnableLayerLists,
     cc::switches::kEnableMainFrameBeforeActivation,
     cc::switches::kShowCompositedLayerBorders,
     cc::switches::kShowFPSCounter,
@@ -202,6 +203,7 @@ void DeriveCommandLine(const GURL& start_url,
     cc::switches::kShowScreenSpaceRects,
     cc::switches::kShowSurfaceDamageRects,
     cc::switches::kSlowDownRasterScaleFactor,
+    cc::switches::kUIEnableLayerLists,
     cc::switches::kUIShowFPSCounter,
     chromeos::switches::kConsumerDeviceManagementUrl,
     chromeos::switches::kDbusStub,
@@ -210,6 +212,7 @@ void DeriveCommandLine(const GURL& start_url,
     chromeos::switches::kDisableLoginAnimations,
     chromeos::switches::kEnableArc,
     chromeos::switches::kEnableConsumerManagement,
+    chromeos::switches::kEnterpriseDisableArc,
     chromeos::switches::kEnterpriseEnableForcedReEnrollment,
     chromeos::switches::kHasChromeOSDiamondKey,
     chromeos::switches::kLoginProfile,
@@ -324,8 +327,9 @@ void GetOffTheRecordCommandLine(const GURL& start_url,
   otr_switches.SetString(switches::kGuestSession, std::string());
   otr_switches.SetString(::switches::kIncognito, std::string());
   otr_switches.SetString(::switches::kLoggingLevel, kGuestModeLoggingLevel);
-  otr_switches.SetString(switches::kLoginUser,
-                         login::GuestAccountId().GetUserEmail());
+  otr_switches.SetString(
+      switches::kLoginUser,
+      cryptohome::Identification(login::GuestAccountId()).id());
 
   // Override the home page.
   otr_switches.SetString(::switches::kHomePage,

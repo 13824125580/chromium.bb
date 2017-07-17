@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -143,10 +143,10 @@ class AutocompleteResultTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<TemplateURLService> template_url_service_;
+  std::unique_ptr<TemplateURLService> template_url_service_;
 
  private:
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   // For every provider mentioned in TestData, we need a mock provider.
   std::vector<scoped_refptr<MockAutocompleteProvider> > mock_provider_list_;
@@ -208,15 +208,15 @@ void AutocompleteResultTest::RunCopyOldMatchesTest(
   PopulateAutocompleteMatches(last, last_size, &last_matches);
   AutocompleteResult last_result;
   last_result.AppendMatches(input, last_matches);
-  last_result.SortAndCull(input, std::string(), template_url_service_.get());
+  last_result.SortAndCull(input, template_url_service_.get());
 
   ACMatches current_matches;
   PopulateAutocompleteMatches(current, current_size, &current_matches);
   AutocompleteResult current_result;
   current_result.AppendMatches(input, current_matches);
-  current_result.SortAndCull(input, std::string(), template_url_service_.get());
+  current_result.SortAndCull(input, template_url_service_.get());
   current_result.CopyOldMatches(
-      input, std::string(), last_result, template_url_service_.get());
+      input, last_result, template_url_service_.get());
 
   AssertResultMatches(current_result, expected, expected_size);
 }
@@ -242,7 +242,7 @@ TEST_F(AutocompleteResultTest, Swap) {
                           true, false, TestSchemeClassifier());
   matches.push_back(match);
   r1.AppendMatches(input, matches);
-  r1.SortAndCull(input, std::string(), template_url_service_.get());
+  r1.SortAndCull(input, template_url_service_.get());
   EXPECT_EQ(r1.begin(), r1.default_match());
   EXPECT_EQ("http://a/", r1.alternate_nav_url().spec());
   r1.Swap(&r2);
@@ -379,7 +379,7 @@ TEST_F(AutocompleteResultTest, SortAndCullEmptyDestinationURLs) {
                           false, true, false, TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(input, matches);
-  result.SortAndCull(input, std::string(), template_url_service_.get());
+  result.SortAndCull(input, template_url_service_.get());
 
   // Of the two results with the same non-empty destination URL, the
   // lower-relevance one should be dropped.  All of the results with empty URLs
@@ -424,7 +424,7 @@ TEST_F(AutocompleteResultTest, SortAndCullDuplicateSearchURLs) {
                           false, true, false, TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(input, matches);
-  result.SortAndCull(input, std::string(), template_url_service_.get());
+  result.SortAndCull(input, template_url_service_.get());
 
   // We expect the 3rd and 4th results to be removed.
   ASSERT_EQ(3U, result.size());
@@ -475,7 +475,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithMatchDups) {
                           false, true, false, TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(input, matches);
-  result.SortAndCull(input, std::string(), template_url_service_.get());
+  result.SortAndCull(input, template_url_service_.get());
 
   // Expect 3 unique results after SortAndCull().
   ASSERT_EQ(3U, result.size());
@@ -528,7 +528,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithDemotionsByType) {
                           false, true, false, TestSchemeClassifier());
   AutocompleteResult result;
   result.AppendMatches(input, matches);
-  result.SortAndCull(input, std::string(), template_url_service_.get());
+  result.SortAndCull(input, template_url_service_.get());
 
   // Check the new ordering.  The history-title results should be omitted.
   // We cannot check relevance scores because the matches are sorted by
@@ -573,7 +573,7 @@ TEST_F(AutocompleteResultTest, SortAndCullWithMatchDupsAndDemotionsByType) {
         false, false, true, false, TestSchemeClassifier());
     AutocompleteResult result;
     result.AppendMatches(input, matches);
-    result.SortAndCull(input, std::string(), template_url_service_.get());
+    result.SortAndCull(input, template_url_service_.get());
 
     // The NAVSUGGEST dup-url stay above search-url since the navsuggest
     // variant should not be demoted.
@@ -611,7 +611,7 @@ TEST_F(AutocompleteResultTest, SortAndCullReorderForDefaultMatch) {
                             TestSchemeClassifier());
     AutocompleteResult result;
     result.AppendMatches(input, matches);
-    result.SortAndCull(input, std::string(), template_url_service_.get());
+    result.SortAndCull(input, template_url_service_.get());
     AssertResultMatches(result, data, 4);
   }
 
@@ -627,7 +627,7 @@ TEST_F(AutocompleteResultTest, SortAndCullReorderForDefaultMatch) {
                             TestSchemeClassifier());
     AutocompleteResult result;
     result.AppendMatches(input, matches);
-    result.SortAndCull(input, std::string(), template_url_service_.get());
+    result.SortAndCull(input, template_url_service_.get());
     ASSERT_EQ(4U, result.size());
     EXPECT_EQ("http://c/", result.match_at(0)->destination_url.spec());
     EXPECT_EQ("http://a/", result.match_at(1)->destination_url.spec());

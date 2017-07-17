@@ -33,7 +33,6 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8ObjectBuilder.h"
 #include "bindings/core/v8/V8Uint8Array.h"
-#include "core/dom/ExceptionCode.h"
 #include "platform/CryptoResult.h"
 #include "public/platform/WebCryptoAlgorithmParams.h"
 #include "public/platform/WebCryptoKeyAlgorithm.h"
@@ -119,7 +118,7 @@ public:
     {
         ASSERT(algorithm.paramsType() == WebCryptoAlgorithmParamsTypeNone);
 
-        V8ObjectBuilder algorithmValue(m_builder.scriptState());
+        V8ObjectBuilder algorithmValue(m_builder.getScriptState());
         algorithmValue.addString("name", WebCryptoAlgorithm::lookupAlgorithmInfo(algorithm.id())->name);
         m_builder.add(propertyName, algorithmValue);
     }

@@ -29,7 +29,8 @@ const int kInputBufferTimeout = 20;
 
 // Timeout for dequeuing an output buffer from MediaCodec in milliseconds.
 const int kOutputBufferTimeout = 20;
-}
+
+}  // namespace
 
 MediaCodecDecoder::MediaCodecDecoder(
     const char* decoder_thread_name,
@@ -117,11 +118,10 @@ void MediaCodecDecoder::Flush() {
 #endif
 
   if (media_codec_bridge_) {
-    // MediaCodecBridge::Reset() performs MediaCodecBridge.flush()
-    MediaCodecStatus flush_status = media_codec_bridge_->Reset();
+    MediaCodecStatus flush_status = media_codec_bridge_->Flush();
     if (flush_status != MEDIA_CODEC_OK) {
       DVLOG(0) << class_name() << "::" << __FUNCTION__
-               << "MediaCodecBridge::Reset() failed";
+               << "MediaCodecBridge::Flush() failed";
       media_task_runner_->PostTask(FROM_HERE, internal_error_cb_);
     }
   }
@@ -180,7 +180,7 @@ bool MediaCodecDecoder::NotCompletedAndNeedsPreroll() const {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
 
   return HasStream() && !completed_ &&
-         (!is_prepared_ || preroll_timestamp_ != base::TimeDelta());
+         (!is_prepared_ || !preroll_timestamp_.is_zero());
 }
 
 void MediaCodecDecoder::SetPrerollTimestamp(base::TimeDelta preroll_timestamp) {
@@ -326,7 +326,7 @@ bool MediaCodecDecoder::Start(base::TimeDelta start_timestamp) {
   // We only synchronize video stream.
   AssociateCurrentTimeWithPTS(start_timestamp);
 
-  DCHECK(preroll_timestamp_ == base::TimeDelta());
+  DCHECK(preroll_timestamp_.is_zero());
 
   // Start the decoder thread
   if (!decoder_thread_.IsRunning()) {
@@ -891,7 +891,13 @@ bool MediaCodecDecoder::DepleteOutputBufferQueue() {
       case MEDIA_CODEC_OUTPUT_FORMAT_CHANGED:
         DVLOG(2) << class_name() << "::" << __FUNCTION__
                  << " MEDIA_CODEC_OUTPUT_FORMAT_CHANGED";
-        OnOutputFormatChanged();
+        if (!OnOutputFormatChanged()) {
+          DVLOG(1) << class_name() << "::" << __FUNCTION__
+                   << ": OnOutputFormatChanged failed, stopping frame"
+                   << " processing";
+          media_task_runner_->PostTask(FROM_HERE, internal_error_cb_);
+          return false;
+        }
         break;
 
       case MEDIA_CODEC_OK:
@@ -906,7 +912,13 @@ bool MediaCodecDecoder::DepleteOutputBufferQueue() {
         else
           render_mode = kRenderNow;
 
-        Render(buffer_index, offset, size, render_mode, pts, eos_encountered);
+        if (!Render(buffer_index, offset, size, render_mode, pts,
+                    eos_encountered)) {
+          DVLOG(1) << class_name() << "::" << __FUNCTION__
+                   << " Render failed, stopping frame processing";
+          media_task_runner_->PostTask(FROM_HERE, internal_error_cb_);
+          return false;
+        }
 
         if (render_mode == kRenderAfterPreroll) {
           DVLOG(1) << class_name() << "::" << __FUNCTION__ << " pts " << pts
@@ -933,7 +945,6 @@ bool MediaCodecDecoder::DepleteOutputBufferQueue() {
         NOTREACHED();
         break;
     }
-
   } while (status != MEDIA_CODEC_DEQUEUE_OUTPUT_AGAIN_LATER &&
            status != MEDIA_CODEC_ERROR && !eos_encountered);
 

@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/public/browser/trace_uploader.h"
@@ -33,6 +33,8 @@ class TraceCrashServiceUploader : public content::TraceUploader,
 
   void SetUploadURL(const std::string& url);
 
+  void SetMaxUploadBytes(size_t max_upload_bytes);
+
   // net::URLFetcherDelegate implementation.
   void OnURLFetchComplete(const net::URLFetcher* source) override;
   void OnURLFetchUploadProgress(const net::URLFetcher* source,
@@ -42,22 +44,23 @@ class TraceCrashServiceUploader : public content::TraceUploader,
   // content::TraceUploader
   void DoUpload(const std::string& file_contents,
                 UploadMode upload_mode,
-                scoped_ptr<const base::DictionaryValue> metadata,
+                std::unique_ptr<const base::DictionaryValue> metadata,
                 const UploadProgressCallback& progress_callback,
                 const UploadDoneCallback& done_callback) override;
 
  private:
-  void DoUploadOnFileThread(const std::string& file_contents,
-                            UploadMode upload_mode,
-                            const std::string& upload_url,
-                            scoped_ptr<const base::DictionaryValue> metadata,
-                            const UploadProgressCallback& progress_callback,
-                            const UploadDoneCallback& done_callback);
+  void DoUploadOnFileThread(
+      const std::string& file_contents,
+      UploadMode upload_mode,
+      const std::string& upload_url,
+      std::unique_ptr<const base::DictionaryValue> metadata,
+      const UploadProgressCallback& progress_callback,
+      const UploadDoneCallback& done_callback);
   // Sets up a multipart body to be uploaded. The body is produced according
   // to RFC 2046.
   void SetupMultipart(const std::string& product,
                       const std::string& version,
-                      scoped_ptr<const base::DictionaryValue> metadata,
+                      std::unique_ptr<const base::DictionaryValue> metadata,
                       const std::string& trace_filename,
                       const std::string& trace_contents,
                       std::string* post_data);
@@ -73,13 +76,15 @@ class TraceCrashServiceUploader : public content::TraceUploader,
                                 const std::string& post_data);
   void OnUploadError(const std::string& error_message);
 
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   UploadProgressCallback progress_callback_;
   UploadDoneCallback done_callback_;
 
   net::URLRequestContextGetter* request_context_;
 
   std::string upload_url_;
+
+  size_t max_upload_bytes_;
 
   DISALLOW_COPY_AND_ASSIGN(TraceCrashServiceUploader);
 };

@@ -7,18 +7,22 @@
 #include <algorithm>
 #include <vector>
 
-#include "ash/ash_switches.h"
+#include "ash/aura/wm_window_aura.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/material_design/material_design_controller.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/shell_observer.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm/window_state_delegate.h"
+#include "ash/common/wm/window_state_observer.h"
+#include "ash/common/wm_lookup.h"
+#include "ash/common/wm_shell.h"
 #include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "ash/frame/default_header_painter.h"
 #include "ash/frame/frame_border_hit_test_controller.h"
 #include "ash/frame/header_painter.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
-#include "ash/shell_observer.h"
 #include "ash/wm/immersive_fullscreen_controller.h"
-#include "ash/wm/window_state.h"
-#include "ash/wm/window_state_delegate.h"
-#include "ash/wm/window_state_observer.h"
+#include "ash/wm/window_state_aura.h"
 #include "base/command_line.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
@@ -63,21 +67,26 @@ class CustomFrameViewAshWindowStateDelegate
     // TODO(pkotwicz): This is a hack. Remove ASAP. http://crbug.com/319048
     window_state_ = window_state;
     window_state_->AddObserver(this);
-    window_state_->window()->AddObserver(this);
+    GetAuraWindow()->AddObserver(this);
   }
   ~CustomFrameViewAshWindowStateDelegate() override {
     if (window_state_) {
       window_state_->RemoveObserver(this);
-      window_state_->window()->RemoveObserver(this);
+      GetAuraWindow()->RemoveObserver(this);
     }
   }
+
  private:
+  aura::Window* GetAuraWindow() {
+    return ash::WmWindowAura::GetAuraWindow(window_state_->window());
+  }
+
   // Overridden from ash::wm::WindowStateDelegate:
   bool ToggleFullscreen(ash::wm::WindowState* window_state) override {
     bool enter_fullscreen = !window_state->IsFullscreen();
     if (enter_fullscreen) {
-      window_state->window()->SetProperty(aura::client::kShowStateKey,
-                                           ui::SHOW_STATE_FULLSCREEN);
+      GetAuraWindow()->SetProperty(aura::client::kShowStateKey,
+                                   ui::SHOW_STATE_FULLSCREEN);
     } else {
       window_state->Restore();
     }
@@ -91,24 +100,22 @@ class CustomFrameViewAshWindowStateDelegate
   // Overridden from aura::WindowObserver:
   void OnWindowDestroying(aura::Window* window) override {
     window_state_->RemoveObserver(this);
-    window_state_->window()->RemoveObserver(this);
+    GetAuraWindow()->RemoveObserver(this);
     window_state_ = NULL;
   }
   // Overridden from ash::wm::WindowStateObserver:
   void OnPostWindowStateTypeChange(ash::wm::WindowState* window_state,
                                    ash::wm::WindowStateType old_type) override {
-    if (!window_state->IsFullscreen() &&
-        !window_state->IsMinimized() &&
+    if (!window_state->IsFullscreen() && !window_state->IsMinimized() &&
         immersive_fullscreen_controller_.get() &&
         immersive_fullscreen_controller_->IsEnabled()) {
       immersive_fullscreen_controller_->SetEnabled(
-          ash::ImmersiveFullscreenController::WINDOW_TYPE_OTHER,
-          false);
+          ash::ImmersiveFullscreenController::WINDOW_TYPE_OTHER, false);
     }
   }
 
   ash::wm::WindowState* window_state_;
-  scoped_ptr<ash::ImmersiveFullscreenController>
+  std::unique_ptr<ash::ImmersiveFullscreenController>
       immersive_fullscreen_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomFrameViewAshWindowStateDelegate);
@@ -159,6 +166,8 @@ class CustomFrameViewAsh::HeaderView
   void ChildPreferredSizeChanged(views::View* child) override;
 
   // ShellObserver:
+  void OnOverviewModeStarting() override;
+  void OnOverviewModeEnded() override;
   void OnMaximizeModeStarted() override;
   void OnMaximizeModeEnded() override;
 
@@ -166,9 +175,7 @@ class CustomFrameViewAsh::HeaderView
     return caption_button_container_;
   }
 
-  views::View* avatar_icon() const {
-    return avatar_icon_;
-  }
+  views::View* avatar_icon() const { return avatar_icon_; }
 
  private:
   // ImmersiveFullscreenController::Delegate:
@@ -182,7 +189,7 @@ class CustomFrameViewAsh::HeaderView
   views::Widget* frame_;
 
   // Helper for painting the header.
-  scoped_ptr<DefaultHeaderPainter> header_painter_;
+  std::unique_ptr<DefaultHeaderPainter> header_painter_;
 
   views::ImageView* avatar_icon_;
 
@@ -209,11 +216,11 @@ CustomFrameViewAsh::HeaderView::HeaderView(views::Widget* frame)
   header_painter_->Init(frame_, this, caption_button_container_);
   UpdateAvatarIcon();
 
-  Shell::GetInstance()->AddShellObserver(this);
+  WmShell::Get()->AddShellObserver(this);
 }
 
 CustomFrameViewAsh::HeaderView::~HeaderView() {
-  Shell::GetInstance()->RemoveShellObserver(this);
+  WmShell::Get()->RemoveShellObserver(this);
 }
 
 void CustomFrameViewAsh::HeaderView::SchedulePaintForTitle() {
@@ -226,8 +233,8 @@ void CustomFrameViewAsh::HeaderView::ResetWindowControls() {
 
 int CustomFrameViewAsh::HeaderView::GetPreferredOnScreenHeight() const {
   if (frame_->IsFullscreen()) {
-    return static_cast<int>(
-        GetPreferredHeight() * fullscreen_visible_fraction_);
+    return static_cast<int>(GetPreferredHeight() *
+                            fullscreen_visible_fraction_);
   }
   return GetPreferredHeight();
 }
@@ -241,9 +248,8 @@ int CustomFrameViewAsh::HeaderView::GetMinimumWidth() const {
 }
 
 void CustomFrameViewAsh::HeaderView::UpdateAvatarIcon() {
-  SessionStateDelegate* delegate =
-      Shell::GetInstance()->session_state_delegate();
-  aura::Window* window = frame_->GetNativeView();
+  SessionStateDelegate* delegate = WmShell::Get()->GetSessionStateDelegate();
+  WmWindow* window = WmLookup::Get()->GetWindowForWidget(frame_);
   bool show = delegate->ShouldShowAvatar(window);
   if (!show) {
     if (!avatar_icon_)
@@ -270,7 +276,8 @@ void CustomFrameViewAsh::HeaderView::SizeConstraintsChanged() {
 }
 
 void CustomFrameViewAsh::HeaderView::SetFrameColors(
-    SkColor active_frame_color, SkColor inactive_frame_color) {
+    SkColor active_frame_color,
+    SkColor inactive_frame_color) {
   header_painter_->SetFrameColors(active_frame_color, inactive_frame_color);
 }
 
@@ -286,13 +293,14 @@ void CustomFrameViewAsh::HeaderView::OnPaint(gfx::Canvas* canvas) {
       frame_->non_client_view()->frame_view()->ShouldPaintAsActive();
   caption_button_container_->SetPaintAsActive(paint_as_active);
 
-  HeaderPainter::Mode header_mode = paint_as_active ?
-      HeaderPainter::MODE_ACTIVE : HeaderPainter::MODE_INACTIVE;
+  HeaderPainter::Mode header_mode = paint_as_active
+                                        ? HeaderPainter::MODE_ACTIVE
+                                        : HeaderPainter::MODE_INACTIVE;
   header_painter_->PaintHeader(canvas, header_mode);
 }
 
-void CustomFrameViewAsh::HeaderView::
-    ChildPreferredSizeChanged(views::View* child) {
+void CustomFrameViewAsh::HeaderView::ChildPreferredSizeChanged(
+    views::View* child) {
   // FrameCaptionButtonContainerView animates the visibility changes in
   // UpdateSizeButtonVisibility(false). Due to this a new size is not available
   // until the completion of the animation. Layout in response to the preferred
@@ -304,6 +312,16 @@ void CustomFrameViewAsh::HeaderView::
 
 ///////////////////////////////////////////////////////////////////////////////
 // CustomFrameViewAsh::HeaderView, ShellObserver overrides:
+
+void CustomFrameViewAsh::HeaderView::OnOverviewModeStarting() {
+  if (ash::MaterialDesignController::IsOverviewMaterial())
+    caption_button_container_->SetVisible(false);
+}
+
+void CustomFrameViewAsh::HeaderView::OnOverviewModeEnded() {
+  if (ash::MaterialDesignController::IsOverviewMaterial())
+    caption_button_container_->SetVisible(true);
+}
 
 void CustomFrameViewAsh::HeaderView::OnMaximizeModeStarted() {
   caption_button_container_->UpdateSizeButtonVisibility();
@@ -322,7 +340,7 @@ void CustomFrameViewAsh::HeaderView::OnMaximizeModeEnded() {
 void CustomFrameViewAsh::HeaderView::OnImmersiveRevealStarted() {
   fullscreen_visible_fraction_ = 0;
   SetPaintToLayer(true);
-  SetFillsBoundsOpaquely(false);
+  layer()->SetFillsBoundsOpaquely(false);
   parent()->Layout();
 }
 
@@ -387,11 +405,10 @@ CustomFrameViewAsh::OverlayView::OverlayView(HeaderView* header_view)
     : header_view_(header_view) {
   AddChildView(header_view);
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 }
 
-CustomFrameViewAsh::OverlayView::~OverlayView() {
-}
+CustomFrameViewAsh::OverlayView::~OverlayView() {}
 
 ///////////////////////////////////////////////////////////////////////////////
 // CustomFrameViewAsh::OverlayView, views::View overrides:
@@ -442,14 +459,12 @@ CustomFrameViewAsh::CustomFrameViewAsh(views::Widget* frame)
   // be set. This is the case for packaged apps.
   wm::WindowState* window_state = wm::GetWindowState(frame->GetNativeWindow());
   if (!window_state->HasDelegate()) {
-    window_state->SetDelegate(scoped_ptr<wm::WindowStateDelegate>(
-        new CustomFrameViewAshWindowStateDelegate(
-            window_state, this)));
+    window_state->SetDelegate(std::unique_ptr<wm::WindowStateDelegate>(
+        new CustomFrameViewAshWindowStateDelegate(window_state, this)));
   }
 }
 
-CustomFrameViewAsh::~CustomFrameViewAsh() {
-}
+CustomFrameViewAsh::~CustomFrameViewAsh() {}
 
 void CustomFrameViewAsh::InitImmersiveFullscreenControllerForView(
     ImmersiveFullscreenController* immersive_fullscreen_controller) {
@@ -478,8 +493,8 @@ gfx::Rect CustomFrameViewAsh::GetWindowBoundsForClientBounds(
 }
 
 int CustomFrameViewAsh::NonClientHitTest(const gfx::Point& point) {
-  return FrameBorderHitTestController::NonClientHitTest(this,
-      header_view_->caption_button_container(), point);
+  return FrameBorderHitTestController::NonClientHitTest(
+      this, header_view_->caption_button_container(), point);
 }
 
 void CustomFrameViewAsh::GetWindowMask(const gfx::Size& size,
@@ -491,8 +506,7 @@ void CustomFrameViewAsh::ResetWindowControls() {
   header_view_->ResetWindowControls();
 }
 
-void CustomFrameViewAsh::UpdateWindowIcon() {
-}
+void CustomFrameViewAsh::UpdateWindowIcon() {}
 
 void CustomFrameViewAsh::UpdateWindowTitle() {
   header_view_->SchedulePaintForTitle();
@@ -502,14 +516,26 @@ void CustomFrameViewAsh::SizeConstraintsChanged() {
   header_view_->SizeConstraintsChanged();
 }
 
+void CustomFrameViewAsh::ActivationChanged(bool active) {
+  // The icons differ between active and inactive.
+  header_view_->SchedulePaint();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // CustomFrameViewAsh, views::View overrides:
 
 gfx::Size CustomFrameViewAsh::GetPreferredSize() const {
   gfx::Size pref = frame_->client_view()->GetPreferredSize();
   gfx::Rect bounds(0, 0, pref.width(), pref.height());
-  return frame_->non_client_view()->GetWindowBoundsForClientBounds(
-      bounds).size();
+  return frame_->non_client_view()
+      ->GetWindowBoundsForClientBounds(bounds)
+      .size();
+}
+
+void CustomFrameViewAsh::Layout() {
+  views::NonClientFrameView::Layout();
+  frame_->GetNativeWindow()->SetProperty(aura::client::kTopViewInset,
+                                         NonClientTopBorderHeight());
 }
 
 const char* CustomFrameViewAsh::GetClassName() const {
@@ -578,8 +604,8 @@ bool CustomFrameViewAsh::DoesIntersectRect(const views::View* target,
   return false;
 }
 
-FrameCaptionButtonContainerView* CustomFrameViewAsh::
-    GetFrameCaptionButtonContainerViewForTest() {
+FrameCaptionButtonContainerView*
+CustomFrameViewAsh::GetFrameCaptionButtonContainerViewForTest() {
   return header_view_->caption_button_container();
 }
 

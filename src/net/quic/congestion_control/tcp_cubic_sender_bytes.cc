@@ -42,18 +42,27 @@ TcpCubicSenderBytes::TcpCubicSenderBytes(
       initial_tcp_congestion_window_(initial_tcp_congestion_window *
                                      kDefaultTCPMSS),
       initial_max_tcp_congestion_window_(max_congestion_window *
-                                         kDefaultTCPMSS) {}
+                                         kDefaultTCPMSS),
+      min_slow_start_exit_window_(min_congestion_window_) {}
 
 TcpCubicSenderBytes::~TcpCubicSenderBytes() {}
 
 void TcpCubicSenderBytes::SetCongestionWindowFromBandwidthAndRtt(
     QuicBandwidth bandwidth,
     QuicTime::Delta rtt) {
-  // Make sure CWND is in appropriate range (in case of bad data).
   QuicByteCount new_congestion_window = bandwidth.ToBytesPerPeriod(rtt);
-  congestion_window_ =
-      max(min(new_congestion_window, kMaxCongestionWindow * kDefaultTCPMSS),
-          kMinCongestionWindowForBandwidthResumption * kDefaultTCPMSS);
+  if (FLAGS_quic_no_lower_bw_resumption_limit) {
+    // Limit new CWND if needed.
+    congestion_window_ =
+        max(min_congestion_window_,
+            min(new_congestion_window,
+                kMaxResumptionCongestionWindow * kDefaultTCPMSS));
+  } else {
+    congestion_window_ =
+        max(min(new_congestion_window,
+                kMaxResumptionCongestionWindow * kDefaultTCPMSS),
+            kMinCongestionWindowForBandwidthResumption * kDefaultTCPMSS);
+  }
 }
 
 void TcpCubicSenderBytes::SetCongestionWindowInPackets(
@@ -73,6 +82,7 @@ void TcpCubicSenderBytes::SetNumEmulatedConnections(int num_connections) {
 
 void TcpCubicSenderBytes::SetMaxCongestionWindow(
     QuicByteCount max_congestion_window) {
+  DCHECK(!FLAGS_quic_ignore_srbf);
   max_congestion_window_ = max_congestion_window;
 }
 
@@ -81,16 +91,18 @@ void TcpCubicSenderBytes::ExitSlowstart() {
 }
 
 void TcpCubicSenderBytes::OnPacketLost(QuicPacketNumber packet_number,
+                                       QuicByteCount lost_bytes,
                                        QuicByteCount bytes_in_flight) {
   // TCP NewReno (RFC6582) says that once a loss occurs, any losses in packets
   // already sent should be treated as a single loss event, since it's expected.
   if (packet_number <= largest_sent_at_last_cutback_) {
     if (last_cutback_exited_slowstart_) {
       ++stats_->slowstart_packets_lost;
+      stats_->slowstart_bytes_lost += lost_bytes;
       if (slow_start_large_reduction_) {
-        // Reduce congestion window by 1 MSS for every loss.
+        // Reduce congestion window by lost_bytes for every loss.
         congestion_window_ =
-            max(congestion_window_ - kDefaultTCPMSS, min_congestion_window_);
+            max(congestion_window_ - lost_bytes, min_slow_start_exit_window_);
         slowstart_threshold_ = congestion_window_;
       }
     }
@@ -104,11 +116,17 @@ void TcpCubicSenderBytes::OnPacketLost(QuicPacketNumber packet_number,
     ++stats_->slowstart_packets_lost;
   }
 
-  prr_.OnPacketLost(bytes_in_flight);
+  if (!no_prr_) {
+    prr_.OnPacketLost(bytes_in_flight);
+  }
 
   // TODO(jri): Separate out all of slow start into a separate class.
   if (slow_start_large_reduction_ && InSlowStart()) {
     DCHECK_LT(kDefaultTCPMSS, congestion_window_);
+    if (FLAGS_quic_sslr_limit_reduction &&
+        congestion_window_ >= 2 * initial_tcp_congestion_window_) {
+      min_slow_start_exit_window_ = congestion_window_ / 2;
+    }
     congestion_window_ = congestion_window_ - kDefaultTCPMSS;
   } else if (reno_) {
     congestion_window_ = congestion_window_ * RenoBeta();
@@ -116,7 +134,6 @@ void TcpCubicSenderBytes::OnPacketLost(QuicPacketNumber packet_number,
     congestion_window_ =
         cubic_.CongestionWindowAfterPacketLoss(congestion_window_);
   }
-  // Enforce TCP's minimum congestion window of 2*MSS.
   if (congestion_window_ < min_congestion_window_) {
     congestion_window_ = min_congestion_window_;
   }

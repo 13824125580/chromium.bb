@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/chrome_proximity_auth_client.h"
@@ -54,7 +55,7 @@ ScreenlockPrivateGetLockedFunction::ScreenlockPrivateGetLockedFunction() {}
 ScreenlockPrivateGetLockedFunction::~ScreenlockPrivateGetLockedFunction() {}
 
 bool ScreenlockPrivateGetLockedFunction::RunAsync() {
-  SetResult(new base::FundamentalValue(
+  SetResult(base::MakeUnique<base::FundamentalValue>(
       proximity_auth::ScreenlockBridge::Get()->IsLocked()));
   SendResponse(error_.empty());
   return true;
@@ -65,7 +66,7 @@ ScreenlockPrivateSetLockedFunction::ScreenlockPrivateSetLockedFunction() {}
 ScreenlockPrivateSetLockedFunction::~ScreenlockPrivateSetLockedFunction() {}
 
 bool ScreenlockPrivateSetLockedFunction::RunAsync() {
-  scoped_ptr<screenlock::SetLocked::Params> params(
+  std::unique_ptr<screenlock::SetLocked::Params> params(
       screenlock::SetLocked::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   EasyUnlockService* service = EasyUnlockService::Get(GetProfile());
@@ -95,7 +96,7 @@ ScreenlockPrivateAcceptAuthAttemptFunction::
     ~ScreenlockPrivateAcceptAuthAttemptFunction() {}
 
 bool ScreenlockPrivateAcceptAuthAttemptFunction::RunSync() {
-  scoped_ptr<screenlock::AcceptAuthAttempt::Params> params(
+  std::unique_ptr<screenlock::AcceptAuthAttempt::Params> params(
       screenlock::AcceptAuthAttempt::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -135,10 +136,10 @@ void ScreenlockPrivateEventRouter::DispatchEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name,
     base::Value* arg) {
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   if (arg)
     args->Append(arg);
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(histogram_value, event_name, std::move(args)));
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
@@ -164,11 +165,11 @@ bool ScreenlockPrivateEventRouter::OnAuthAttempted(
   if (!router->HasEventListener(screenlock::OnAuthAttempted::kEventName))
     return false;
 
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->AppendString(screenlock::ToString(FromLockHandlerAuthType(auth_type)));
   args->AppendString(value);
 
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::SCREENLOCK_PRIVATE_ON_AUTH_ATTEMPTED,
                 screenlock::OnAuthAttempted::kEventName, std::move(args)));
   router->BroadcastEvent(std::move(event));

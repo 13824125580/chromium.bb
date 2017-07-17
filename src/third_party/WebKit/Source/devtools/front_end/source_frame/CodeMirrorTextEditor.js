@@ -39,6 +39,8 @@ WebInspector.CodeMirrorTextEditor = function(url, delegate)
     WebInspector.VBox.call(this);
     this._delegate = delegate;
     this._url = url;
+    /** @type {!Array<string>} */
+    this._gutters = ["CodeMirror-linenumbers"];
 
     this.registerRequiredCSS("cm/codemirror.css");
     this.registerRequiredCSS("source_frame/cmdevtools.css");
@@ -1064,7 +1066,7 @@ WebInspector.CodeMirrorTextEditor.prototype = {
     _contextMenu: function(event)
     {
         var contextMenu = new WebInspector.ContextMenu(event);
-        event.consume(true); //Consume event now to prevent document from handling the async menu
+        event.consume(true); // Consume event now to prevent document from handling the async menu
         var target = event.target.enclosingNodeOrSelfWithClass("CodeMirror-gutter-elt");
         var promise;
         if (target)
@@ -1114,6 +1116,43 @@ WebInspector.CodeMirrorTextEditor.prototype = {
             if (classes[i].startsWith("cm-breakpoint"))
                 this._codeMirror.removeLineClass(lineNumber, "wrap", classes[i]);
         }
+    },
+
+    /**
+     * @param {string} type
+     * @param {boolean} leftToNumbers
+     */
+    installGutter: function(type, leftToNumbers)
+    {
+        if (this._gutters.indexOf(type) !== -1)
+            return;
+        if (leftToNumbers)
+            this._gutters.unshift(type);
+        else
+            this._gutters.push(type);
+        this._codeMirror.setOption("gutters", this._gutters.slice());
+        this._codeMirror.refresh();
+    },
+
+    /**
+     * @param {string} type
+     */
+    uninstallGutter: function(type)
+    {
+        this._gutters = this._gutters.filter(gutter => gutter !== type);
+        this._codeMirror.setOption("gutters", this._gutters.slice());
+        this._codeMirror.refresh();
+    },
+
+    /**
+     * @param {number} lineNumber
+     * @param {string} type
+     * @param {?Element} element
+     */
+    setGutterDecoration: function(lineNumber, type, element)
+    {
+        console.assert(this._gutters.indexOf(type) !== -1, "Cannot decorate unexisting gutter.")
+        this._codeMirror.setGutterMarker(lineNumber, type, element);
     },
 
     /**
@@ -1209,7 +1248,7 @@ WebInspector.CodeMirrorTextEditor.prototype = {
         this.clearPositionHighlight();
         this._highlightedLine = this._codeMirror.getLineHandle(lineNumber);
         if (!this._highlightedLine)
-          return;
+            return;
         this._revealLine(lineNumber);
         if (shouldHighlight) {
             this._codeMirror.addLineClass(this._highlightedLine, null, "cm-highlight");
@@ -1413,6 +1452,22 @@ WebInspector.CodeMirrorTextEditor.prototype = {
     firstVisibleLine: function()
     {
         return this._codeMirror.lineAtHeight(this._codeMirror.getScrollInfo().top, "local");
+    },
+
+    /**
+     * @return {number}
+     */
+    scrollTop: function()
+    {
+        return this._codeMirror.getScrollInfo().top;
+    },
+
+    /**
+     * @param {number} scrollTop
+     */
+    setScrollTop: function(scrollTop)
+    {
+        this._codeMirror.scrollTo(0, scrollTop);
     },
 
     /**
@@ -1642,7 +1697,7 @@ WebInspector.CodeMirrorPositionHandle.prototype = {
      */
     equal: function(positionHandle)
     {
-        return positionHandle._lineHandle === this._lineHandle && positionHandle._columnNumber == this._columnNumber && positionHandle._codeMirror === this._codeMirror;
+        return positionHandle._lineHandle === this._lineHandle && positionHandle._columnNumber === this._columnNumber && positionHandle._codeMirror === this._codeMirror;
     }
 }
 

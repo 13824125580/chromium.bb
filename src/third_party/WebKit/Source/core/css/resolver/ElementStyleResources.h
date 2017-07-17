@@ -24,6 +24,7 @@
 #define ElementStyleResources_h
 
 #include "core/CSSPropertyNames.h"
+#include "core/css/CSSPropertyIDTemplates.h"
 #include "platform/CrossOriginAttributeValue.h"
 #include "platform/graphics/Color.h"
 #include "platform/heap/Handle.h"
@@ -39,6 +40,7 @@ class CSSImageValue;
 class CSSSVGDocumentValue;
 class CSSValue;
 class ComputedStyle;
+class Document;
 class FilterOperation;
 class StyleImage;
 class StylePendingImage;
@@ -51,26 +53,26 @@ class ElementStyleResources {
 public:
     ElementStyleResources(Document&, float deviceScaleFactor);
 
-    PassRefPtrWillBeRawPtr<StyleImage> styleImage(CSSPropertyID, const CSSValue&);
-    PassRefPtrWillBeRawPtr<StyleImage> cachedOrPendingFromValue(CSSPropertyID, const CSSImageValue&);
-    PassRefPtrWillBeRawPtr<StyleImage> setOrPendingFromValue(CSSPropertyID, const CSSImageSetValue&);
+    StyleImage* styleImage(CSSPropertyID, const CSSValue&);
+    StyleImage* cachedOrPendingFromValue(CSSPropertyID, const CSSImageValue&);
+    StyleImage* setOrPendingFromValue(CSSPropertyID, const CSSImageSetValue&);
 
     void loadPendingResources(ComputedStyle*);
 
-    void addPendingSVGDocument(FilterOperation*, CSSSVGDocumentValue*);
+    void addPendingSVGDocument(FilterOperation*, const CSSSVGDocumentValue*);
 
 private:
-    PassRefPtrWillBeRawPtr<StyleImage> cursorOrPendingFromValue(CSSPropertyID, const CSSCursorImageValue&);
-    PassRefPtrWillBeRawPtr<StyleImage> generatedOrPendingFromValue(CSSPropertyID, const CSSImageGeneratorValue&);
+    StyleImage* cursorOrPendingFromValue(CSSPropertyID, const CSSCursorImageValue&);
+    StyleImage* generatedOrPendingFromValue(CSSPropertyID, const CSSImageGeneratorValue&);
 
     void loadPendingSVGDocuments(ComputedStyle*);
     void loadPendingImages(ComputedStyle*);
 
-    PassRefPtrWillBeRawPtr<StyleImage> loadPendingImage(StylePendingImage*, CrossOriginAttributeValue = CrossOriginAttributeNotSet);
+    StyleImage* loadPendingImage(ComputedStyle*, StylePendingImage*, CrossOriginAttributeValue = CrossOriginAttributeNotSet);
 
-    RawPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
     HashSet<CSSPropertyID> m_pendingImageProperties;
-    WillBeHeapHashMap<RawPtrWillBeMember<FilterOperation>, RefPtrWillBeMember<CSSSVGDocumentValue>> m_pendingSVGDocuments;
+    HeapHashMap<Member<FilterOperation>, Member<const CSSSVGDocumentValue>> m_pendingSVGDocuments;
     float m_deviceScaleFactor;
 };
 

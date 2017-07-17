@@ -51,17 +51,18 @@ public:
     void setValue(unsigned short);
 
     // SVGPropertyBase:
-    virtual PassRefPtrWillBeRawPtr<SVGEnumerationBase> clone() const = 0;
-    PassRefPtrWillBeRawPtr<SVGPropertyBase> cloneForAnimation(const String&) const override;
+    virtual SVGEnumerationBase* clone() const = 0;
+    SVGPropertyBase* cloneForAnimation(const String&) const override;
 
     String valueAsString() const override;
     SVGParsingError setValueAsString(const String&);
 
-    void add(PassRefPtrWillBeRawPtr<SVGPropertyBase>, SVGElement*) override;
-    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> from, PassRefPtrWillBeRawPtr<SVGPropertyBase> to, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement*) override;
-    float calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement*) override;
+    void add(SVGPropertyBase*, SVGElement*) override;
+    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, SVGPropertyBase* from, SVGPropertyBase* to, SVGPropertyBase* toAtEndOfDurationValue, SVGElement*) override;
+    float calculateDistance(SVGPropertyBase* to, SVGElement*) override;
 
     static AnimatedPropertyType classType() { return AnimatedEnumeration; }
+    AnimatedPropertyType type() const override { return classType(); }
 
     static unsigned short valueOfLastEnum(const StringEntries& entries) { return entries.last().first; }
 
@@ -70,8 +71,7 @@ public:
 
 protected:
     SVGEnumerationBase(unsigned short value, const StringEntries& entries, unsigned short maxExposed)
-        : SVGPropertyBase(classType())
-        , m_value(value)
+        : m_value(value)
         , m_maxExposed(maxExposed)
         , m_entries(entries)
     {
@@ -99,14 +99,14 @@ template<typename Enum> unsigned short getMaxExposedEnumValue()
 template<typename Enum>
 class SVGEnumeration : public SVGEnumerationBase {
 public:
-    static PassRefPtrWillBeRawPtr<SVGEnumeration<Enum>> create(Enum newValue)
+    static SVGEnumeration<Enum>* create(Enum newValue)
     {
-        return adoptRefWillBeNoop(new SVGEnumeration<Enum>(newValue));
+        return new SVGEnumeration<Enum>(newValue);
     }
 
     ~SVGEnumeration() override {}
 
-    PassRefPtrWillBeRawPtr<SVGEnumerationBase> clone() const override
+    SVGEnumerationBase* clone() const override
     {
         return create(enumValue());
     }

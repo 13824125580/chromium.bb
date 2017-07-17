@@ -7,16 +7,18 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/data_use_measurement/content/data_use_measurement.h"
+#include "components/metrics/data_use_tracker.h"
+#include "components/prefs/pref_member.h"
 #include "net/base/network_delegate_impl.h"
 
 class ChromeExtensionsNetworkDelegate;
@@ -28,11 +30,6 @@ typedef PrefMember<bool> BooleanPrefMember;
 
 namespace base {
 class Value;
-}
-
-namespace chrome_browser_net {
-class ConnectInterceptor;
-class Predictor;
 }
 
 namespace content_settings {
@@ -67,19 +64,19 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   // |enable_referrers| (and all of the other optional PrefMembers) should be
   // initialized on the UI thread (see below) beforehand. This object's owner is
   // responsible for cleaning them up at shutdown.
-  ChromeNetworkDelegate(extensions::EventRouterForwarder* event_router,
-                        BooleanPrefMember* enable_referrers);
+  ChromeNetworkDelegate(
+      extensions::EventRouterForwarder* event_router,
+      BooleanPrefMember* enable_referrers,
+      const metrics::UpdateUsagePrefCallbackType& metrics_data_use_forwarder);
   ~ChromeNetworkDelegate() override;
 
   // Pass through to ChromeExtensionsNetworkDelegate::set_extension_info_map().
   void set_extension_info_map(extensions::InfoMap* extension_info_map);
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   void set_url_blacklist_manager(
       const policy::URLBlacklistManager* url_blacklist_manager) {
     url_blacklist_manager_ = url_blacklist_manager;
   }
-#endif
 
   // If |profile| is NULL or not set, events will be broadcast to all profiles,
   // otherwise they will only be sent to the specified profile.
@@ -99,9 +96,6 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   // the header file. Here we just forward-declare it.
   void set_cookie_settings(content_settings::CookieSettings* cookie_settings);
 
-  // Causes requested URLs to be fed to |predictor| via ConnectInterceptor.
-  void set_predictor(chrome_browser_net::Predictor* predictor);
-
   void set_enable_do_not_track(BooleanPrefMember* enable_do_not_track) {
     enable_do_not_track_ = enable_do_not_track;
   }
@@ -114,6 +108,11 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   void set_force_youtube_safety_mode(
       BooleanPrefMember* force_youtube_safety_mode) {
     force_youtube_safety_mode_ = force_youtube_safety_mode;
+  }
+
+  void set_allowed_domains_for_apps(
+      StringPrefMember* allowed_domains_for_apps) {
+    allowed_domains_for_apps_ = allowed_domains_for_apps;
   }
 
   void set_domain_reliability_monitor(
@@ -133,6 +132,7 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
       BooleanPrefMember* enable_do_not_track,
       BooleanPrefMember* force_google_safe_search,
       BooleanPrefMember* force_youtube_safety_mode,
+      StringPrefMember* allowed_domains_for_apps,
       PrefService* pref_service);
 
   // When called, all file:// URLs will now be accessible.  If this is not
@@ -144,11 +144,11 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   int OnBeforeURLRequest(net::URLRequest* request,
                          const net::CompletionCallback& callback,
                          GURL* new_url) override;
-  int OnBeforeSendHeaders(net::URLRequest* request,
-                          const net::CompletionCallback& callback,
-                          net::HttpRequestHeaders* headers) override;
-  void OnSendHeaders(net::URLRequest* request,
-                     const net::HttpRequestHeaders& headers) override;
+  int OnBeforeStartTransaction(net::URLRequest* request,
+                               const net::CompletionCallback& callback,
+                               net::HttpRequestHeaders* headers) override;
+  void OnStartTransaction(net::URLRequest* request,
+                          const net::HttpRequestHeaders& headers) override;
   int OnHeadersReceived(
       net::URLRequest* request,
       const net::CompletionCallback& callback,
@@ -193,24 +193,21 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
                             int64_t tx_bytes,
                             int64_t rx_bytes);
 
-  scoped_ptr<ChromeExtensionsNetworkDelegate> extensions_delegate_;
+  std::unique_ptr<ChromeExtensionsNetworkDelegate> extensions_delegate_;
 
   void* profile_;
   base::FilePath profile_path_;
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
-
-  scoped_ptr<chrome_browser_net::ConnectInterceptor> connect_interceptor_;
 
   // Weak, owned by our owner.
   BooleanPrefMember* enable_referrers_;
   BooleanPrefMember* enable_do_not_track_;
   BooleanPrefMember* force_google_safe_search_;
   BooleanPrefMember* force_youtube_safety_mode_;
+  StringPrefMember* allowed_domains_for_apps_;
 
   // Weak, owned by our owner.
-#if defined(ENABLE_CONFIGURATION_POLICY)
   const policy::URLBlacklistManager* url_blacklist_manager_;
-#endif
   domain_reliability::DomainReliabilityMonitor* domain_reliability_monitor_;
 
   // When true, allow access to all file:// URLs.

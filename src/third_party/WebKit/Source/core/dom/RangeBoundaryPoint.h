@@ -35,11 +35,11 @@ namespace blink {
 class RangeBoundaryPoint {
     DISALLOW_NEW();
 public:
-    explicit RangeBoundaryPoint(PassRefPtrWillBeRawPtr<Node> container);
+    explicit RangeBoundaryPoint(Node* container);
 
     explicit RangeBoundaryPoint(const RangeBoundaryPoint&);
 
-    bool inDocument() const;
+    bool inShadowIncludingDocument() const;
     const Position toPosition() const;
 
     Node* container() const;
@@ -48,7 +48,7 @@ public:
 
     void clear();
 
-    void set(PassRefPtrWillBeRawPtr<Node> container, int offset, Node* childBefore);
+    void set(Node* container, int offset, Node* childBefore);
     void setOffset(int);
 
     void setToBeforeChild(Node&);
@@ -56,8 +56,8 @@ public:
     void setToEndOfNode(Node&);
 
     void childBeforeWillBeRemoved();
-    void invalidateOffset() const;
-    void ensureOffsetIsValid() const;
+    void invalidateOffset();
+    void markValid() const;
 
     DEFINE_INLINE_TRACE()
     {
@@ -66,25 +66,31 @@ public:
     }
 
 private:
+    uint64_t domTreeVersion() const;
+    void ensureOffsetIsValid() const;
+    bool isOffsetValid() const;
+
     static const int invalidOffset = -1;
 
-    RefPtrWillBeMember<Node> m_containerNode;
+    Member<Node> m_containerNode;
+    Member<Node> m_childBeforeBoundary;
+    mutable uint64_t m_domTreeVersion;
     mutable int m_offsetInContainer;
-    RefPtrWillBeMember<Node> m_childBeforeBoundary;
 };
 
-inline RangeBoundaryPoint::RangeBoundaryPoint(PassRefPtrWillBeRawPtr<Node> container)
+inline RangeBoundaryPoint::RangeBoundaryPoint(Node* container)
     : m_containerNode(container)
-    , m_offsetInContainer(0)
     , m_childBeforeBoundary(nullptr)
+    , m_domTreeVersion(domTreeVersion())
+    , m_offsetInContainer(0)
 {
-    ASSERT(m_containerNode);
 }
 
 inline RangeBoundaryPoint::RangeBoundaryPoint(const RangeBoundaryPoint& other)
     : m_containerNode(other.container())
-    , m_offsetInContainer(other.offset())
     , m_childBeforeBoundary(other.childBefore())
+    , m_domTreeVersion(other.m_domTreeVersion)
+    , m_offsetInContainer(other.offset())
 {
 }
 
@@ -98,23 +104,43 @@ inline Node* RangeBoundaryPoint::childBefore() const
     return m_childBeforeBoundary.get();
 }
 
+inline uint64_t RangeBoundaryPoint::domTreeVersion() const
+{
+    return m_containerNode->document().domTreeVersion();
+}
+
 inline void RangeBoundaryPoint::ensureOffsetIsValid() const
 {
-    if (m_offsetInContainer >= 0)
+    if (isOffsetValid())
         return;
-
-    ASSERT(m_childBeforeBoundary);
+    DCHECK(!m_containerNode->isCharacterDataNode());
+    markValid();
+    if (!m_childBeforeBoundary) {
+        m_offsetInContainer = 0;
+        return;
+    }
     m_offsetInContainer = m_childBeforeBoundary->nodeIndex() + 1;
 }
 
-inline bool RangeBoundaryPoint::inDocument() const
+inline bool RangeBoundaryPoint::inShadowIncludingDocument() const
 {
-    return m_containerNode && m_containerNode->inDocument();
+    return m_containerNode && m_containerNode->inShadowIncludingDocument();
+}
+
+inline bool RangeBoundaryPoint::isOffsetValid() const
+{
+    if (m_offsetInContainer == invalidOffset) {
+        DCHECK(!m_containerNode->isTextNode());
+        return false;
+    }
+    return domTreeVersion() == m_domTreeVersion || m_containerNode->isCharacterDataNode();
 }
 
 inline const Position RangeBoundaryPoint::toPosition() const
 {
     ensureOffsetIsValid();
+    // TODO(yosin): We should return |Position::beforeAnchor| when
+    // |m_containerNode| isn't |Text| node.
     return Position::editingPositionOf(m_containerNode.get(), m_offsetInContainer);
 }
 
@@ -129,33 +155,37 @@ inline void RangeBoundaryPoint::clear()
     m_containerNode.clear();
     m_offsetInContainer = 0;
     m_childBeforeBoundary = nullptr;
+    m_domTreeVersion = 0;
 }
 
-inline void RangeBoundaryPoint::set(PassRefPtrWillBeRawPtr<Node> container, int offset, Node* childBefore)
+inline void RangeBoundaryPoint::set(Node* container, int offset, Node* childBefore)
 {
-    ASSERT(container);
-    ASSERT(offset >= 0);
-    ASSERT(childBefore == (offset ? NodeTraversal::childAt(*container, offset - 1) : 0));
+    DCHECK(container);
+    DCHECK_GE(offset, 0);
+    DCHECK_EQ(childBefore, offset ? NodeTraversal::childAt(*container, offset - 1) : 0);
     m_containerNode = container;
     m_offsetInContainer = offset;
     m_childBeforeBoundary = childBefore;
+    markValid();
 }
 
 inline void RangeBoundaryPoint::setOffset(int offset)
 {
-    ASSERT(m_containerNode);
-    ASSERT(m_containerNode->offsetInCharacters());
-    ASSERT(m_offsetInContainer >= 0);
-    ASSERT(!m_childBeforeBoundary);
+    DCHECK(m_containerNode);
+    DCHECK(m_containerNode->offsetInCharacters());
+    DCHECK_GE(m_offsetInContainer, 0);
+    DCHECK(!m_childBeforeBoundary);
     m_offsetInContainer = offset;
+    markValid();
 }
 
 inline void RangeBoundaryPoint::setToBeforeChild(Node& child)
 {
-    ASSERT(child.parentNode());
+    DCHECK(child.parentNode());
     m_childBeforeBoundary = child.previousSibling();
     m_containerNode = child.parentNode();
     m_offsetInContainer = m_childBeforeBoundary ? invalidOffset : 0;
+    markValid();
 }
 
 inline void RangeBoundaryPoint::setToStartOfNode(Node& container)
@@ -163,6 +193,7 @@ inline void RangeBoundaryPoint::setToStartOfNode(Node& container)
     m_containerNode = &container;
     m_offsetInContainer = 0;
     m_childBeforeBoundary = nullptr;
+    markValid();
 }
 
 inline void RangeBoundaryPoint::setToEndOfNode(Node& container)
@@ -175,21 +206,30 @@ inline void RangeBoundaryPoint::setToEndOfNode(Node& container)
         m_childBeforeBoundary = m_containerNode->lastChild();
         m_offsetInContainer = m_childBeforeBoundary ? invalidOffset : 0;
     }
+    markValid();
 }
 
 inline void RangeBoundaryPoint::childBeforeWillBeRemoved()
 {
-    ASSERT(m_offsetInContainer);
     m_childBeforeBoundary = m_childBeforeBoundary->previousSibling();
+    if (!isOffsetValid())
+        return;
+    DCHECK_GT(m_offsetInContainer, 0);
     if (!m_childBeforeBoundary)
         m_offsetInContainer = 0;
     else if (m_offsetInContainer > 0)
         --m_offsetInContainer;
+    markValid();
 }
 
-inline void RangeBoundaryPoint::invalidateOffset() const
+inline void RangeBoundaryPoint::invalidateOffset()
 {
     m_offsetInContainer = invalidOffset;
+}
+
+inline void RangeBoundaryPoint::markValid() const
+{
+    m_domTreeVersion = domTreeVersion();
 }
 
 inline bool operator==(const RangeBoundaryPoint& a, const RangeBoundaryPoint& b)

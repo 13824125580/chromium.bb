@@ -31,15 +31,18 @@
 #include "web/WebDataSourceImpl.h"
 
 #include "core/dom/Document.h"
+#include "public/platform/WebDocumentSubresourceFilter.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLError.h"
 #include "public/platform/WebVector.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<WebDataSourceImpl> WebDataSourceImpl::create(LocalFrame* frame, const ResourceRequest& request, const SubstituteData& data)
+WebDataSourceImpl* WebDataSourceImpl::create(LocalFrame* frame, const ResourceRequest& request, const SubstituteData& data)
 {
-    return adoptRefWillBeNoop(new WebDataSourceImpl(frame, request, data));
+    return new WebDataSourceImpl(frame, request, data);
 }
 
 const WebURLRequest& WebDataSourceImpl::originalRequest() const
@@ -92,18 +95,18 @@ bool WebDataSourceImpl::replacesCurrentHistoryItem() const
 
 WebNavigationType WebDataSourceImpl::navigationType() const
 {
-    return toWebNavigationType(DocumentLoader::navigationType());
+    return toWebNavigationType(DocumentLoader::getNavigationType());
 }
 
-WebDataSource::ExtraData* WebDataSourceImpl::extraData() const
+WebDataSource::ExtraData* WebDataSourceImpl::getExtraData() const
 {
     return m_extraData.get();
 }
 
 void WebDataSourceImpl::setExtraData(ExtraData* extraData)
 {
-    // extraData can't be a PassOwnPtr because setExtraData is a WebKit API function.
-    m_extraData = adoptPtr(extraData);
+    // extraData can't be a std::unique_ptr because setExtraData is a WebKit API function.
+    m_extraData = wrapUnique(extraData);
 }
 
 void WebDataSourceImpl::setNavigationStartTime(double navigationStart)
@@ -138,15 +141,18 @@ WebDataSourceImpl::WebDataSourceImpl(LocalFrame* frame, const ResourceRequest& r
 WebDataSourceImpl::~WebDataSourceImpl()
 {
     // Verify that detachFromFrame() has been called.
-    ASSERT(!m_extraData);
+    DCHECK(!m_extraData);
 }
 
 void WebDataSourceImpl::detachFromFrame()
 {
-    RefPtrWillBeRawPtr<DocumentLoader> protect(this);
-
     DocumentLoader::detachFromFrame();
-    m_extraData.clear();
+    m_extraData.reset();
+}
+
+void WebDataSourceImpl::setSubresourceFilter(WebDocumentSubresourceFilter* subresourceFilter)
+{
+    DocumentLoader::setSubresourceFilter(WTF::wrapUnique(subresourceFilter));
 }
 
 DEFINE_TRACE(WebDataSourceImpl)

@@ -41,23 +41,18 @@
 #include "modules/indexeddb/WebIDBCallbacksImpl.h"
 #include "modules/indexeddb/WebIDBDatabaseCallbacksImpl.h"
 #include "platform/Histogram.h"
-#include "platform/weborigin/DatabaseIdentifier.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/modules/indexeddb/WebIDBFactory.h"
+#include <memory>
 
 namespace blink {
 
 static const char permissionDeniedErrorMessage[] = "The user denied permission to access the database.";
 
-IDBFactory::IDBFactory(IndexedDBClient* permissionClient)
-    : m_permissionClient(permissionClient)
+IDBFactory::IDBFactory()
 {
-}
-
-DEFINE_TRACE(IDBFactory)
-{
-    visitor->trace(m_permissionClient);
 }
 
 static bool isContextValid(ExecutionContext* context)
@@ -73,21 +68,21 @@ static bool isContextValid(ExecutionContext* context)
 IDBRequest* IDBFactory::getDatabaseNames(ScriptState* scriptState, ExceptionState& exceptionState)
 {
     IDB_TRACE("IDBFactory::getDatabaseNames");
-    if (!isContextValid(scriptState->executionContext()))
+    if (!isContextValid(scriptState->getExecutionContext()))
         return nullptr;
-    if (!scriptState->executionContext()->securityOrigin()->canAccessDatabase()) {
+    if (!scriptState->getExecutionContext()->getSecurityOrigin()->canAccessDatabase()) {
         exceptionState.throwSecurityError("access to the Indexed Database API is denied in this context.");
         return nullptr;
     }
 
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::createNull(), nullptr);
 
-    if (!m_permissionClient->allowIndexedDB(scriptState->executionContext(), "Database Listing")) {
+    if (!IndexedDBClient::from(scriptState->getExecutionContext())->allowIndexedDB(scriptState->getExecutionContext(), "Database Listing")) {
         request->onError(DOMException::create(UnknownError, permissionDeniedErrorMessage));
         return request;
     }
 
-    Platform::current()->idbFactory()->getDatabaseNames(WebIDBCallbacksImpl::create(request).leakPtr(), createDatabaseIdentifierFromSecurityOrigin(scriptState->executionContext()->securityOrigin()));
+    Platform::current()->idbFactory()->getDatabaseNames(WebIDBCallbacksImpl::create(request).release(), WebSecurityOrigin(scriptState->getExecutionContext()->getSecurityOrigin()));
     return request;
 }
 
@@ -105,9 +100,9 @@ IDBOpenDBRequest* IDBFactory::openInternal(ScriptState* scriptState, const Strin
 {
     IDBDatabase::recordApiCallsHistogram(IDBOpenCall);
     ASSERT(version >= 1 || version == IDBDatabaseMetadata::NoVersion);
-    if (!isContextValid(scriptState->executionContext()))
+    if (!isContextValid(scriptState->getExecutionContext()))
         return nullptr;
-    if (!scriptState->executionContext()->securityOrigin()->canAccessDatabase()) {
+    if (!scriptState->getExecutionContext()->getSecurityOrigin()->canAccessDatabase()) {
         exceptionState.throwSecurityError("access to the Indexed Database API is denied in this context.");
         return nullptr;
     }
@@ -116,12 +111,12 @@ IDBOpenDBRequest* IDBFactory::openInternal(ScriptState* scriptState, const Strin
     int64_t transactionId = IDBDatabase::nextTransactionId();
     IDBOpenDBRequest* request = IDBOpenDBRequest::create(scriptState, databaseCallbacks, transactionId, version);
 
-    if (!m_permissionClient->allowIndexedDB(scriptState->executionContext(), name)) {
+    if (!IndexedDBClient::from(scriptState->getExecutionContext())->allowIndexedDB(scriptState->getExecutionContext(), name)) {
         request->onError(DOMException::create(UnknownError, permissionDeniedErrorMessage));
         return request;
     }
 
-    Platform::current()->idbFactory()->open(name, version, transactionId, WebIDBCallbacksImpl::create(request).leakPtr(), WebIDBDatabaseCallbacksImpl::create(databaseCallbacks).leakPtr(), createDatabaseIdentifierFromSecurityOrigin(scriptState->executionContext()->securityOrigin()));
+    Platform::current()->idbFactory()->open(name, version, transactionId, WebIDBCallbacksImpl::create(request).release(), WebIDBDatabaseCallbacksImpl::create(databaseCallbacks).release(), WebSecurityOrigin(scriptState->getExecutionContext()->getSecurityOrigin()));
     return request;
 }
 
@@ -135,21 +130,21 @@ IDBOpenDBRequest* IDBFactory::deleteDatabase(ScriptState* scriptState, const Str
 {
     IDB_TRACE("IDBFactory::deleteDatabase");
     IDBDatabase::recordApiCallsHistogram(IDBDeleteDatabaseCall);
-    if (!isContextValid(scriptState->executionContext()))
+    if (!isContextValid(scriptState->getExecutionContext()))
         return nullptr;
-    if (!scriptState->executionContext()->securityOrigin()->canAccessDatabase()) {
+    if (!scriptState->getExecutionContext()->getSecurityOrigin()->canAccessDatabase()) {
         exceptionState.throwSecurityError("access to the Indexed Database API is denied in this context.");
         return nullptr;
     }
 
     IDBOpenDBRequest* request = IDBOpenDBRequest::create(scriptState, nullptr, 0, IDBDatabaseMetadata::DefaultVersion);
 
-    if (!m_permissionClient->allowIndexedDB(scriptState->executionContext(), name)) {
+    if (!IndexedDBClient::from(scriptState->getExecutionContext())->allowIndexedDB(scriptState->getExecutionContext(), name)) {
         request->onError(DOMException::create(UnknownError, permissionDeniedErrorMessage));
         return request;
     }
 
-    Platform::current()->idbFactory()->deleteDatabase(name, WebIDBCallbacksImpl::create(request).leakPtr(), createDatabaseIdentifierFromSecurityOrigin(scriptState->executionContext()->securityOrigin()));
+    Platform::current()->idbFactory()->deleteDatabase(name, WebIDBCallbacksImpl::create(request).release(), WebSecurityOrigin(scriptState->getExecutionContext()->getSecurityOrigin()));
     return request;
 }
 

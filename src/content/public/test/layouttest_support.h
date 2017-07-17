@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ class BluetoothAdapter;
 }
 
 namespace test_runner {
+class WebFrameTestProxyBase;
 class WebTestProxyBase;
 }
 
@@ -51,12 +53,27 @@ void EnableBrowserLayoutTestMode();
 // Turn a renderer into layout test mode.
 void EnableRendererLayoutTestMode();
 
-// Enable injecting of a WebTestProxy between WebViews and RenderViews.
-// |callback| is invoked with a pointer to WebTestProxyBase for each created
-// WebTestProxy.
+// "Casts" |render_view| to |WebTestProxyBase|.  Caller has to ensure that prior
+// to construction of |render_view|, EnableWebTestProxyCreation was called.
+test_runner::WebTestProxyBase* GetWebTestProxyBase(RenderView* render_view);
+
+// "Casts" |render_frame| to |WebFrameTestProxyBase|.  Caller has to ensure
+// that prior to construction of |render_frame|, EnableWebTestProxyCreation was
+// called.
+test_runner::WebFrameTestProxyBase* GetWebFrameTestProxyBase(
+    RenderFrame* render_frame);
+
+// Enable injecting of a WebTestProxy between WebViews and RenderViews
+// and WebFrameTestProxy between WebFrames and RenderFrames.
+// |view_proxy_creation_callback| is invoked after creating WebTestProxy.
+// |frame_proxy_creation_callback| is called after creating WebFrameTestProxy.
+using ViewProxyCreationCallback =
+    base::Callback<void(RenderView*, test_runner::WebTestProxyBase*)>;
+using FrameProxyCreationCallback =
+    base::Callback<void(RenderFrame*, test_runner::WebFrameTestProxyBase*)>;
 void EnableWebTestProxyCreation(
-    const base::Callback<void(RenderView*, test_runner::WebTestProxyBase*)>&
-        callback);
+    const ViewProxyCreationCallback& view_proxy_creation_callback,
+    const FrameProxyCreationCallback& frame_proxy_creation_callback);
 
 typedef base::Callback<void(const blink::WebURLResponse& response,
                             const std::string& data)> FetchManifestCallback;
@@ -64,7 +81,7 @@ void FetchManifest(blink::WebView* view, const GURL& url,
                    const FetchManifestCallback&);
 
 // Sets gamepad provider to be used for layout tests.
-void SetMockGamepadProvider(scoped_ptr<RendererGamepadProvider> provider);
+void SetMockGamepadProvider(std::unique_ptr<RendererGamepadProvider> provider);
 
 // Sets a double that should be used when registering
 // a listener through BlinkPlatformImpl::setDeviceLightListener().
@@ -96,23 +113,15 @@ void ForceResizeRenderView(RenderView* render_view,
 // Set the device scale factor and force the compositor to resize.
 void SetDeviceScaleFactor(RenderView* render_view, float factor);
 
+// Get the window to viewport scale.
+float GetWindowToViewportScale(RenderView* render_view);
+
 // Set the device color profile associated with the profile |name|.
 void SetDeviceColorProfile(RenderView* render_view, const std::string& name);
 
 // Change the bluetooth test adapter while running a layout test.
 void SetBluetoothAdapter(int render_process_id,
                          scoped_refptr<device::BluetoothAdapter> adapter);
-
-// Enables mock geofencing service while running a layout test.
-// |service_available| indicates if the mock service should mock geofencing
-// being available or not.
-void SetGeofencingMockProvider(bool service_available);
-
-// Disables mock geofencing service while running a layout test.
-void ClearGeofencingMockProvider();
-
-// Set the mock geofencing position while running a layout test.
-void SetGeofencingMockPosition(double latitude, double longitude);
 
 // Enables or disables synchronous resize mode. When enabled, all window-sizing
 // machinery is short-circuited inside the renderer. This mode is necessary for
@@ -131,6 +140,9 @@ void DisableAutoResizeMode(RenderView* render_view,
 // Provides a text dump of the contents of the given page state.
 std::string DumpBackForwardList(std::vector<PageState>& page_state,
                                 size_t current_index);
+
+// Run all pending idle tasks immediately, and then invoke callback.
+void SchedulerRunIdleTasks(const base::Closure& callback);
 
 }  // namespace content
 

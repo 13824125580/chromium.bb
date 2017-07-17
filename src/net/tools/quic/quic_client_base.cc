@@ -13,11 +13,13 @@ QuicClientBase::QuicClientBase(const QuicServerId& server_id,
                                const QuicVersionVector& supported_versions,
                                const QuicConfig& config,
                                QuicConnectionHelperInterface* helper,
+                               QuicAlarmFactory* alarm_factory,
                                ProofVerifier* proof_verifier)
     : server_id_(server_id),
       config_(config),
       crypto_config_(proof_verifier),
       helper_(helper),
+      alarm_factory_(alarm_factory),
       supported_versions_(supported_versions),
       initial_max_packet_length_(0),
       num_stateless_rejects_received_(0),
@@ -101,6 +103,17 @@ void QuicClientBase::UpdateStats() {
   if (session()->error() == QUIC_CRYPTO_HANDSHAKE_STATELESS_REJECT) {
     ++num_stateless_rejects_received_;
   }
+}
+
+int QuicClientBase::GetNumReceivedServerConfigUpdates() {
+  // If we are not actively attempting to connect, the session object
+  // corresponds to the previous connection and should not be used.
+  // We do not need to take stateless rejects into account, since we
+  // don't expect any scup messages to be sent during a
+  // statelessly-rejected connection.
+  return !connected_or_attempting_connect_
+             ? 0
+             : session_->GetNumReceivedServerConfigUpdates();
 }
 
 QuicErrorCode QuicClientBase::connection_error() const {

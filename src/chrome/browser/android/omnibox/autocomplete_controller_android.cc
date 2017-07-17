@@ -9,6 +9,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -85,13 +86,13 @@ class ZeroSuggestPrefetcher : public AutocompleteControllerDelegate {
   // AutocompleteControllerDelegate:
   void OnResultChanged(bool default_match_changed) override;
 
-  scoped_ptr<AutocompleteController> controller_;
+  std::unique_ptr<AutocompleteController> controller_;
   base::OneShotTimer expire_timer_;
 };
 
 ZeroSuggestPrefetcher::ZeroSuggestPrefetcher(Profile* profile)
     : controller_(new AutocompleteController(
-          make_scoped_ptr(new ChromeAutocompleteProviderClient(profile)),
+          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)),
           this,
           AutocompleteProvider::TYPE_ZERO_SUGGEST)) {
   // Creating an arbitrary fake_request_source to avoid passing in an invalid
@@ -126,12 +127,11 @@ void ZeroSuggestPrefetcher::OnResultChanged(bool default_match_changed) {
 
 AutocompleteControllerAndroid::AutocompleteControllerAndroid(Profile* profile)
     : autocomplete_controller_(new AutocompleteController(
-          make_scoped_ptr(new ChromeAutocompleteProviderClient(profile)),
+          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)),
           this,
           kAndroidAutocompleteProviders)),
       inside_synchronous_start_(false),
-      profile_(profile) {
-}
+      profile_(profile) {}
 
 void AutocompleteControllerAndroid::Start(
     JNIEnv* env,
@@ -177,7 +177,6 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_omnibox_text,
     const JavaParamRef<jstring>& j_current_url,
-    jboolean is_query_in_omnibox,
     jboolean focused_from_fakebox) {
   if (!autocomplete_controller_)
     return;
@@ -193,7 +192,7 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
 
   input_ = AutocompleteInput(
       omnibox_text, base::string16::npos, std::string(), current_url,
-      ClassifyPage(current_url, is_query_in_omnibox, focused_from_fakebox),
+      ClassifyPage(current_url, focused_from_fakebox),
       false, false, true, true, true,
       ChromeAutocompleteSchemeClassifier(profile_));
   autocomplete_controller_->Start(input_);
@@ -218,7 +217,6 @@ void AutocompleteControllerAndroid::OnSuggestionSelected(
     const JavaParamRef<jobject>& obj,
     jint selected_index,
     const JavaParamRef<jstring>& j_current_url,
-    jboolean is_query_in_omnibox,
     jboolean focused_from_fakebox,
     jlong elapsed_time_since_first_modified,
     jint completed_length,
@@ -226,7 +224,7 @@ void AutocompleteControllerAndroid::OnSuggestionSelected(
   base::string16 url = ConvertJavaStringToUTF16(env, j_current_url);
   const GURL current_url = GURL(url);
   OmniboxEventProto::PageClassification current_page_classification =
-      ClassifyPage(current_url, is_query_in_omnibox, focused_from_fakebox);
+      ClassifyPage(current_url, focused_from_fakebox);
   const base::TimeTicks& now(base::TimeTicks::Now());
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(j_web_contents);
@@ -408,7 +406,6 @@ void AutocompleteControllerAndroid::NotifySuggestionsReceived(
 
 OmniboxEventProto::PageClassification
 AutocompleteControllerAndroid::ClassifyPage(const GURL& gurl,
-                                            bool is_query_in_omnibox,
                                             bool focused_from_fakebox) const {
   if (!gurl.is_valid())
     return OmniboxEventProto::INVALID_SPEC;
@@ -431,9 +428,6 @@ AutocompleteControllerAndroid::ClassifyPage(const GURL& gurl,
 
   if (url == profile_->GetPrefs()->GetString(prefs::kHomePage))
     return OmniboxEventProto::HOME_PAGE;
-
-  if (is_query_in_omnibox)
-    return OmniboxEventProto::SEARCH_RESULT_PAGE_DOING_SEARCH_TERM_REPLACEMENT;
 
   bool is_search_url = TemplateURLServiceFactory::GetForProfile(profile_)->
       IsSearchResultsPageFromDefaultSearchProvider(gurl);
@@ -554,19 +548,6 @@ AutocompleteControllerAndroid::BuildOmniboxSuggestion(
       destination_url.obj(),
       bookmark_model && bookmark_model->IsBookmarked(match.destination_url),
       match.SupportsDeletion());
-}
-
-base::string16 AutocompleteControllerAndroid::FormatURLUsingAcceptLanguages(
-    GURL url) {
-  if (profile_ == NULL)
-    return base::string16();
-
-  std::string languages(
-      profile_->GetPrefs()->GetString(prefs::kAcceptLanguages));
-
-  return url_formatter::FormatUrl(
-      url, languages, url_formatter::kFormatUrlOmitAll,
-      net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
 }
 
 ScopedJavaLocalRef<jobject>

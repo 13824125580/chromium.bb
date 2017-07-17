@@ -27,22 +27,19 @@ public class DisableIfSkipCheck extends SkipCheck {
         Method method = getTestMethod(testCase);
         if (method == null) return true;
 
-        if (method.isAnnotationPresent(DisableIf.Build.class)) {
-            DisableIf.Build v = method.getAnnotation(DisableIf.Build.class);
-
+        for (DisableIf.Build v : getAnnotations(method, DisableIf.Build.class)) {
             if (abi(v) && hardware(v) && sdk(v)) {
                 if (!v.message().isEmpty()) {
                     Log.i(TAG, "%s is disabled: %s", testCase.toString(), v.message());
                 }
                 return true;
-            } else {
-                return false;
             }
         }
 
         return false;
     }
 
+    @SuppressWarnings("deprecation")
     private boolean abi(DisableIf.Build v) {
         if (v.supported_abis_includes().isEmpty()) return true;
 
@@ -57,6 +54,11 @@ public class DisableIfSkipCheck extends SkipCheck {
 
     private boolean hardware(DisableIf.Build v) {
         return v.hardware_is().isEmpty() || Build.HARDWARE.equals(v.hardware_is());
+    }
+
+    private boolean product(DisableIf.Build v) {
+        return v.product_name_includes().isEmpty()
+                || Build.PRODUCT.contains(v.product_name_includes());
     }
 
     private boolean sdk(DisableIf.Build v) {

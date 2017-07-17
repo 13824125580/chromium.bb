@@ -10,14 +10,20 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/test/ui_controls.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/view.h"
@@ -43,7 +49,7 @@ class WindowSizerTest : public InProcessBrowserTest {
 
 void CloseBrowser(Browser* browser) {
   browser->window()->Close();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 gfx::Rect GetChromeIconBoundsForRootWindow(aura::Window* root_window) {
@@ -60,8 +66,8 @@ void OpenBrowserUsingShelfOnRootWindow(aura::Window* root_window) {
   ui::test::EventGenerator generator(root_window);
   gfx::Point center =
       GetChromeIconBoundsForRootWindow(root_window).CenterPoint();
-  gfx::Display display =
-      gfx::Screen::GetScreen()->GetDisplayNearestWindow(root_window);
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(root_window);
   const gfx::Point& origin = display.bounds().origin();
   center.Offset(- origin.x(), - origin.y());
   generator.MoveMouseTo(center);
@@ -85,7 +91,8 @@ void OpenBrowserUsingShelfOnRootWindow(aura::Window* root_window) {
 IN_PROC_BROWSER_TEST_F(WindowSizerTest,
                        MAYBE_OpenBrowserUsingShelfOnOtherDisplay) {
   // Don't shutdown when closing the last browser window.
-  chrome::IncrementKeepAliveCount();
+  ScopedKeepAlive test_keep_alive(KeepAliveOrigin::BROWSER_PROCESS_CHROMEOS,
+                                  KeepAliveRestartOption::DISABLED);
 
   aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
 
@@ -116,9 +123,6 @@ IN_PROC_BROWSER_TEST_F(WindowSizerTest,
   EXPECT_EQ(root_windows[0],
             browser_list->get(0)->window()->GetNativeWindow()->GetRootWindow());
   EXPECT_EQ(root_windows[0], ash::Shell::GetTargetRootWindow());
-
-  // Balanced with the chrome::IncrementKeepAliveCount above.
-  chrome::DecrementKeepAliveCount();
 }
 
 namespace {
@@ -147,7 +151,7 @@ class WindowSizerContextMenuTest : public WindowSizerTest {
   }
 
   static void QuitLoop() {
-    base::MessageLoop::current()->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
   }
 
@@ -171,7 +175,8 @@ void OpenBrowserUsingContextMenuOnRootWindow(aura::Window* root_window) {
 IN_PROC_BROWSER_TEST_F(WindowSizerContextMenuTest,
                        MAYBE_OpenBrowserUsingContextMenuOnOtherDisplay) {
   // Don't shutdown when closing the last browser window.
-  chrome::IncrementKeepAliveCount();
+  ScopedKeepAlive test_keep_alive(KeepAliveOrigin::BROWSER_PROCESS_CHROMEOS,
+                                  KeepAliveRestartOption::DISABLED);
 
   views::MenuController::TurnOffMenuSelectionHoldForTest();
 
@@ -191,14 +196,12 @@ IN_PROC_BROWSER_TEST_F(WindowSizerContextMenuTest,
             browser_list->get(0)->window()->GetNativeWindow()->GetRootWindow());
   EXPECT_EQ(root_windows[1], ash::Shell::GetTargetRootWindow());
 
+  CloseBrowser(browser_list->get(0));
   OpenBrowserUsingContextMenuOnRootWindow(root_windows[0]);
 
   // Next new browser must be created on 1st display.
-  ASSERT_EQ(2u, browser_list->size());
+  ASSERT_EQ(1u, browser_list->size());
   EXPECT_EQ(root_windows[0],
-            browser_list->get(1)->window()->GetNativeWindow()->GetRootWindow());
+            browser_list->get(0)->window()->GetNativeWindow()->GetRootWindow());
   EXPECT_EQ(root_windows[0], ash::Shell::GetTargetRootWindow());
-
-  // Balanced with the chrome::IncrementKeepAliveCount above.
-  chrome::DecrementKeepAliveCount();
 }

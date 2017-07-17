@@ -38,9 +38,10 @@
 #include "public/platform/WebString.h"
 #include "public/platform/WebThread.h"
 #include "public/platform/WebURL.h"
+#include "public/platform/WebURLLoaderMockFactory.h"
 #include "public/platform/WebURLRequest.h"
 #include "public/platform/WebURLResponse.h"
-#include "public/platform/WebUnitTestSupport.h"
+#include "public/web/WebCache.h"
 #include "public/web/WebSettings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "web/WebLocalFrameImpl.h"
@@ -68,12 +69,13 @@ protected:
     void SetUp() override
     {
         // We want the images to load and JavaScript to be on.
-        m_helper.initialize(true, 0, 0, &configureSettings);
+        m_helper.initialize(true, nullptr, nullptr, nullptr, &configureSettings);
     }
 
     void TearDown() override
     {
-        Platform::current()->unitTestSupport()->unregisterAllMockedURLs();
+        Platform::current()->getURLLoaderMockFactory()->unregisterAllURLs();
+        WebCache::clear();
     }
 
     void setBaseFolder(const char* folder)
@@ -107,7 +109,7 @@ protected:
         response.setMIMEType("text/html");
         response.setHTTPStatusCode(statusCode);
 
-        Platform::current()->unitTestSupport()->registerMockedErrorURL(KURL(m_baseUrl, file), response, error);
+        Platform::current()->getURLLoaderMockFactory()->registerErrorURL(KURL(m_baseUrl, file), response, error);
     }
 
     void registerRewriteURL(const char* fromURL, const char* toURL)
@@ -117,7 +119,7 @@ protected:
 
     void serialize(const char* url)
     {
-        FrameTestHelpers::loadFrame(m_helper.webView()->mainFrame(), KURL(m_baseUrl, url).string().utf8().data());
+        FrameTestHelpers::loadFrame(m_helper.webView()->mainFrame(), KURL(m_baseUrl, url).getString().utf8().data());
         FrameSerializer serializer(m_resources, *this);
         Frame* frame = m_helper.webViewImpl()->mainFrameImpl()->frame();
         for (; frame; frame = frame->tree().traverseNext()) {
@@ -182,7 +184,7 @@ private:
 
         StringBuilder uriBuilder;
         uriBuilder.append(m_rewriteFolder);
-        uriBuilder.appendLiteral("/");
+        uriBuilder.append("/");
         uriBuilder.append(m_rewriteURLs.get(completeURL));
         rewrittenLink = uriBuilder.toString();
         return true;
@@ -401,7 +403,7 @@ TEST_F(FrameSerializerTest, CSSImport)
 
 TEST_F(FrameSerializerTest, XMLDeclaration)
 {
-    V8TestingScope scope(v8::Isolate::GetCurrent());
+    V8TestingScope scope;
     setBaseFolder("frameserializer/xml/");
 
     registerURL("xmldecl.xml", "text/xml");

@@ -35,11 +35,11 @@ namespace offline_pages {
 // Example:
 //   void SavePageOffline(content::WebContents* web_contents) {
 //     const GURL& url = web_contents->GetLastCommittedURL();
-//     scoped_ptr<OfflinePageMHTMLArchiver> archiver(
+//     std::unique_ptr<OfflinePageMHTMLArchiver> archiver(
 //         new OfflinePageMHTMLArchiver(
 //             web_contents, archive_dir));
 //     // Callback is of type OfflinePageModel::SavePageCallback.
-//     model->SavePage(url, archiver.Pass(), callback);
+//     model->SavePage(url, std::move(archiver), callback);
 //   }
 class OfflinePageMHTMLArchiver : public OfflinePageArchiver {
  public:
@@ -48,13 +48,15 @@ class OfflinePageMHTMLArchiver : public OfflinePageArchiver {
   // Creates a file name for the archive file based on url and title. Public for
   // testing.
   static base::FilePath GenerateFileName(const GURL& url,
-                                         const std::string& title);
+                                         const std::string& title,
+                                         int64_t archive_id);
 
   explicit OfflinePageMHTMLArchiver(content::WebContents* web_contents);
   ~OfflinePageMHTMLArchiver() override;
 
   // OfflinePageArchiver implementation:
   void CreateArchive(const base::FilePath& archives_dir,
+                     int64_t archive_id,
                      const CreateArchiveCallback& callback) override;
 
  protected:
@@ -63,19 +65,20 @@ class OfflinePageMHTMLArchiver : public OfflinePageArchiver {
 
   // Try to generate MHTML.
   // Might be overridden for testing purpose.
-  virtual void GenerateMHTML(const base::FilePath& archives_dir);
+  virtual void GenerateMHTML(const base::FilePath& archives_dir,
+                             int64_t archive_id);
 
   // Callback for Generating MHTML.
   void OnGenerateMHTMLDone(const GURL& url,
                            const base::FilePath& file_path,
                            int64_t file_size);
 
-  // Sends the result of archiving a page to the client that requested archive
-  // creation.
-  void ReportResult(ArchiverResult result,
-                    const GURL& url,
-                    const base::FilePath& file_path,
-                    int64_t file_size);
+  // Checks whether the page to be saved has security error when loaded over
+  // HTTPS. Saving a page will fail if that is the case. HTTP connections are
+  // not affected.
+  virtual bool HasConnectionSecurityError();
+
+  // Reports failure to create archive a page to the client that requested it.
   void ReportFailure(ArchiverResult result);
 
  private:

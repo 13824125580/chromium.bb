@@ -115,8 +115,11 @@ public:
         setException(value);
     }
 
+    // Might return nullptr.
+    v8::Isolate* isolate() const { return m_isolate; }
+
 #if ENABLE(ASSERT)
-    OnStackObjectChecker& onStackObjectChecker() { return m_onStackObjectChecker; }
+    OnStackObjectChecker& getOnStackObjectChecker() { return m_onStackObjectChecker; }
 #endif
 
 protected:

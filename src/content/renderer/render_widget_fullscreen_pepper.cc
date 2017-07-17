@@ -11,16 +11,15 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "build/build_config.h"
-#include "content/common/gpu/client/gpu_channel_host.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "gpu/ipc/client/gpu_channel_host.h"
 #include "skia/ext/platform_canvas.h"
 #include "third_party/WebKit/public/platform/WebCanvas.h"
 #include "third_party/WebKit/public/platform/WebCursorInfo.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 #include "third_party/WebKit/public/platform/WebLayer.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/web/WebWidget.h"
@@ -43,7 +42,6 @@ using blink::WebTextDirection;
 using blink::WebTextInputType;
 using blink::WebVector;
 using blink::WebWidget;
-using blink::WGC3Dintptr;
 
 namespace content {
 
@@ -67,36 +65,30 @@ class FullscreenMouseLockDispatcher : public MouseLockDispatcher {
 WebMouseEvent WebMouseEventFromGestureEvent(const WebGestureEvent& gesture) {
   WebMouseEvent mouse;
 
+  // Only convert touch screen gesture events, do not convert
+  // touchpad/mouse wheel gesture events. (crbug.com/620974)
+  if (gesture.sourceDevice != blink::WebGestureDeviceTouchscreen)
+    return mouse;
+
   switch (gesture.type) {
     case WebInputEvent::GestureScrollBegin:
       mouse.type = WebInputEvent::MouseDown;
       break;
-
     case WebInputEvent::GestureScrollUpdate:
       mouse.type = WebInputEvent::MouseMove;
       break;
-
     case WebInputEvent::GestureFlingStart:
-      if (gesture.sourceDevice == blink::WebGestureDeviceTouchscreen) {
-        // A scroll gesture on the touchscreen may end with a GestureScrollEnd
-        // when there is no velocity, or a GestureFlingStart when it has a
-        // velocity. In both cases, it should end the drag that was initiated by
-        // the GestureScrollBegin (and subsequent GestureScrollUpdate) events.
-        mouse.type = WebInputEvent::MouseUp;
-        break;
-      } else {
-        return mouse;
-      }
+      // A scroll gesture on the touchscreen may end with a GestureScrollEnd
+      // when there is no velocity, or a GestureFlingStart when it has a
+      // velocity. In both cases, it should end the drag that was initiated by
+      // the GestureScrollBegin (and subsequent GestureScrollUpdate) events.
+      mouse.type = WebInputEvent::MouseUp;
     case WebInputEvent::GestureScrollEnd:
       mouse.type = WebInputEvent::MouseUp;
       break;
-
     default:
-      break;
+      return mouse;
   }
-
-  if (mouse.type == WebInputEvent::Undefined)
-    return mouse;
 
   mouse.timeStampSeconds = gesture.timeStampSeconds;
   mouse.modifiers = gesture.modifiers | WebInputEvent::LeftButtonDown;
@@ -148,13 +140,12 @@ class PepperWidget : public WebWidget {
   WebSize size() override { return size_; }
 
   void resize(const WebSize& size) override {
-    if (!widget_->plugin())
+    if (!widget_->plugin() || size_ == size)
       return;
 
     size_ = size;
     WebRect plugin_rect(0, 0, size_.width, size_.height);
-    widget_->plugin()->ViewChanged(plugin_rect, plugin_rect, plugin_rect,
-                                   std::vector<gfx::Rect>());
+    widget_->plugin()->ViewChanged(plugin_rect, plugin_rect, plugin_rect);
     widget_->Invalidate();
   }
 
@@ -315,7 +306,7 @@ void RenderWidgetFullscreenPepper::Destroy() {
   Release();
 }
 
-void RenderWidgetFullscreenPepper::DidChangeCursor(
+void RenderWidgetFullscreenPepper::PepperDidChangeCursor(
     const blink::WebCursorInfo& cursor) {
   didChangeCursor(cursor);
 }

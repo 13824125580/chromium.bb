@@ -86,7 +86,6 @@ WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(float x,
     result.wheelTicksY = dy > 0.0f ? 1.0f : -1.0f;
   result.modifiers = modifiers;
   result.hasPreciseScrollingDeltas = precise;
-  result.canScroll = true;
   return result;
 }
 
@@ -118,9 +117,10 @@ WebGestureEvent SyntheticWebGestureEventBuilder::Build(
 
 WebGestureEvent SyntheticWebGestureEventBuilder::BuildScrollBegin(
     float dx_hint,
-    float dy_hint) {
-  WebGestureEvent result = Build(WebInputEvent::GestureScrollBegin,
-                                 blink::WebGestureDeviceTouchscreen);
+    float dy_hint,
+    blink::WebGestureDevice source_device) {
+  WebGestureEvent result =
+      Build(WebInputEvent::GestureScrollBegin, source_device);
   result.data.scrollBegin.deltaXHint = dx_hint;
   result.data.scrollBegin.deltaYHint = dy_hint;
   return result;
@@ -169,7 +169,7 @@ WebGestureEvent SyntheticWebGestureEventBuilder::BuildFling(
 
 SyntheticWebTouchEvent::SyntheticWebTouchEvent() : WebTouchEvent() {
   uniqueTouchEventId = ui::GetNextTouchEventId();
-  SetTimestamp(base::TimeTicks::Now() - base::TimeTicks());
+  SetTimestamp(base::TimeTicks::Now());
 }
 
 void SyntheticWebTouchEvent::ResetPoints() {
@@ -236,8 +236,8 @@ void SyntheticWebTouchEvent::CancelPoint(int index) {
       WebInputEvent::TouchCancel, timeStampSeconds, this);
 }
 
-void SyntheticWebTouchEvent::SetTimestamp(base::TimeDelta timestamp) {
-  timeStampSeconds = timestamp.InSecondsF();
+void SyntheticWebTouchEvent::SetTimestamp(base::TimeTicks timestamp) {
+  timeStampSeconds = ui::EventTimeStampToSeconds(timestamp);
 }
 
 }  // namespace content

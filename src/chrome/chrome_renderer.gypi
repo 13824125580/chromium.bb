@@ -5,6 +5,8 @@
 {
   'variables': {
     'chrome_renderer_sources': [
+      'renderer/app_categorizer.h',
+      'renderer/app_categorizer.cc',
       'renderer/banners/app_banner_client.cc',
       'renderer/banners/app_banner_client.h',
       'renderer/benchmarking_extension.cc',
@@ -13,8 +15,8 @@
       'renderer/chrome_content_renderer_client.h',
       'renderer/chrome_render_frame_observer.cc',
       'renderer/chrome_render_frame_observer.h',
-      'renderer/chrome_render_process_observer.cc',
-      'renderer/chrome_render_process_observer.h',
+      'renderer/chrome_render_thread_observer.cc',
+      'renderer/chrome_render_thread_observer.h',
       'renderer/chrome_render_view_observer.cc',
       'renderer/chrome_render_view_observer.h',
       'renderer/content_settings_observer.cc',
@@ -33,8 +35,6 @@
       'renderer/net/net_error_page_controller.h',
       'renderer/net_benchmarking_extension.cc',
       'renderer/net_benchmarking_extension.h',
-      'renderer/origin_trials/origin_trial_key_manager.cc',
-      'renderer/origin_trials/origin_trial_key_manager.h',
       'renderer/page_load_histograms.cc',
       'renderer/page_load_histograms.h',
       'renderer/plugins/non_loadable_plugin_placeholder.cc',
@@ -125,8 +125,8 @@
       'renderer/media/cast_session_delegate.h',
       'renderer/media/cast_threads.cc',
       'renderer/media/cast_threads.h',
-      'renderer/media/cast_transport_sender_ipc.cc',
-      'renderer/media/cast_transport_sender_ipc.h',
+      'renderer/media/cast_transport_ipc.cc',
+      'renderer/media/cast_transport_ipc.h',
       'renderer/media/cast_udp_transport.cc',
       'renderer/media/cast_udp_transport.h',
       'renderer/resources/extensions/app_custom_bindings.js',
@@ -259,7 +259,8 @@
         '../components/components.gyp:page_load_metrics_renderer',
         '../components/components.gyp:password_manager_content_renderer',
         '../components/components.gyp:plugins_renderer',
-        '../components/components.gyp:startup_metric_utils_common',
+        '../components/components.gyp:startup_metric_utils_interfaces',
+        '../components/components.gyp:subresource_filter_content_renderer',
         '../components/components.gyp:translate_content_renderer',
         '../components/components.gyp:visitedlink_renderer',
         '../components/components.gyp:web_cache_renderer',
@@ -391,6 +392,7 @@
         ['OS=="win"', {
           'dependencies': [
             '../components/components.gyp:dom_distiller_core',  # Needed by chrome_content_renderer_client.cc.
+            '../components/components.gyp:startup_metric_utils_win',
           ],
           'include_dirs': [
             '<(DEPTH)/third_party/wtl/include',

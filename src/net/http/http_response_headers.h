@@ -9,9 +9,9 @@
 #include <stdint.h>
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
@@ -96,6 +96,10 @@ class NET_EXPORT HttpResponseHeaders
   // merged together by this method; the one provided is simply put at the
   // end of the list.
   void AddHeader(const std::string& header);
+
+  // Adds a cookie header. |cookie_string| should be the header value without
+  // the header name (Set-Cookie).
+  void AddCookie(const std::string& cookie_string);
 
   // Replaces the current status line with the provided one (|new_status| should
   // not have any EOL).
@@ -253,8 +257,8 @@ class NET_EXPORT HttpResponseHeaders
                                 const base::Time& current_time) const;
 
   // The following methods extract values from the response headers.  If a
-  // value is not present, then false is returned.  Otherwise, true is returned
-  // and the out param is assigned to the corresponding value.
+  // value is not present, or is invalid, then false is returned.  Otherwise,
+  // true is returned and the out param is assigned to the corresponding value.
   bool GetMaxAgeValue(base::TimeDelta* value) const;
   bool GetAgeValue(base::TimeDelta* value) const;
   bool GetDateValue(base::Time* value) const;
@@ -272,6 +276,11 @@ class NET_EXPORT HttpResponseHeaders
   // Returns true if this response has a strong etag or last-modified header.
   // See section 13.3.3 of RFC 2616.
   bool HasStrongValidators() const;
+
+  // Returns true if this response has any validator (either a Last-Modified or
+  // an ETag) regardless of whether it is strong or weak.  See section 13.3.3 of
+  // RFC 2616.
+  bool HasValidators() const;
 
   // Extracts the value of the Content-Length header or returns -1 if there is
   // no such header in the response.
@@ -296,7 +305,8 @@ class NET_EXPORT HttpResponseHeaders
   bool IsChunkEncoded() const;
 
   // Creates a Value for use with the NetLog containing the response headers.
-  scoped_ptr<base::Value> NetLogCallback(NetLogCaptureMode capture_mode) const;
+  std::unique_ptr<base::Value> NetLogCallback(
+      NetLogCaptureMode capture_mode) const;
 
   // Takes in a Value created by the above function, and attempts to create a
   // copy of the original headers.  Returns true on success.  On failure,
@@ -318,7 +328,7 @@ class NET_EXPORT HttpResponseHeaders
  private:
   friend class base::RefCountedThreadSafe<HttpResponseHeaders>;
 
-  typedef base::hash_set<std::string> HeaderSet;
+  using HeaderSet = std::unordered_set<std::string>;
 
   // The members of this structure point into raw_headers_.
   struct ParsedHeader;

@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace syncer {
 
@@ -21,7 +21,7 @@ void ProxyGetOrDownloadCallback(
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     const AttachmentService::GetOrDownloadCallback& callback,
     const AttachmentService::GetOrDownloadResult& result,
-    scoped_ptr<AttachmentMap> attachments) {
+    std::unique_ptr<AttachmentMap> attachments) {
   task_runner->PostTask(
       FROM_HERE, base::Bind(callback, result, base::Passed(&attachments)));
 }

@@ -47,13 +47,18 @@ function mediaControlsButton(element, id)
     return button;
 }
 
+function elementCoordinates(element)
+{
+    var elementBoundingRect = element.getBoundingClientRect();
+    var x = elementBoundingRect.left + elementBoundingRect.width / 2;
+    var y = elementBoundingRect.top + elementBoundingRect.height / 2;
+    return new Array(x, y);
+}
+
 function mediaControlsButtonCoordinates(element, id)
 {
     var button = mediaControlsButton(element, id);
-    var buttonBoundingRect = button.getBoundingClientRect();
-    var x = buttonBoundingRect.left + buttonBoundingRect.width / 2;
-    var y = buttonBoundingRect.top + buttonBoundingRect.height / 2;
-    return new Array(x, y);
+    return elementCoordinates(button);
 }
 
 function mediaControlsButtonDimensions(element, id)
@@ -94,6 +99,20 @@ function textTrackDisplayElement(parentElement, id, cueNumber)
     return displayElement;
 }
 
+function isClosedCaptionsButtonVisible(currentMediaElement)
+{
+    var captionsButtonElement = mediaControlsButton(currentMediaElement, "toggle-closed-captions-button");
+    var captionsButtonCoordinates = mediaControlsButtonCoordinates(currentMediaElement, "toggle-closed-captions-button");
+
+    if (!captionsButtonElement.disabled
+        && captionsButtonCoordinates[0] > 0
+        && captionsButtonCoordinates[1] > 0) {
+        return true;
+    }
+
+    return false;
+}
+
 function testClosedCaptionsButtonVisibility(expected)
 {
     try {
@@ -119,12 +138,45 @@ function testClosedCaptionsButtonVisibility(expected)
     }
 }
 
+function clickAtCoordinates(x, y)
+{
+    eventSender.mouseMoveTo(x, y);
+    eventSender.mouseDown();
+    eventSender.mouseUp();
+}
+
 function clickCCButton()
 {
     consoleWrite("*** Click the CC button.");
-    eventSender.mouseMoveTo(captionsButtonCoordinates[0], captionsButtonCoordinates[1]);
-    eventSender.mouseDown();
-    eventSender.mouseUp();
+    clickAtCoordinates(captionsButtonCoordinates[0], captionsButtonCoordinates[1]);
+}
+
+function textTrackListItemAtIndex(video, index)
+{
+    var textTrackListElementID = "-internal-media-controls-text-track-list";
+    var textTrackListElement = mediaControlsElement(internals.shadowRoot(video).firstChild, textTrackListElementID);
+    if (!textTrackListElement)
+        throw "Failed to find text track list element";
+
+    var trackListItems = textTrackListElement.childNodes;
+    for (var i = 0; i < trackListItems.length; i++) {
+        var trackListItem = trackListItems[i];
+        if (trackListItem.firstChild.getAttribute("data-track-index") == index)
+            return trackListItem;
+    }
+}
+
+function selectTextTrack(video, index)
+{
+    clickCCButton();
+    var trackListItemElement = textTrackListItemAtIndex(video, index);
+    var trackListItemCoordinates = elementCoordinates(trackListItemElement);
+    clickAtCoordinates(trackListItemCoordinates[0], trackListItemCoordinates[1]);
+}
+
+function turnClosedCaptionsOff(video)
+{
+    selectTextTrack(video, -1);
 }
 
 function runAfterHideMediaControlsTimerFired(func, mediaElement)

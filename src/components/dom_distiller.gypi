@@ -140,6 +140,7 @@
       'target_name': 'dom_distiller_mojo_bindings',
       'type': 'static_library',
       'sources': [
+        'dom_distiller/content/common/distillability_service.mojom',
         'dom_distiller/content/common/distiller_javascript_service.mojom',
         'dom_distiller/content/common/distiller_page_notifier_service.mojom',
       ],
@@ -156,17 +157,16 @@
           'target_name': 'dom_distiller_content_browser',
           'type': 'static_library',
           'dependencies': [
-            'dom_distiller_content_common',
             'dom_distiller_core',
             'dom_distiller_mojo_bindings',
             'dom_distiller_protos',
             '../base/base.gyp:base',
             '../content/content.gyp:content_browser',
-            '../mojo/mojo_base.gyp:mojo_environment_chromium',
             '../mojo/mojo_public.gyp:mojo_cpp_bindings',
             '../net/net.gyp:net',
             '../skia/skia.gyp:skia',
             '../sync/sync.gyp:sync',
+            '../ui/display/display.gyp:display',
             '../ui/gfx/gfx.gyp:gfx',
             '../url/url.gyp:url_lib',
             'components_resources.gyp:components_resources',
@@ -208,13 +208,11 @@
           'target_name': 'dom_distiller_content_renderer',
           'type': 'static_library',
           'dependencies': [
-            'dom_distiller_content_common',
             'dom_distiller_mojo_bindings',
             'dom_distiller_protos',
             '../base/base.gyp:base',
             '../content/content.gyp:content_browser',
             '../gin/gin.gyp:gin',
-            '../mojo/mojo_base.gyp:mojo_environment_chromium',
             '../mojo/mojo_public.gyp:mojo_cpp_bindings',
           ],
           'include_dirs': [
@@ -232,24 +230,6 @@
             'dom_distiller/content/renderer/distiller_native_javascript.h',
             'dom_distiller/content/renderer/distiller_page_notifier_service_impl.cc',
             'dom_distiller/content/renderer/distiller_page_notifier_service_impl.h',
-          ],
-        },
-        {
-          # GN version: //components/dom_distiller/content/common
-          'target_name': 'dom_distiller_content_common',
-          'type': 'static_library',
-          'include_dirs': [
-            '..',
-          ],
-          'dependencies': [
-            '../base/base.gyp:base',
-            '../content/content.gyp:content_common',
-            '../ipc/ipc.gyp:ipc',
-            '../url/url.gyp:url_lib',
-          ],
-          'sources': [
-            'dom_distiller/content/common/distiller_messages.cc',
-            'dom_distiller/content/common/distiller_messages.h',
           ],
         },
         {

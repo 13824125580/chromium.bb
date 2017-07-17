@@ -9,22 +9,23 @@
 
 #include "cc/base/cc_export.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
+#include "cc/playback/raster_source.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
-class DisplayListRasterSource;
 
 class CC_EXPORT RasterBuffer {
  public:
   RasterBuffer();
   virtual ~RasterBuffer();
 
-  virtual void Playback(const DisplayListRasterSource* raster_source,
-                        const gfx::Rect& raster_full_rect,
-                        const gfx::Rect& raster_dirty_rect,
-                        uint64_t new_content_id,
-                        const gfx::AxisTransform2d& transform,
-                        bool include_images) = 0;
+  virtual void Playback(
+      const RasterSource* raster_source,
+      const gfx::Rect& raster_full_rect,
+      const gfx::Rect& raster_dirty_rect,
+      uint64_t new_content_id,
+      const gfx::AxisTransform2d& transform,
+      const RasterSource::PlaybackSettings& playback_settings) = 0;
 };
 
 }  // namespace cc

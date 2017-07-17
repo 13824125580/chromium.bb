@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/run_loop.h"
 #include "content/browser/webui/url_data_manager_backend.h"
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/http/http_response_headers.h"
@@ -41,7 +43,8 @@ class CancelAfterFirstReadURLRequestDelegate : public net::TestDelegate {
 
 class UrlDataManagerBackendTest : public testing::Test {
  public:
-  UrlDataManagerBackendTest() {
+  UrlDataManagerBackendTest()
+      : thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP) {
     // URLRequestJobFactory takes ownership of the passed in ProtocolHandler.
     url_request_job_factory_.SetProtocolHandler(
         "chrome", URLDataManagerBackend::CreateProtocolHandler(
@@ -49,11 +52,14 @@ class UrlDataManagerBackendTest : public testing::Test {
     url_request_context_.set_job_factory(&url_request_job_factory_);
   }
 
-  scoped_ptr<net::URLRequest> CreateRequest(net::URLRequest::Delegate* delegate,
-                                            const char* origin) {
-    scoped_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
-        GURL("chrome://resources/polymer/v1_0/polymer/polymer-extracted.js"),
-        net::HIGHEST, delegate);
+  std::unique_ptr<net::URLRequest> CreateRequest(
+      net::URLRequest::Delegate* delegate,
+      const char* origin) {
+    std::unique_ptr<net::URLRequest> request =
+        url_request_context_.CreateRequest(
+            GURL(
+                "chrome://resources/polymer/v1_0/polymer/polymer-extracted.js"),
+            net::HIGHEST, delegate);
     request->SetExtraRequestHeaderByName("Origin", origin, true);
     return request;
   }
@@ -67,7 +73,7 @@ class UrlDataManagerBackendTest : public testing::Test {
 };
 
 TEST_F(UrlDataManagerBackendTest, AccessControlAllowOriginChromeUrl) {
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       CreateRequest(&delegate_, "chrome://webui"));
   request->Start();
   base::RunLoop().RunUntilIdle();
@@ -76,7 +82,7 @@ TEST_F(UrlDataManagerBackendTest, AccessControlAllowOriginChromeUrl) {
 }
 
 TEST_F(UrlDataManagerBackendTest, AccessControlAllowOriginNonChromeUrl) {
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       CreateRequest(&delegate_, "http://www.example.com"));
   request->Start();
   base::RunLoop().RunUntilIdle();
@@ -86,7 +92,7 @@ TEST_F(UrlDataManagerBackendTest, AccessControlAllowOriginNonChromeUrl) {
 
 // Check that the URLRequest isn't passed headers after cancellation.
 TEST_F(UrlDataManagerBackendTest, CancelBeforeResponseStarts) {
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       CreateRequest(&delegate_, "chrome://webui"));
   request->Start();
   request->Cancel();
@@ -98,7 +104,7 @@ TEST_F(UrlDataManagerBackendTest, CancelBeforeResponseStarts) {
 // Check that the URLRequest isn't passed data after cancellation.
 TEST_F(UrlDataManagerBackendTest, CancelAfterFirstReadStarted) {
   CancelAfterFirstReadURLRequestDelegate cancel_delegate;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       CreateRequest(&cancel_delegate, "chrome://webui"));
   request->Start();
   base::RunLoop().RunUntilIdle();
@@ -110,9 +116,9 @@ TEST_F(UrlDataManagerBackendTest, CancelAfterFirstReadStarted) {
 
 // Check for a network error page request via chrome://network-error/.
 TEST_F(UrlDataManagerBackendTest, ChromeNetworkErrorPageRequest) {
-  scoped_ptr<net::URLRequest> error_request =
-        url_request_context_.CreateRequest(
-        GURL("chrome://network-error/-105"), net::HIGHEST, &delegate_);
+  std::unique_ptr<net::URLRequest> error_request =
+      url_request_context_.CreateRequest(GURL("chrome://network-error/-105"),
+                                         net::HIGHEST, &delegate_);
   error_request->Start();
   base::RunLoop().Run();
   EXPECT_EQ(net::URLRequestStatus::FAILED, error_request->status().status());
@@ -121,9 +127,9 @@ TEST_F(UrlDataManagerBackendTest, ChromeNetworkErrorPageRequest) {
 
 // Check for an invalid network error page request via chrome://network-error/.
 TEST_F(UrlDataManagerBackendTest, ChromeNetworkErrorPageRequestFailed) {
-  scoped_ptr<net::URLRequest> error_request =
-        url_request_context_.CreateRequest(
-        GURL("chrome://network-error/-123456789"), net::HIGHEST, &delegate_);
+  std::unique_ptr<net::URLRequest> error_request =
+      url_request_context_.CreateRequest(
+          GURL("chrome://network-error/-123456789"), net::HIGHEST, &delegate_);
   error_request->Start();
   base::RunLoop().Run();
   EXPECT_EQ(net::URLRequestStatus::FAILED, error_request->status().status());

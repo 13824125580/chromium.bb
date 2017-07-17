@@ -355,9 +355,16 @@ bool URLDatabase::FindShortestURLFromBase(const std::string& base,
 
 bool URLDatabase::GetTextMatches(const base::string16& query,
                                  URLRows* results) {
+  return GetTextMatchesWithAlgorithm(
+      query, query_parser::MatchingAlgorithm::DEFAULT, results);
+}
+
+bool URLDatabase::GetTextMatchesWithAlgorithm(
+    const base::string16& query,
+    query_parser::MatchingAlgorithm algorithm,
+    URLRows* results) {
   ScopedVector<query_parser::QueryNode> query_nodes;
-  query_parser_.ParseQueryNodes(
-      query, query_parser::MatchingAlgorithm::DEFAULT, &query_nodes.get());
+  query_parser_.ParseQueryNodes(query, algorithm, &query_nodes.get());
 
   results->clear();
   sql::Statement statement(GetDB().GetCachedStatement(SQL_FROM_HERE,
@@ -370,11 +377,8 @@ bool URLDatabase::GetTextMatches(const base::string16& query,
     GURL gurl(url);
     if (gurl.is_valid()) {
       // Decode punycode to match IDN.
-      // |query_words| won't be shown to user - therefore we can use empty
-      // |languages| to reduce dependency (no need to call PrefService).
       base::string16 ascii = base::ASCIIToUTF16(gurl.host());
-      base::string16 utf =
-          url_formatter::IDNToUnicode(gurl.host(), std::string());
+      base::string16 utf = url_formatter::IDNToUnicode(gurl.host());
       if (ascii != utf)
         query_parser_.ExtractQueryWords(utf, &query_words);
     }

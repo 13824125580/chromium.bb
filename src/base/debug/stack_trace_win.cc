@@ -9,14 +9,13 @@
 #include <stddef.h>
 
 #include <iostream>
+#include <memory>
 
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "base/process/launch.h"
-#include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
-#include "base/win/windows_version.h"
 
 namespace base {
 namespace debug {
@@ -71,7 +70,7 @@ bool InitializeSymbols() {
   // add the directory of the executable to symbol search path.
   // All following errors are non-fatal.
   const size_t kSymbolsArraySize = 1024;
-  scoped_ptr<wchar_t[]> symbols_path(new wchar_t[kSymbolsArraySize]);
+  std::unique_ptr<wchar_t[]> symbols_path(new wchar_t[kSymbolsArraySize]);
 
   // Note: The below function takes buffer size as number of characters,
   // not number of bytes!

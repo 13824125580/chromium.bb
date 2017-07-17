@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/ash/chrome_browser_main_extra_parts_ash.h"
 
 #include "ash/root_window_controller.h"
-#include "ash/session/session_state_delegate.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
@@ -17,7 +16,6 @@
 #include "chrome/browser/ui/views/ash/tab_scrubber.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/aura/env.h"
-#include "ui/gfx/screen.h"
 #include "ui/keyboard/content/keyboard.h"
 #include "ui/keyboard/keyboard_controller.h"
 
@@ -26,21 +24,14 @@
 #include "chrome/browser/ui/views/select_file_dialog_extension_factory.h"
 #endif
 
-ChromeBrowserMainExtraPartsAsh::ChromeBrowserMainExtraPartsAsh() {
-}
+ChromeBrowserMainExtraPartsAsh::ChromeBrowserMainExtraPartsAsh() {}
 
-ChromeBrowserMainExtraPartsAsh::~ChromeBrowserMainExtraPartsAsh() {
-}
+ChromeBrowserMainExtraPartsAsh::~ChromeBrowserMainExtraPartsAsh() {}
 
 void ChromeBrowserMainExtraPartsAsh::PreProfileInit() {
-  if (chrome::ShouldOpenAshOnStartup()) {
+  if (chrome::ShouldOpenAshOnStartup())
     chrome::OpenAsh(gfx::kNullAcceleratedWidget);
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  ash::Shell::GetInstance()->CreateShelf();
-  ash::Shell::GetInstance()->ShowShelf();
-#endif
-  }
 #if defined(OS_CHROMEOS)
   // For OS_CHROMEOS, virtual keyboard needs to be initialized before profile
   // initialized. Otherwise, virtual keyboard extension will not load at login
@@ -54,6 +45,9 @@ void ChromeBrowserMainExtraPartsAsh::PreProfileInit() {
 }
 
 void ChromeBrowserMainExtraPartsAsh::PostProfileInit() {
+  if (chrome::IsRunningInMash())
+    chrome::InitializeMash();
+
   if (!ash::Shell::HasInstance())
     return;
 

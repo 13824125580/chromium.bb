@@ -8,13 +8,14 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "webrtc/base/checks.h"
-#include "webrtc/base/scoped_ptr.h"
+#include "webrtc/base/timeutils.h"
 #include "webrtc/common_video/include/video_image.h"
 #include "webrtc/common_video/libyuv/include/webrtc_libyuv.h"
 #include "webrtc/modules/video_coding/codecs/vp8/include/vp8.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 #include "webrtc/test/testsupport/fileutils.h"
 #include "webrtc/test/testsupport/metrics/video_metrics.h"
 #include "webrtc/tools/simple_command_line_parser.h"
@@ -147,7 +148,7 @@ int SequenceCoder(webrtc::test::CommandLineParser* parser) {
   EXPECT_EQ(0, decoder->InitDecode(&inst, 1));
   webrtc::VideoFrame input_frame;
   size_t length = webrtc::CalcBufferSize(webrtc::kI420, width, height);
-  rtc::scoped_ptr<uint8_t[]> frame_buffer(new uint8_t[length]);
+  std::unique_ptr<uint8_t[]> frame_buffer(new uint8_t[length]);
 
   int half_width = (width + 1) / 2;
   // Set and register callbacks.
@@ -157,7 +158,7 @@ int SequenceCoder(webrtc::test::CommandLineParser* parser) {
   decoder->RegisterDecodeCompleteCallback(&decoder_callback);
   // Read->Encode->Decode sequence.
   // num_frames = -1 implies unlimited encoding (entire sequence).
-  int64_t starttime = webrtc::TickTime::MillisecondTimestamp();
+  int64_t starttime = rtc::TimeMillis();
   int frame_cnt = 1;
   int frames_processed = 0;
   input_frame.CreateEmptyFrame(width, height, width, half_width, half_width);
@@ -175,7 +176,7 @@ int SequenceCoder(webrtc::test::CommandLineParser* parser) {
     ++frame_cnt;
   }
   printf("\nProcessed %d frames\n", frames_processed);
-  int64_t endtime = webrtc::TickTime::MillisecondTimestamp();
+  int64_t endtime = rtc::TimeMillis();
   int64_t totalExecutionTime = endtime - starttime;
   printf("Total execution time: %.2lf ms\n",
          static_cast<double>(totalExecutionTime));

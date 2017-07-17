@@ -37,7 +37,7 @@ namespace blink {
 class Element;
 class ExceptionState;
 
-class CORE_EXPORT DOMTokenListObserver : public WillBeGarbageCollectedMixin {
+class CORE_EXPORT DOMTokenListObserver : public GarbageCollectedMixin {
 public:
     // Called when the value property is set, even if the tokens in
     // the set have not changed.
@@ -46,23 +46,17 @@ public:
     DEFINE_INLINE_VIRTUAL_TRACE() { }
 };
 
-class CORE_EXPORT DOMTokenList : public RefCountedWillBeGarbageCollectedFinalized<DOMTokenList>,
+class CORE_EXPORT DOMTokenList : public GarbageCollectedFinalized<DOMTokenList>,
     public ScriptWrappable, public ValueIterable<String> {
     DEFINE_WRAPPERTYPEINFO();
-    USING_FAST_MALLOC_WILL_BE_REMOVED(DOMTokenList);
     WTF_MAKE_NONCOPYABLE(DOMTokenList);
 public:
-    static PassRefPtrWillBeRawPtr<DOMTokenList> create(DOMTokenListObserver* observer = nullptr)
+    static DOMTokenList* create(DOMTokenListObserver* observer = nullptr)
     {
-        return adoptRefWillBeNoop(new DOMTokenList(observer));
+        return new DOMTokenList(observer);
     }
 
     virtual ~DOMTokenList() { }
-
-#if !ENABLE(OILPAN)
-    virtual void ref() { RefCounted<DOMTokenList>::ref(); }
-    virtual void deref() { RefCounted<DOMTokenList>::deref(); }
-#endif
 
     virtual unsigned length() const { return m_tokens.size(); }
     virtual const AtomicString item(unsigned index) const;
@@ -112,7 +106,7 @@ private:
     IterationSource* startIteration(ScriptState*, ExceptionState&) override;
     SpaceSplitString m_tokens;
     AtomicString m_value;
-    RawPtrWillBeWeakMember<DOMTokenListObserver> m_observer;
+    WeakMember<DOMTokenListObserver> m_observer;
 };
 
 } // namespace blink

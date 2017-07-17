@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view_ash.h"
 
-#include "ash/ash_constants.h"
-#include "ash/ash_switches.h"
+#include "ash/common/ash_constants.h"
+#include "ash/common/ash_switches.h"
 #include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "ash/frame/header_painter.h"
 #include "ash/shell.h"
@@ -28,7 +28,7 @@
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_test.h"
-#include "chrome/browser/ui/views/profiles/avatar_menu_button.h"
+#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "components/signin/core/account_id/account_id.h"
 #endif  // defined(OS_CHROMEOS)
 
@@ -80,7 +80,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
   // fullscreen here because tab fullscreen is non-immersive even on ChromeOS).
   {
     // NOTIFICATION_FULLSCREEN_CHANGED is sent asynchronously.
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     browser()
         ->exclusive_access_manager()
@@ -97,7 +97,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
   // The frame should be painted again when fullscreen is exited and the caption
   // buttons should be visible.
   {
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     chrome::ToggleFullscreenMode(browser());
     waiter->Wait();
@@ -134,13 +134,13 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   // fullscreen should enable immersive fullscreen.
   {
     // NOTIFICATION_FULLSCREEN_CHANGED is sent asynchronously.
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     chrome::ToggleFullscreenMode(browser());
     waiter->Wait();
   }
   {
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     browser()
         ->exclusive_access_manager()
@@ -151,7 +151,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   EXPECT_TRUE(immersive_mode_controller->IsEnabled());
 
   // An immersive reveal shows the buttons and the top of the frame.
-  scoped_ptr<ImmersiveRevealedLock> revealed_lock(
+  std::unique_ptr<ImmersiveRevealedLock> revealed_lock(
       immersive_mode_controller->GetRevealedLock(
           ImmersiveModeController::ANIMATE_REVEAL_NO));
   EXPECT_TRUE(immersive_mode_controller->IsRevealed());
@@ -169,7 +169,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   // Repeat test but without tab fullscreen. The tab lightbars should now show
   // when the top-of-window views are not revealed.
   {
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     browser()
         ->exclusive_access_manager()
@@ -200,7 +200,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   // Exiting immersive fullscreen should make the caption buttons and the frame
   // visible again.
   {
-    scoped_ptr<FullscreenNotificationObserver> waiter(
+    std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
     browser_view->ExitFullscreen();
     waiter->Wait();
@@ -237,8 +237,9 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
   manager->ShowWindowForUser(window, account_id2);
   EXPECT_TRUE(chrome::MultiUserWindowManager::ShouldShowAvatar(window));
 
-  // Avatar should show on the top left corner of the teleported browser window.
-  EXPECT_TRUE(frame_view->avatar_button());
+  // An icon should show on the top left corner of the teleported browser
+  // window.
+  EXPECT_TRUE(frame_view->profile_indicator_icon());
 }
 
 // Hit Test for Avatar Menu Button on ChromeOS.

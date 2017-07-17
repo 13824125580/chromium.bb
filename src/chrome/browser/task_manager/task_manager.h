@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -20,9 +21,19 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "chrome/browser/task_manager/resource_provider.h"
-#include "chrome/browser/ui/host_desktop.h"
-#include "content/public/common/gpu_memory_stats.h"
+#include "gpu/ipc/common/memory_stats.h"
 #include "third_party/WebKit/public/web/WebCache.h"
+
+// -----------------------------------------------------------------------------
+// DEPRECATED:
+// - This is currently enabled only on MacOSX, and will be removed soon (See
+//   crbug.com/528486).
+// - Please don't add any new stuff here. See the new implementation in
+//   //src/chrome/browser/task_management.
+// -----------------------------------------------------------------------------
+#if !defined(OS_MACOSX)
+#error "The old task manager is deprecated on non-macos platforms."
+#endif  // defined(OS_MACOSX)
 
 class PrefRegistrySimple;
 class PrivateWorkingSetSnapshot;
@@ -52,8 +63,6 @@ class URLRequest;
 // This class is a singleton.
 class TaskManager {
  public:
-  static void RegisterPrefs(PrefRegistrySimple* registry);
-
   // Returns true if the process at the specified index is the browser process.
   bool IsBrowserProcess(int index) const;
 
@@ -83,8 +92,6 @@ class TaskManager {
   static TaskManager* GetInstance();
 
   TaskManagerModel* model() const { return model_.get(); }
-
-  void OpenAboutMemory();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(TaskManagerTest, Basic);
@@ -298,7 +305,7 @@ class TaskManagerModel : public base::RefCountedThreadSafe<TaskManagerModel> {
   void RefreshPhysicalMemoryFromWorkingSetSnapshot();
 
   void NotifyVideoMemoryUsageStats(
-      const content::GPUVideoMemoryUsageStats& video_memory_usage_stats);
+      const gpu::VideoMemoryUsageStats& video_memory_usage_stats);
 
   void NotifyBytesRead(const net::URLRequest& request, int64_t bytes_read);
 
@@ -309,7 +316,7 @@ class TaskManagerModel : public base::RefCountedThreadSafe<TaskManagerModel> {
  private:
   friend class base::RefCountedThreadSafe<TaskManagerModel>;
   friend class TaskManagerBrowserTest;
-  FRIEND_TEST_ALL_PREFIXES(ExtensionApiTest, ProcessesVsTaskManager);
+  FRIEND_TEST_ALL_PREFIXES(ProcessesApiTest, ProcessesVsTaskManager);
   FRIEND_TEST_ALL_PREFIXES(TaskManagerTest, RefreshCalled);
   FRIEND_TEST_ALL_PREFIXES(TaskManagerWindowControllerTest,
                            SelectionAdaptsToSorting);
@@ -511,14 +518,14 @@ class TaskManagerModel : public base::RefCountedThreadSafe<TaskManagerModel> {
   ResourceValueMap current_byte_count_map_;
 
   // A map that contains the video memory usage for a process
-  content::GPUVideoMemoryUsageStats video_memory_usage_stats_;
+  gpu::VideoMemoryUsageStats video_memory_usage_stats_;
 
   // Set to true when we've requested video stats and false once we get them.
   bool pending_video_memory_usage_stats_update_;
 
   // An observer waiting for video memory usage stats updates from the GPU
   // process
-  scoped_ptr<TaskManagerModelGpuDataManagerObserver>
+  std::unique_ptr<TaskManagerModelGpuDataManagerObserver>
       video_memory_usage_stats_observer_;
 
   base::ObserverList<TaskManagerModelObserver> observer_list_;
@@ -545,7 +552,7 @@ class TaskManagerModel : public base::RefCountedThreadSafe<TaskManagerModel> {
   std::vector<base::Closure> on_data_ready_callbacks_;
 
 #if defined(OS_WIN)
-  scoped_ptr<PrivateWorkingSetSnapshot> working_set_snapshot_;
+  std::unique_ptr<PrivateWorkingSetSnapshot> working_set_snapshot_;
 #endif
 
   // All per-Resource values are stored here.

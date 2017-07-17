@@ -8,9 +8,10 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/observer_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/drive/drive_app_uninstall_sync_service.h"
 #include "chrome/browser/sync/glue/sync_start_util.h"
@@ -59,9 +60,21 @@ class AppListSyncableService : public syncer::SyncableService,
     std::string item_name;
     std::string parent_id;
     syncer::StringOrdinal item_ordinal;
+    syncer::StringOrdinal item_pin_ordinal;
 
     std::string ToString() const;
   };
+
+  class Observer {
+   public:
+    // Notifies that sync model was updated.
+    virtual void OnSyncModelUpdated() = 0;
+
+   protected:
+    virtual ~Observer() = default;
+  };
+
+  using SyncItemMap = std::map<std::string, SyncItem*>;
 
   // Populates the model when |extension_system| is ready.
   AppListSyncableService(Profile* profile,
@@ -71,7 +84,7 @@ class AppListSyncableService : public syncer::SyncableService,
 
   // Adds |item| to |sync_items_| and |model_|. If a sync item already exists,
   // updates the existing sync item instead.
-  void AddItem(scoped_ptr<AppListItem> app_item);
+  void AddItem(std::unique_ptr<AppListItem> app_item);
 
   // Removes sync item matching |id|.
   void RemoveItem(const std::string& id);
@@ -88,8 +101,22 @@ class AppListSyncableService : public syncer::SyncableService,
   // Sets the name of the folder for OEM apps.
   void SetOemFolderName(const std::string& name);
 
+  // Returns optional pin position for the app specified by |app_id|. If app is
+  // not synced or does not have associated pin position then empty ordinal is
+  // returned.
+  syncer::StringOrdinal GetPinPosition(const std::string& app_id);
+
+  // Sets pin position and how it is pinned for the app specified by |app_id|.
+  // Empty |item_pin_ordinal| indicates that the app has no pin.
+  void SetPinPosition(const std::string& app_id,
+                      const syncer::StringOrdinal& item_pin_ordinal);
+
   // Gets the app list model, building it if it doesn't yet exist.
   AppListModel* GetModel();
+
+  // Registers new observers and makes sure that service is started.
+  void AddObserverAndStart(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
   Profile* profile() { return profile_; }
   size_t GetNumSyncItemsForTest();
@@ -98,12 +125,14 @@ class AppListSyncableService : public syncer::SyncableService,
   }
   void ResetDriveAppProviderForTest();
 
+  const SyncItemMap& sync_items() const { return sync_items_; }
+
   // syncer::SyncableService
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -112,7 +141,6 @@ class AppListSyncableService : public syncer::SyncableService,
 
  private:
   class ModelObserver;
-  typedef std::map<std::string, SyncItem*> SyncItemMap;
 
   // KeyedService
   void Shutdown() override;
@@ -202,25 +230,31 @@ class AppListSyncableService : public syncer::SyncableService,
   // an OEM (extension->was_installed_by_oem() is true).
   bool AppIsOem(const std::string& id);
 
+  // Helper that notifies observers that sync model has been updated.
+  void NotifyObserversSyncUpdated();
+
   Profile* profile_;
   extensions::ExtensionSystem* extension_system_;
-  scoped_ptr<AppListModel> model_;
-  scoped_ptr<ModelObserver> model_observer_;
-  scoped_ptr<ModelPrefUpdater> model_pref_updater_;
-  scoped_ptr<ExtensionAppModelBuilder> apps_builder_;
+  std::unique_ptr<AppListModel> model_;
+  std::unique_ptr<ModelObserver> model_observer_;
+  std::unique_ptr<ModelPrefUpdater> model_pref_updater_;
+  std::unique_ptr<ExtensionAppModelBuilder> apps_builder_;
 #if defined(OS_CHROMEOS)
-  scoped_ptr<ArcAppModelBuilder> arc_apps_builder_;
+  std::unique_ptr<ArcAppModelBuilder> arc_apps_builder_;
 #endif
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
-  scoped_ptr<syncer::SyncErrorFactory> sync_error_handler_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncErrorFactory> sync_error_handler_;
   SyncItemMap sync_items_;
   syncer::SyncableService::StartSyncFlare flare_;
   bool initial_sync_data_processed_;
   bool first_app_list_sync_;
   std::string oem_folder_name_;
 
+  // List of observers.
+  base::ObserverList<Observer> observer_list_;
+
   // Provides integration with Drive apps.
-  scoped_ptr<DriveAppProvider> drive_app_provider_;
+  std::unique_ptr<DriveAppProvider> drive_app_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListSyncableService);
 };

@@ -8,11 +8,14 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -104,7 +107,8 @@ class SpawnerRequestData : public base::SupportsUserData::Data {
 
 SpawnerCommunicator::SpawnerCommunicator(uint16_t port)
     : io_thread_("spawner_communicator"),
-      event_(false, false),
+      event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+             base::WaitableEvent::InitialState::NOT_SIGNALED),
       port_(port),
       next_id_(0),
       is_running_(false),
@@ -171,7 +175,7 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
     std::string* data_received) {
   base::MessageLoop* loop = io_thread_.message_loop();
   DCHECK(loop);
-  DCHECK_EQ(base::MessageLoop::current(), loop);
+  DCHECK(loop->task_runner()->BelongsToCurrentThread());
 
   // Prepare the URLRequest for sending the command.
   DCHECK(!cur_request_.get());
@@ -190,7 +194,7 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
     cur_request_->set_method("GET");
   } else {
     cur_request_->set_method("POST");
-    scoped_ptr<UploadElementReader> reader(
+    std::unique_ptr<UploadElementReader> reader(
         UploadOwnedBytesElementReader::CreateWithString(post_data));
     cur_request_->set_upload(
         ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
@@ -201,11 +205,9 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
   }
 
   // Post a task to timeout this request if it takes too long.
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&SpawnerCommunicator::OnTimeout,
-                 weak_factory_.GetWeakPtr(),
-                 current_request_id),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&SpawnerCommunicator::OnTimeout,
+                            weak_factory_.GetWeakPtr(), current_request_id),
       TestTimeouts::action_max_timeout());
 
   // Start the request.
@@ -340,7 +342,8 @@ bool SpawnerCommunicator::StartServer(const std::string& arguments,
     return false;
 
   // Check whether the data returned from spawner server is JSON-formatted.
-  scoped_ptr<base::Value> value = base::JSONReader::Read(server_return_data);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::Read(server_return_data);
   if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY)) {
     LOG(ERROR) << "Invalid server data: " << server_return_data.c_str();
     return false;

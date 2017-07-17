@@ -7,7 +7,7 @@ from core import perf_benchmark
 from measurements import webrtc
 import page_sets
 from telemetry import benchmark
-from telemetry.timeline import tracing_category_filter
+from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf import timeline_based_measurement
 from telemetry.web_perf.metrics import webrtc_rendering_timeline
 
@@ -16,6 +16,7 @@ RENDERING_VALUE_PREFIX = 'WebRTCRendering_'
 # TODO(qyearsley, mcasas): Add webrtc.audio when http://crbug.com/468732
 # is fixed, or revert https://codereview.chromium.org/1544573002/ when
 # http://crbug.com/568333 is fixed.
+
 
 # Disabled because the reference set becomes flaky with the new
 # https:// page set introduced in http://crbug.com/523517.
@@ -28,7 +29,7 @@ class _Webrtc(perf_benchmark.PerfBenchmark):
 
 
 class WebrtcGetusermedia(_Webrtc):
-  """Measures WebRtc GetUserMedia for video capture and local playback"""
+  """Measures WebRtc GetUserMedia for video capture and local playback."""
   page_set = page_sets.WebrtcGetusermediaPageSet
 
   @classmethod
@@ -37,7 +38,7 @@ class WebrtcGetusermedia(_Webrtc):
 
 
 class WebrtcPeerConnection(_Webrtc):
-  """Measures WebRtc Peerconnection for remote video and audio communication """
+  """Measures WebRtc Peerconnection for remote video and audio communication."""
   page_set = page_sets.WebrtcPeerconnectionPageSet
 
   @classmethod
@@ -46,7 +47,7 @@ class WebrtcPeerConnection(_Webrtc):
 
 
 class WebrtcDataChannel(_Webrtc):
-  """Measures WebRtc DataChannel loopback """
+  """Measures WebRtc DataChannel loopback."""
   page_set = page_sets.WebrtcDatachannelPageSet
 
   @classmethod
@@ -56,13 +57,17 @@ class WebrtcDataChannel(_Webrtc):
 
 # WebrtcRendering must be a PerfBenchmark, and not a _Webrtc, because it is a
 # timeline-based.
+# Disabled on reference builds because they crash and don't support tab
+# capture. See http://crbug.com/603232.
+@benchmark.Disabled('reference')
+@benchmark.Disabled('android')  # http://crbug.com/610019
 class WebrtcRendering(perf_benchmark.PerfBenchmark):
   """Specific time measurements (e.g. fps, smoothness) for WebRtc rendering."""
 
-  page_set = page_sets.WebrtcPeerconnectionPageSet
+  page_set = page_sets.WebrtcRenderingPageSet
 
   def CreateTimelineBasedMeasurementOptions(self):
-    category_filter = tracing_category_filter.TracingCategoryFilter(
+    category_filter = chrome_trace_category_filter.ChromeTraceCategoryFilter(
         filter_string='webrtc,webkit.console,blink.console')
     options = timeline_based_measurement.Options(category_filter)
     options.SetLegacyTimelineBasedMetrics(

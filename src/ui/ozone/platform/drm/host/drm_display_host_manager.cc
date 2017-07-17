@@ -7,14 +7,15 @@
 #include <fcntl.h>
 #include <stddef.h>
 #include <xf86drm.h>
+
 #include <utility>
 
-#include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/events/ozone/device/device_event.h"
@@ -32,12 +33,10 @@ namespace {
 
 typedef base::Callback<void(const base::FilePath&,
                             const base::FilePath&,
-                            scoped_ptr<DrmDeviceHandle>)>
+                            std::unique_ptr<DrmDeviceHandle>)>
     OnOpenDeviceReplyCallback;
 
 const char kDefaultGraphicsCardPattern[] = "/dev/dri/card%d";
-const char kVgemDevDriCardPath[] = "/dev/dri/";
-const char kVgemSysCardPath[] = "/sys/bus/platform/devices/vgem/drm/";
 
 const char* kDisplayActionString[] = {
     "ADD", "REMOVE", "CHANGE",
@@ -60,7 +59,7 @@ void OpenDeviceOnWorkerThread(
     const OnOpenDeviceReplyCallback& callback) {
   base::FilePath sys_path = MapDevPathToSysPath(device_path);
 
-  scoped_ptr<DrmDeviceHandle> handle(new DrmDeviceHandle());
+  std::unique_ptr<DrmDeviceHandle> handle(new DrmDeviceHandle());
   handle->Initialize(device_path, sys_path);
   reply_runner->PostTask(FROM_HERE,
                          base::Bind(callback, device_path, sys_path,
@@ -95,28 +94,12 @@ base::FilePath GetPrimaryDisplayCardPath() {
   return base::FilePath();  // Not reached.
 }
 
-base::FilePath GetVgemCardPath() {
-  base::FileEnumerator file_iter(base::FilePath(kVgemSysCardPath), false,
-                                 base::FileEnumerator::DIRECTORIES,
-                                 FILE_PATH_LITERAL("card*"));
-
-  while (!file_iter.Next().empty()) {
-    // Inspect the card%d directories in the directory and extract the filename.
-    std::string vgem_card_path =
-        kVgemDevDriCardPath + file_iter.GetInfo().GetName().BaseName().value();
-    DVLOG(1) << "VGEM card path is " << vgem_card_path;
-    return base::FilePath(vgem_card_path);
-  }
-  DVLOG(1) << "Don't support VGEM";
-  return base::FilePath();
-}
-
 class FindDrmDisplayHostById {
  public:
   explicit FindDrmDisplayHostById(int64_t display_id)
       : display_id_(display_id) {}
 
-  bool operator()(const scoped_ptr<DrmDisplayHost>& display) const {
+  bool operator()(const std::unique_ptr<DrmDisplayHost>& display) const {
     return display->snapshot()->display_id() == display_id_;
   }
 
@@ -152,8 +135,6 @@ DrmDisplayHostManager::DrmDisplayHostManager(
     }
     drm_devices_[primary_graphics_card_path_] =
         primary_graphics_card_path_sysfs;
-
-    vgem_card_path_ = GetVgemCardPath();
   }
 
   device_manager_->AddObserver(this);
@@ -164,7 +145,7 @@ DrmDisplayHostManager::DrmDisplayHostManager(
       GetAvailableDisplayControllerInfos(primary_drm_device_handle_->fd());
   has_dummy_display_ = !display_infos.empty();
   for (size_t i = 0; i < display_infos.size(); ++i) {
-    displays_.push_back(make_scoped_ptr(new DrmDisplayHost(
+    displays_.push_back(base::WrapUnique(new DrmDisplayHost(
         proxy_, CreateDisplaySnapshotParams(
                     display_infos[i], primary_drm_device_handle_->fd(),
                     primary_drm_device_handle_->sys_path(), 0, gfx::Point()),
@@ -264,8 +245,6 @@ void DrmDisplayHostManager::ProcessEvent() {
             << " for " << event.path.value();
     switch (event.action_type) {
       case DeviceEvent::ADD:
-        if (event.path == vgem_card_path_)
-          continue;
         if (drm_devices_.find(event.path) == drm_devices_.end()) {
           task_pending_ = base::WorkerPool::PostTask(
               FROM_HERE,
@@ -285,7 +264,6 @@ void DrmDisplayHostManager::ProcessEvent() {
       case DeviceEvent::REMOVE:
         DCHECK(event.path != primary_graphics_card_path_)
             << "Removing primary graphics card";
-        DCHECK(event.path != vgem_card_path_) << "Removing VGEM device";
         auto it = drm_devices_.find(event.path);
         if (it != drm_devices_.end()) {
           task_pending_ = base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -302,7 +280,7 @@ void DrmDisplayHostManager::ProcessEvent() {
 void DrmDisplayHostManager::OnAddGraphicsDevice(
     const base::FilePath& dev_path,
     const base::FilePath& sys_path,
-    scoped_ptr<DrmDeviceHandle> handle) {
+    std::unique_ptr<DrmDeviceHandle> handle) {
   if (handle->IsValid()) {
     drm_devices_[dev_path] = sys_path;
     proxy_->GpuAddGraphicsDevice(sys_path,
@@ -350,7 +328,8 @@ void DrmDisplayHostManager::OnGpuThreadReady() {
   if (!relinquish_display_control_callback_.is_null())
     GpuRelinquishedDisplayControl(false);
 
-  scoped_ptr<DrmDeviceHandle> handle = std::move(primary_drm_device_handle_);
+  std::unique_ptr<DrmDeviceHandle> handle =
+      std::move(primary_drm_device_handle_);
   {
     base::ThreadRestrictions::ScopedAllowIO allow_io;
 
@@ -379,13 +358,13 @@ void DrmDisplayHostManager::OnGpuThreadRetired() {}
 
 void DrmDisplayHostManager::GpuHasUpdatedNativeDisplays(
     const std::vector<DisplaySnapshot_Params>& params) {
-  std::vector<scoped_ptr<DrmDisplayHost>> old_displays;
+  std::vector<std::unique_ptr<DrmDisplayHost>> old_displays;
   displays_.swap(old_displays);
   for (size_t i = 0; i < params.size(); ++i) {
     auto it = std::find_if(old_displays.begin(), old_displays.end(),
                            FindDrmDisplayHostById(params[i].display_id));
     if (it == old_displays.end()) {
-      displays_.push_back(make_scoped_ptr(
+      displays_.push_back(base::WrapUnique(
           new DrmDisplayHost(proxy_, params[i], false /* is_dummy */)));
     } else {
       (*it)->UpdateDisplaySnapshot(params[i]);

@@ -114,11 +114,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                              int x,
                              int y);
 
-  // Creates and opens the front-end API channel to applicable front-end in a
-  // form of devtools agent host.
-  static content::DevToolsExternalAgentProxyDelegate*
-      CreateWebSocketAPIChannel(const std::string& path);
-
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
   void SetLoadCompletedCallback(const base::Closure& closure);
@@ -129,7 +124,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // Reloads inspected web contents as if it was triggered from DevTools.
   // Returns true if it has successfully handled reload, false if the caller
   // is to proceed reload without DevTools interception.
-  bool ReloadInspectedWebContents(bool ignore_cache);
+  bool ReloadInspectedWebContents(bool bypass_cache);
 
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
@@ -211,6 +206,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // by user.
   static void OnPageCloseCanceled(content::WebContents* contents);
 
+  content::WebContents* GetInspectedWebContents();
+
  private:
   friend class DevToolsWindowTesting;
   friend class DevToolsWindowCreationObserver;
@@ -257,8 +254,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                              const GURL& base_url,
                              bool shared_worker_frontend,
                              const std::string& remote_frontend,
-                             bool can_dock,
-                             const std::string& settings);
+                             bool can_dock);
 
   static DevToolsWindow* CreateDevToolsWindowForWorker(Profile* profile);
   static void ToggleDevToolsWindow(
@@ -297,7 +293,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
       content::WebContents* web_contents,
       SkColor color,
       const std::vector<content::ColorSuggestion>& suggestions) override;
-  void RunFileChooser(content::WebContents* web_contents,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
@@ -312,6 +308,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void SetWhitelistedShortcuts(const std::string& message) override;
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override;
+  void ReadyForTest() override;
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override;
 
@@ -323,9 +320,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void LoadCompleted();
   void UpdateBrowserToolbar();
   void UpdateBrowserWindow();
-  content::WebContents* GetInspectedWebContents();
 
-  scoped_ptr<ObserverWithAccessor> inspected_contents_observer_;
+  std::unique_ptr<ObserverWithAccessor> inspected_contents_observer_;
 
   Profile* profile_;
   content::WebContents* main_web_contents_;
@@ -342,9 +338,11 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   bool intercepted_page_beforeunload_;
   base::Closure load_completed_callback_;
   base::Closure close_callback_;
+  bool ready_for_test_;
+  base::Closure ready_for_test_callback_;
 
   base::TimeTicks inspect_element_start_time_;
-  scoped_ptr<DevToolsEventForwarder> event_forwarder_;
+  std::unique_ptr<DevToolsEventForwarder> event_forwarder_;
 
   friend class DevToolsEventForwarder;
   DISALLOW_COPY_AND_ASSIGN(DevToolsWindow);

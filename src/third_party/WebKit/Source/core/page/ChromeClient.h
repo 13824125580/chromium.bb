@@ -25,8 +25,7 @@
 #include "base/gtest_prod_util.h"
 #include "core/CoreExport.h"
 #include "core/dom/AXObjectCache.h"
-#include "core/frame/ConsoleTypes.h"
-#include "core/inspector/ConsoleAPITypes.h"
+#include "core/inspector/ConsoleTypes.h"
 #include "core/loader/FrameLoader.h"
 #include "core/loader/NavigationPolicy.h"
 #include "core/style/ComputedStyleConstants.h"
@@ -35,44 +34,49 @@
 #include "platform/PopupMenu.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "public/platform/BlameContext.h"
+#include "public/platform/WebDragOperation.h"
 #include "public/platform/WebEventListenerProperties.h"
 #include "public/platform/WebFocusType.h"
 #include "wtf/Forward.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
 class AXObject;
 class ColorChooser;
 class ColorChooserClient;
+class CompositorAnimationTimeline;
+class CompositorProxyClient;
 class DateTimeChooser;
 class DateTimeChooserClient;
 class Element;
 class FileChooser;
-class Frame;
 class FloatPoint;
+class Frame;
 class GraphicsContext;
 class GraphicsLayer;
-class GraphicsLayerFactory;
-class HitTestResult;
 class HTMLFormControlElement;
 class HTMLInputElement;
 class HTMLSelectElement;
+class HitTestResult;
 class IntRect;
 class LocalFrame;
 class Node;
 class Page;
 class PaintArtifact;
 class PopupOpeningObserver;
-class CompositorAnimationTimeline;
+class WebDragData;
 class WebFrameScheduler;
+class WebImage;
 
 struct CompositedSelection;
 struct DateTimeChooserParameters;
 struct FrameLoadRequest;
 struct GraphicsDeviceAdapter;
 struct ViewportDescription;
+struct WebPoint;
 struct WindowFeatures;
 
 class CORE_EXPORT ChromeClient : public HostWindow {
@@ -95,18 +99,32 @@ public:
 
     virtual bool hadFormInteraction() const = 0;
 
+    virtual void beginLifecycleUpdates() = 0;
+
+    // Start a system drag and drop operation.
+    virtual void startDragging(LocalFrame*, const WebDragData&, WebDragOperationsMask, const WebImage& dragImage, const WebPoint& dragImageOffset) = 0;
+    virtual bool acceptsLoadDrops() const = 0;
+
     // The LocalFrame pointer provides the ChromeClient with context about which
     // LocalFrame wants to create the new Page. Also, the newly created window
     // should not be shown to the user until the ChromeClient of the newly
     // created Page has its show method called.
     // The FrameLoadRequest parameter is only for ChromeClient to check if the
     // request could be fulfilled. The ChromeClient should not load the request.
-    virtual Page* createWindow(LocalFrame*, const FrameLoadRequest&, const WindowFeatures&, NavigationPolicy, ShouldSetOpener) = 0;
+    virtual Page* createWindow(LocalFrame*, const FrameLoadRequest&, const WindowFeatures&, NavigationPolicy) = 0;
     virtual void show(NavigationPolicy = NavigationPolicyIgnore) = 0;
 
     void setWindowFeatures(const WindowFeatures&);
 
-    virtual void didOverscroll(const FloatSize&, const FloatSize&, const FloatPoint&, const FloatSize&) = 0;
+    // All the parameters should be in viewport space. That is, if an event
+    // scrolls by 10 px, but due to a 2X page scale we apply a 5px scroll to the
+    // root frame, all of which is handled as overscroll, we should return 10px
+    // as the overscrollDelta.
+    virtual void didOverscroll(
+        const FloatSize& overscrollDelta,
+        const FloatSize& accumulatedOverscroll,
+        const FloatPoint& positionInViewport,
+        const FloatSize& velocityInViewport) = 0;
 
     virtual void setToolbarsVisible(bool) = 0;
     virtual bool toolbarsVisible() = 0;
@@ -161,7 +179,7 @@ public:
 
     virtual void annotatedRegionsChanged() = 0;
 
-    virtual PassOwnPtrWillBeRawPtr<ColorChooser> openColorChooser(LocalFrame*, ColorChooserClient*, const Color&) = 0;
+    virtual ColorChooser* openColorChooser(LocalFrame*, ColorChooserClient*, const Color&) = 0;
 
     // This function is used for:
     //  - Mandatory date/time choosers if !ENABLE(INPUT_MULTIPLE_FIELDS_UI)
@@ -169,7 +187,7 @@ public:
     //    returns true, if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
     //  - <datalist> UI for date/time input types regardless of
     //    ENABLE(INPUT_MULTIPLE_FIELDS_UI)
-    virtual PassRefPtrWillBeRawPtr<DateTimeChooser> openDateTimeChooser(DateTimeChooserClient*, const DateTimeChooserParameters&) = 0;
+    virtual DateTimeChooser* openDateTimeChooser(DateTimeChooserClient*, const DateTimeChooserParameters&) = 0;
 
     virtual void openTextDataListChooser(HTMLInputElement&)= 0;
 
@@ -177,9 +195,6 @@ public:
 
     // Asychronous request to enumerate all files in a directory chosen by the user.
     virtual void enumerateChosenDirectory(FileChooser*) = 0;
-
-    // Allows ports to customize the type of graphics layers created by this page.
-    virtual GraphicsLayerFactory* graphicsLayerFactory() const { return nullptr; }
 
     // Pass 0 as the GraphicsLayer to detach the root layer.
     // This sets the graphics layer for the LocalFrame's WebWidget, if it has
@@ -201,14 +216,14 @@ public:
 
     virtual void setEventListenerProperties(WebEventListenerClass, WebEventListenerProperties) = 0;
     virtual WebEventListenerProperties eventListenerProperties(WebEventListenerClass) const = 0;
-    virtual void setHaveScrollEventHandlers(bool) = 0;
-    virtual bool haveScrollEventHandlers() const = 0;
+    virtual void setHasScrollEventHandlers(bool) = 0;
+    virtual bool hasScrollEventHandlers() const = 0;
 
     virtual void setTouchAction(TouchAction) = 0;
 
     // Checks if there is an opened popup, called by LayoutMenuList::showPopup().
     virtual bool hasOpenedPopup() const = 0;
-    virtual PassRefPtrWillBeRawPtr<PopupMenu> openPopupMenu(LocalFrame&, HTMLSelectElement&) = 0;
+    virtual PopupMenu* openPopupMenu(LocalFrame&, HTMLSelectElement&) = 0;
     virtual DOMWindow* pagePopupWindowForTesting() const = 0;
 
     virtual void postAccessibilityNotification(AXObject*, AXObjectCache::AXNotification) { }
@@ -224,14 +239,14 @@ public:
 
     virtual bool isSVGImageChromeClient() const { return false; }
 
-    virtual bool requestPointerLock() { return false; }
-    virtual void requestPointerUnlock() { }
+    virtual bool requestPointerLock(LocalFrame*) { return false; }
+    virtual void requestPointerUnlock(LocalFrame*) {}
 
     virtual IntSize minimumWindowSize() const { return IntSize(100, 100); }
 
     virtual bool isChromeClientImpl() const { return false; }
 
-    virtual void didAssociateFormControls(const WillBeHeapVector<RefPtrWillBeMember<Element>>&, LocalFrame*) { }
+    virtual void didAssociateFormControls(const HeapVector<Member<Element>>&, LocalFrame*) { }
     virtual void didChangeValueInTextField(HTMLFormControlElement&) { }
     virtual void didEndEditingOnTextField(HTMLInputElement&) { }
     virtual void handleKeyboardEventOnTextField(HTMLInputElement&, KeyboardEvent&) { }
@@ -255,6 +270,8 @@ public:
     virtual void registerPopupOpeningObserver(PopupOpeningObserver*) = 0;
     virtual void unregisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
 
+    virtual CompositorProxyClient* createCompositorProxyClient(LocalFrame*) = 0;
+
     virtual FloatSize elasticOverscroll() const { return FloatSize(); }
 
     // Called when observed XHR, fetch, and other fetch request with non-GET
@@ -262,14 +279,17 @@ public:
     // that this is comprehensive.
     virtual void didObserveNonGetFetchFromScript() const {}
 
-    virtual PassOwnPtr<WebFrameScheduler> createFrameScheduler() = 0;
+    virtual std::unique_ptr<WebFrameScheduler> createFrameScheduler(BlameContext*) = 0;
+
+    // Returns the time of the beginning of the last beginFrame, in seconds, if any, and 0.0 otherwise.
+    virtual double lastFrameTimeMonotonic() const { return 0.0; }
 
 protected:
     ~ChromeClient() override { }
 
     virtual void showMouseOverURL(const HitTestResult&) = 0;
     virtual void setWindowRect(const IntRect&) = 0;
-    virtual bool openBeforeUnloadConfirmPanelDelegate(LocalFrame*, const String& message, bool isReload) = 0;
+    virtual bool openBeforeUnloadConfirmPanelDelegate(LocalFrame*, bool isReload) = 0;
     virtual bool openJavaScriptAlertDelegate(LocalFrame*, const String&) = 0;
     virtual bool openJavaScriptConfirmDelegate(LocalFrame*, const String&) = 0;
     virtual bool openJavaScriptPromptDelegate(LocalFrame*, const String& message, const String& defaultValue, String& result) = 0;

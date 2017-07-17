@@ -15,8 +15,8 @@
 #include "base/synchronization/waitable_event.h"
 #include "components/audio_modem/public/audio_modem_types.h"
 #include "content/public/browser/browser_thread.h"
+#include "media/audio/audio_device_description.h"
 #include "media/audio/audio_manager.h"
-#include "media/audio/audio_manager_base.h"
 #include "media/base/audio_bus.h"
 
 namespace audio_modem {
@@ -25,7 +25,8 @@ namespace {
 
 const float kProcessIntervalMs = 500.0f;  // milliseconds.
 
-void AudioBusToString(scoped_ptr<media::AudioBus> source, std::string* buffer) {
+void AudioBusToString(std::unique_ptr<media::AudioBus> source,
+                      std::string* buffer) {
   buffer->resize(source->frames() * source->channels() * sizeof(float));
   float* buffer_view = reinterpret_cast<float*>(string_as_array(buffer));
 
@@ -40,13 +41,15 @@ void AudioBusToString(scoped_ptr<media::AudioBus> source, std::string* buffer) {
 // converts our samples to the required sample rate, interleaves the samples
 // and sends them to the whispernet decoder to process.
 void ProcessSamples(
-    scoped_ptr<media::AudioBus> bus,
+    std::unique_ptr<media::AudioBus> bus,
     const AudioRecorderImpl::RecordedSamplesCallback& callback) {
   std::string samples;
   AudioBusToString(std::move(bus), &samples);
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE, base::Bind(callback, samples));
 }
+
+void OnLogMessage(const std::string& message) {}
 
 }  // namespace
 
@@ -102,7 +105,7 @@ void AudioRecorderImpl::InitializeOnAudioThread() {
     params = *params_for_testing_;
   } else {
     params = media::AudioManager::Get()->GetInputStreamParameters(
-        media::AudioManagerBase::kDefaultDeviceId);
+        media::AudioDeviceDescription::kDefaultDeviceId);
     params.set_effects(media::AudioParameters::NO_EFFECTS);
   }
 
@@ -113,7 +116,8 @@ void AudioRecorderImpl::InitializeOnAudioThread() {
   stream_ = input_stream_for_testing_
                 ? input_stream_for_testing_.get()
                 : media::AudioManager::Get()->MakeAudioInputStream(
-                      params, media::AudioManagerBase::kDefaultDeviceId);
+                      params, media::AudioDeviceDescription::kDefaultDeviceId,
+                      base::Bind(&OnLogMessage));
 
   if (!stream_ || !stream_->Open()) {
     LOG(ERROR) << "Failed to open an input stream.";
@@ -196,22 +200,6 @@ void AudioRecorderImpl::OnError(media::AudioInputStream* /* stream */) {
       FROM_HERE,
       base::Bind(&AudioRecorderImpl::StopAndCloseOnAudioThread,
                  base::Unretained(this)));
-}
-
-void AudioRecorderImpl::FlushAudioLoopForTesting() {
-  if (media::AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread())
-    return;
-
-  // Queue task on the audio thread, when it is executed, that means we've
-  // successfully executed all the tasks before us.
-  base::RunLoop rl;
-  media::AudioManager::Get()->GetTaskRunner()->PostTaskAndReply(
-      FROM_HERE,
-      base::Bind(
-          base::IgnoreResult(&AudioRecorderImpl::FlushAudioLoopForTesting),
-          base::Unretained(this)),
-      rl.QuitClosure());
-  rl.Run();
 }
 
 }  // namespace audio_modem

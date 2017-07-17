@@ -20,10 +20,12 @@
 #include "components/browser_sync/browser/profile_sync_service.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "jni/AccountChooserDialog_jni.h"
 #include "ui/android/window_android.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/range/range.h"
 
@@ -110,7 +112,9 @@ AccountChooserDialogAndroid::AccountChooserDialogAndroid(
     ScopedVector<autofill::PasswordForm> federated_credentials,
     const GURL& origin,
     const ManagePasswordsState::CredentialsCallback& callback)
-    : web_contents_(web_contents), origin_(origin) {
+    : content::WebContentsObserver(web_contents),
+      web_contents_(web_contents),
+      origin_(origin) {
   passwords_data_.set_client(
       ChromePasswordManagerClient::FromWebContents(web_contents_));
   passwords_data_.OnRequestCredentials(
@@ -128,8 +132,9 @@ void AccountChooserDialogAndroid::ShowDialog() {
               Profile::FromBrowserContext(web_contents_->GetBrowserContext())));
   base::string16 title;
   gfx::Range title_link_range = gfx::Range();
-  GetAccountChooserDialogTitleTextAndLinkRange(is_smartlock_branding_enabled,
-                                               &title, &title_link_range);
+  GetAccountChooserDialogTitleTextAndLinkRange(
+      is_smartlock_branding_enabled, local_credentials_forms().size() > 1,
+      &title, &title_link_range);
   gfx::NativeWindow native_window = web_contents_->GetTopLevelNativeWindow();
   size_t credential_array_size =
       local_credentials_forms().size() + federated_credentials_forms().size();
@@ -143,21 +148,24 @@ void AccountChooserDialogAndroid::ShowDialog() {
       password_manager::CredentialType::CREDENTIAL_TYPE_FEDERATED,
       local_credentials_forms().size());
   base::android::ScopedJavaGlobalRef<jobject> java_dialog_global;
-  java_dialog_global.Reset(Java_AccountChooserDialog_createAccountChooser(
+  const std::string origin = password_manager::GetShownOrigin(origin_);
+  base::string16 signin_button;
+  if (local_credentials_forms().size() == 1) {
+    signin_button =
+        l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_ACCOUNT_CHOOSER_SIGN_IN);
+  }
+  dialog_jobject_.Reset(Java_AccountChooserDialog_createAndShowAccountChooser(
       env, native_window->GetJavaObject().obj(),
       reinterpret_cast<intptr_t>(this), java_credentials_array.obj(),
       base::android::ConvertUTF16ToJavaString(env, title).obj(),
       title_link_range.start(), title_link_range.end(),
-      base::android::ConvertUTF8ToJavaString(
-          env, password_manager::GetShownOrigin(origin_, std::string()))
-          .obj()));
-  base::android::ScopedJavaLocalRef<jobject> java_dialog(java_dialog_global);
+      base::android::ConvertUTF8ToJavaString(env, origin).obj(),
+      base::android::ConvertUTF16ToJavaString(env, signin_button).obj()));
   net::URLRequestContextGetter* request_context =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext())
           ->GetRequestContext();
-  FetchAvatars(java_dialog_global, local_credentials_forms(), 0,
-               request_context);
-  FetchAvatars(java_dialog_global, federated_credentials_forms(),
+  FetchAvatars(dialog_jobject_, local_credentials_forms(), 0, request_context);
+  FetchAvatars(dialog_jobject_, federated_credentials_forms(),
                local_credentials_forms().size(), request_context);
 }
 
@@ -165,10 +173,12 @@ void AccountChooserDialogAndroid::OnCredentialClicked(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     jint credential_item,
-    jint credential_type) {
+    jint credential_type,
+    jboolean signin_button_clicked) {
   ChooseCredential(
       credential_item,
-      static_cast<password_manager::CredentialType>(credential_type));
+      static_cast<password_manager::CredentialType>(credential_type),
+      signin_button_clicked);
 }
 
 void AccountChooserDialogAndroid::Destroy(JNIEnv* env,
@@ -179,7 +189,7 @@ void AccountChooserDialogAndroid::Destroy(JNIEnv* env,
 void AccountChooserDialogAndroid::CancelDialog(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  ChooseCredential(-1, password_manager::CredentialType::CREDENTIAL_TYPE_EMPTY);
+  OnDialogCancel();
 }
 
 void AccountChooserDialogAndroid::OnLinkClicked(
@@ -189,6 +199,24 @@ void AccountChooserDialogAndroid::OnLinkClicked(
       GURL(password_manager::kPasswordManagerHelpCenterSmartLock),
       content::Referrer(), NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_LINK,
       false /* is_renderer_initiated */));
+}
+
+void AccountChooserDialogAndroid::WebContentsDestroyed() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_AccountChooserDialog_dismissDialog(env, dialog_jobject_.obj());
+}
+
+void AccountChooserDialogAndroid::WasHidden() {
+  // TODO(https://crbug.com/610700): once bug is fixed, this code should be
+  // gone.
+  OnDialogCancel();
+  JNIEnv* env = AttachCurrentThread();
+  Java_AccountChooserDialog_dismissDialog(env, dialog_jobject_.obj());
+}
+
+void AccountChooserDialogAndroid::OnDialogCancel() {
+  ChooseCredential(-1, password_manager::CredentialType::CREDENTIAL_TYPE_EMPTY,
+                   false /* signin_button_clicked */);
 }
 
 const std::vector<const autofill::PasswordForm*>&
@@ -203,20 +231,32 @@ AccountChooserDialogAndroid::federated_credentials_forms() const {
 
 void AccountChooserDialogAndroid::ChooseCredential(
     size_t index,
-    password_manager::CredentialType type) {
+    password_manager::CredentialType type,
+    bool signin_button_clicked) {
   using namespace password_manager;
+  password_manager::metrics_util::AccountChooserUserAction action;
   if (type == CredentialType::CREDENTIAL_TYPE_EMPTY) {
-    passwords_data_.ChooseCredential(autofill::PasswordForm(), type);
-    return;
+    passwords_data_.ChooseCredential(nullptr);
+    action = metrics_util::ACCOUNT_CHOOSER_DISMISSED;
+  } else {
+    action = signin_button_clicked
+                 ? metrics_util::ACCOUNT_CHOOSER_SIGN_IN
+                 : metrics_util::ACCOUNT_CHOOSER_CREDENTIAL_CHOSEN;
+    const auto& credentials_forms =
+        (type == CredentialType::CREDENTIAL_TYPE_PASSWORD)
+            ? local_credentials_forms()
+            : federated_credentials_forms();
+    if (index < credentials_forms.size()) {
+      passwords_data_.ChooseCredential(credentials_forms[index]);
+    }
   }
-  DCHECK(type == CredentialType::CREDENTIAL_TYPE_PASSWORD ||
-         type == CredentialType::CREDENTIAL_TYPE_FEDERATED);
-  const auto& credentials_forms =
-      (type == CredentialType::CREDENTIAL_TYPE_PASSWORD)
-          ? local_credentials_forms()
-          : federated_credentials_forms();
-  if (index < credentials_forms.size()) {
-    passwords_data_.ChooseCredential(*credentials_forms[index], type);
+
+  if (local_credentials_forms().size() == 1) {
+    password_manager::metrics_util::LogAccountChooserUserActionOneAccount(
+        action);
+  } else {
+    password_manager::metrics_util::LogAccountChooserUserActionManyAccounts(
+        action);
   }
 }
 

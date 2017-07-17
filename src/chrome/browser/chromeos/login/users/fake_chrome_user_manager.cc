@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/sys_info.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager_util.h"
@@ -28,9 +29,12 @@ class FakeSupervisedUserManager;
 FakeChromeUserManager::FakeChromeUserManager()
     : supervised_user_manager_(new FakeSupervisedUserManager),
       bootstrap_manager_(NULL),
-      multi_profile_user_controller_(NULL) {}
+      multi_profile_user_controller_(NULL) {
+  ProfileHelper::SetProfileToUserForTestingEnabled(true);
+}
 
 FakeChromeUserManager::~FakeChromeUserManager() {
+  ProfileHelper::SetProfileToUserForTestingEnabled(false);
 }
 
 const user_manager::User* FakeChromeUserManager::AddUser(
@@ -45,10 +49,20 @@ const user_manager::User* FakeChromeUserManager::AddUserWithAffiliation(
   user->SetAffiliation(is_affiliated);
   user->set_username_hash(ProfileHelper::GetUserIdHashByUserIdForTesting(
       account_id.GetUserEmail()));
-  user->SetStubImage(user_manager::UserImage(
+  user->SetStubImage(base::WrapUnique(new user_manager::UserImage(
                          *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-                             IDR_PROFILE_PICTURE_LOADING)),
+                             IDR_PROFILE_PICTURE_LOADING))),
                      user_manager::User::USER_IMAGE_PROFILE, false);
+  users_.push_back(user);
+  chromeos::ProfileHelper::Get()->SetProfileToUserMappingForTesting(user);
+  return user;
+}
+
+user_manager::User* FakeChromeUserManager::AddKioskAppUser(
+    const AccountId& account_id) {
+  user_manager::User* user = user_manager::User::CreateKioskAppUser(account_id);
+  user->set_username_hash(ProfileHelper::GetUserIdHashByUserIdForTesting(
+      account_id.GetUserEmail()));
   users_.push_back(user);
   return user;
 }
@@ -59,21 +73,17 @@ const user_manager::User* FakeChromeUserManager::AddPublicAccountUser(
       user_manager::User::CreatePublicAccountUser(account_id);
   user->set_username_hash(ProfileHelper::GetUserIdHashByUserIdForTesting(
       account_id.GetUserEmail()));
-  user->SetStubImage(user_manager::UserImage(
+  user->SetStubImage(base::WrapUnique(new user_manager::UserImage(
                          *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-                             IDR_PROFILE_PICTURE_LOADING)),
+                             IDR_PROFILE_PICTURE_LOADING))),
                      user_manager::User::USER_IMAGE_PROFILE, false);
   users_.push_back(user);
+  chromeos::ProfileHelper::Get()->SetProfileToUserMappingForTesting(user);
   return user;
 }
 
-void FakeChromeUserManager::AddKioskAppUser(
-    const AccountId& kiosk_app_account_id) {
-  user_manager::User* user =
-      user_manager::User::CreateKioskAppUser(kiosk_app_account_id);
-  user->set_username_hash(ProfileHelper::GetUserIdHashByUserIdForTesting(
-      kiosk_app_account_id.GetUserEmail()));
-  users_.push_back(user);
+bool FakeChromeUserManager::AreEphemeralUsersEnabled() const {
+  return fake_ephemeral_users_enabled_;
 }
 
 void FakeChromeUserManager::LoginUser(const AccountId& account_id) {
@@ -133,9 +143,16 @@ void FakeChromeUserManager::SwitchActiveUser(const AccountId& account_id) {
   ProfileHelper::Get()->ActiveUserHashChanged(
       ProfileHelper::GetUserIdHashByUserIdForTesting(
           account_id.GetUserEmail()));
+  active_user_ = nullptr;
   if (!users_.empty() && active_account_id_.is_valid()) {
-    for (user_manager::User* user : users_)
-      user->set_is_active(user->GetAccountId() == active_account_id_);
+    for (user_manager::User* const user : users_) {
+      if (user->GetAccountId() == active_account_id_) {
+        active_user_ = user;
+        user->set_is_active(true);
+      } else {
+        user->set_is_active(false);
+      }
+    }
   }
 }
 
@@ -152,6 +169,7 @@ void FakeChromeUserManager::RemoveUser(
 
 void FakeChromeUserManager::RemoveUserFromList(const AccountId& account_id) {
   WallpaperManager::Get()->RemoveUserWallpaperInfo(account_id);
+  chromeos::ProfileHelper::Get()->RemoveUserFromListForTesting(account_id);
   FakeUserManager::RemoveUserFromList(account_id);
 }
 

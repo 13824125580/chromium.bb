@@ -7,8 +7,9 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/android/content_video_view.h"
 #include "content/common/content_export.h"
 #include "ui/gfx/geometry/size.h"
@@ -27,7 +28,7 @@ class CONTENT_EXPORT BrowserSurfaceViewManager
   ~BrowserSurfaceViewManager();
 
   // ContentVideoView::Client overrides.
-  void SetVideoSurface(gfx::ScopedJavaSurface surface) override;
+  void SetVideoSurface(gl::ScopedJavaSurface surface) override;
   void DidExitFullscreen(bool release_media_player) override;
 
   void OnCreateFullscreenSurface(const gfx::Size& video_natural_size);
@@ -37,13 +38,21 @@ class CONTENT_EXPORT BrowserSurfaceViewManager
   // Send a message to return the surface id to the caller.
   bool SendSurfaceID(int surface_id);
 
+  // Synchronously notify the decoder that the surface is being destroyed so it
+  // can stop rendering to it. This sends a message to the GPU process. Without
+  // this, the MediaCodec decoder will start throwing IllegalStateException, and
+  // crash on some devices (http://crbug.com/598408). There is no way for us to
+  // make sure the surface outlives the decoder because Android initiates the
+  // destruction in some cases.
+  void SendDestroyingVideoSurfaceIfRequired(int surface_id);
+
   RenderFrameHost* const render_frame_host_;
 
   // The surface id of the ContentVideoView surface.
   int surface_id_;
 
   // The fullscreen view that contains a SurfaceView.
-  scoped_ptr<ContentVideoView> content_video_view_;
+  std::unique_ptr<ContentVideoView> content_video_view_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserSurfaceViewManager);
 };

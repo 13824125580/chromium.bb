@@ -29,7 +29,7 @@ static_assert(sizeof(struct in_addr) == 4, "incorrect system size of IPv4");
 static_assert(sizeof(struct in6_addr) == 16, "incorrect system size of IPv6");
 
 SOCKS5ClientSocket::SOCKS5ClientSocket(
-    scoped_ptr<ClientSocketHandle> transport_socket,
+    std::unique_ptr<ClientSocketHandle> transport_socket,
     const HostResolver::RequestInfo& req_info)
     : io_callback_(base::Bind(&SOCKS5ClientSocket::OnIOComplete,
                               base::Unretained(this))),
@@ -111,14 +111,6 @@ void SOCKS5ClientSocket::SetOmniboxSpeculation() {
 
 bool SOCKS5ClientSocket::WasEverUsed() const {
   return was_ever_used_;
-}
-
-bool SOCKS5ClientSocket::UsingTCPFastOpen() const {
-  if (transport_.get() && transport_->socket()) {
-    return transport_->socket()->UsingTCPFastOpen();
-  }
-  NOTREACHED();
-  return false;
 }
 
 bool SOCKS5ClientSocket::WasNpnNegotiated() const {

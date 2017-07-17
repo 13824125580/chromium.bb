@@ -17,10 +17,10 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_process.h"
-#include "content/common/gpu/client/gpu_memory_buffer_impl.h"
 #include "content/common/media/video_capture_messages.h"
+#include "gpu/ipc/client/gpu_memory_buffer_impl.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
@@ -31,7 +31,7 @@ namespace content {
 class VideoCaptureImpl::ClientBuffer
     : public base::RefCountedThreadSafe<ClientBuffer> {
  public:
-  ClientBuffer(scoped_ptr<base::SharedMemory> buffer, size_t buffer_size)
+  ClientBuffer(std::unique_ptr<base::SharedMemory> buffer, size_t buffer_size)
       : buffer_(std::move(buffer)), buffer_size_(buffer_size) {}
 
   base::SharedMemory* buffer() const { return buffer_.get(); }
@@ -42,7 +42,7 @@ class VideoCaptureImpl::ClientBuffer
 
   virtual ~ClientBuffer() {}
 
-  const scoped_ptr<base::SharedMemory> buffer_;
+  const std::unique_ptr<base::SharedMemory> buffer_;
   const size_t buffer_size_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientBuffer);
@@ -63,7 +63,7 @@ class VideoCaptureImpl::ClientBuffer2
     for (size_t i = 0; i < handles_.size(); ++i) {
       const size_t width = media::VideoFrame::Columns(i, format, size_.width());
       const size_t height = media::VideoFrame::Rows(i, format, size_.height());
-      buffers_.push_back(GpuMemoryBufferImpl::CreateFromHandle(
+      buffers_.push_back(gpu::GpuMemoryBufferImpl::CreateFromHandle(
           handles_[i], gfx::Size(width, height), gfx::BufferFormat::R_8,
           gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
           base::Bind(&ClientBuffer2::DestroyGpuMemoryBuffer,
@@ -191,7 +191,6 @@ void VideoCaptureImpl::StartCapture(
       }
       DVLOG(1) << "StartCapture: starting with first resolution "
                << params_.requested_format.frame_size.ToString();
-      first_frame_timestamp_ = base::TimeTicks();
       StartCaptureInternal();
     }
   }
@@ -215,6 +214,11 @@ void VideoCaptureImpl::StopCapture(int client_id) {
     client_buffer2s_.clear();
     weak_factory_.InvalidateWeakPtrs();
   }
+}
+
+void VideoCaptureImpl::RequestRefreshFrame() {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+  Send(new VideoCaptureHostMsg_RequestRefreshFrame(device_id_));
 }
 
 void VideoCaptureImpl::GetDeviceSupportedFormats(
@@ -247,7 +251,8 @@ void VideoCaptureImpl::OnBufferCreated(base::SharedMemoryHandle handle,
     return;
   }
 
-  scoped_ptr<base::SharedMemory> shm(new base::SharedMemory(handle, false));
+  std::unique_ptr<base::SharedMemory> shm(
+      new base::SharedMemory(handle, false));
   if (!shm->Map(length)) {
     DLOG(ERROR) << "OnBufferCreated: Map failed.";
     return;
@@ -298,7 +303,7 @@ void VideoCaptureImpl::OnBufferDestroyed(int buffer_id) {
 
 void VideoCaptureImpl::OnBufferReceived(
     int buffer_id,
-    base::TimeTicks timestamp,
+    base::TimeDelta timestamp,
     const base::DictionaryValue& metadata,
     media::VideoPixelFormat pixel_format,
     media::VideoFrame::StorageType storage_type,
@@ -318,18 +323,35 @@ void VideoCaptureImpl::OnBufferReceived(
                                              gpu::SyncToken(), -1.0));
     return;
   }
-  if (first_frame_timestamp_.is_null())
-    first_frame_timestamp_ = timestamp;
 
+  base::TimeTicks reference_time;
+  media::VideoFrameMetadata frame_metadata;
+  frame_metadata.MergeInternalValuesFrom(metadata);
+  const bool success = frame_metadata.GetTimeTicks(
+      media::VideoFrameMetadata::REFERENCE_TIME, &reference_time);
+  DCHECK(success);
+
+  if (first_frame_ref_time_.is_null())
+    first_frame_ref_time_ = reference_time;
+
+  // If the timestamp is not prepared, we use reference time to make a rough
+  // estimate. e.g. ThreadSafeCaptureOracle::DidCaptureFrame().
+  // TODO(miu): Fix upstream capturers to always set timestamp and reference
+  // time. See http://crbug/618407/ for tracking.
+  if (timestamp.is_zero())
+    timestamp = reference_time - first_frame_ref_time_;
+
+  // TODO(qiangchen): Change the metric name to "reference_time" and
+  // "timestamp", so that we have consistent naming everywhere.
   // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc
   TRACE_EVENT_INSTANT2("cast_perf_test", "OnBufferReceived",
                        TRACE_EVENT_SCOPE_THREAD, "timestamp",
-                       timestamp.ToInternalValue(), "time_delta",
-                       (timestamp - first_frame_timestamp_).ToInternalValue());
+                       (reference_time - base::TimeTicks()).InMicroseconds(),
+                       "time_delta", timestamp.InMicroseconds());
 
   scoped_refptr<media::VideoFrame> frame;
   BufferFinishedCallback buffer_finished_callback;
-  scoped_ptr<gpu::SyncToken> release_sync_token(new gpu::SyncToken);
+  std::unique_ptr<gpu::SyncToken> release_sync_token(new gpu::SyncToken);
   switch (storage_type) {
     case media::VideoFrame::STORAGE_GPU_MEMORY_BUFFERS: {
       const auto& iter = client_buffer2s_.find(buffer_id);
@@ -337,11 +359,8 @@ void VideoCaptureImpl::OnBufferReceived(
       scoped_refptr<ClientBuffer2> buffer = iter->second;
       const auto& handles = buffer->gpu_memory_buffer_handles();
       frame = media::VideoFrame::WrapExternalYuvGpuMemoryBuffers(
-          media::PIXEL_FORMAT_I420,
-          coded_size,
-          gfx::Rect(coded_size),
-          coded_size,
-          buffer->stride(media::VideoFrame::kYPlane),
+          media::PIXEL_FORMAT_I420, coded_size, gfx::Rect(coded_size),
+          coded_size, buffer->stride(media::VideoFrame::kYPlane),
           buffer->stride(media::VideoFrame::kUPlane),
           buffer->stride(media::VideoFrame::kVPlane),
           buffer->data(media::VideoFrame::kYPlane),
@@ -349,8 +368,7 @@ void VideoCaptureImpl::OnBufferReceived(
           buffer->data(media::VideoFrame::kVPlane),
           handles[media::VideoFrame::kYPlane],
           handles[media::VideoFrame::kUPlane],
-          handles[media::VideoFrame::kVPlane],
-          timestamp - first_frame_timestamp_);
+          handles[media::VideoFrame::kVPlane], timestamp);
       buffer_finished_callback = media::BindToCurrentLoop(
           base::Bind(&VideoCaptureImpl::OnClientBufferFinished2,
                      weak_factory_.GetWeakPtr(), buffer_id, buffer));
@@ -365,7 +383,7 @@ void VideoCaptureImpl::OnBufferReceived(
           gfx::Size(visible_rect.width(), visible_rect.height()),
           reinterpret_cast<uint8_t*>(buffer->buffer()->memory()),
           buffer->buffer_size(), buffer->buffer()->handle(),
-          0 /* shared_memory_offset */, timestamp - first_frame_timestamp_);
+          0 /* shared_memory_offset */, timestamp);
       buffer_finished_callback = media::BindToCurrentLoop(
           base::Bind(&VideoCaptureImpl::OnClientBufferFinished,
                      weak_factory_.GetWeakPtr(), buffer_id, buffer));
@@ -381,16 +399,16 @@ void VideoCaptureImpl::OnBufferReceived(
     return;
   }
 
-  frame->metadata()->SetTimeTicks(media::VideoFrameMetadata::REFERENCE_TIME,
-                                  timestamp);
   frame->AddDestructionObserver(
       base::Bind(&VideoCaptureImpl::DidFinishConsumingFrame, frame->metadata(),
                  base::Passed(&release_sync_token), buffer_finished_callback));
 
   frame->metadata()->MergeInternalValuesFrom(metadata);
 
+  // TODO(qiangchen): Dive into the full code path to let frame metadata hold
+  // reference time rather than using an extra parameter.
   for (const auto& client : clients_)
-    client.second.deliver_frame_cb.Run(frame, timestamp);
+    client.second.deliver_frame_cb.Run(frame, reference_time);
 }
 
 void VideoCaptureImpl::OnClientBufferFinished(
@@ -545,7 +563,7 @@ bool VideoCaptureImpl::RemoveClient(int client_id, ClientInfoMap* clients) {
 // static
 void VideoCaptureImpl::DidFinishConsumingFrame(
     const media::VideoFrameMetadata* metadata,
-    scoped_ptr<gpu::SyncToken> release_sync_token,
+    std::unique_ptr<gpu::SyncToken> release_sync_token,
     const BufferFinishedCallback& callback_to_io_thread) {
   // Note: This function may be called on any thread by the VideoFrame
   // destructor.  |metadata| is still valid for read-access at this point.

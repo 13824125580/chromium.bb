@@ -4,9 +4,15 @@
 
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "components/page_load_metrics/common/page_load_metrics_messages.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/test/web_contents_tester.h"
+#include "third_party/WebKit/public/web/WebInputEvent.h"
 
 namespace page_load_metrics {
 
@@ -67,12 +73,24 @@ void PageLoadMetricsObserverTestHarness::PopulateRequiredTimingFields(
         inout_timing->load_event_start;
   }
   if (!inout_timing->first_layout.is_zero() &&
-      inout_timing->response_start.is_zero()) {
-    inout_timing->response_start = inout_timing->first_layout;
+      inout_timing->dom_loading.is_zero()) {
+    inout_timing->dom_loading = inout_timing->first_layout;
   }
   if (!inout_timing->dom_content_loaded_event_start.is_zero() &&
+      inout_timing->dom_loading.is_zero()) {
+    inout_timing->dom_loading = inout_timing->dom_content_loaded_event_start;
+  }
+  if (!inout_timing->parse_stop.is_zero() &&
+      inout_timing->parse_start.is_zero()) {
+    inout_timing->parse_start = inout_timing->parse_stop;
+  }
+  if (!inout_timing->parse_start.is_zero() &&
       inout_timing->response_start.is_zero()) {
-    inout_timing->response_start = inout_timing->dom_content_loaded_event_start;
+    inout_timing->response_start = inout_timing->parse_start;
+  }
+  if (!inout_timing->dom_loading.is_zero() &&
+      inout_timing->response_start.is_zero()) {
+    inout_timing->response_start = inout_timing->dom_loading;
   }
 }
 
@@ -80,10 +98,9 @@ void PageLoadMetricsObserverTestHarness::SetUp() {
   ChromeRenderViewHostTestHarness::SetUp();
   SetContents(CreateTestWebContents());
   NavigateAndCommit(GURL("http://www.google.com"));
-  observer_ =
-      MetricsWebContentsObserver::CreateForWebContents(
-          web_contents(),
-          make_scoped_ptr(new TestPageLoadMetricsEmbedderInterface(this)));
+  observer_ = MetricsWebContentsObserver::CreateForWebContents(
+      web_contents(),
+      base::WrapUnique(new TestPageLoadMetricsEmbedderInterface(this)));
   web_contents()->WasShown();
 }
 
@@ -95,14 +112,41 @@ void PageLoadMetricsObserverTestHarness::StartNavigation(const GURL& gurl) {
 
 void PageLoadMetricsObserverTestHarness::SimulateTimingUpdate(
     const PageLoadTiming& timing) {
-  observer_->OnMessageReceived(
-      PageLoadMetricsMsg_TimingUpdated(observer_->routing_id(), timing),
-      web_contents()->GetMainFrame());
+  SimulateTimingAndMetadataUpdate(timing, PageLoadMetadata());
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateTimingAndMetadataUpdate(
+    const PageLoadTiming& timing,
+    const PageLoadMetadata& metadata) {
+  observer_->OnMessageReceived(PageLoadMetricsMsg_TimingUpdated(
+                                   observer_->routing_id(), timing, metadata),
+                               web_contents()->GetMainFrame());
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateInputEvent(
+    const blink::WebInputEvent& event) {
+  observer_->OnInputEvent(event);
 }
 
 const base::HistogramTester&
 PageLoadMetricsObserverTestHarness::histogram_tester() const {
   return histogram_tester_;
+}
+
+const PageLoadExtraInfo
+PageLoadMetricsObserverTestHarness::GetPageLoadExtraInfoForCommittedLoad() {
+  return observer_->GetPageLoadExtraInfoForCommittedLoad();
+}
+
+void PageLoadMetricsObserverTestHarness::NavigateWithPageTransitionAndCommit(
+    const GURL& url,
+    ui::PageTransition transition) {
+  controller().LoadURL(url, content::Referrer(), transition, std::string());
+  int pending_id = controller().GetPendingEntry()->GetUniqueID();
+  const bool did_create_new_entry = true;
+  content::WebContentsTester::For(web_contents())
+      ->TestDidNavigate(web_contents()->GetMainFrame(), 1, pending_id,
+                        did_create_new_entry, url, transition);
 }
 
 }  // namespace page_load_metrics

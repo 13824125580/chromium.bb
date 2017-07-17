@@ -25,6 +25,7 @@
 #ifndef AbstractAudioContext_h
 #define AbstractAudioContext_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/ActiveDOMObject.h"
@@ -39,7 +40,6 @@
 #include "platform/audio/AudioBus.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashSet.h"
-#include "wtf/MainThread.h"
 #include "wtf/RefPtr.h"
 #include "wtf/Threading.h"
 #include "wtf/Vector.h"
@@ -71,6 +71,7 @@ class MediaStreamAudioSourceNode;
 class OscillatorNode;
 class PannerNode;
 class PeriodicWave;
+class PeriodicWaveConstraints;
 class ScriptProcessorNode;
 class ScriptPromiseResolver;
 class ScriptState;
@@ -81,9 +82,8 @@ class WaveShaperNode;
 // AbstractAudioContext is the cornerstone of the web audio API and all AudioNodes are created from it.
 // For thread safety between the audio thread and the main thread, it has a rendering graph locking mechanism.
 
-class MODULES_EXPORT AbstractAudioContext : public RefCountedGarbageCollectedEventTargetWithInlineData<AbstractAudioContext>, public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(AbstractAudioContext);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(AbstractAudioContext);
+class MODULES_EXPORT AbstractAudioContext : public EventTargetWithInlineData, public ActiveScriptWrappable, public ActiveDOMObject {
+    USING_GARBAGE_COLLECTED_MIXIN(AbstractAudioContext);
     DEFINE_WRAPPERTYPEINFO();
 public:
     // The state of an audio context.  On creation, the state is Suspended. The state is Running if
@@ -112,17 +112,22 @@ public:
 
     // Document notification
     void stop() final;
-    bool hasPendingActivity() const override;
+    bool hasPendingActivity() const final;
 
-    AudioDestinationNode* destination() const { return m_destinationNode.get(); }
+    // Cannnot be called from the audio thread.
+    AudioDestinationNode* destination() const;
 
     size_t currentSampleFrame() const
     {
+        // TODO: What is the correct value for the current frame if the destination node has gone
+        // away?  0 is a valid frame.
         return m_destinationNode ? m_destinationNode->audioDestinationHandler().currentSampleFrame() : 0;
     }
 
     double currentTime() const
     {
+        // TODO: What is the correct value for the current time if the destination node has gone
+        // away? 0 is a valid time.
         return m_destinationNode ? m_destinationNode->audioDestinationHandler().currentTime() : 0;
     }
 
@@ -130,6 +135,7 @@ public:
 
     String state() const;
     AudioContextState contextState() const { return m_contextState; }
+    void throwExceptionForClosedState(ExceptionState&);
 
     AudioBuffer* createBuffer(unsigned numberOfChannels, size_t numberOfFrames, float sampleRate, ExceptionState&);
 
@@ -139,7 +145,7 @@ public:
     // Handles the promise and callbacks when |decodeAudioData| is finished decoding.
     void handleDecodeAudioData(AudioBuffer*, ScriptPromiseResolver*, AudioBufferCallback* successCallback, AudioBufferCallback* errorCallback);
 
-    AudioListener* listener() { return m_listener.get(); }
+    AudioListener* listener() { return m_listener; }
 
     virtual bool hasRealtimeConstraint() = 0;
 
@@ -168,7 +174,7 @@ public:
     ChannelMergerNode* createChannelMerger(size_t numberOfInputs, ExceptionState&);
     OscillatorNode* createOscillator(ExceptionState&);
     PeriodicWave* createPeriodicWave(DOMFloat32Array* real, DOMFloat32Array* imag, ExceptionState&);
-    PeriodicWave* createPeriodicWave(DOMFloat32Array* real, DOMFloat32Array* imag, const Dictionary&, ExceptionState&);
+    PeriodicWave* createPeriodicWave(DOMFloat32Array* real, DOMFloat32Array* imag, const PeriodicWaveConstraints&, ExceptionState&);
 
     // Close
     virtual ScriptPromise closeContext(ScriptState*) = 0;
@@ -237,7 +243,7 @@ public:
 
     // EventTarget
     const AtomicString& interfaceName() const final;
-    ExecutionContext* executionContext() const final;
+    ExecutionContext* getExecutionContext() const final;
 
     DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange);
 
@@ -250,11 +256,17 @@ public:
     virtual bool isContextClosed() const { return m_isCleared; }
 
     // Get the security origin for this audio context.
-    SecurityOrigin* securityOrigin() const;
+    SecurityOrigin* getSecurityOrigin() const;
 
     // Get the PeriodicWave for the specified oscillator type.  The table is initialized internally
     // if necessary.
     PeriodicWave* periodicWave(int type);
+
+    // Check whether the AudioContext requires a user gesture and whether the
+    // current stack is processing user gesture and record these information in
+    // a histogram.
+    void recordUserGestureState();
+
 protected:
     explicit AbstractAudioContext(Document*);
     AbstractAudioContext(Document*, unsigned numberOfChannels, size_t numberOfFrames, float sampleRate);
@@ -281,16 +293,20 @@ protected:
 
     void setClosedContextSampleRate(float newSampleRate) { m_closedContextSampleRate = newSampleRate; }
     float closedContextSampleRate() const { return m_closedContextSampleRate; }
+
+    void rejectPendingDecodeAudioDataResolvers();
+
 private:
     bool m_isCleared;
     void clear();
-
-    void throwExceptionForClosedState(ExceptionState&);
 
     // When the context goes away, there might still be some sources which
     // haven't finished playing.  Make sure to release them here.
     void releaseActiveSourceNodes();
 
+    void removeFinishedSourceNodes();
+
+    // Listener for the PannerNodes
     Member<AudioListener> m_listener;
 
     // Only accessed in the audio thread.
@@ -306,23 +322,32 @@ private:
     // this.
     HeapVector<Member<AudioNode>> m_activeSourceNodes;
 
+    // The main thread controls m_activeSourceNodes, all updates and additions
+    // are performed by it. When the audio thread marks a source node as finished,
+    // the nodes are added to |m_finishedSourceNodes| and scheduled for removal
+    // from |m_activeSourceNodes| by the main thread.
+    HashSet<UntracedMember<AudioNode>> m_finishedSourceNodes;
+
     // FIXME(dominicc): Move these to AudioContext because only
     // it creates these Promises.
     // Handle Promises for resume() and suspend()
     void resolvePromisesForResume();
     void resolvePromisesForResumeOnMainThread();
 
-    void rejectPendingResolvers();
+    // When the context is going away, reject any pending script promise resolvers.
+    virtual void rejectPendingResolvers();
 
     // True if we're in the process of resolving promises for resume().  Resolving can take some
     // time and the audio context process loop is very fast, so we don't want to call resolve an
     // excessive number of times.
     bool m_isResolvingResumePromises;
 
+    // Whether a user gesture is required to start this AudioContext.
+    bool m_userGestureRequired;
+
     unsigned m_connectionCount;
 
     // Graph locking.
-    bool m_didInitializeContextGraphMutex;
     RefPtr<DeferredTaskHandler> m_deferredTaskHandler;
 
     // The state of the AbstractAudioContext.

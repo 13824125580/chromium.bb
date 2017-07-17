@@ -9,25 +9,29 @@
 // VideoCaptureManager. Capturing is done on other threads, depending on the OS
 // specific implementation.
 
-#ifndef MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_H_
-#define MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_H_
+#ifndef MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_H_
+#define MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/files/file.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "media/base/media_export.h"
 #include "media/base/video_capture_types.h"
 #include "media/base/video_frame.h"
+#include "media/capture/capture_export.h"
+#include "media/capture/video/scoped_result_callback.h"
+#include "media/mojo/interfaces/image_capture.mojom.h"
+#include "mojo/public/cpp/bindings/array.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
 namespace tracked_objects {
@@ -36,7 +40,7 @@ class Location;
 
 namespace media {
 
-class MEDIA_EXPORT VideoCaptureDevice {
+class CAPTURE_EXPORT VideoCaptureDevice {
  public:
   // Represents a capture device name and ID.
   // You should not create an instance of this class directly by e.g. setting
@@ -46,7 +50,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
   // The reason for this is that a device name might contain platform specific
   // settings that are relevant only to the platform specific implementation of
   // VideoCaptureDevice::Create.
-  class MEDIA_EXPORT Name {
+  class CAPTURE_EXPORT Name {
    public:
     Name();
     Name(const std::string& name, const std::string& id);
@@ -62,7 +66,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
     enum CaptureApiType { MEDIA_FOUNDATION, DIRECT_SHOW, API_TYPE_UNKNOWN };
 #elif defined(OS_MACOSX)
     // Mac targets Capture Api type: it can only be set on construction.
-    enum CaptureApiType { AVFOUNDATION, QTKIT, DECKLINK, API_TYPE_UNKNOWN };
+    enum CaptureApiType { AVFOUNDATION, DECKLINK, API_TYPE_UNKNOWN };
     // For AVFoundation Api, identify devices that are built-in or USB.
     enum TransportType { USB_OR_BUILT_IN, OTHER_TRANSPORT };
 #elif defined(OS_ANDROID)
@@ -93,6 +97,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
          const CaptureApiType api_type,
          const TransportType transport_type);
 #endif
+    Name(const Name& other);
     ~Name();
 
     // Friendly name of a device
@@ -133,10 +138,6 @@ class MEDIA_EXPORT VideoCaptureDevice {
 #endif  // if defined(OS_WIN)
 #if defined(OS_MACOSX)
     TransportType transport_type() const { return transport_type_; }
-    bool is_blacklisted() const { return is_blacklisted_; }
-    void set_is_blacklisted(bool is_blacklisted) {
-      is_blacklisted_ = is_blacklisted;
-    }
 #endif  // if defined(OS_MACOSX)
 
    private:
@@ -168,8 +169,6 @@ class MEDIA_EXPORT VideoCaptureDevice {
 #endif
 #if defined(OS_MACOSX)
     TransportType transport_type_;
-    // Flag used to mark blacklisted devices for QTKit Api.
-    bool is_blacklisted_;
 #endif
     // Allow generated copy constructor and assignment.
   };
@@ -181,10 +180,10 @@ class MEDIA_EXPORT VideoCaptureDevice {
   // is actually two-in-one: clients may implement OnIncomingCapturedData() or
   // ReserveOutputBuffer() + OnIncomingCapturedVideoFrame(), or all of them.
   // All clients must implement OnError().
-  class MEDIA_EXPORT Client {
+  class CAPTURE_EXPORT Client {
    public:
     // Memory buffer returned by Client::ReserveOutputBuffer().
-    class MEDIA_EXPORT Buffer {
+    class CAPTURE_EXPORT Buffer {
      public:
       virtual ~Buffer() = 0;
       virtual int id() const = 0;
@@ -205,12 +204,19 @@ class MEDIA_EXPORT VideoCaptureDevice {
     // The format of the frame is described by |frame_format|, and is assumed to
     // be tightly packed. This method will try to reserve an output buffer and
     // copy from |data| into the output buffer. If no output buffer is
-    // available, the frame will be silently dropped.
+    // available, the frame will be silently dropped. |reference_time| is
+    // system clock time when we detect the capture happens, it is used for
+    // Audio/Video sync, not an exact presentation time for playout, because it
+    // could contain noise. |timestamp| measures the ideal time span between the
+    // first frame in the stream and the current frame; however, the time source
+    // is determined by the platform's device driver and is often not the system
+    // clock, or even has a drift with respect to system clock.
     virtual void OnIncomingCapturedData(const uint8_t* data,
                                         int length,
                                         const VideoCaptureFormat& frame_format,
                                         int clockwise_rotation,
-                                        const base::TimeTicks& timestamp) = 0;
+                                        base::TimeTicks reference_time,
+                                        base::TimeDelta timestamp) = 0;
 
     // Reserve an output buffer into which contents can be captured directly.
     // The returned Buffer will always be allocated with a memory size suitable
@@ -222,7 +228,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
     //
     // The output buffer stays reserved and mapped for use until the Buffer
     // object is destroyed or returned.
-    virtual scoped_ptr<Buffer> ReserveOutputBuffer(
+    virtual std::unique_ptr<Buffer> ReserveOutputBuffer(
         const gfx::Size& dimensions,
         VideoPixelFormat format,
         VideoPixelStorage storage) = 0;
@@ -233,14 +239,26 @@ class MEDIA_EXPORT VideoCaptureDevice {
     // In both cases, as the frame is backed by a reservation returned by
     // ReserveOutputBuffer(), delivery is guaranteed and will require no
     // additional copies in the browser process.
+    // See OnIncomingCapturedData for details of |reference_time| and
+    // |timestamp|.
     virtual void OnIncomingCapturedBuffer(
-        scoped_ptr<Buffer> buffer,
+        std::unique_ptr<Buffer> buffer,
         const VideoCaptureFormat& frame_format,
-        const base::TimeTicks& timestamp) = 0;
+        base::TimeTicks reference_time,
+        base::TimeDelta timestamp) = 0;
     virtual void OnIncomingCapturedVideoFrame(
-        scoped_ptr<Buffer> buffer,
-        const scoped_refptr<VideoFrame>& frame,
-        const base::TimeTicks& timestamp) = 0;
+        std::unique_ptr<Buffer> buffer,
+        const scoped_refptr<VideoFrame>& frame) = 0;
+
+    // Attempts to reserve the same Buffer provided in the last call to one of
+    // the OnIncomingCapturedXXX() methods. This will fail if the content of the
+    // Buffer has not been preserved, or if the |dimensions|, |format|, or
+    // |storage| disagree with how it was reserved via ReserveOutputBuffer().
+    // When this operation fails, nullptr will be returned.
+    virtual std::unique_ptr<Buffer> ResurrectLastOutputBuffer(
+        const gfx::Size& dimensions,
+        VideoPixelFormat format,
+        VideoPixelStorage storage) = 0;
 
     // An error has occurred that cannot be handled and VideoCaptureDevice must
     // be StopAndDeAllocate()-ed. |reason| is a text description of the error.
@@ -257,24 +275,55 @@ class MEDIA_EXPORT VideoCaptureDevice {
 
   virtual ~VideoCaptureDevice();
 
-  // Prepares the camera for use. After this function has been called no other
-  // applications can use the camera. StopAndDeAllocate() must be called before
-  // the object is deleted.
+  // Prepares the video capturer for use. StopAndDeAllocate() must be called
+  // before the object is deleted.
   virtual void AllocateAndStart(const VideoCaptureParams& params,
-                                scoped_ptr<Client> client) = 0;
+                                std::unique_ptr<Client> client) = 0;
 
-  // Deallocates the camera, possibly asynchronously.
+  // In cases where the video capturer self-pauses (e.g., a screen capturer
+  // where the screen's content has not changed in a while), consumers may call
+  // this to request a "refresh frame" be delivered to the Client.  This is used
+  // in a number of circumstances, such as:
+  //
+  //   1. An additional consumer of video frames is starting up and requires a
+  //      first frame (as opposed to not receiving a frame for an indeterminate
+  //      amount of time).
+  //   2. A few repeats of the same frame would allow a lossy video encoder to
+  //      improve the video quality of unchanging content.
+  //
+  // The default implementation is a no-op. VideoCaptureDevice implementations
+  // are not required to honor this request, especially if they do not
+  // self-pause and/or if honoring the request would cause them to exceed their
+  // configured maximum frame rate. Any VideoCaptureDevice that does self-pause,
+  // however, should provide an implementation of this method that makes
+  // reasonable attempts to honor these requests.
+  virtual void RequestRefreshFrame() {}
+
+  // Deallocates the video capturer, possibly asynchronously.
   //
   // This call requires the device to do the following things, eventually: put
-  // camera hardware into a state where other applications could use it, free
-  // the memory associated with capture, and delete the |client| pointer passed
-  // into AllocateAndStart.
+  // hardware into a state where other applications could use it, free the
+  // memory associated with capture, and delete the |client| pointer passed into
+  // AllocateAndStart.
   //
   // If deallocation is done asynchronously, then the device implementation must
   // ensure that a subsequent AllocateAndStart() operation targeting the same ID
   // would be sequenced through the same task runner, so that deallocation
   // happens first.
   virtual void StopAndDeAllocate() = 0;
+
+  // Retrieve the photo capabilities of the device (e.g. zoom levels etc).
+  using GetPhotoCapabilitiesCallback =
+      base::Callback<void(mojom::PhotoCapabilitiesPtr)>;
+  virtual void GetPhotoCapabilities(
+      ScopedResultCallback<GetPhotoCapabilitiesCallback> callback);
+
+  // Asynchronously takes a photo, possibly reconfiguring the capture objects
+  // and/or interrupting the capture flow. Runs |callback| on the thread
+  // where TakePhoto() is called, if the photo was successfully taken.
+  using TakePhotoCallback =
+      base::Callback<void(mojo::String, mojo::Array<uint8_t>)>;
+  virtual void TakePhoto(ScopedResultCallback<TakePhotoCallback> callback);
 
   // Gets the power line frequency, either from the params if specified by the
   // user or from the current system time zone.
@@ -289,4 +338,4 @@ class MEDIA_EXPORT VideoCaptureDevice {
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_H_
+#endif  // MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_H_

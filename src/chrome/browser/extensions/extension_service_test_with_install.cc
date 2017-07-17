@@ -87,7 +87,7 @@ void ExtensionServiceTestWithInstall::PackCRX(const base::FilePath& dir_path,
 
   ASSERT_TRUE(base::DeleteFile(crx_path, false));
 
-  scoped_ptr<ExtensionCreator> creator(new ExtensionCreator());
+  std::unique_ptr<ExtensionCreator> creator(new ExtensionCreator());
   ASSERT_TRUE(creator->Run(dir_path,
                            crx_path,
                            pem_path,
@@ -197,7 +197,7 @@ const Extension* ExtensionServiceTestWithInstall::VerifyCrxInstall(
   std::vector<base::string16> errors = GetErrors();
   const Extension* extension = nullptr;
   if (install_state != INSTALL_FAILED) {
-    if (install_state == INSTALL_NEW)
+    if (install_state == INSTALL_NEW || install_state == INSTALL_WITHOUT_LOAD)
       ++expected_extensions_count_;
 
     EXPECT_TRUE(installed_) << path.value();
@@ -211,6 +211,7 @@ const Extension* ExtensionServiceTestWithInstall::VerifyCrxInstall(
 
     if (install_state == INSTALL_WITHOUT_LOAD) {
       EXPECT_EQ(0u, loaded_.size()) << path.value();
+      extension = installed_;
     } else {
       EXPECT_EQ(1u, loaded_.size()) << path.value();
       size_t actual_extension_count =

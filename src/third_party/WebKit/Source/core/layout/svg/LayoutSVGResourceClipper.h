@@ -47,13 +47,13 @@ public:
     SVGUnitTypes::SVGUnitType clipPathUnits() const { return toSVGClipPathElement(element())->clipPathUnits()->currentValue()->enumValue(); }
 
     bool asPath(const AffineTransform&, const FloatRect& referenceBox, Path&);
-    PassRefPtr<const SkPicture> createContentPicture(AffineTransform&, const FloatRect&, GraphicsContext&);
+    PassRefPtr<const SkPicture> createContentPicture();
 
     bool hasCycle() { return m_inClipExpansion; }
     void beginClipExpansion() { ASSERT(!m_inClipExpansion); m_inClipExpansion = true; }
     void endClipExpansion() { ASSERT(m_inClipExpansion); m_inClipExpansion = false; }
 private:
-    void calculateClipContentPaintInvalidationRect();
+    void calculateLocalClipBounds();
 
     // Return true if the clip path was calculated or a cached value is available.
     bool calculateClipContentPathIfNeeded();
@@ -64,7 +64,7 @@ private:
     // Cache of the clip path picture when falling back to masking for clipping.
     RefPtr<const SkPicture> m_clipContentPicture;
 
-    FloatRect m_clipBoundaries;
+    FloatRect m_localClipBounds;
 
     // Reference cycle detection.
     bool m_inClipExpansion;

@@ -26,6 +26,8 @@
 #ifndef CSSFontFaceSource_h
 #define CSSFontFaceSource_h
 
+#include "core/CoreExport.h"
+#include "platform/fonts/FontCacheKey.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
 #include "wtf/HashMap.h"
@@ -36,8 +38,7 @@ class CSSFontFace;
 class FontDescription;
 class SimpleFontData;
 
-class CSSFontFaceSource : public NoBaseWillBeGarbageCollectedFinalized<CSSFontFaceSource> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CSSFontFaceSource);
+class CORE_EXPORT CSSFontFaceSource : public GarbageCollectedFinalized<CSSFontFaceSource> {
     WTF_MAKE_NONCOPYABLE(CSSFontFaceSource);
 public:
     virtual ~CSSFontFaceSource();
@@ -54,6 +55,8 @@ public:
     virtual bool isLocalFontAvailable(const FontDescription&) { return false; }
     virtual void beginLoadIfNeeded() { }
 
+    virtual bool isBlank() { return false; }
+
     // For UMA reporting
     virtual bool hadBlankText() { return false; }
 
@@ -63,9 +66,9 @@ protected:
     CSSFontFaceSource();
     virtual PassRefPtr<SimpleFontData> createFontData(const FontDescription&) = 0;
 
-    using FontDataTable = HashMap<unsigned, RefPtr<SimpleFontData>>; // The hash key is composed of size synthetic styles.
+    using FontDataTable = HashMap<FontCacheKey, RefPtr<SimpleFontData>, FontCacheKeyHash, FontCacheKeyTraits>;
 
-    RawPtrWillBeMember<CSSFontFace> m_face; // Our owning font face.
+    Member<CSSFontFace> m_face; // Our owning font face.
     FontDataTable m_fontDataTable;
 };
 

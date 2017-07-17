@@ -29,6 +29,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "ipc/ipc_platform_file.h"
 
 using content::BrowserThread;
@@ -86,10 +87,6 @@ SpellcheckService::SpellcheckService(content::BrowserContext* context)
       first_of_dictionaries,
       &language_code,
       &country_code);
-
-  // SHEZ: Remove feedback sender
-  // feedback_sender_.reset(new spellcheck::FeedbackSender(
-  //     context->GetRequestContext(), language_code, country_code));
 
   pref_change_registrar_.Add(
       prefs::kSpellCheckDictionaries,
@@ -208,9 +205,9 @@ void SpellcheckService::InitForRenderer(content::RenderProcessHost* process) {
     bdict_languages.back().language = hunspell_dictionary->GetLanguage();
     bdict_languages.back().file =
         hunspell_dictionary->GetDictionaryFile().IsValid()
-            ? IPC::GetFileHandleForProcess(
+            ? IPC::GetPlatformFileForTransit(
                   hunspell_dictionary->GetDictionaryFile().GetPlatformFile(),
-                  process->GetHandle(), false)
+                  false)
             : IPC::InvalidPlatformFileForTransit();
   }
 
@@ -255,11 +252,14 @@ void SpellcheckService::LoadHunspellDictionaries() {
   const base::ListValue* dictionary_values =
       prefs->GetList(prefs::kSpellCheckDictionaries);
 
-  for (const base::Value* dictionary_value : *dictionary_values) {
+  for (const auto& dictionary_value : *dictionary_values) {
     std::string dictionary;
     dictionary_value->GetAsString(&dictionary);
     hunspell_dictionaries_.push_back(new SpellcheckHunspellDictionary(
-        dictionary, context_->AllowDictionaryDownloads() ? context_->GetRequestContext() : 0, this));
+        dictionary,
+        content::BrowserContext::GetDefaultStoragePartition(context_)->
+            GetURLRequestContext(),
+        this));
     hunspell_dictionaries_.back()->AddObserver(this);
     hunspell_dictionaries_.back()->Load();
   }
@@ -290,10 +290,8 @@ bool SpellcheckService::UnloadExternalDictionary(
 void SpellcheckService::Observe(int type,
                                 const content::NotificationSource& source,
                                 const content::NotificationDetails& details) {
-  DCHECK(type == content::NOTIFICATION_RENDERER_PROCESS_CREATED);
-  content::RenderProcessHost* process =
-      content::Source<content::RenderProcessHost>(source).ptr();
-  InitForRenderer(process);
+  DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
+  InitForRenderer(content::Source<content::RenderProcessHost>(source).ptr());
 }
 
 // content::SpellcheckData::Observer implementation.

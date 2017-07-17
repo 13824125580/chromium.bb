@@ -67,22 +67,6 @@ struct ConfigurationInfo {
   array<InterfaceInfo> interfaces;
 };
 
-struct WebUsbFunctionSubset {
-  uint8 first_interface;
-  array<string> origins;
-};
-
-struct WebUsbConfigurationSubset {
-  uint8 configuration_value;
-  array<string> origins;
-  array<WebUsbFunctionSubset> functions;
-};
-
-struct WebUsbDescriptorSet {
-  array<string> origins;
-  array<WebUsbConfigurationSubset> configurations;
-};
-
 struct DeviceInfo {
   string guid;
   uint8 usb_version_major;
@@ -99,8 +83,8 @@ struct DeviceInfo {
   string? manufacturer_name;
   string? product_name;
   string? serial_number;
+  uint8 active_configuration;
   array<ConfigurationInfo> configurations;
-  WebUsbDescriptorSet? webusb_allowed_origins;
 };
 
 struct ControlTransferParams {
@@ -152,10 +136,6 @@ interface Device {
   // Retrieve a DeviceInfo struct containing metadata about the device,
   // including the set of all available device configurations.
   GetDeviceInfo() => (DeviceInfo? info);
-
-  // Retrieves the |configuration_value| of the device's currently active
-  // configuration. Will return 0 if the device is unconfigured.
-  GetConfiguration() => (uint8 value);
 
   // Opens the device. Methods below require the device be opened first.
   Open() => (OpenDeviceError error);

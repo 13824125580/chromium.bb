@@ -28,15 +28,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "core/dom/ActiveDOMObject.h"
+
 #include "core/dom/Document.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
 class MockActiveDOMObject final : public GarbageCollectedFinalized<MockActiveDOMObject>, public ActiveDOMObject {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MockActiveDOMObject);
+    USING_GARBAGE_COLLECTED_MIXIN(MockActiveDOMObject);
 public:
     explicit MockActiveDOMObject(ExecutionContext* context) : ActiveDOMObject(context) { }
 
@@ -59,8 +62,8 @@ protected:
     MockActiveDOMObject& activeDOMObject() { return *m_activeDOMObject; }
 
 private:
-    OwnPtr<DummyPageHolder> m_srcPageHolder;
-    OwnPtr<DummyPageHolder> m_destPageHolder;
+    std::unique_ptr<DummyPageHolder> m_srcPageHolder;
+    std::unique_ptr<DummyPageHolder> m_destPageHolder;
     Persistent<MockActiveDOMObject> m_activeDOMObject;
 };
 

@@ -16,14 +16,14 @@
 #include <string>
 #include <vector>
 
+#include "webrtc/base/scoped_ref_ptr.h"
+#include "webrtc/modules/audio_coding/codecs/audio_decoder_factory.h"
+#include "webrtc/common_types.h"
 #include "webrtc/config.h"
-#include "webrtc/stream.h"
 #include "webrtc/transport.h"
 #include "webrtc/typedefs.h"
 
 namespace webrtc {
-
-class AudioDecoder;
 class AudioSinkInterface;
 
 // WORK IN PROGRESS
@@ -31,7 +31,7 @@ class AudioSinkInterface;
 // of WebRtc/Libjingle. Please use the VoiceEngine API instead.
 // See: https://bugs.chromium.org/p/webrtc/issues/detail?id=4690
 
-class AudioReceiveStream : public ReceiveStream {
+class AudioReceiveStream {
  public:
   struct Stats {
     uint32_t remote_ssrc = 0;
@@ -79,11 +79,13 @@ class AudioReceiveStream : public ReceiveStream {
       // for details.
       bool transport_cc = false;
 
+      // See NackConfig for description.
+      NackConfig nack;
+
       // RTP header extensions used for the received stream.
       std::vector<RtpExtension> extensions;
     } rtp;
 
-    Transport* receive_transport = nullptr;
     Transport* rtcp_send_transport = nullptr;
 
     // Underlying VoiceEngine handle, used to map AudioReceiveStream to lower-
@@ -102,7 +104,16 @@ class AudioReceiveStream : public ReceiveStream {
     // Call::CreateReceiveStream().
     // TODO(solenberg): Use unique_ptr<> once our std lib fully supports C++11.
     std::map<uint8_t, AudioDecoder*> decoder_map;
+
+    rtc::scoped_refptr<AudioDecoderFactory> decoder_factory;
   };
+
+  // Starts stream activity.
+  // When a stream is active, it can receive, process and deliver packets.
+  virtual void Start() = 0;
+  // Stops stream activity.
+  // When a stream is stopped, it can't receive, process or deliver packets.
+  virtual void Stop() = 0;
 
   virtual Stats GetStats() const = 0;
 
@@ -115,6 +126,13 @@ class AudioReceiveStream : public ReceiveStream {
   // is being pulled+rendered and/or if audio is being pulled for the purposes
   // of feeding to the AEC.
   virtual void SetSink(std::unique_ptr<AudioSinkInterface> sink) = 0;
+
+  // Sets playback gain of the stream, applied when mixing, and thus after it
+  // is potentially forwarded to any attached AudioSinkInterface implementation.
+  virtual void SetGain(float gain) = 0;
+
+ protected:
+  virtual ~AudioReceiveStream() {}
 };
 }  // namespace webrtc
 

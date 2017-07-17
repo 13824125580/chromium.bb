@@ -72,7 +72,7 @@ class SlowHandler : public WebUIMessageHandler {
   void LoadComplete(const base::ListValue* args);
 
   Profile* profile_;
-  scoped_ptr<PrefChangeRegistrar> user_pref_registrar_;
+  std::unique_ptr<PrefChangeRegistrar> user_pref_registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(SlowHandler);
 };
@@ -118,7 +118,7 @@ void SlowHandler::UpdatePage() {
   PrefService* pref_service = profile_->GetPrefs();
   bool enabled = pref_service->GetBoolean(prefs::kPerformanceTracingEnabled);
   base::FundamentalValue pref_value(enabled);
-  web_ui()->CallJavascriptFunction(kJsApiTracingPrefChanged, pref_value);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsApiTracingPrefChanged, pref_value);
 }
 
 // SlowUI -----------------------------------------------------------------

@@ -38,6 +38,10 @@ VendorID GetVendorID(const FunctionsGL *functions)
     {
         return VENDOR_ID_AMD;
     }
+    else if (nativeVendorString.find("Qualcomm") != std::string::npos)
+    {
+        return VENDOR_ID_QUALCOMM;
+    }
     else
     {
         return VENDOR_ID_UNKNOWN;
@@ -289,6 +293,24 @@ void GenerateCaps(const FunctionsGL *functions, gl::Caps *caps, gl::TextureCapsM
         // Doesn't impact supported version
     }
 
+    if (functions->isAtLeastGL(gl::Version(4, 1)) ||
+        functions->hasGLExtension("GL_ARB_get_program_binary") ||
+        functions->isAtLeastGLES(gl::Version(3, 0)) ||
+        functions->hasGLExtension("GL_OES_get_program_binary"))
+    {
+        // Able to support the GL_PROGRAM_BINARY_ANGLE format as long as another program binary
+        // format is available.
+        GLint numBinaryFormats = QuerySingleGLInt(functions, GL_NUM_PROGRAM_BINARY_FORMATS_OES);
+        if (numBinaryFormats > 0)
+        {
+            caps->programBinaryFormats.push_back(GL_PROGRAM_BINARY_ANGLE);
+        }
+    }
+    else
+    {
+        // Doesn't impact supported version
+    }
+
     // glGetShaderPrecisionFormat is not available until desktop GL version 4.1 or GL_ARB_ES2_compatibility exists
     if (functions->isAtLeastGL(gl::Version(4, 1)) || functions->hasGLExtension("GL_ARB_ES2_compatibility") ||
         functions->isAtLeastGLES(gl::Version(2, 0)))
@@ -514,6 +536,17 @@ void GenerateCaps(const FunctionsGL *functions, gl::Caps *caps, gl::TextureCapsM
         LimitVersion(maxSupportedESVersion, gl::Version(2, 0));
     }
 
+    // Check if index constant sampler array indexing is supported
+    if (!functions->isAtLeastGL(gl::Version(4, 0)) &&
+        !functions->isAtLeastGLES(gl::Version(2, 0)) &&
+        !functions->hasExtension("GL_ARB_gpu_shader5"))
+    {
+        // This should also be required for ES2 but there are some driver support index constant
+        // sampler array indexing without meeting the requirements above. Don't limit their ES
+        // version as it would break WebGL for some users.
+        LimitVersion(maxSupportedESVersion, gl::Version(2, 0));
+    }
+
     // Check if sampler objects are supported
     if (!functions->isAtLeastGL(gl::Version(3, 3)) &&
         !functions->hasGLExtension("GL_ARB_sampler_objects") &&
@@ -564,15 +597,24 @@ void GenerateCaps(const FunctionsGL *functions, gl::Caps *caps, gl::TextureCapsM
     // updated.
     caps->maxVertexUniformVectors = std::min(1024u, caps->maxVertexUniformVectors);
     caps->maxVertexUniformComponents =
-        std::min(caps->maxVertexUniformVectors / 4, caps->maxVertexUniformComponents);
+        std::min(caps->maxVertexUniformVectors * 4, caps->maxVertexUniformComponents);
     caps->maxFragmentUniformVectors = std::min(1024u, caps->maxFragmentUniformVectors);
     caps->maxFragmentUniformComponents =
-        std::min(caps->maxFragmentUniformVectors / 4, caps->maxFragmentUniformComponents);
+        std::min(caps->maxFragmentUniformVectors * 4, caps->maxFragmentUniformComponents);
+
+    // If it is not possible to support reading buffer data back, a shadow copy of the buffers must
+    // be held. This disallows writing to buffers indirectly through transform feedback, thus
+    // disallowing ES3.
+    if (!CanMapBufferForRead(functions))
+    {
+        LimitVersion(maxSupportedESVersion, gl::Version(2, 0));
+    }
 
     // Extension support
     extensions->setTextureExtensionSupport(*textureCapsMap);
     extensions->elementIndexUint = functions->standard == STANDARD_GL_DESKTOP ||
                                    functions->isAtLeastGLES(gl::Version(3, 0)) || functions->hasGLESExtension("GL_OES_element_index_uint");
+    extensions->getProgramBinary = caps->programBinaryFormats.size() > 0;
     extensions->readFormatBGRA = functions->isAtLeastGL(gl::Version(1, 2)) || functions->hasGLExtension("GL_EXT_bgra") ||
                                  functions->hasGLESExtension("GL_EXT_read_format_bgra");
     extensions->mapBuffer = functions->isAtLeastGL(gl::Version(1, 5)) ||
@@ -630,10 +672,23 @@ void GenerateCaps(const FunctionsGL *functions, gl::Caps *caps, gl::TextureCapsM
             QueryQueryValue(functions, GL_TIMESTAMP, GL_QUERY_COUNTER_BITS);
     }
 
-    // ANGLE emulates vertex array objects in its GL layer
-    extensions->vertexArrayObject = true;
+    // the EXT_multisample_compatibility is written against ES3.1 but can apply
+    // to earlier versions so therefore we're only checking for the extension string
+    // and not the specific GLES version.
+    extensions->multisampleCompatibility = functions->isAtLeastGL(gl::Version(1, 3)) ||
+        functions->hasGLESExtension("GL_EXT_multisample_compatibility");
 
-    extensions->noError = true;
+    extensions->framebufferMixedSamples =
+        functions->hasGLExtension("GL_NV_framebuffer_mixed_samples") ||
+        functions->hasGLESExtension("GL_NV_framebuffer_mixed_samples");
+
+    // if NV_path_rendering is to be supported then EXT_direct_state_access
+    // must also be available. NV_path_rendering needs some of the matrix loads
+    // from this extension.
+    extensions->pathRendering = (functions->hasGLExtension("GL_NV_path_rendering") &&
+                                 functions->hasGLExtension("GL_EXT_direct_state_access")) ||
+                                (functions->hasGLESExtension("GL_NV_path_rendering") &&
+                                 functions->hasGLESExtension("GL_EXT_direct_state_access"));
 }
 
 void GenerateWorkarounds(const FunctionsGL *functions, WorkaroundsGL *workarounds)
@@ -658,8 +713,64 @@ void GenerateWorkarounds(const FunctionsGL *functions, WorkaroundsGL *workaround
 
     workarounds->finishDoesNotCauseQueriesToBeAvailable =
         functions->standard == STANDARD_GL_DESKTOP && vendor == VENDOR_ID_NVIDIA;
+
+    // TODO(cwallez): Disable this workaround for MacOSX versions 10.9 or later.
+    workarounds->alwaysCallUseProgramAfterLink = true;
+
+    workarounds->unpackOverlappingRowsSeparatelyUnpackBuffer = vendor == VENDOR_ID_NVIDIA;
 }
 
 }
 
+bool CanMapBufferForRead(const FunctionsGL *functions)
+{
+    return (functions->mapBufferRange != nullptr) ||
+           (functions->mapBuffer != nullptr && functions->standard == STANDARD_GL_DESKTOP);
+}
+
+uint8_t *MapBufferRangeWithFallback(const FunctionsGL *functions,
+                                    GLenum target,
+                                    size_t offset,
+                                    size_t length,
+                                    GLbitfield access)
+{
+    if (functions->mapBufferRange != nullptr)
+    {
+        return reinterpret_cast<uint8_t *>(
+            functions->mapBufferRange(target, offset, length, access));
+    }
+    else if (functions->mapBuffer != nullptr &&
+             (functions->standard == STANDARD_GL_DESKTOP || access == GL_MAP_WRITE_BIT))
+    {
+        // Only the read and write bits are supported
+        ASSERT((access & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT)) != 0);
+
+        GLenum accessEnum = 0;
+        if (access == (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))
+        {
+            accessEnum = GL_READ_WRITE;
+        }
+        else if (access == GL_MAP_READ_BIT)
+        {
+            accessEnum = GL_READ_ONLY;
+        }
+        else if (access == GL_MAP_WRITE_BIT)
+        {
+            accessEnum = GL_WRITE_ONLY;
+        }
+        else
+        {
+            UNREACHABLE();
+            return nullptr;
+        }
+
+        return reinterpret_cast<uint8_t *>(functions->mapBuffer(target, accessEnum)) + offset;
+    }
+    else
+    {
+        // No options available
+        UNREACHABLE();
+        return nullptr;
+    }
+}
 }

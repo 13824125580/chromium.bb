@@ -125,7 +125,7 @@ static bool isValidPropertyName(const String& name)
 static AtomicString convertPropertyNameToAttributeName(const String& name)
 {
     StringBuilder builder;
-    builder.appendLiteral("data-");
+    builder.append("data-");
 
     unsigned length = name.length();
     for (unsigned i = 0; i < length; ++i) {
@@ -140,18 +140,6 @@ static AtomicString convertPropertyNameToAttributeName(const String& name)
 
     return builder.toAtomicString();
 }
-
-#if !ENABLE(OILPAN)
-void DatasetDOMStringMap::ref()
-{
-    m_element->ref();
-}
-
-void DatasetDOMStringMap::deref()
-{
-    m_element->deref();
-}
-#endif
 
 void DatasetDOMStringMap::getNames(Vector<String>& names)
 {

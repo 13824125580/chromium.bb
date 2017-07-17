@@ -61,7 +61,7 @@ bool StyleSheetCandidate::isCSSStyle() const
 
 Document* StyleSheetCandidate::importedDocument() const
 {
-    ASSERT(isImport());
+    DCHECK(isImport());
     return toHTMLLinkElement(node()).import();
 }
 
@@ -80,12 +80,6 @@ bool StyleSheetCandidate::isEnabledViaScript() const
 bool StyleSheetCandidate::isEnabledAndLoading() const
 {
     return isHTMLLink() && !toHTMLLinkElement(node()).isDisabled() && toHTMLLinkElement(node()).styleSheetIsLoading();
-}
-
-bool StyleSheetCandidate::hasPreferrableName(const String& currentPreferrableName) const
-{
-    ASSERT(isEnabledAndLoading() || sheet());
-    return !isEnabledViaScript() && !title().isEmpty() && !isAlternate() && currentPreferrableName.isEmpty();
 }
 
 bool StyleSheetCandidate::canBeActivated(const String& currentPreferrableName) const

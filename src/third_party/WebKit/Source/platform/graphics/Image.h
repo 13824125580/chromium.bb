@@ -34,7 +34,6 @@
 #include "platform/graphics/ImageAnimationPolicy.h"
 #include "platform/graphics/ImageObserver.h"
 #include "platform/graphics/ImageOrientation.h"
-#include "third_party/skia/include/core/SkCanvas.h"
 #include "wtf/Assertions.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/PassRefPtr.h"
@@ -43,7 +42,10 @@
 #include "wtf/text/WTFString.h"
 
 class SkBitmap;
+class SkCanvas;
 class SkImage;
+class SkMatrix;
+class SkPaint;
 
 namespace blink {
 
@@ -93,11 +95,6 @@ public:
     virtual bool usesContainerSize() const { return false; }
     virtual bool hasRelativeSize() const { return false; }
 
-    // Computes (extracts) the intrinsic dimensions and ratio from the Image. The intrinsic ratio
-    // will be the 'viewport' of the image. (Same as the dimensions for a raster image. For SVG
-    // images it can be the dimensions defined by the 'viewBox'.)
-    virtual void computeIntrinsicDimensions(FloatSize& intrinsicSize, FloatSize& intrinsicRatio);
-
     virtual IntSize size() const = 0;
     IntRect rect() const { return IntRect(IntPoint(), size()); }
     int width() const { return size().width(); }
@@ -109,7 +106,7 @@ public:
 
     virtual String filenameExtension() const { return String(); } // null string if unknown
 
-    virtual void destroyDecodedData(bool destroyAll) = 0;
+    virtual void destroyDecodedData() = 0;
 
     SharedBuffer* data() { return m_encodedImageData.get(); }
 
@@ -117,7 +114,6 @@ public:
     // It will automatically pause once all observers no longer want to render the image anywhere.
     enum CatchUpAnimation { DoNotCatchUp, CatchUp };
     virtual void startAnimation(CatchUpAnimation = CatchUp) { }
-    virtual void stopAnimation() {}
     virtual void resetAnimation() {}
 
     // True if this image can potentially animate.
@@ -134,8 +130,10 @@ public:
     virtual void advanceAnimationForTesting() { }
 
     // Typically the ImageResource that owns us.
-    ImageObserver* imageObserver() const { return m_imageObserver; }
-    void setImageObserver(ImageObserver* observer) { m_imageObserver = observer; }
+    ImageObserver* getImageObserver() const { return m_imageObserverDisabled ? nullptr : m_imageObserver; }
+    void clearImageObserver() { m_imageObserver = nullptr; }
+    // Do not call setImageObserverDisabled() other than from ImageObserverDisabler to avoid interleaved accesses to |m_imageObserverDisabled|.
+    void setImageObserverDisabled(bool disabled) { m_imageObserverDisabled = disabled; }
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
@@ -153,6 +151,19 @@ public:
 
     virtual void draw(SkCanvas*, const SkPaint&, const FloatRect& dstRect, const FloatRect& srcRect, RespectImageOrientationEnum, ImageClampingMode) = 0;
 
+    virtual bool applyShader(SkPaint&, const SkMatrix& localMatrix);
+
+    // Compute the tile which contains a given point (assuming a repeating tile grid).
+    // The point and returned value are in destination grid space.
+    static FloatRect computeTileContaining(const FloatPoint&, const FloatSize& tileSize,
+        const FloatPoint& tilePhase, const FloatSize& tileSpacing);
+
+    // Compute the image subset which gets mapped onto dest, when the whole image is drawn into
+    // tile.  Assumes the tile contains dest.  The tile rect is in destination grid space while
+    // the return value is in image coordinate space.
+    static FloatRect computeSubsetForTile(const FloatRect& tile, const FloatRect& dest,
+        const FloatSize& imageSize);
+
 protected:
     Image(ImageObserver* = 0);
 
@@ -167,7 +178,8 @@ private:
     //
     // The observer (an ImageResource) is an untraced member, with the ImageResource
     // being responsible of clearing itself out.
-    RawPtrWillBeUntracedMember<ImageObserver> m_imageObserver;
+    UntracedMember<ImageObserver> m_imageObserver;
+    bool m_imageObserverDisabled;
 };
 
 #define DEFINE_IMAGE_TYPE_CASTS(typeName) \

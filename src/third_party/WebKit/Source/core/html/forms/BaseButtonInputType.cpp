@@ -34,6 +34,7 @@
 #include "core/HTMLNames.h"
 #include "core/dom/Text.h"
 #include "core/dom/shadow/ShadowRoot.h"
+#include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/layout/LayoutButton.h"
@@ -42,9 +43,26 @@ namespace blink {
 
 using namespace HTMLNames;
 
+BaseButtonInputType::BaseButtonInputType(HTMLInputElement& element)
+    : InputType(element)
+    , KeyboardClickableInputTypeView(element)
+{
+}
+
+DEFINE_TRACE(BaseButtonInputType)
+{
+    KeyboardClickableInputTypeView::trace(visitor);
+    InputType::trace(visitor);
+}
+
+InputTypeView* BaseButtonInputType::createView()
+{
+    return this;
+}
+
 void BaseButtonInputType::createShadowSubtree()
 {
-    ASSERT(element().userAgentShadowRoot());
+    DCHECK(element().userAgentShadowRoot());
     element().userAgentShadowRoot()->appendChild(Text::create(element().document(), displayValue()));
 }
 
@@ -80,6 +98,13 @@ bool BaseButtonInputType::storesValueSeparateFromAttribute()
 void BaseButtonInputType::setValue(const String& sanitizedValue, bool, TextFieldEventBehavior)
 {
     element().setAttribute(valueAttr, AtomicString(sanitizedValue));
+}
+
+bool BaseButtonInputType::matchesDefaultPseudoClass()
+{
+    // HTMLFormElement::findDefaultButton() traverses the tree. So we check
+    // canBeSuccessfulSubmitButton() first for early return.
+    return canBeSuccessfulSubmitButton() && element().form() && element().form()->findDefaultButton() == &element();
 }
 
 } // namespace blink

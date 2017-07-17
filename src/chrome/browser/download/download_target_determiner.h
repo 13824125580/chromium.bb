@@ -5,16 +5,18 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_TARGET_DETERMINER_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_TARGET_DETERMINER_H_
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/download/download_target_determiner_delegate.h"
 #include "chrome/browser/download/download_target_info.h"
+#include "chrome/common/safe_browsing/download_file_types.pb.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager_delegate.h"
@@ -53,7 +55,7 @@ enum DownloadDangerType;
 class DownloadTargetDeterminer
     : public content::DownloadItem::Observer {
  public:
-  typedef base::Callback<void(scoped_ptr<DownloadTargetInfo>)>
+  typedef base::Callback<void(std::unique_ptr<DownloadTargetInfo>)>
       CompletionCallback;
 
   // Start the process of determing the target of |download|.
@@ -297,7 +299,7 @@ class DownloadTargetDeterminer
   //
   // If |require_explicit_consent| is non-null then the pointed bool will be set
   // to true if the download requires explicit user consent.
-  download_util::DownloadDangerLevel GetDangerLevel(
+  safe_browsing::DownloadFileType::DangerLevel GetDangerLevel(
       PriorVisitsToReferrer visits) const;
 
   // content::DownloadItem::Observer
@@ -310,7 +312,7 @@ class DownloadTargetDeterminer
   bool create_target_directory_;
   DownloadPathReservationTracker::FilenameConflictAction conflict_action_;
   content::DownloadDangerType danger_type_;
-  download_util::DownloadDangerLevel danger_level_;
+  safe_browsing::DownloadFileType::DangerLevel danger_level_;
   base::FilePath virtual_path_;
   base::FilePath local_path_;
   base::FilePath intermediate_path_;

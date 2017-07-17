@@ -4,24 +4,25 @@
 
 #include "ash/wm/workspace/workspace_event_handler.h"
 
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm/wm_event.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm/wm_event.h"
 #include "ash/wm/workspace_controller.h"
 #include "ash/wm/workspace_controller_test_helper.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/hit_test.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/screen.h"
 #include "ui/wm/core/window_util.h"
 #include "ui/wm/public/window_move_client.h"
 
@@ -72,16 +73,14 @@ class WorkspaceEventHandlerTest : public test::AshTestBase {
 // Keeps track of the properties changed of a particular window.
 class WindowPropertyObserver : public aura::WindowObserver {
  public:
-  explicit WindowPropertyObserver(aura::Window* window)
-      : window_(window) {
+  explicit WindowPropertyObserver(aura::Window* window) : window_(window) {
     window->AddObserver(this);
   }
 
   ~WindowPropertyObserver() override { window_->RemoveObserver(this); }
 
   bool DidPropertyChange(const void* property) const {
-    return std::find(properties_changed_.begin(),
-                     properties_changed_.end(),
+    return std::find(properties_changed_.begin(), properties_changed_.end(),
                      property) != properties_changed_.end();
   }
 
@@ -103,11 +102,12 @@ TEST_F(WorkspaceEventHandlerTest, DoubleClickSingleAxisResizeEdge) {
   // vertically.
   gfx::Rect restored_bounds(10, 10, 50, 50);
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, restored_bounds));
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindow(&delegate, restored_bounds));
 
   wm::ActivateWindow(window.get());
 
-  gfx::Rect work_area = gfx::Screen::GetScreen()
+  gfx::Rect work_area = display::Screen::GetScreen()
                             ->GetDisplayNearestWindow(window.get())
                             .work_area();
 
@@ -212,9 +212,10 @@ TEST_F(WorkspaceEventHandlerTest, DoubleClickSingleAxisResizeEdge) {
 TEST_F(WorkspaceEventHandlerTest, DoubleClickSingleAxisWhenSideSnapped) {
   gfx::Rect restored_bounds(10, 10, 50, 50);
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, restored_bounds));
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindow(&delegate, restored_bounds));
 
-  gfx::Rect work_area_in_screen = gfx::Screen::GetScreen()
+  gfx::Rect work_area_in_screen = display::Screen::GetScreen()
                                       ->GetDisplayNearestWindow(window.get())
                                       .work_area();
 
@@ -252,13 +253,10 @@ TEST_F(WorkspaceEventHandlerTest,
        DoubleClickSingleAxisDoesntResizeVerticalEdgeIfConstrained) {
   gfx::Rect restored_bounds(10, 10, 50, 50);
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, restored_bounds));
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindow(&delegate, restored_bounds));
 
   wm::ActivateWindow(window.get());
-
-  gfx::Rect work_area = gfx::Screen::GetScreen()
-                            ->GetDisplayNearestWindow(window.get())
-                            .work_area();
 
   delegate.set_maximum_size(gfx::Size(0, 100));
 
@@ -277,13 +275,10 @@ TEST_F(WorkspaceEventHandlerTest,
        DoubleClickSingleAxisDoesntResizeHorizontalEdgeIfConstrained) {
   gfx::Rect restored_bounds(10, 10, 50, 50);
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, restored_bounds));
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindow(&delegate, restored_bounds));
 
   wm::ActivateWindow(window.get());
-
-  gfx::Rect work_area = gfx::Screen::GetScreen()
-                            ->GetDisplayNearestWindow(window.get())
-                            .work_area();
 
   delegate.set_maximum_size(gfx::Size(100, 0));
 
@@ -302,9 +297,9 @@ TEST_F(WorkspaceEventHandlerTest,
        DoubleClickOrTapWithModalChildDoesntMaximize) {
   aura::test::TestWindowDelegate delegate1;
   aura::test::TestWindowDelegate delegate2;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate1, gfx::Rect(10, 20, 30, 40)));
-  scoped_ptr<aura::Window> child(
+  std::unique_ptr<aura::Window> child(
       CreateTestWindow(&delegate2, gfx::Rect(0, 0, 1, 1)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
   delegate1.set_window_component(HTCAPTION);
@@ -330,14 +325,14 @@ TEST_F(WorkspaceEventHandlerTest,
 // Test the behavior as a result of double clicking the window header.
 TEST_F(WorkspaceEventHandlerTest, DoubleClickCaptionTogglesMaximize) {
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate, gfx::Rect(1, 2, 30, 40)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
 
   wm::WindowState* window_state = wm::GetWindowState(window.get());
   gfx::Rect restore_bounds = window->bounds();
-  gfx::Rect work_area_in_parent = ScreenUtil::GetDisplayWorkAreaBoundsInParent(
-      window.get());
+  gfx::Rect work_area_in_parent =
+      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window.get());
 
   EXPECT_FALSE(window_state->IsMaximized());
 
@@ -388,7 +383,7 @@ TEST_F(WorkspaceEventHandlerTest, DoubleClickCaptionTogglesMaximize) {
 TEST_F(WorkspaceEventHandlerTest,
        DoubleClickMiddleButtonDoesNotToggleMaximize) {
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate, gfx::Rect(1, 2, 30, 40)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
   delegate.set_window_component(HTCAPTION);
@@ -408,7 +403,7 @@ TEST_F(WorkspaceEventHandlerTest,
 TEST_F(WorkspaceEventHandlerTest, DoubleTapCaptionTogglesMaximize) {
   aura::test::TestWindowDelegate delegate;
   gfx::Rect bounds(10, 20, 30, 40);
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
+  std::unique_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
   delegate.set_window_component(HTCAPTION);
 
@@ -434,12 +429,12 @@ TEST_F(WorkspaceEventHandlerTest, DeleteWhenDragging) {
   // Create a large window in the background. This is necessary so that when we
   // delete |window| WorkspaceEventHandler is still the active event handler.
   aura::test::TestWindowDelegate delegate2;
-  scoped_ptr<aura::Window> window2(
+  std::unique_ptr<aura::Window> window2(
       CreateTestWindow(&delegate2, gfx::Rect(0, 0, 500, 500)));
 
   aura::test::TestWindowDelegate delegate;
   const gfx::Rect bounds(10, 20, 30, 40);
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
+  std::unique_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
   delegate.set_window_component(HTCAPTION);
   ui::test::EventGenerator generator(window->GetRootWindow());
   generator.MoveMouseToCenterOf(window.get());
@@ -454,31 +449,26 @@ TEST_F(WorkspaceEventHandlerTest, DeleteWhenDragging) {
 TEST_F(WorkspaceEventHandlerTest, DeleteWhileInRunLoop) {
   aura::test::TestWindowDelegate delegate;
   const gfx::Rect bounds(10, 20, 30, 40);
-  scoped_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
+  std::unique_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
   delegate.set_window_component(HTCAPTION);
 
   ASSERT_TRUE(aura::client::GetWindowMoveClient(window->GetRootWindow()));
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, window.get());
   aura::client::GetWindowMoveClient(window->GetRootWindow())
-      ->RunMoveLoop(window.release(),
-                    gfx::Vector2d(),
+      ->RunMoveLoop(window.release(), gfx::Vector2d(),
                     aura::client::WINDOW_MOVE_SOURCE_MOUSE);
 }
 
 // Verifies that double clicking in the header does not maximize if the target
 // component has changed.
 TEST_F(WorkspaceEventHandlerTest,
-    DoubleClickTwoDifferentTargetsDoesntMaximize) {
+       DoubleClickTwoDifferentTargetsDoesntMaximize) {
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate, gfx::Rect(1, 2, 30, 40)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
 
   wm::WindowState* window_state = wm::GetWindowState(window.get());
-  gfx::Rect restore_bounds = window->bounds();
-  gfx::Rect work_area_in_parent = ScreenUtil::GetDisplayWorkAreaBoundsInParent(
-      window.get());
-
   EXPECT_FALSE(window_state->IsMaximized());
 
   // First click will go to a client
@@ -499,15 +489,11 @@ TEST_F(WorkspaceEventHandlerTest,
 // component has changed.
 TEST_F(WorkspaceEventHandlerTest, DoubleTapTwoDifferentTargetsDoesntMaximize) {
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate, gfx::Rect(1, 2, 30, 40)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
 
   wm::WindowState* window_state = wm::GetWindowState(window.get());
-  gfx::Rect restore_bounds = window->bounds();
-  gfx::Rect work_area_in_parent = ScreenUtil::GetDisplayWorkAreaBoundsInParent(
-      window.get());
-
   EXPECT_FALSE(window_state->IsMaximized());
 
   // First tap will go to a client
@@ -523,18 +509,13 @@ TEST_F(WorkspaceEventHandlerTest, DoubleTapTwoDifferentTargetsDoesntMaximize) {
   EXPECT_FALSE(window_state->IsMaximized());
 }
 
-TEST_F(WorkspaceEventHandlerTest,
-    RightClickDuringDoubleClickDoesntMaximize) {
+TEST_F(WorkspaceEventHandlerTest, RightClickDuringDoubleClickDoesntMaximize) {
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> window(
+  std::unique_ptr<aura::Window> window(
       CreateTestWindow(&delegate, gfx::Rect(1, 2, 30, 40)));
   window->SetProperty(aura::client::kCanMaximizeKey, true);
 
   wm::WindowState* window_state = wm::GetWindowState(window.get());
-  gfx::Rect restore_bounds = window->bounds();
-  gfx::Rect work_area_in_parent = ScreenUtil::GetDisplayWorkAreaBoundsInParent(
-      window.get());
-
   EXPECT_FALSE(window_state->IsMaximized());
 
   // First click will go to a client

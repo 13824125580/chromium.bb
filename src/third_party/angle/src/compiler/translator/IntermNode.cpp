@@ -57,8 +57,10 @@ bool ValidateMultiplication(TOperator op, const TType &left, const TType &right)
       case EOpMatrixTimesMatrix:
         return left.getCols() == right.getRows();
       case EOpMatrixTimesMatrixAssign:
-        return left.getCols() == right.getCols() &&
-               left.getRows() == right.getRows();
+          // We need to check two things:
+          // 1. The matrix multiplication step is valid.
+          // 2. The result will have the same number of columns as the lvalue.
+          return left.getCols() == right.getRows() && left.getCols() == right.getCols();
 
       default:
         UNREACHABLE();
@@ -349,6 +351,21 @@ TIntermTyped::TIntermTyped(const TIntermTyped &node) : TIntermNode(), mType(node
     // don't explicitly allow it, so normal TIntermNode constructor is used to construct the copy.
     // We need to manually copy any fields of TIntermNode besides handling fields in TIntermTyped.
     mLine = node.mLine;
+}
+
+bool TIntermTyped::isConstructorWithOnlyConstantUnionParameters()
+{
+    TIntermAggregate *constructor = getAsAggregate();
+    if (!constructor || !constructor->isConstructor())
+    {
+        return false;
+    }
+    for (TIntermNode *&node : *constructor->getSequence())
+    {
+        if (!node->getAsConstantUnion())
+            return false;
+    }
+    return true;
 }
 
 TIntermConstantUnion::TIntermConstantUnion(const TIntermConstantUnion &node) : TIntermTyped(node)

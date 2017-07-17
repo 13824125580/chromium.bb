@@ -26,8 +26,6 @@
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "wtf/HashMap.h"
-#include "wtf/ListHashSet.h"
-#include "wtf/RefCounted.h"
 #include "wtf/Vector.h"
 #include "wtf/text/AtomicStringHash.h"
 #include "wtf/text/StringHash.h"
@@ -46,19 +44,19 @@ class StyleRuleFontFace;
 class StyleRuleImport;
 class StyleRuleNamespace;
 
-class CORE_EXPORT StyleSheetContents : public RefCountedWillBeGarbageCollectedFinalized<StyleSheetContents> {
+class CORE_EXPORT StyleSheetContents : public GarbageCollectedFinalized<StyleSheetContents> {
 public:
-    static PassRefPtrWillBeRawPtr<StyleSheetContents> create(const CSSParserContext& context)
+    static StyleSheetContents* create(const CSSParserContext& context)
     {
-        return adoptRefWillBeNoop(new StyleSheetContents(0, String(), context));
+        return new StyleSheetContents(0, String(), context);
     }
-    static PassRefPtrWillBeRawPtr<StyleSheetContents> create(const String& originalURL, const CSSParserContext& context)
+    static StyleSheetContents* create(const String& originalURL, const CSSParserContext& context)
     {
-        return adoptRefWillBeNoop(new StyleSheetContents(0, originalURL, context));
+        return new StyleSheetContents(0, originalURL, context);
     }
-    static PassRefPtrWillBeRawPtr<StyleSheetContents> create(StyleRuleImport* ownerRule, const String& originalURL, const CSSParserContext& context)
+    static StyleSheetContents* create(StyleRuleImport* ownerRule, const String& originalURL, const CSSParserContext& context)
     {
-        return adoptRefWillBeNoop(new StyleSheetContents(ownerRule, originalURL, context));
+        return new StyleSheetContents(ownerRule, originalURL, context);
     }
 
     ~StyleSheetContents();
@@ -72,7 +70,8 @@ public:
     void parseString(const String&);
     void parseStringAtPosition(const String&, const TextPosition&);
 
-    bool isCacheable() const;
+    bool isCacheableForResource() const;
+    bool isCacheableForStyleElement() const;
 
     bool isLoading() const;
 
@@ -92,19 +91,19 @@ public:
     void setHasSyntacticallyValidCSSHeader(bool isValidCss);
     bool hasSyntacticallyValidCSSHeader() const { return m_hasSyntacticallyValidCSSHeader; }
 
-    void setHasFontFaceRule(bool b) { m_hasFontFaceRule = b; }
+    void setHasFontFaceRule() { m_hasFontFaceRule = true; }
     bool hasFontFaceRule() const { return m_hasFontFaceRule; }
-    void findFontFaceRules(WillBeHeapVector<RawPtrWillBeMember<const StyleRuleFontFace>>& fontFaceRules);
+    void findFontFaceRules(HeapVector<Member<const StyleRuleFontFace>>& fontFaceRules);
 
     void parserAddNamespace(const AtomicString& prefix, const AtomicString& uri);
-    void parserAppendRule(PassRefPtrWillBeRawPtr<StyleRuleBase>);
+    void parserAppendRule(StyleRuleBase*);
 
     void clearRules();
 
     // Rules other than @import.
-    const WillBeHeapVector<RefPtrWillBeMember<StyleRuleBase>>& childRules() const { return m_childRules; }
-    const WillBeHeapVector<RefPtrWillBeMember<StyleRuleImport>>& importRules() const { return m_importRules; }
-    const WillBeHeapVector<RefPtrWillBeMember<StyleRuleNamespace>>& namespaceRules() const { return m_namespaceRules; }
+    const HeapVector<Member<StyleRuleBase>>& childRules() const { return m_childRules; }
+    const HeapVector<Member<StyleRuleImport>>& importRules() const { return m_importRules; }
+    const HeapVector<Member<StyleRuleNamespace>>& namespaceRules() const { return m_namespaceRules; }
 
     void notifyLoadedSheet(const CSSStyleSheetResource*);
 
@@ -123,12 +122,12 @@ public:
 
     unsigned estimatedSizeInBytes() const;
 
-    bool wrapperInsertRule(PassRefPtrWillBeRawPtr<StyleRuleBase>, unsigned index);
+    bool wrapperInsertRule(StyleRuleBase*, unsigned index);
     bool wrapperDeleteRule(unsigned index);
 
-    PassRefPtrWillBeRawPtr<StyleSheetContents> copy() const
+    StyleSheetContents* copy() const
     {
-        return adoptRefWillBeNoop(new StyleSheetContents(*this));
+        return new StyleSheetContents(*this);
     }
 
     void registerClient(CSSStyleSheet*);
@@ -143,9 +142,9 @@ public:
 
     void removeSheetFromCache(Document*);
 
-    bool isInMemoryCache() const { return m_isInMemoryCache; }
-    void addedToMemoryCache();
-    void removedFromMemoryCache();
+    bool isReferencedFromResource() const { return m_referencedFromResource; }
+    void setReferencedFromResource(CSSStyleSheetResource*);
+    void clearReferencedFromResource();
 
     void setHasMediaQueries();
     bool hasMediaQueries() const { return m_hasMediaQueries; }
@@ -169,31 +168,31 @@ private:
 
     Document* clientSingleOwnerDocument() const;
 
-    RawPtrWillBeMember<StyleRuleImport> m_ownerRule;
+    Member<StyleRuleImport> m_ownerRule;
 
     String m_originalURL;
 
-    WillBeHeapVector<RefPtrWillBeMember<StyleRuleImport>> m_importRules;
-    WillBeHeapVector<RefPtrWillBeMember<StyleRuleNamespace>> m_namespaceRules;
-    WillBeHeapVector<RefPtrWillBeMember<StyleRuleBase>> m_childRules;
+    HeapVector<Member<StyleRuleImport>> m_importRules;
+    HeapVector<Member<StyleRuleNamespace>> m_namespaceRules;
+    HeapVector<Member<StyleRuleBase>> m_childRules;
     using PrefixNamespaceURIMap = HashMap<AtomicString, AtomicString>;
     PrefixNamespaceURIMap m_namespaces;
     AtomicString m_defaultNamespace;
+    WeakMember<CSSStyleSheetResource> m_referencedFromResource;
 
     bool m_hasSyntacticallyValidCSSHeader : 1;
     bool m_didLoadErrorOccur : 1;
     bool m_isMutable : 1;
-    bool m_isInMemoryCache : 1;
     bool m_hasFontFaceRule : 1;
     bool m_hasMediaQueries : 1;
     bool m_hasSingleOwnerDocument : 1;
 
     CSSParserContext m_parserContext;
 
-    WillBeHeapHashSet<RawPtrWillBeWeakMember<CSSStyleSheet>> m_loadingClients;
-    WillBeHeapHashSet<RawPtrWillBeWeakMember<CSSStyleSheet>> m_completedClients;
+    HeapHashSet<WeakMember<CSSStyleSheet>> m_loadingClients;
+    HeapHashSet<WeakMember<CSSStyleSheet>> m_completedClients;
 
-    OwnPtrWillBeMember<RuleSet> m_ruleSet;
+    Member<RuleSet> m_ruleSet;
     String m_sourceMapURL;
 };
 

@@ -53,7 +53,6 @@
 #define IDC_CLOSE_SETTINGS_AND_OPEN_URL                40920
 #define IDC_REQUEST_DESKTOP_SITE                       40921
 #define IDC_CLEAR_BROWSING_DATA_IOS                    40924
-#define IDC_SHOW_SIGN_IN_WITH_RESHARE_ON_COMPLETION    40925
 #define IDC_SHOW_MAIL_COMPOSER                         40926
 #define IDC_BACK_TO_CALLING_APP                        40927
 #define IDC_RESET_ALL_WEBVIEWS                         40928
@@ -66,7 +65,6 @@
 #define IDC_PRELOAD_VOICE_SEARCH                       40937
 #define IDC_SHOW_BACK_HISTORY                          40938
 #define IDC_SHOW_FORWARD_HISTORY                       40939
-#define IDC_SHOW_PROXY_SETTINGS                        40940
 #define IDC_CLOSE_SETTINGS_AND_OPEN_NEW_INCOGNITO_TAB  40942
 #define IDC_SHOW_ACCOUNTS_SETTINGS                     40943
 #define IDC_CLOSE_SETTINGS                             40944
@@ -75,6 +73,8 @@
 #define IDC_RATE_THIS_APP                              40948
 #define IDC_ADD_READING_LIST                           40949
 #define IDC_SHOW_READING_LIST                          40950
+#define IDC_SHOW_CLEAR_BROWSING_DATA_SETTINGS          40951
+#define IDC_SHOW_SYNC_PASSPHRASE_SETTINGS              40952
 // clang-format on
 
 #endif  // IOS_CHROME_BROWSER_UI_COMMANDS_IOS_COMMAND_IDS_H_

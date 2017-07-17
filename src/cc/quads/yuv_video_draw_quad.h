@@ -7,7 +7,8 @@
 
 #include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "cc/base/cc_export.h"
 #include "cc/quads/draw_quad.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -17,6 +18,11 @@ namespace cc {
 
 class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
  public:
+  static const size_t kYPlaneResourceIdIndex = 0;
+  static const size_t kUPlaneResourceIdIndex = 1;
+  static const size_t kVPlaneResourceIdIndex = 2;
+  static const size_t kAPlaneResourceIdIndex = 3;
+
   enum ColorSpace {
     REC_601,  // SDTV standard with restricted "studio swing" color range.
     REC_709,  // HDTV standard with restricted "studio swing" color range.
@@ -92,11 +98,6 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
   }
 
  private:
-  static const size_t kYPlaneResourceIdIndex = 0;
-  static const size_t kUPlaneResourceIdIndex = 1;
-  static const size_t kVPlaneResourceIdIndex = 2;
-  static const size_t kAPlaneResourceIdIndex = 3;
-
   void ExtendValue(base::trace_event::TracedValue* value) const override;
 };
 

@@ -45,15 +45,18 @@ void TestWindowTree::DeleteWindow(uint32_t change_id, uint32_t window_id) {}
 
 void TestWindowTree::SetWindowBounds(uint32_t change_id,
                                      uint32_t window_id,
-                                     mojo::RectPtr bounds) {
+                                     const gfx::Rect& bounds) {
   got_change_ = true;
   change_id_ = change_id;
 }
 
 void TestWindowTree::SetClientArea(
     uint32_t window_id,
-    mojo::InsetsPtr insets,
-    mojo::Array<mojo::RectPtr> additional_client_areas) {}
+    const gfx::Insets& insets,
+    mojo::Array<gfx::Rect> additional_client_areas) {}
+
+void TestWindowTree::SetHitTestMask(uint32_t window_id, const gfx::Rect& mask) {
+}
 
 void TestWindowTree::SetWindowVisibility(uint32_t change_id,
                                          uint32_t window_id,
@@ -66,6 +69,13 @@ void TestWindowTree::SetWindowProperty(uint32_t change_id,
                                        uint32_t window_id,
                                        const mojo::String& name,
                                        mojo::Array<uint8_t> value) {
+  got_change_ = true;
+  change_id_ = change_id;
+}
+
+void TestWindowTree::SetWindowOpacity(uint32_t change_id,
+                                      uint32_t window_id,
+                                      float opacity) {
   got_change_ = true;
   change_id_ = change_id;
 }
@@ -91,6 +101,11 @@ void TestWindowTree::RemoveTransientWindowFromParent(
     uint32_t change_id,
     uint32_t transient_window_id) {}
 
+void TestWindowTree::SetModal(uint32_t change_id, uint32_t window_id) {
+  got_change_ = true;
+  change_id_ = change_id;
+}
+
 void TestWindowTree::ReorderWindow(uint32_t change_id,
                                    uint32_t window_id,
                                    uint32_t relative_window_id,
@@ -109,9 +124,12 @@ void TestWindowTree::ReleaseCapture(uint32_t change_id, uint32_t window_id) {
   change_id_ = change_id;
 }
 
+void TestWindowTree::SetEventObserver(mojom::EventMatcherPtr matcher,
+                                      uint32_t observer_id) {}
+
 void TestWindowTree::Embed(uint32_t window_id,
                            mojom::WindowTreeClientPtr client,
-                           uint32_t policy_bitmask,
+                           uint32_t flags,
                            const EmbedCallback& callback) {}
 
 void TestWindowTree::SetFocus(uint32_t change_id, uint32_t window_id) {
@@ -132,12 +150,18 @@ void TestWindowTree::SetImeVisibility(uint32_t window_id,
                                       bool visible,
                                       mojo::TextInputStatePtr state) {}
 
-void TestWindowTree::OnWindowInputEventAck(uint32_t event_id) {
+void TestWindowTree::OnWindowInputEventAck(uint32_t event_id,
+                                           mus::mojom::EventResult result) {
   EXPECT_FALSE(acked_events_.count(event_id));
   acked_events_.insert(event_id);
 }
 
 void TestWindowTree::GetWindowManagerClient(
     mojo::AssociatedInterfaceRequest<mojom::WindowManagerClient> internal) {}
+
+void TestWindowTree::GetCursorLocationMemory(
+    const GetCursorLocationMemoryCallback& callback) {
+  callback.Run(mojo::ScopedSharedBufferHandle());
+}
 
 }  // namespace mus

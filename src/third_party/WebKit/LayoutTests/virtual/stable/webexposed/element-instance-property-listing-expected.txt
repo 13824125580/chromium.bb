@@ -1,4 +1,4 @@
-CONSOLE WARNING: The <keygen> element is deprecated and will be removed in M54, around October 2016. See https://www.chromestatus.com/features/5716060992962560 for more details.
+CONSOLE WARNING: line 18: The <keygen> element is deprecated and will be removed in M54, around October 2016. See https://www.chromestatus.com/features/5716060992962560 for more details.
 This test documents all properties on all element instances.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -29,6 +29,8 @@ namespace http://www.w3.org/1999/xhtml
     property addEventListener
     property animate
     property appendChild
+    property assignedSlot
+    property attachShadow
     property attributes
     property baseURI
     property blur
@@ -77,6 +79,7 @@ namespace http://www.w3.org/1999/xhtml
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property isConnected
     property isContentEditable
     property isDefaultNamespace
     property isEqualNode
@@ -203,12 +206,14 @@ namespace http://www.w3.org/1999/xhtml
     property setAttributeNode
     property setAttributeNodeNS
     property shadowRoot
+    property slot
     property spellcheck
     property style
     property tabIndex
     property tagName
     property textContent
     property title
+    property toString
     property translate
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -230,6 +235,7 @@ html element a
     property ping
     property port
     property protocol
+    property referrerPolicy
     property rel
     property rev
     property search
@@ -256,6 +262,7 @@ html element area
     property ping
     property port
     property protocol
+    property referrerPolicy
     property search
     property shape
     property target
@@ -305,6 +312,7 @@ html element audio
     property setSinkId
     property sinkId
     property src
+    property srcObject
     property textTracks
     property volume
     property webkitAudioDecodedByteCount
@@ -362,6 +370,7 @@ html element button
     property value
     property willValidate
 html element canvas
+    property captureStream
     property getContext
     property height
     property toBlob
@@ -519,6 +528,7 @@ html element iframe
     property marginHeight
     property marginWidth
     property name
+    property referrerPolicy
     property sandbox
     property scrolling
     property src
@@ -540,6 +550,7 @@ html element img
     property name
     property naturalHeight
     property naturalWidth
+    property referrerPolicy
     property sizes
     property src
     property srcset
@@ -706,6 +717,7 @@ html element object
     property codeBase
     property codeType
     property contentDocument
+    property contentWindow
     property data
     property declare
     property form
@@ -818,6 +830,8 @@ html element select
 html element shadow
     property getDistributedNodes
 html element slot
+    property assignedNodes
+    property name
 html element small
 html element source
     property media
@@ -1026,6 +1040,7 @@ html element video
     property setSinkId
     property sinkId
     property src
+    property srcObject
     property textTracks
     property videoHeight
     property videoWidth
@@ -1069,6 +1084,8 @@ namespace http://www.w3.org/2000/svg
     property addEventListener
     property animate
     property appendChild
+    property assignedSlot
+    property attachShadow
     property attributes
     property baseURI
     property blur
@@ -1117,6 +1134,7 @@ namespace http://www.w3.org/2000/svg
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property isConnected
     property isContentEditable
     property isDefaultNamespace
     property isEqualNode
@@ -1243,12 +1261,14 @@ namespace http://www.w3.org/2000/svg
     property setAttributeNode
     property setAttributeNodeNS
     property shadowRoot
+    property slot
     property spellcheck
     property style
     property tabIndex
     property tagName
     property textContent
     property title
+    property toString
     property translate
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -1270,6 +1290,7 @@ svg element a
     property ping
     property port
     property protocol
+    property referrerPolicy
     property rel
     property rev
     property search

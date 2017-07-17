@@ -4,11 +4,12 @@
 
 #include "chrome/browser/ui/views/ash/tab_scrubber.h"
 
+#include <memory>
+
 #include "ash/display/event_transformation_handler.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -180,11 +181,8 @@ class TabScrubberTest : public InProcessBrowserTest,
       event_generator.set_async(true);
     }
     event_generator.ScrollSequence(gfx::Point(0, 0),
-                                   ui::EventTimeForNow(),
-                                   x_offset,
-                                   0,
-                                   1,
-                                   3);
+                                   base::TimeDelta::FromMilliseconds(100),
+                                   x_offset, 0, 1, 3);
     if (wait_for_active)
       RunUntilTabActive(browser, index);
   }

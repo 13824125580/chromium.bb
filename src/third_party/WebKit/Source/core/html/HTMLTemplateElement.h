@@ -47,13 +47,15 @@ public:
 
     DocumentFragment* content() const;
 
+    DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
 private:
-    PassRefPtrWillBeRawPtr<Node> cloneNode(bool deep) override;
+    Node* cloneNode(bool deep) override;
     void didMoveToNewDocument(Document& oldDocument) override;
 
     explicit HTMLTemplateElement(Document&);
 
-    mutable RefPtrWillBeMember<TemplateContentDocumentFragment> m_content;
+    mutable Member<TemplateContentDocumentFragment> m_content;
 };
 
 } // namespace blink

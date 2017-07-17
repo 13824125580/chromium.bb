@@ -9,10 +9,10 @@
 
 #include "base/strings/stringprintf.h"
 #include "components/mus/common/transient_window_utils.h"
+#include "components/mus/public/interfaces/window_manager.mojom.h"
 #include "components/mus/ws/server_window_delegate.h"
 #include "components/mus/ws/server_window_observer.h"
 #include "components/mus/ws/server_window_surface_manager.h"
-#include "mojo/converters/geometry/geometry_type_converters.h"
 
 namespace mus {
 
@@ -29,8 +29,10 @@ ServerWindow::ServerWindow(ServerWindowDelegate* delegate,
       parent_(nullptr),
       stacking_target_(nullptr),
       transient_parent_(nullptr),
+      is_modal_(false),
       visible_(false),
       cursor_id_(mojom::Cursor::CURSOR_NULL),
+      non_client_cursor_id_(mojom::Cursor::CURSOR_NULL),
       opacity_(1),
       can_focus_(true),
       properties_(properties),
@@ -69,6 +71,7 @@ void ServerWindow::AddObserver(ServerWindowObserver* observer) {
 }
 
 void ServerWindow::RemoveObserver(ServerWindowObserver* observer) {
+  DCHECK(observers_.HasObserver(observer));
   observers_.RemoveObserver(observer);
 }
 
@@ -175,6 +178,14 @@ void ServerWindow::SetClientArea(
       OnWindowClientAreaChanged(this, insets, additional_client_areas));
 }
 
+void ServerWindow::SetHitTestMask(const gfx::Rect& mask) {
+  hit_test_mask_.reset(new gfx::Rect(mask));
+}
+
+void ServerWindow::ClearHitTestMask() {
+  hit_test_mask_.reset();
+}
+
 const ServerWindow* ServerWindow::GetRoot() const {
   return delegate_->GetRootWindow(this);
 }
@@ -205,7 +216,11 @@ ServerWindow* ServerWindow::GetChildWindow(const WindowId& window_id) {
   return nullptr;
 }
 
-void ServerWindow::AddTransientWindow(ServerWindow* child) {
+bool ServerWindow::AddTransientWindow(ServerWindow* child) {
+  // A system modal window cannot become a transient child.
+  if (child->is_modal() && !child->transient_parent())
+    return false;
+
   if (child->transient_parent())
     child->transient_parent()->RemoveTransientWindow(child);
 
@@ -221,6 +236,7 @@ void ServerWindow::AddTransientWindow(ServerWindow* child) {
 
   FOR_EACH_OBSERVER(ServerWindowObserver, observers_,
                     OnTransientWindowAdded(this, child));
+  return true;
 }
 
 void ServerWindow::RemoveTransientWindow(ServerWindow* child) {
@@ -239,6 +255,10 @@ void ServerWindow::RemoveTransientWindow(ServerWindow* child) {
 
   FOR_EACH_OBSERVER(ServerWindowObserver, observers_,
                     OnTransientWindowRemoved(this, child));
+}
+
+void ServerWindow::SetModal() {
+  is_modal_ = true;
 }
 
 bool ServerWindow::Contains(const ServerWindow* window) const {
@@ -263,8 +283,11 @@ void ServerWindow::SetVisible(bool value) {
 void ServerWindow::SetOpacity(float value) {
   if (value == opacity_)
     return;
+  float old_opacity = opacity_;
   opacity_ = value;
   delegate_->OnScheduleWindowPaint(this);
+  FOR_EACH_OBSERVER(ServerWindowObserver, observers_,
+                    OnWindowOpacityChanged(this, old_opacity, opacity_));
 }
 
 void ServerWindow::SetPredefinedCursor(mus::mojom::Cursor value) {
@@ -274,6 +297,15 @@ void ServerWindow::SetPredefinedCursor(mus::mojom::Cursor value) {
   FOR_EACH_OBSERVER(
       ServerWindowObserver, observers_,
       OnWindowPredefinedCursorChanged(this, static_cast<int32_t>(value)));
+}
+
+void ServerWindow::SetNonClientCursor(mus::mojom::Cursor value) {
+  if (value == non_client_cursor_id_)
+    return;
+  non_client_cursor_id_ = value;
+  FOR_EACH_OBSERVER(
+      ServerWindowObserver, observers_,
+      OnWindowNonClientCursorChanged(this, static_cast<int32_t>(value)));
 }
 
 void ServerWindow::SetTransform(const gfx::Transform& transform) {
@@ -305,6 +337,13 @@ void ServerWindow::SetProperty(const std::string& name,
 
   FOR_EACH_OBSERVER(ServerWindowObserver, observers_,
                     OnWindowSharedPropertyChanged(this, name, value));
+}
+
+std::string ServerWindow::GetName() const {
+  auto it = properties_.find(mojom::WindowManager::kName_Property);
+  if (it == properties_.end())
+    return std::string();
+  return std::string(it->second.begin(), it->second.end());
 }
 
 void ServerWindow::SetTextInputState(const ui::TextInputState& state) {
@@ -363,11 +402,12 @@ std::string ServerWindow::GetDebugWindowHierarchy() const {
 
 void ServerWindow::BuildDebugInfo(const std::string& depth,
                                   std::string* result) const {
+  std::string name = GetName();
   *result += base::StringPrintf(
-      "%sid=%d,%d visible=%s bounds=%d,%d %dx%d" PRIu64 "\n", depth.c_str(),
-      static_cast<int>(id_.connection_id), static_cast<int>(id_.window_id),
+      "%sid=%d,%d visible=%s bounds=%d,%d %dx%d %s\n", depth.c_str(),
+      static_cast<int>(id_.client_id), static_cast<int>(id_.window_id),
       visible_ ? "true" : "false", bounds_.x(), bounds_.y(), bounds_.width(),
-      bounds_.height());
+      bounds_.height(), !name.empty() ? name.c_str() : "(no name)");
   for (const ServerWindow* child : children_)
     child->BuildDebugInfo(depth + "  ", result);
 }

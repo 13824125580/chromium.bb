@@ -39,6 +39,12 @@ ui::GestureProvider::Config GetEmulatorGestureProviderConfig(
   return config;
 }
 
+int ModifiersWithoutMouseButtons(const WebInputEvent& event) {
+  const int all_buttons = WebInputEvent::LeftButtonDown |
+      WebInputEvent::MiddleButtonDown | WebInputEvent::RightButtonDown;
+  return event.modifiers & ~all_buttons;
+}
+
 // Time between two consecutive mouse moves, during which second mouse move
 // is not converted to touch.
 const double kMouseMoveDropIntervalSeconds = 5.f / 1000;
@@ -126,9 +132,6 @@ gfx::SizeF TouchEmulator::InitCursorFromResource(
   cursor_info.custom_image = cursor_image.AsBitmap();
   cursor_info.hotspot =
       gfx::Point(cursor_image.Width() / 2, cursor_image.Height() / 2);
-#if defined(OS_WIN)
-  cursor_info.external_handle = 0;
-#endif
 
   cursor->InitFromCursorInfo(cursor_info);
   return gfx::ScaleSize(gfx::SizeF(cursor_image.Size()), 1.f / scale);
@@ -401,7 +404,7 @@ void TouchEmulator::PinchEnd(const WebGestureEvent& event) {
 
 void TouchEmulator::FillPinchEvent(const WebInputEvent& event) {
   pinch_event_.timeStampSeconds = event.timeStampSeconds;
-  pinch_event_.modifiers = event.modifiers;
+  pinch_event_.modifiers = ModifiersWithoutMouseButtons(event);
   pinch_event_.sourceDevice = blink::WebGestureDeviceTouchscreen;
   pinch_event_.x = pinch_anchor_.x();
   pinch_event_.y = pinch_anchor_.y();
@@ -410,7 +413,7 @@ void TouchEmulator::FillPinchEvent(const WebInputEvent& event) {
 void TouchEmulator::ScrollEnd(const WebGestureEvent& event) {
   WebGestureEvent scroll_event;
   scroll_event.timeStampSeconds = event.timeStampSeconds;
-  scroll_event.modifiers = event.modifiers;
+  scroll_event.modifiers = ModifiersWithoutMouseButtons(event);
   scroll_event.sourceDevice = blink::WebGestureDeviceTouchscreen;
   scroll_event.type = WebInputEvent::GestureScrollEnd;
   client_->ForwardEmulatedGestureEvent(scroll_event);
@@ -433,7 +436,7 @@ void TouchEmulator::FillTouchEventAndPoint(const WebMouseEvent& mouse_event) {
       NOTREACHED() << "Invalid event for touch emulation: " << mouse_event.type;
   }
   touch_event_.touchesLength = 1;
-  touch_event_.modifiers = mouse_event.modifiers;
+  touch_event_.modifiers = ModifiersWithoutMouseButtons(mouse_event);
   WebTouchEventTraits::ResetTypeAndTouchStates(
       eventType, mouse_event.timeStampSeconds, &touch_event_);
 
@@ -449,6 +452,7 @@ void TouchEmulator::FillTouchEventAndPoint(const WebMouseEvent& mouse_event) {
   point.screenPosition.y = mouse_event.globalY;
   point.tiltX = 0;
   point.tiltY = 0;
+  point.pointerType = blink::WebPointerProperties::PointerType::Touch;
 }
 
 bool TouchEmulator::InPinchGestureMode() const {

@@ -69,7 +69,8 @@ function initialize_extensionsPanelTest()
         function consoleMessageAdded()
         {
             WebInspector.multitargetConsoleModel.removeEventListener(WebInspector.ConsoleModel.Events.MessageAdded, wrappedConsoleMessageAdded);
-            InspectorTest.runAfterPendingDispatches(clickOnMessage)
+            WebInspector.ConsoleView.instance()._viewportThrottler.flush();
+            InspectorTest.deprecatedRunAfterPendingDispatches(clickOnMessage)
         }
 
         function clickOnMessage()
@@ -315,14 +316,14 @@ function extension_testGlobalShortcuts(nextTest)
         testPanel.onShown.removeListener(onPanelShown);
         output("Panel shown, now toggling console...");
         panelWindow.addEventListener("resize", onPanelResized);
-        dispatchKeydownEvent({ keyIdentifier: "U+001B" });
+        dispatchKeydownEvent({ key: "Escape", keyIdentifier: "U+001B" });
     }
     function onPanelResized()
     {
         panelWindow.removeEventListener("resize", onPanelResized);
         output("Panel resized, switching away...");
         var isMac = platform === "mac";
-        dispatchKeydownEvent({ ctrlKey: !isMac, metaKey: isMac, keyIdentifier: "U+005D" });
+        dispatchKeydownEvent({ ctrlKey: !isMac, metaKey: isMac, key: "]" });
     }
     function onPanelHidden()
     {

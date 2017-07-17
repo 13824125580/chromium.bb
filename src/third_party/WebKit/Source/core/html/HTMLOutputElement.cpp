@@ -45,20 +45,27 @@ inline HTMLOutputElement::HTMLOutputElement(Document& document, HTMLFormElement*
 
 HTMLOutputElement::~HTMLOutputElement()
 {
-#if !ENABLE(OILPAN)
-    m_tokens->setObserver(nullptr);
-#endif
 }
 
-PassRefPtrWillBeRawPtr<HTMLOutputElement> HTMLOutputElement::create(Document& document, HTMLFormElement* form)
+HTMLOutputElement* HTMLOutputElement::create(Document& document, HTMLFormElement* form)
 {
-    return adoptRefWillBeNoop(new HTMLOutputElement(document, form));
+    return new HTMLOutputElement(document, form);
 }
 
 const AtomicString& HTMLOutputElement::formControlType() const
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, output, ("output", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, output, ("output"));
     return output;
+}
+
+bool HTMLOutputElement::isDisabledFormControl() const
+{
+    return false;
+}
+
+bool HTMLOutputElement::matchesEnabledPseudoClass() const
+{
+    return false;
 }
 
 bool HTMLOutputElement::supportsFocus() const

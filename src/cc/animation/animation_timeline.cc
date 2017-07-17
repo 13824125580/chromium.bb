@@ -38,7 +38,7 @@ void AnimationTimeline::AttachPlayer(scoped_refptr<AnimationPlayer> player) {
   DCHECK(player->id());
   player->SetAnimationHost(animation_host_);
   player->SetAnimationTimeline(this);
-  id_to_player_map_.insert(std::make_pair(player->id(), player));
+  id_to_player_map_.insert(std::make_pair(player->id(), std::move(player)));
 }
 
 void AnimationTimeline::DetachPlayer(scoped_refptr<AnimationPlayer> player) {
@@ -94,7 +94,7 @@ void AnimationTimeline::RemoveDetachedPlayersFromImplThread(
 
 void AnimationTimeline::ErasePlayer(scoped_refptr<AnimationPlayer> player) {
   if (player->element_animations())
-    player->DetachLayer();
+    player->DetachElement();
   player->SetAnimationTimeline(nullptr);
   player->SetAnimationHost(nullptr);
 }

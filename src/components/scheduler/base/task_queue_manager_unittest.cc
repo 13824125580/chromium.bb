@@ -5,13 +5,19 @@
 #include "components/scheduler/base/task_queue_manager.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/test/trace_event_analyzer.h"
 #include "base/threading/thread.h"
+#include "base/trace_event/blame_context.h"
+#include "base/trace_event/trace_buffer.h"
 #include "cc/test/ordered_simple_task_runner.h"
 #include "components/scheduler/base/real_time_domain.h"
 #include "components/scheduler/base/task_queue_impl.h"
@@ -34,7 +40,7 @@ namespace scheduler {
 class MessageLoopTaskRunner : public TaskQueueManagerDelegateForTest {
  public:
   static scoped_refptr<MessageLoopTaskRunner> Create(
-      scoped_ptr<base::TickClock> tick_clock) {
+      std::unique_ptr<base::TickClock> tick_clock) {
     return make_scoped_refptr(new MessageLoopTaskRunner(std::move(tick_clock)));
   }
 
@@ -44,10 +50,10 @@ class MessageLoopTaskRunner : public TaskQueueManagerDelegateForTest {
   }
 
  private:
-  explicit MessageLoopTaskRunner(scoped_ptr<base::TickClock> tick_clock)
-      : TaskQueueManagerDelegateForTest(base::MessageLoop::current()
-                                            ->task_runner(),
-                                        std::move(tick_clock)) {}
+  explicit MessageLoopTaskRunner(std::unique_ptr<base::TickClock> tick_clock)
+      : TaskQueueManagerDelegateForTest(
+            base::MessageLoop::current()->task_runner(),
+            std::move(tick_clock)) {}
   ~MessageLoopTaskRunner() override {}
 };
 
@@ -57,15 +63,15 @@ class TaskQueueManagerTest : public testing::Test {
 
  protected:
   void InitializeWithClock(size_t num_queues,
-                           scoped_ptr<base::TickClock> test_time_source) {
+                           std::unique_ptr<base::TickClock> test_time_source) {
     test_task_runner_ = make_scoped_refptr(
         new cc::OrderedSimpleTaskRunner(now_src_.get(), false));
     main_task_runner_ = TaskQueueManagerDelegateForTest::Create(
         test_task_runner_.get(),
-        make_scoped_ptr(new TestTimeSource(now_src_.get())));
-    manager_ = make_scoped_ptr(new TaskQueueManager(
-        main_task_runner_, "test.scheduler", "test.scheduler",
-        "test.scheduler.debug"));
+        base::WrapUnique(new TestTimeSource(now_src_.get())));
+    manager_ = base::WrapUnique(
+        new TaskQueueManager(main_task_runner_, "test.scheduler",
+                             "test.scheduler", "test.scheduler.debug"));
 
     for (size_t i = 0; i < num_queues; i++)
       runners_.push_back(manager_->NewTaskQueue(TaskQueue::Spec("test_queue")));
@@ -75,26 +81,26 @@ class TaskQueueManagerTest : public testing::Test {
     now_src_.reset(new base::SimpleTestTickClock());
     now_src_->Advance(base::TimeDelta::FromMicroseconds(1000));
     InitializeWithClock(num_queues,
-                        make_scoped_ptr(new TestTimeSource(now_src_.get())));
+                        base::WrapUnique(new TestTimeSource(now_src_.get())));
   }
 
   void InitializeWithRealMessageLoop(size_t num_queues) {
     now_src_.reset(new base::SimpleTestTickClock());
     message_loop_.reset(new base::MessageLoop());
-    manager_ = make_scoped_ptr(new TaskQueueManager(
+    manager_ = base::WrapUnique(new TaskQueueManager(
         MessageLoopTaskRunner::Create(
-            make_scoped_ptr(new TestTimeSource(now_src_.get()))),
+            base::WrapUnique(new TestTimeSource(now_src_.get()))),
         "test.scheduler", "test.scheduler", "test.scheduler.debug"));
 
     for (size_t i = 0; i < num_queues; i++)
       runners_.push_back(manager_->NewTaskQueue(TaskQueue::Spec("test_queue")));
   }
 
-  scoped_ptr<base::MessageLoop> message_loop_;
-  scoped_ptr<base::SimpleTestTickClock> now_src_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::SimpleTestTickClock> now_src_;
   scoped_refptr<TaskQueueManagerDelegateForTest> main_task_runner_;
   scoped_refptr<cc::OrderedSimpleTaskRunner> test_task_runner_;
-  scoped_ptr<TaskQueueManager> manager_;
+  std::unique_ptr<TaskQueueManager> manager_;
   std::vector<scoped_refptr<internal::TaskQueueImpl>> runners_;
 };
 
@@ -109,16 +115,16 @@ void PostFromNestedRunloop(base::MessageLoop* message_loop,
       runner->PostNonNestableTask(FROM_HERE, pair.first);
     }
   }
-  message_loop->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 void NopTask() {}
 
 TEST_F(TaskQueueManagerTest, NowNotCalledWhenThereAreNoDelayedTasks) {
   message_loop_.reset(new base::MessageLoop());
-  manager_ = make_scoped_ptr(new TaskQueueManager(
+  manager_ = base::WrapUnique(new TaskQueueManager(
       MessageLoopTaskRunner::Create(
-          make_scoped_ptr(new TestAlwaysFailTimeSource())),
+          base::WrapUnique(new TestAlwaysFailTimeSource())),
       "test.scheduler", "test.scheduler", "test.scheduler.debug"));
 
   for (size_t i = 0; i < 3; i++)
@@ -209,9 +215,9 @@ TEST_F(TaskQueueManagerTest, NonNestableTaskDoesntExecuteInNestedLoop) {
       std::make_pair(base::Bind(&TestTask, 5, &run_order), true));
 
   runners_[0]->PostTask(
-      FROM_HERE,
-      base::Bind(&PostFromNestedRunloop, message_loop_.get(), runners_[0],
-                 base::Unretained(&tasks_to_post_from_nested_loop)));
+      FROM_HERE, base::Bind(&PostFromNestedRunloop, message_loop_.get(),
+                            base::RetainedRef(runners_[0]),
+                            base::Unretained(&tasks_to_post_from_nested_loop)));
 
   message_loop_->RunUntilIdle();
   // Note we expect task 3 to run last because it's non-nestable.
@@ -385,7 +391,8 @@ TEST_F(TaskQueueManagerTest, ManualPumping) {
   EXPECT_TRUE(runners_[0]->HasPendingImmediateWork());
 
   // After pumping the task runs normally.
-  runners_[0]->PumpQueue(true);
+  LazyNow lazy_now(now_src_.get());
+  runners_[0]->PumpQueue(&lazy_now, true);
   EXPECT_TRUE(test_task_runner_->HasPendingTasks());
   test_task_runner_->RunUntilIdle();
   EXPECT_THAT(run_order, ElementsAre(1));
@@ -467,13 +474,15 @@ TEST_F(TaskQueueManagerTest, ManualPumpingWithDelayedTask) {
                                delay);
 
   // After pumping but before the delay period has expired, task does not run.
-  runners_[0]->PumpQueue(true);
+  LazyNow lazy_now1(now_src_.get());
+  runners_[0]->PumpQueue(&lazy_now1, true);
   test_task_runner_->RunForPeriod(base::TimeDelta::FromMilliseconds(5));
   EXPECT_TRUE(run_order.empty());
 
   // Once the delay has expired, pumping causes the task to run.
   now_src_->Advance(base::TimeDelta::FromMilliseconds(5));
-  runners_[0]->PumpQueue(true);
+  LazyNow lazy_now2(now_src_.get());
+  runners_[0]->PumpQueue(&lazy_now2, true);
   EXPECT_TRUE(test_task_runner_->HasPendingTasks());
   test_task_runner_->RunPendingTasks();
   EXPECT_THAT(run_order, ElementsAre(1));
@@ -501,7 +510,8 @@ TEST_F(TaskQueueManagerTest, ManualPumpingWithMultipleDelayedTasks) {
   EXPECT_TRUE(run_order.empty());
 
   // Once the delay has expired, pumping causes the task to run.
-  runners_[0]->PumpQueue(true);
+  LazyNow lazy_now(now_src_.get());
+  runners_[0]->PumpQueue(&lazy_now, true);
   test_task_runner_->RunUntilIdle();
   EXPECT_THAT(run_order, ElementsAre(1, 2));
 }
@@ -526,10 +536,11 @@ TEST_F(TaskQueueManagerTest, ManualPumpingWithNonEmptyWorkQueue) {
   std::vector<EnqueueOrder> run_order;
   // Posting two tasks and pumping twice should result in two tasks in the work
   // queue.
+  LazyNow lazy_now(now_src_.get());
   runners_[0]->PostTask(FROM_HERE, base::Bind(&TestTask, 1, &run_order));
-  runners_[0]->PumpQueue(true);
+  runners_[0]->PumpQueue(&lazy_now, true);
   runners_[0]->PostTask(FROM_HERE, base::Bind(&TestTask, 2, &run_order));
-  runners_[0]->PumpQueue(true);
+  runners_[0]->PumpQueue(&lazy_now, true);
 
   EXPECT_EQ(2u, runners_[0]->immediate_work_queue()->Size());
 }
@@ -617,9 +628,9 @@ TEST_F(TaskQueueManagerTest, PostFromNestedRunloop) {
 
   runners_[0]->PostTask(FROM_HERE, base::Bind(&TestTask, 0, &run_order));
   runners_[0]->PostTask(
-      FROM_HERE,
-      base::Bind(&PostFromNestedRunloop, message_loop_.get(), runners_[0],
-                 base::Unretained(&tasks_to_post_from_nested_loop)));
+      FROM_HERE, base::Bind(&PostFromNestedRunloop, message_loop_.get(),
+                            base::RetainedRef(runners_[0]),
+                            base::Unretained(&tasks_to_post_from_nested_loop)));
   runners_[0]->PostTask(FROM_HERE, base::Bind(&TestTask, 2, &run_order));
 
   message_loop_->RunUntilIdle();
@@ -696,7 +707,8 @@ TEST_F(TaskQueueManagerTest,
   // This still shouldn't wake TQM as manual queue was not pumped.
   EXPECT_TRUE(run_order.empty());
 
-  runners_[1]->PumpQueue(true);
+  LazyNow lazy_now(now_src_.get());
+  runners_[1]->PumpQueue(&lazy_now, true);
   test_task_runner_->RunUntilIdle();
   // Executing a task on an auto pumped queue should wake the TQM.
   EXPECT_THAT(run_order, ElementsAre(2, 1));
@@ -1029,7 +1041,8 @@ TEST_F(TaskQueueManagerTest, HasPendingImmediateWork) {
   EXPECT_FALSE(queue0->HasPendingImmediateWork());
   EXPECT_TRUE(queue1->HasPendingImmediateWork());
 
-  queue1->PumpQueue(true);
+  LazyNow lazy_now(now_src_.get());
+  queue1->PumpQueue(&lazy_now, true);
   EXPECT_FALSE(queue0->HasPendingImmediateWork());
   EXPECT_TRUE(queue1->HasPendingImmediateWork());
 
@@ -1072,7 +1085,8 @@ TEST_F(TaskQueueManagerTest, HasPendingImmediateWorkAndNeedsPumping) {
   EXPECT_TRUE(queue1->HasPendingImmediateWork());
   EXPECT_TRUE(queue1->NeedsPumping());
 
-  queue1->PumpQueue(true);
+  LazyNow lazy_now(now_src_.get());
+  queue1->PumpQueue(&lazy_now, true);
   EXPECT_FALSE(queue0->HasPendingImmediateWork());
   EXPECT_FALSE(queue0->NeedsPumping());
   EXPECT_TRUE(queue1->HasPendingImmediateWork());
@@ -1196,10 +1210,10 @@ TEST_F(TaskQueueManagerTest, QuitWhileNested) {
 
   bool was_nested = true;
   base::RunLoop run_loop;
-  runners_[0]->PostTask(
-      FROM_HERE,
-      base::Bind(&PostAndQuitFromNestedRunloop, base::Unretained(&run_loop),
-                 runners_[0], base::Unretained(&was_nested)));
+  runners_[0]->PostTask(FROM_HERE, base::Bind(&PostAndQuitFromNestedRunloop,
+                                              base::Unretained(&run_loop),
+                                              base::RetainedRef(runners_[0]),
+                                              base::Unretained(&was_nested)));
 
   message_loop_->RunUntilIdle();
   EXPECT_FALSE(was_nested);
@@ -1346,7 +1360,7 @@ void PostTestTasksFromNestedMessageLoop(
                                    base::Bind(&TestTask, 1, run_order));
   // The following should never get executed.
   wake_up_runner->PostTask(FROM_HERE, base::Bind(&TestTask, 2, run_order));
-  message_loop->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(TaskQueueManagerTest, DeferredNonNestableTaskDoesNotTriggerWakeUp) {
@@ -1456,9 +1470,9 @@ TEST_F(TaskQueueManagerTest, UnregisterTaskQueueInNestedLoop) {
                                 base::Unretained(task_queue.get())),
                      true));
   runners_[0]->PostTask(
-      FROM_HERE,
-      base::Bind(&PostFromNestedRunloop, message_loop_.get(), runners_[0],
-                 base::Unretained(&tasks_to_post_from_nested_loop)));
+      FROM_HERE, base::Bind(&PostFromNestedRunloop, message_loop_.get(),
+                            base::RetainedRef(runners_[0]),
+                            base::Unretained(&tasks_to_post_from_nested_loop)));
   message_loop_->RunUntilIdle();
 
   // Add a final call to HasOneRefTask.  This gives the manager a chance to
@@ -1475,9 +1489,9 @@ TEST_F(TaskQueueManagerTest, TimeDomainsAreIndependant) {
   Initialize(2u);
 
   base::TimeTicks start_time = manager_->delegate()->NowTicks();
-  scoped_ptr<VirtualTimeDomain> domain_a(
+  std::unique_ptr<VirtualTimeDomain> domain_a(
       new VirtualTimeDomain(nullptr, start_time));
-  scoped_ptr<VirtualTimeDomain> domain_b(
+  std::unique_ptr<VirtualTimeDomain> domain_b(
       new VirtualTimeDomain(nullptr, start_time));
   manager_->RegisterTimeDomain(domain_a.get());
   manager_->RegisterTimeDomain(domain_b.get());
@@ -1522,7 +1536,7 @@ TEST_F(TaskQueueManagerTest, TimeDomainMigration) {
   Initialize(1u);
 
   base::TimeTicks start_time = manager_->delegate()->NowTicks();
-  scoped_ptr<VirtualTimeDomain> domain_a(
+  std::unique_ptr<VirtualTimeDomain> domain_a(
       new VirtualTimeDomain(nullptr, start_time));
   manager_->RegisterTimeDomain(domain_a.get());
   runners_[0]->SetTimeDomain(domain_a.get());
@@ -1542,7 +1556,7 @@ TEST_F(TaskQueueManagerTest, TimeDomainMigration) {
   test_task_runner_->RunUntilIdle();
   EXPECT_THAT(run_order, ElementsAre(1, 2));
 
-  scoped_ptr<VirtualTimeDomain> domain_b(
+  std::unique_ptr<VirtualTimeDomain> domain_b(
       new VirtualTimeDomain(nullptr, start_time));
   manager_->RegisterTimeDomain(domain_b.get());
   runners_[0]->SetTimeDomain(domain_b.get());
@@ -1808,7 +1822,7 @@ void RunloopCurrentlyExecutingTaskQueueTestTask(
     pair.second->PostTask(FROM_HERE, pair.first);
   }
 
-  message_loop->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   task_sources->push_back(task_queue_manager->currently_executing_task_queue());
 }
 }
@@ -1840,6 +1854,76 @@ TEST_F(TaskQueueManagerTest, CurrentlyExecutingTaskQueue_NestedLoop) {
   message_loop_->RunUntilIdle();
   EXPECT_THAT(task_sources, ElementsAre(queue0, queue1, queue2, queue0));
   EXPECT_EQ(nullptr, manager_->currently_executing_task_queue());
+}
+
+void OnTraceDataCollected(base::Closure quit_closure,
+                          base::trace_event::TraceResultBuffer* buffer,
+                          const scoped_refptr<base::RefCountedString>& json,
+                          bool has_more_events) {
+  buffer->AddFragment(json->data());
+  if (!has_more_events)
+    quit_closure.Run();
+}
+
+class TaskQueueManagerTestWithTracing : public TaskQueueManagerTest {
+ public:
+  void StartTracing();
+  void StopTracing();
+  std::unique_ptr<trace_analyzer::TraceAnalyzer> CreateTraceAnalyzer();
+};
+
+void TaskQueueManagerTestWithTracing::StartTracing() {
+  base::trace_event::TraceLog::GetInstance()->SetEnabled(
+      base::trace_event::TraceConfig("*"),
+      base::trace_event::TraceLog::RECORDING_MODE);
+}
+
+void TaskQueueManagerTestWithTracing::StopTracing() {
+  base::trace_event::TraceLog::GetInstance()->SetDisabled();
+}
+
+std::unique_ptr<trace_analyzer::TraceAnalyzer>
+TaskQueueManagerTestWithTracing::CreateTraceAnalyzer() {
+  base::trace_event::TraceResultBuffer buffer;
+  base::trace_event::TraceResultBuffer::SimpleOutput trace_output;
+  buffer.SetOutputCallback(trace_output.GetCallback());
+  base::RunLoop run_loop;
+  buffer.Start();
+  base::trace_event::TraceLog::GetInstance()->Flush(
+      Bind(&OnTraceDataCollected, run_loop.QuitClosure(),
+           base::Unretained(&buffer)));
+  run_loop.Run();
+  buffer.Finish();
+
+  return base::WrapUnique(
+      trace_analyzer::TraceAnalyzer::Create(trace_output.json_output));
+}
+
+TEST_F(TaskQueueManagerTestWithTracing, BlameContextAttribution) {
+  using trace_analyzer::Query;
+
+  InitializeWithRealMessageLoop(1u);
+  TaskQueue* queue = runners_[0].get();
+
+  StartTracing();
+  {
+    base::trace_event::BlameContext blame_context("cat", "name", "type",
+                                                  "scope", 0, nullptr);
+    blame_context.Initialize();
+    queue->SetBlameContext(&blame_context);
+    queue->PostTask(FROM_HERE, base::Bind(&NopTask));
+    message_loop_->RunUntilIdle();
+  }
+  StopTracing();
+  std::unique_ptr<trace_analyzer::TraceAnalyzer> analyzer =
+      CreateTraceAnalyzer();
+
+  trace_analyzer::TraceEventVector events;
+  Query q = Query::EventPhaseIs(TRACE_EVENT_PHASE_ENTER_CONTEXT) ||
+            Query::EventPhaseIs(TRACE_EVENT_PHASE_LEAVE_CONTEXT);
+  analyzer->FindEvents(q, &events);
+
+  EXPECT_EQ(2u, events.size());
 }
 
 }  // namespace scheduler

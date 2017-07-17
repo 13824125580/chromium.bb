@@ -38,7 +38,7 @@ ExtensionMessageBubbleFactory::OverrideForTesting g_override_for_testing =
 const char kEnableDevModeWarningExperimentName[] =
     "ExtensionDeveloperModeWarning";
 
-#if !defined(OS_WIN)
+#if !defined(OS_WIN) && !defined(OS_MACOSX)
 const char kEnableProxyWarningExperimentName[] = "ExtensionProxyWarning";
 #endif
 
@@ -61,7 +61,7 @@ bool EnableSuspiciousExtensionsBubble() {
 }
 
 bool EnableSettingsApiBubble() {
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_MACOSX)
   return true;
 #else
   return g_override_for_testing ==
@@ -70,7 +70,7 @@ bool EnableSettingsApiBubble() {
 }
 
 bool EnableProxyOverrideBubble() {
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_MACOSX)
   return true;
 #else
   return g_override_for_testing ==
@@ -102,14 +102,14 @@ ExtensionMessageBubbleFactory::ExtensionMessageBubbleFactory(Browser* browser)
 ExtensionMessageBubbleFactory::~ExtensionMessageBubbleFactory() {
 }
 
-scoped_ptr<extensions::ExtensionMessageBubbleController>
+std::unique_ptr<extensions::ExtensionMessageBubbleController>
 ExtensionMessageBubbleFactory::GetController() {
   Profile* original_profile = browser_->profile()->GetOriginalProfile();
   std::set<Profile*>& profiles_evaluated = g_profiles_evaluated.Get();
   bool is_initial_check = profiles_evaluated.count(original_profile) == 0;
   profiles_evaluated.insert(original_profile);
 
-  scoped_ptr<extensions::ExtensionMessageBubbleController> controller;
+  std::unique_ptr<extensions::ExtensionMessageBubbleController> controller;
 
   if (g_override_for_testing == OVERRIDE_DISABLED)
     return controller;

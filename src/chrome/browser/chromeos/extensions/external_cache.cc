@@ -70,7 +70,7 @@ void ExternalCache::Shutdown(const base::Closure& callback) {
 }
 
 void ExternalCache::UpdateExtensionsList(
-    scoped_ptr<base::DictionaryValue> prefs) {
+    std::unique_ptr<base::DictionaryValue> prefs) {
   extensions_ = std::move(prefs);
 
   if (extensions_->empty()) {
@@ -154,17 +154,11 @@ void ExternalCache::PutExternalExtension(
 void ExternalCache::Observe(int type,
                             const content::NotificationSource& source,
                             const content::NotificationDetails& details) {
-  switch (type) {
-    case extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR: {
-      extensions::CrxInstaller* installer =
-          content::Source<extensions::CrxInstaller>(source).ptr();
-      OnDamagedFileDetected(installer->source_file());
-      break;
-    }
+  DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR, type);
 
-    default:
-      NOTREACHED();
-  }
+  extensions::CrxInstaller* installer =
+      content::Source<extensions::CrxInstaller>(source).ptr();
+  OnDamagedFileDetected(installer->source_file());
 }
 
 void ExternalCache::OnExtensionDownloadFailed(

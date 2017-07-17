@@ -6,7 +6,8 @@
 
 #include <android/bitmap.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "cc/layers/layer.h"
 #include "cc/layers/ui_resource_layer.h"
 #include "chrome/browser/android/compositor/decoration_title.h"
@@ -59,7 +60,7 @@ void LayerTitleCache::UpdateLayer(JNIEnv* env,
   if (title_layer == NULL) {
     layer_cache_.AddWithID(
         new DecorationTitle(
-            this, resource_manager_, title_resource_id, favicon_resource_id,
+            resource_manager_, title_resource_id, favicon_resource_id,
             spinner_resource_id_, spinner_incognito_resource_id_, fade_width_,
             favicon_start_padding_, favicon_end_padding_, is_incognito, is_rtl),
         tab_id);

@@ -5,12 +5,13 @@
 #include "ui/gl/gpu_timing.h"
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_version_info.h"
 
-namespace gfx {
+namespace gl {
 
 class TimeElapsedTimerQuery;
 class TimerQuery;
@@ -604,12 +605,13 @@ GPUTimingClient::GPUTimingClient(GPUTimingImpl* gpu_timing)
   }
 }
 
-scoped_ptr<GPUTimer> GPUTimingClient::CreateGPUTimer(bool prefer_elapsed_time) {
+std::unique_ptr<GPUTimer> GPUTimingClient::CreateGPUTimer(
+    bool prefer_elapsed_time) {
   prefer_elapsed_time |= (timer_type_ == GPUTiming::kTimerTypeEXT);
   if (gpu_timing_)
     prefer_elapsed_time |= gpu_timing_->IsForceTimeElapsedQuery();
 
-  return make_scoped_ptr(new GPUTimer(this, prefer_elapsed_time));
+  return base::WrapUnique(new GPUTimer(this, prefer_elapsed_time));
 }
 
 bool GPUTimingClient::IsAvailable() {
@@ -664,4 +666,4 @@ void GPUTimingClient::ForceTimeElapsedQuery() {
 GPUTimingClient::~GPUTimingClient() {
 }
 
-}  // namespace gfx
+}  // namespace gl

@@ -30,10 +30,10 @@
 #define InspectorDOMStorageAgent_h
 
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/DOMStorage.h"
 #include "modules/ModulesExport.h"
 #include "modules/storage/StorageArea.h"
 #include "wtf/HashMap.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -46,13 +46,12 @@ namespace protocol {
 class DictionaryValue;
 }
 
-typedef String ErrorString;
 
-class MODULES_EXPORT InspectorDOMStorageAgent final : public InspectorBaseAgent<InspectorDOMStorageAgent, protocol::Frontend::DOMStorage>, public protocol::Dispatcher::DOMStorageCommandHandler {
+class MODULES_EXPORT InspectorDOMStorageAgent final : public InspectorBaseAgent<protocol::DOMStorage::Metainfo> {
 public:
-    static PassOwnPtrWillBeRawPtr<InspectorDOMStorageAgent> create(Page* page)
+    static InspectorDOMStorageAgent* create(Page* page)
     {
-        return adoptPtrWillBeNoop(new InspectorDOMStorageAgent(page));
+        return new InspectorDOMStorageAgent(page);
     }
 
     ~InspectorDOMStorageAgent() override;
@@ -69,14 +68,14 @@ private:
     // protocol::Dispatcher::DOMStorageCommandHandler overrides.
     void enable(ErrorString*) override;
     void disable(ErrorString*) override;
-    void getDOMStorageItems(ErrorString*, PassOwnPtr<protocol::DOMStorage::StorageId> in_storageId, OwnPtr<protocol::Array<protocol::Array<String>>>* out_entries) override;
-    void setDOMStorageItem(ErrorString*, PassOwnPtr<protocol::DOMStorage::StorageId> in_storageId, const String& in_key, const String& in_value) override;
-    void removeDOMStorageItem(ErrorString*, PassOwnPtr<protocol::DOMStorage::StorageId> in_storageId, const String& in_key) override;
+    void getDOMStorageItems(ErrorString*, std::unique_ptr<protocol::DOMStorage::StorageId> in_storageId, std::unique_ptr<protocol::Array<protocol::Array<String>>>* out_entries) override;
+    void setDOMStorageItem(ErrorString*, std::unique_ptr<protocol::DOMStorage::StorageId> in_storageId, const String& in_key, const String& in_value) override;
+    void removeDOMStorageItem(ErrorString*, std::unique_ptr<protocol::DOMStorage::StorageId> in_storageId, const String& in_key) override;
 
-    StorageArea* findStorageArea(ErrorString*, PassOwnPtr<protocol::DOMStorage::StorageId>, LocalFrame*&);
-    PassOwnPtr<protocol::DOMStorage::StorageId> storageId(SecurityOrigin*, bool isLocalStorage);
+    StorageArea* findStorageArea(ErrorString*, std::unique_ptr<protocol::DOMStorage::StorageId>, LocalFrame*&);
+    std::unique_ptr<protocol::DOMStorage::StorageId> storageId(SecurityOrigin*, bool isLocalStorage);
 
-    RawPtrWillBeMember<Page> m_page;
+    Member<Page> m_page;
     bool m_isEnabled;
 };
 

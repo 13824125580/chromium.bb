@@ -80,7 +80,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   void RemoveObserver(views::DesktopWindowTreeHostObserverX11* observer);
 
   // Swaps the current handler for events in the non client view with |handler|.
-  void SwapNonClientEventHandler(scoped_ptr<ui::EventHandler> handler);
+  void SwapNonClientEventHandler(std::unique_ptr<ui::EventHandler> handler);
 
   // Runs the |func| callback for each content-window, and deallocates the
   // internal list of open windows.
@@ -91,8 +91,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   void Init(aura::Window* content_window,
             const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
-  scoped_ptr<corewm::Tooltip> CreateTooltip() override;
-  scoped_ptr<aura::client::DragDropClient> CreateDragDropClient(
+  std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
+  std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient(
       DesktopNativeCursorManager* cursor_manager) override;
   void Close() override;
   void CloseNow() override;
@@ -109,6 +109,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   gfx::Rect GetWindowBoundsInScreen() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   gfx::Rect GetRestoredBounds() const override;
+  std::string GetWorkspace() const override;
   gfx::Rect GetWorkAreaBoundsInScreen() const override;
   void SetShape(SkRegion* native_region) override;
   void Activate() override;
@@ -136,7 +137,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   void FrameTypeChanged() override;
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
-  void SetOpacity(unsigned char opacity) override;
+  void SetOpacity(float opacity) override;
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
                       const gfx::ImageSkia& app_icon) override;
   void InitModalType(ui::ModalType modal_type) override;
@@ -259,6 +260,9 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   // Is the window mapped to the screen?
   bool window_mapped_;
 
+  // Should we wait for an UnmapNotify before trying to remap the window?
+  bool wait_for_unmap_;
+
   // The bounds of |xwindow_|.
   gfx::Rect bounds_in_pixels_;
 
@@ -300,8 +304,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
 
   DesktopDragDropClientAuraX11* drag_drop_client_;
 
-  scoped_ptr<ui::EventHandler> x11_non_client_event_filter_;
-  scoped_ptr<X11DesktopWindowMoveClient> x11_window_move_client_;
+  std::unique_ptr<ui::EventHandler> x11_non_client_event_filter_;
+  std::unique_ptr<X11DesktopWindowMoveClient> x11_window_move_client_;
 
   // TODO(beng): Consider providing an interface to DesktopNativeWidgetAura
   //             instead of providing this route back to Widget.

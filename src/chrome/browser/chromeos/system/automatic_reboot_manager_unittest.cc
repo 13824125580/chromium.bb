@@ -20,8 +20,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -106,7 +106,7 @@ class TestAutomaticRebootManagerTaskRunner
   void OnAfterTimePassed() override;
   void OnAfterTaskRun() override;
 
-  scoped_ptr<MockUptimeProvider> uptime_provider_;
+  std::unique_ptr<MockUptimeProvider> uptime_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(TestAutomaticRebootManagerTaskRunner);
 };
@@ -186,7 +186,7 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
   scoped_refptr<TestAutomaticRebootManagerTaskRunner> task_runner_;
 
   MockAutomaticRebootManagerObserver automatic_reboot_manager_observer_;
-  scoped_ptr<AutomaticRebootManager> automatic_reboot_manager_;
+  std::unique_ptr<AutomaticRebootManager> automatic_reboot_manager_;
 
  private:
   void VerifyTimerIsStopped(const base::OneShotTimer* timer) const;
@@ -229,7 +229,7 @@ class AutomaticRebootManagerTest
 
 void SaveUptimeToFile(const base::FilePath& path,
                       const base::TimeDelta& uptime) {
-  if (path.empty() || uptime == base::TimeDelta())
+  if (path.empty() || uptime.is_zero())
     return;
 
   const std::string uptime_seconds = base::DoubleToString(uptime.InSecondsF());
@@ -333,14 +333,14 @@ void AutomaticRebootManagerBasicTest::SetUp() {
   TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
   AutomaticRebootManager::RegisterPrefs(local_state_.registry());
 
-  scoped_ptr<DBusThreadManagerSetter> dbus_setter =
+  std::unique_ptr<DBusThreadManagerSetter> dbus_setter =
       chromeos::DBusThreadManager::GetSetterForTesting();
   power_manager_client_ = new FakePowerManagerClient;
   dbus_setter->SetPowerManagerClient(
-      scoped_ptr<PowerManagerClient>(power_manager_client_));
+      std::unique_ptr<PowerManagerClient>(power_manager_client_));
   update_engine_client_ = new FakeUpdateEngineClient;
   dbus_setter->SetUpdateEngineClient(
-      scoped_ptr<UpdateEngineClient>(update_engine_client_));
+      std::unique_ptr<UpdateEngineClient>(update_engine_client_));
 
   EXPECT_CALL(*mock_user_manager_, IsUserLoggedIn())
      .WillRepeatedly(ReturnPointee(&is_user_logged_in_));
@@ -386,7 +386,7 @@ void AutomaticRebootManagerBasicTest::SetUptimeLimit(
     const base::TimeDelta& limit,
     bool expect_reboot) {
   uptime_limit_ = limit;
-  if (limit == base::TimeDelta()) {
+  if (limit.is_zero()) {
     local_state_.RemoveManagedPref(prefs::kUptimeLimit);
   } else {
     local_state_.SetManagedPref(
@@ -460,7 +460,7 @@ void AutomaticRebootManagerBasicTest::ExpectNoRebootRequest() {
 void AutomaticRebootManagerBasicTest::CreateAutomaticRebootManager(
     bool expect_reboot) {
   automatic_reboot_manager_.reset(new AutomaticRebootManager(
-      scoped_ptr<base::TickClock>(task_runner_->GetMockTickClock())));
+      std::unique_ptr<base::TickClock>(task_runner_->GetMockTickClock())));
   automatic_reboot_manager_observer_.Init(automatic_reboot_manager_.get());
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,

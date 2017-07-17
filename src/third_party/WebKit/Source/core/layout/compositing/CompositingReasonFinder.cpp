@@ -40,8 +40,7 @@ bool CompositingReasonFinder::hasOverflowScrollTrigger() const
 
 bool CompositingReasonFinder::isMainFrame() const
 {
-    // FIXME: LocalFrame::isMainFrame() is probably better.
-    return !m_layoutView.document().ownerElement();
+    return m_layoutView.document().isInMainFrame();
 }
 
 CompositingReasons CompositingReasonFinder::directReasons(const PaintLayer* layer) const
@@ -93,7 +92,7 @@ CompositingReasons CompositingReasonFinder::potentialCompositingReasonsFromStyle
     if (style.hasInlineTransform())
         reasons |= CompositingReasonInlineTransform;
 
-    if (style.transformStyle3D() == TransformStyle3DPreserve3D)
+    if (style.usedTransformStyle3D() == TransformStyle3DPreserve3D)
         reasons |= CompositingReasonPreserve3DWith3DDescendants;
 
     if (style.hasPerspective())
@@ -103,12 +102,12 @@ CompositingReasons CompositingReasonFinder::potentialCompositingReasonsFromStyle
         reasons |= CompositingReasonCompositorProxy;
 
     // If the implementation of createsGroup changes, we need to be aware of that in this part of code.
-    ASSERT((layoutObject->isTransparent() || layoutObject->hasMask() || layoutObject->hasFilter() || style.hasBlendMode()) == layoutObject->createsGroup());
+    ASSERT((layoutObject->isTransparent() || layoutObject->hasMask() || layoutObject->hasFilterInducingProperty() || style.hasBlendMode()) == layoutObject->createsGroup());
 
     if (style.hasMask())
         reasons |= CompositingReasonMaskWithCompositedDescendants;
 
-    if (style.hasFilter())
+    if (style.hasFilterInducingProperty())
         reasons |= CompositingReasonFilterWithCompositedDescendants;
 
     if (style.hasBackdropFilter())

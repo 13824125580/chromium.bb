@@ -10,6 +10,7 @@
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
@@ -74,7 +75,7 @@ class DefaultRuleIterator : public RuleIterator {
   }
 
  private:
-  scoped_ptr<base::Value> value_;
+  std::unique_ptr<base::Value> value_;
 };
 
 }  // namespace
@@ -121,14 +122,15 @@ DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)
           GetPrefName(CONTENT_SETTINGS_TYPE_COOKIES))),
       CONTENT_SETTING_NUM_SETTINGS);
   UMA_HISTOGRAM_ENUMERATION(
+      "ContentSettings.DefaultPopupsSetting",
+      IntToContentSetting(prefs_->GetInteger(
+          GetPrefName(CONTENT_SETTINGS_TYPE_POPUPS))),
+      CONTENT_SETTING_NUM_SETTINGS);
+#if !defined(OS_IOS) && !defined(OS_ANDROID)
+  UMA_HISTOGRAM_ENUMERATION(
       "ContentSettings.DefaultImagesSetting",
       IntToContentSetting(prefs_->GetInteger(
           GetPrefName(CONTENT_SETTINGS_TYPE_IMAGES))),
-      CONTENT_SETTING_NUM_SETTINGS);
-  UMA_HISTOGRAM_ENUMERATION(
-      "ContentSettings.DefaultJavaScriptSetting",
-      IntToContentSetting(prefs_->GetInteger(
-          GetPrefName(CONTENT_SETTINGS_TYPE_JAVASCRIPT))),
       CONTENT_SETTING_NUM_SETTINGS);
   UMA_HISTOGRAM_ENUMERATION(
       "ContentSettings.DefaultPluginsSetting",
@@ -136,10 +138,19 @@ DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)
           GetPrefName(CONTENT_SETTINGS_TYPE_PLUGINS))),
       CONTENT_SETTING_NUM_SETTINGS);
   UMA_HISTOGRAM_ENUMERATION(
-      "ContentSettings.DefaultPopupsSetting",
+      "ContentSettings.DefaultMouseCursorSetting",
       IntToContentSetting(prefs_->GetInteger(
-          GetPrefName(CONTENT_SETTINGS_TYPE_POPUPS))),
+          GetPrefName(CONTENT_SETTINGS_TYPE_MOUSELOCK))),
       CONTENT_SETTING_NUM_SETTINGS);
+#endif
+
+#if !defined(OS_IOS)
+  UMA_HISTOGRAM_ENUMERATION(
+      "ContentSettings.DefaultJavaScriptSetting",
+      IntToContentSetting(prefs_->GetInteger(
+          GetPrefName(CONTENT_SETTINGS_TYPE_JAVASCRIPT))),
+      CONTENT_SETTING_NUM_SETTINGS);
+
   UMA_HISTOGRAM_ENUMERATION(
       "ContentSettings.DefaultLocationSetting",
       IntToContentSetting(prefs_->GetInteger(
@@ -150,11 +161,7 @@ DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)
       IntToContentSetting(prefs_->GetInteger(
           GetPrefName(CONTENT_SETTINGS_TYPE_NOTIFICATIONS))),
       CONTENT_SETTING_NUM_SETTINGS);
-  UMA_HISTOGRAM_ENUMERATION(
-      "ContentSettings.DefaultMouseCursorSetting",
-      IntToContentSetting(prefs_->GetInteger(
-          GetPrefName(CONTENT_SETTINGS_TYPE_MOUSELOCK))),
-      CONTENT_SETTING_NUM_SETTINGS);
+
   UMA_HISTOGRAM_ENUMERATION(
       "ContentSettings.DefaultMediaStreamMicSetting",
       IntToContentSetting(prefs_->GetInteger(
@@ -185,7 +192,12 @@ DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)
       IntToContentSetting(prefs_->GetInteger(
           GetPrefName(CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD))),
       CONTENT_SETTING_NUM_SETTINGS);
-
+  UMA_HISTOGRAM_ENUMERATION(
+      "ContentSettings.DefaultAutoplaySetting",
+      IntToContentSetting(prefs_->GetInteger(
+          GetPrefName(CONTENT_SETTINGS_TYPE_AUTOPLAY))),
+      CONTENT_SETTING_NUM_SETTINGS);
+#endif
   pref_change_registrar_.Init(prefs_);
   PrefChangeRegistrar::NamedChangeCallback callback = base::Bind(
       &DefaultProvider::OnPreferenceChanged, base::Unretained(this));
@@ -215,7 +227,7 @@ bool DefaultProvider::SetWebsiteSetting(
 
   // Put |in_value| in a scoped pointer to ensure that it gets cleaned up
   // properly if we don't pass on the ownership.
-  scoped_ptr<base::Value> value(in_value);
+  std::unique_ptr<base::Value> value(in_value);
 
   // The default settings may not be directly modified for OTR sessions.
   // Instead, they are synced to the main profile's setting.
@@ -243,23 +255,23 @@ bool DefaultProvider::SetWebsiteSetting(
   return true;
 }
 
-scoped_ptr<RuleIterator> DefaultProvider::GetRuleIterator(
+std::unique_ptr<RuleIterator> DefaultProvider::GetRuleIterator(
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
     bool incognito) const {
   // The default provider never has incognito-specific settings.
   if (incognito)
-    return scoped_ptr<RuleIterator>(new EmptyRuleIterator());
+    return std::unique_ptr<RuleIterator>(new EmptyRuleIterator());
 
   base::AutoLock lock(lock_);
   if (resource_identifier.empty()) {
     auto it(default_settings_.find(content_type));
     if (it != default_settings_.end())
-      return scoped_ptr<RuleIterator>(
+      return std::unique_ptr<RuleIterator>(
           new DefaultRuleIterator(it->second.get()));
     NOTREACHED();
   }
-  return scoped_ptr<RuleIterator>(new EmptyRuleIterator());
+  return std::unique_ptr<RuleIterator>(new EmptyRuleIterator());
 }
 
 void DefaultProvider::ClearAllContentSettingsRules(
@@ -295,7 +307,7 @@ bool DefaultProvider::IsValueEmptyOrDefault(ContentSettingsType content_type,
 void DefaultProvider::ChangeSetting(ContentSettingsType content_type,
                                     base::Value* value) {
   default_settings_[content_type] =
-      value ? make_scoped_ptr(value->DeepCopy())
+      value ? base::WrapUnique(value->DeepCopy())
             : ContentSettingToValue(GetDefaultValue(content_type));
 }
 
@@ -354,7 +366,7 @@ void DefaultProvider::OnPreferenceChanged(const std::string& name) {
                   ResourceIdentifier());
 }
 
-scoped_ptr<base::Value> DefaultProvider::ReadFromPref(
+std::unique_ptr<base::Value> DefaultProvider::ReadFromPref(
     ContentSettingsType content_type) {
   int int_value = prefs_->GetInteger(GetPrefName(content_type));
   return ContentSettingToValue(IntToContentSetting(int_value));

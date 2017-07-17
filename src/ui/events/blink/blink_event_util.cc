@@ -15,6 +15,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/gesture_detection/gesture_event_data.h"
 #include "ui/events/gesture_detection/motion_event.h"
@@ -23,6 +24,7 @@
 
 using blink::WebGestureEvent;
 using blink::WebInputEvent;
+using blink::WebPointerProperties;
 using blink::WebTouchEvent;
 using blink::WebTouchPoint;
 
@@ -81,30 +83,11 @@ WebTouchPoint::State ToWebTouchPointState(const MotionEvent& event,
   return WebTouchPoint::StateUndefined;
 }
 
-WebTouchPoint::PointerType ToWebTouchPointPointerType(const MotionEvent& event,
-                                                      size_t pointer_index) {
-  switch (event.GetToolType(pointer_index)) {
-    case MotionEvent::TOOL_TYPE_UNKNOWN:
-      return WebTouchPoint::PointerType::Unknown;
-    case MotionEvent::TOOL_TYPE_FINGER:
-      return WebTouchPoint::PointerType::Touch;
-    case MotionEvent::TOOL_TYPE_STYLUS:
-      return WebTouchPoint::PointerType::Pen;
-    case MotionEvent::TOOL_TYPE_MOUSE:
-      return WebTouchPoint::PointerType::Mouse;
-    case MotionEvent::TOOL_TYPE_ERASER:
-      return WebTouchPoint::PointerType::Unknown;
-  }
-  NOTREACHED() << "Invalid MotionEvent::ToolType = "
-               << event.GetToolType(pointer_index);
-  return WebTouchPoint::PointerType::Unknown;
-}
-
 WebTouchPoint CreateWebTouchPoint(const MotionEvent& event,
                                   size_t pointer_index) {
   WebTouchPoint touch;
   touch.id = event.GetPointerId(pointer_index);
-  touch.pointerType = ToWebTouchPointPointerType(event, pointer_index);
+  touch.pointerType = ToWebPointerType(event.GetToolType(pointer_index));
   touch.state = ToWebTouchPointState(event, pointer_index);
   touch.position.x = event.GetX(pointer_index);
   touch.position.y = event.GetY(pointer_index);
@@ -187,9 +170,10 @@ blink::WebTouchEvent CreateWebTouchEventFromMotionEvent(
   blink::WebTouchEvent result;
 
   result.type = ToWebInputEventType(event.GetAction());
-  result.cancelable = (result.type != WebInputEvent::TouchCancel);
-  result.timeStampSeconds =
-      (event.GetEventTime() - base::TimeTicks()).InSecondsF();
+  result.dispatchType = result.type == WebInputEvent::TouchCancel
+                            ? WebInputEvent::EventNonBlocking
+                            : WebInputEvent::Blocking;
+  result.timeStampSeconds = ui::EventTimeStampToSeconds(event.GetEventTime());
   result.movedBeyondSlopRegion = moved_beyond_slop_region;
   result.modifiers = EventFlagsToWebEventModifiers(event.GetFlags());
   DCHECK_NE(event.GetUniqueEventId(), 0U);
@@ -239,18 +223,33 @@ int EventFlagsToWebEventModifiers(int flags) {
 }
 
 WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
-                                      base::TimeDelta timestamp,
+                                      base::TimeTicks timestamp,
                                       const gfx::PointF& location,
                                       const gfx::PointF& raw_location,
-                                      int flags) {
+                                      int flags,
+                                      uint32_t unique_touch_event_id) {
   WebGestureEvent gesture;
-  gesture.timeStampSeconds = timestamp.InSecondsF();
+  gesture.timeStampSeconds = ui::EventTimeStampToSeconds(timestamp);
   gesture.x = gfx::ToFlooredInt(location.x());
   gesture.y = gfx::ToFlooredInt(location.y());
   gesture.globalX = gfx::ToFlooredInt(raw_location.x());
   gesture.globalY = gfx::ToFlooredInt(raw_location.y());
   gesture.modifiers = EventFlagsToWebEventModifiers(flags);
-  gesture.sourceDevice = blink::WebGestureDeviceTouchscreen;
+
+  switch (details.device_type()) {
+    case GestureDeviceType::DEVICE_TOUCHSCREEN:
+      gesture.sourceDevice = blink::WebGestureDeviceTouchscreen;
+      break;
+    case GestureDeviceType::DEVICE_TOUCHPAD:
+      gesture.sourceDevice = blink::WebGestureDeviceTouchpad;
+      break;
+    case GestureDeviceType::DEVICE_UNKNOWN:
+      NOTREACHED() << "Unknown device type is not allowed";
+      gesture.sourceDevice = blink::WebGestureDeviceUninitialized;
+      break;
+  }
+
+  gesture.uniqueTouchEventId = unique_touch_event_id;
 
   switch (details.type()) {
     case ET_GESTURE_SHOW_PRESS:
@@ -352,15 +351,16 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
 
 WebGestureEvent CreateWebGestureEventFromGestureEventData(
     const GestureEventData& data) {
-  return CreateWebGestureEvent(data.details, data.time - base::TimeTicks(),
+  return CreateWebGestureEvent(data.details, data.time,
                                gfx::PointF(data.x, data.y),
-                               gfx::PointF(data.raw_x, data.raw_y), data.flags);
+                               gfx::PointF(data.raw_x, data.raw_y), data.flags,
+                               data.unique_touch_event_id);
 }
 
-scoped_ptr<blink::WebInputEvent> ScaleWebInputEvent(
+std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
     const blink::WebInputEvent& event,
     float scale) {
-  scoped_ptr<blink::WebInputEvent> scaled_event;
+  std::unique_ptr<blink::WebInputEvent> scaled_event;
   if (scale == 1.f)
     return scaled_event;
   if (event.type == blink::WebMouseEvent::MouseWheel) {
@@ -460,6 +460,24 @@ scoped_ptr<blink::WebInputEvent> ScaleWebInputEvent(
     }
   }
   return scaled_event;
+}
+
+WebPointerProperties::PointerType ToWebPointerType(
+    MotionEvent::ToolType tool_type) {
+  switch (tool_type) {
+    case MotionEvent::TOOL_TYPE_UNKNOWN:
+      return WebPointerProperties::PointerType::Unknown;
+    case MotionEvent::TOOL_TYPE_FINGER:
+      return WebPointerProperties::PointerType::Touch;
+    case MotionEvent::TOOL_TYPE_STYLUS:
+      return WebPointerProperties::PointerType::Pen;
+    case MotionEvent::TOOL_TYPE_MOUSE:
+      return WebPointerProperties::PointerType::Mouse;
+    case MotionEvent::TOOL_TYPE_ERASER:
+      return WebPointerProperties::PointerType::Unknown;
+  }
+  NOTREACHED() << "Invalid MotionEvent::ToolType = " << tool_type;
+  return WebPointerProperties::PointerType::Unknown;
 }
 
 }  // namespace ui

@@ -140,13 +140,6 @@ class ToolkitCreateParams {
     // so it may not support *all* the switches mentioned on that page.
     BLPWTK2_EXPORT void appendCommandLineSwitch(const StringRef& switchString);
 
-    // Register the specified 'fontFile' to be side-loaded so that it is usable
-    // by the in-process renderer.  The DirectWrite font implementation only
-    // has access to %WINDIR%\Fonts by default.  This function allows
-    // applications to load additional fonts.
-    // Note that right now, this only works for in-process renderers.
-    BLPWTK2_EXPORT void appendSideLoadedFontInProcess(const StringRef& fontFile);
-
     // By default, blpwtk2 will automatically load plugins it finds on the
     // system (e.g. from paths in the Windows registry).  Use this method to
     // disable this behavior.  If it is disabled, then only plugins registered
@@ -243,8 +236,6 @@ class ToolkitCreateParams {
     int inputHandlingTimeThrottlingThresholdMicroseconds() const;
     size_t numCommandLineSwitches() const;
     StringRef commandLineSwitchAt(size_t index) const;
-    size_t numSideLoadedFonts() const;
-    StringRef sideLoadedFontAt(size_t index) const;
     ResourceLoader* inProcessResourceLoader() const;
     StringRef dictionaryPath() const;
     StringRef userAgent() const;

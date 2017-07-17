@@ -7,14 +7,14 @@
 #include <stdint.h>
 
 #include <deque>
+#include <memory>
 #include <set>
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
@@ -114,7 +114,7 @@ class LocalFileChangeTrackerTest : public testing::Test {
 
   base::MessageLoopForIO message_loop_;
   base::ScopedTempDir base_dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
   CannedSyncableFileSystem file_system_;
 
  private:

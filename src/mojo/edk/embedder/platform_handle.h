@@ -10,6 +10,8 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
+
+#include "base/process/process_handle.h"
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include <mach/mach.h>
 #endif
@@ -30,7 +32,7 @@ struct MOJO_SYSTEM_IMPL_EXPORT PlatformHandle {
 
   bool is_valid() const {
 #if defined(OS_MACOSX) && !defined(OS_IOS)
-    if (type == Type::MACH)
+    if (type == Type::MACH || type == Type::MACH_NAME)
       return port != MACH_PORT_NULL;
 #endif
     return handle != -1;
@@ -40,6 +42,11 @@ struct MOJO_SYSTEM_IMPL_EXPORT PlatformHandle {
     POSIX,
 #if defined(OS_MACOSX) && !defined(OS_IOS)
     MACH,
+    // MACH_NAME isn't a real Mach port. But rather the "name" of one that can
+    // be resolved to a real port later. This distinction is needed so that the
+    // "port" doesn't try to be closed if CloseIfNecessary() is called. Having
+    // this also allows us to do checks in other places.
+    MACH_NAME,
 #endif
   };
   Type type = Type::POSIX;
@@ -52,14 +59,23 @@ struct MOJO_SYSTEM_IMPL_EXPORT PlatformHandle {
 };
 #elif defined(OS_WIN)
 struct MOJO_SYSTEM_IMPL_EXPORT PlatformHandle {
-  PlatformHandle() : handle(INVALID_HANDLE_VALUE) {}
-  explicit PlatformHandle(HANDLE handle) : handle(handle) {}
+  PlatformHandle() : PlatformHandle(INVALID_HANDLE_VALUE) {}
+  explicit PlatformHandle(HANDLE handle)
+      : handle(handle), owning_process(base::GetCurrentProcessHandle()) {}
 
   void CloseIfNecessary();
 
   bool is_valid() const { return handle != INVALID_HANDLE_VALUE; }
 
   HANDLE handle;
+
+  // A Windows HANDLE may be duplicated to another process but not yet sent to
+  // that process. This tracks the handle's owning process.
+  base::ProcessHandle owning_process;
+
+  // A Windows HANDLE may be an unconnected named pipe. In this case, we need to
+  // wait for a connection before communicating on the pipe.
+  bool needs_connection = false;
 };
 #else
 #error "Platform not yet supported."

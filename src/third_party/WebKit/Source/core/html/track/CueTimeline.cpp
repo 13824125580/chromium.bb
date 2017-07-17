@@ -24,26 +24,26 @@ CueTimeline::CueTimeline(HTMLMediaElement& mediaElement)
 
 void CueTimeline::addCues(TextTrack* track, const TextTrackCueList* cues)
 {
-    ASSERT(track->mode() != TextTrack::disabledKeyword());
+    DCHECK_NE(track->mode(), TextTrack::disabledKeyword());
     for (size_t i = 0; i < cues->length(); ++i)
         addCueInternal(cues->anonymousIndexedGetter(i));
     updateActiveCues(mediaElement().currentTime());
 }
 
-void CueTimeline::addCue(TextTrack* track, PassRefPtrWillBeRawPtr<TextTrackCue> cue)
+void CueTimeline::addCue(TextTrack* track, TextTrackCue* cue)
 {
-    ASSERT(track->mode() != TextTrack::disabledKeyword());
+    DCHECK_NE(track->mode(), TextTrack::disabledKeyword());
     addCueInternal(cue);
     updateActiveCues(mediaElement().currentTime());
 }
 
-void CueTimeline::addCueInternal(PassRefPtrWillBeRawPtr<TextTrackCue> cue)
+void CueTimeline::addCueInternal(TextTrackCue* cue)
 {
     // Negative duration cues need be treated in the interval tree as
     // zero-length cues.
     double endTime = std::max(cue->startTime(), cue->endTime());
 
-    CueInterval interval = m_cueTree.createInterval(cue->startTime(), endTime, cue.get());
+    CueInterval interval = m_cueTree.createInterval(cue->startTime(), endTime, cue);
     if (!m_cueTree.contains(interval))
         m_cueTree.add(interval);
 }
@@ -55,24 +55,24 @@ void CueTimeline::removeCues(TextTrack*, const TextTrackCueList* cues)
     updateActiveCues(mediaElement().currentTime());
 }
 
-void CueTimeline::removeCue(TextTrack*, PassRefPtrWillBeRawPtr<TextTrackCue> cue)
+void CueTimeline::removeCue(TextTrack*, TextTrackCue* cue)
 {
     removeCueInternal(cue);
     updateActiveCues(mediaElement().currentTime());
 }
 
-void CueTimeline::removeCueInternal(PassRefPtrWillBeRawPtr<TextTrackCue> cue)
+void CueTimeline::removeCueInternal(TextTrackCue* cue)
 {
     // Negative duration cues need to be treated in the interval tree as
     // zero-length cues.
     double endTime = std::max(cue->startTime(), cue->endTime());
 
-    CueInterval interval = m_cueTree.createInterval(cue->startTime(), endTime, cue.get());
+    CueInterval interval = m_cueTree.createInterval(cue->startTime(), endTime, cue);
     m_cueTree.remove(interval);
 
     size_t index = m_currentlyActiveCues.find(interval);
     if (index != kNotFound) {
-        ASSERT(cue->isActive());
+        DCHECK(cue->isActive());
         m_currentlyActiveCues.remove(index);
         cue->setIsActive(false);
         // Since the cue will be removed from the media element and likely the
@@ -112,11 +112,11 @@ static bool eventTimeCueCompare(const std::pair<double, TextTrackCue*>& a, const
     return a.second->cueIndex() < b.second->cueIndex();
 }
 
-static PassRefPtrWillBeRawPtr<Event> createEventWithTarget(const AtomicString& eventName, PassRefPtrWillBeRawPtr<EventTarget> eventTarget)
+static Event* createEventWithTarget(const AtomicString& eventName, EventTarget* eventTarget)
 {
-    RefPtrWillBeRawPtr<Event> event = Event::create(eventName);
+    Event* event = Event::create(eventName);
     event->setTarget(eventTarget);
-    return event.release();
+    return event;
 }
 
 void CueTimeline::updateActiveCues(double movieTime)
@@ -131,13 +131,11 @@ void CueTimeline::updateActiveCues(double movieTime)
 
     HTMLMediaElement& mediaElement = this->mediaElement();
 
-#if !ENABLE(OILPAN)
     // Don't run the "time marches on" algorithm if the document has been
     // detached. This primarily guards against dispatch of events w/
     // HTMLTrackElement targets.
     if (mediaElement.document().isDetached())
         return;
-#endif
 
     // https://html.spec.whatwg.org/#time-marches-on
 
@@ -322,7 +320,7 @@ void CueTimeline::updateActiveCues(double movieTime)
         // simple event named cuechange at the track element as well.
         if (affectedTracks[i]->trackType() == TextTrack::TrackElement) {
             HTMLTrackElement* trackElement = static_cast<LoadableTextTrack*>(affectedTracks[i].get())->trackElement();
-            ASSERT(trackElement);
+            DCHECK(trackElement);
             mediaElement.scheduleEvent(createEventWithTarget(EventTypeNames::cuechange, trackElement));
         }
     }
@@ -353,7 +351,7 @@ void CueTimeline::beginIgnoringUpdateRequests()
 
 void CueTimeline::endIgnoringUpdateRequests()
 {
-    ASSERT(m_ignoreUpdate);
+    DCHECK(m_ignoreUpdate);
     --m_ignoreUpdate;
     if (!m_ignoreUpdate)
         updateActiveCues(mediaElement().currentTime());

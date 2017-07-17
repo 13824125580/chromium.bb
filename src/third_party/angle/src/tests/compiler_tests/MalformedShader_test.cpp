@@ -1532,3 +1532,81 @@ TEST_F(MalformedShaderTest, ESSL300FragmentInvariantAll)
         FAIL() << "Shader compilation succeeded, expecting failure " << mInfoLog;
     }
 }
+
+// Built-in functions can be overloaded in ESSL 1.00.
+TEST_F(MalformedShaderTest, ESSL100BuiltInFunctionOverload)
+{
+    const std::string &shaderString =
+        "precision mediump float;\n"
+        "int sin(int x)\n"
+        "{\n"
+        "    return int(sin(float(x)));\n"
+        "}\n"
+        "void main()\n"
+        "{\n"
+        "   gl_FragColor = vec4(sin(1));"
+        "}\n";
+    if (!compile(shaderString))
+    {
+        FAIL() << "Shader compilation failed, expecting success " << mInfoLog;
+    }
+}
+
+// Built-in functions can not be overloaded in ESSL 3.00.
+TEST_F(MalformedShaderTest, ESSL300BuiltInFunctionOverload)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 my_FragColor;\n"
+        "int sin(int x)\n"
+        "{\n"
+        "    return int(sin(float(x)));\n"
+        "}\n"
+        "void main()\n"
+        "{\n"
+        "   my_FragColor = vec4(sin(1));"
+        "}\n";
+    if (compile(shaderString))
+    {
+        FAIL() << "Shader compilation succeeded, expecting failure " << mInfoLog;
+    }
+}
+
+// Multiplying a 4x2 matrix with a 4x2 matrix should not work.
+TEST_F(MalformedShaderTest, CompoundMultiplyMatrixIdenticalNonSquareDimensions)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 my_FragColor;\n"
+        "void main()\n"
+        "{\n"
+        "   mat4x2 foo;\n"
+        "   foo *= mat4x2(4.0);\n"
+        "   my_FragColor = vec4(0.0);\n"
+        "}\n";
+    if (compile(shaderString))
+    {
+        FAIL() << "Shader compilation succeeded, expecting failure " << mInfoLog;
+    }
+}
+
+// Multiplying a matrix with 2 columns and 4 rows with a 2x2 matrix should work.
+TEST_F(MalformedShaderTest, CompoundMultiplyMatrixValidNonSquareDimensions)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 my_FragColor;\n"
+        "void main()\n"
+        "{\n"
+        "   mat2x4 foo;\n"
+        "   foo *= mat2x2(4.0);\n"
+        "   my_FragColor = vec4(0.0);\n"
+        "}\n";
+    if (!compile(shaderString))
+    {
+        FAIL() << "Shader compilation failed, expecting success " << mInfoLog;
+    }
+}

@@ -43,6 +43,7 @@ class RuntimeData;
 class ServiceWorkerManager;
 class SharedUserScriptMaster;
 class StateStore;
+class ValueStoreFactory;
 
 // ExtensionSystem manages the lifetime of many of the services used by the
 // extensions and apps system, and it handles startup and shutdown as needed.
@@ -85,6 +86,9 @@ class ExtensionSystem : public KeyedService {
   // The rules store is created at startup.
   virtual StateStore* rules_store() = 0;
 
+  // Returns the |ValueStore| factory created at startup.
+  virtual scoped_refptr<ValueStoreFactory> store_factory() = 0;
+
   // Returns the IO-thread-accessible extension data.
   virtual InfoMap* info_map() = 0;
 
@@ -121,7 +125,7 @@ class ExtensionSystem : public KeyedService {
   // Get a set of extensions that depend on the given extension.
   // TODO(elijahtaylor): Move SharedModuleService out of chrome/browser
   // so it can be retrieved from ExtensionSystem directly.
-  virtual scoped_ptr<ExtensionSet> GetDependentExtensions(
+  virtual std::unique_ptr<ExtensionSet> GetDependentExtensions(
       const Extension* extension) = 0;
 
   // Install an updated version of |extension_id| with the version given in

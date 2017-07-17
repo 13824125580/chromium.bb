@@ -198,6 +198,10 @@ public class OmahaClient extends IntentService {
             return;
         }
 
+        if (getRequestGenerator() == null) {
+            return;
+        }
+
         if (!mStateHasBeenRestored) {
             restoreState();
         }
@@ -603,6 +607,18 @@ public class OmahaClient extends IntentService {
         }
 
         return currentVersionNumber.isSmallerThan(latestVersionNumber);
+    }
+
+    /**
+     * Retrieves the latest version we know about from disk.
+     * This function incurs I/O, so make sure you don't use it from the main thread.
+     *
+     * @return A string representing the latest version.
+     */
+    static String getLatestVersionNumberString(Context context) {
+        assert Looper.myLooper() != Looper.getMainLooper();
+        VersionNumberGetter getter = getVersionNumberGetter();
+        return getter.getLatestKnownVersion(context, PREF_PACKAGE, PREF_LATEST_VERSION);
     }
 
     /**

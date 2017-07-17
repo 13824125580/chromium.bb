@@ -5,8 +5,9 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_AURALINUX_H_
 #define UI_BASE_IME_INPUT_METHOD_AURALINUX_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/input_method_base.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
@@ -57,11 +58,24 @@ class UI_BASE_IME_EXPORT InputMethodAuraLinux
   void UpdateContextFocusState();
   void ResetContext();
 
-  // Callback function for IMEEngineHandlerInterface::ProcessKeyEvent.
+  // Processes the key event after the event is processed by the system IME or
+  // the extension.
   void ProcessKeyEventDone(ui::KeyEvent* event, bool filtered, bool is_handled);
 
-  scoped_ptr<LinuxInputMethodContext> context_;
-  scoped_ptr<LinuxInputMethodContext> context_simple_;
+  // Callback function for IMEEngineHandlerInterface::ProcessKeyEvent().
+  // It recovers the context when the event is being passed to the extension and
+  // call ProcessKeyEventDone() for the following processing. This is necessary
+  // as this method is async. The environment may be changed by other generated
+  // key events by the time the callback is run.
+  void ProcessKeyEventByEngineDone(ui::KeyEvent* event,
+                                   bool filtered,
+                                   bool composition_changed,
+                                   ui::CompositionText* composition,
+                                   base::string16* result_text,
+                                   bool is_handled);
+
+  std::unique_ptr<LinuxInputMethodContext> context_;
+  std::unique_ptr<LinuxInputMethodContext> context_simple_;
 
   base::string16 result_text_;
 

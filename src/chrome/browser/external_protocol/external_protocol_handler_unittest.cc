@@ -5,6 +5,7 @@
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -14,31 +15,21 @@ class FakeExternalProtocolHandlerWorker
     : public shell_integration::DefaultProtocolClientWorker {
  public:
   FakeExternalProtocolHandlerWorker(
-      shell_integration::DefaultWebClientObserver* observer,
+      const shell_integration::DefaultWebClientWorkerCallback& callback,
       const std::string& protocol,
       shell_integration::DefaultWebClientState os_state)
-      : shell_integration::DefaultProtocolClientWorker(
-            observer,
-            protocol,
-            /*delete_observer=*/true),
+      : shell_integration::DefaultProtocolClientWorker(callback, protocol),
         os_state_(os_state) {}
 
  private:
-  ~FakeExternalProtocolHandlerWorker() override {}
+  ~FakeExternalProtocolHandlerWorker() override = default;
 
-  void CheckIsDefault() override {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&FakeExternalProtocolHandlerWorker::OnCheckIsDefaultComplete,
-                   this, os_state_));
+  shell_integration::DefaultWebClientState CheckIsDefaultImpl() override {
+    return os_state_;
   }
 
-  void SetAsDefault() override {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(
-            &FakeExternalProtocolHandlerWorker::OnSetAsDefaultAttemptComplete,
-            this, AttemptResult::SUCCESS));
+  void SetAsDefaultImpl(const base::Closure& on_finished_callback) override {
+    on_finished_callback.Run();
   }
 
   shell_integration::DefaultWebClientState os_state_;
@@ -54,10 +45,11 @@ class FakeExternalProtocolHandlerDelegate
         has_prompted_(false),
         has_blocked_(false) {}
 
-  shell_integration::DefaultProtocolClientWorker* CreateShellWorker(
-      shell_integration::DefaultWebClientObserver* observer,
+  scoped_refptr<shell_integration::DefaultProtocolClientWorker>
+  CreateShellWorker(
+      const shell_integration::DefaultWebClientWorkerCallback& callback,
       const std::string& protocol) override {
-    return new FakeExternalProtocolHandlerWorker(observer, protocol, os_state_);
+    return new FakeExternalProtocolHandlerWorker(callback, protocol, os_state_);
   }
 
   ExternalProtocolHandler::BlockState GetBlockState(
@@ -139,7 +131,7 @@ class ExternalProtocolHandlerTest : public testing::Test {
     ExternalProtocolHandler::LaunchUrlWithDelegate(
         url, 0, 0, ui::PAGE_TRANSITION_LINK, true, &delegate_);
     if (block_state != ExternalProtocolHandler::BLOCK)
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
 
     ASSERT_EQ(should_prompt, delegate_.has_prompted());
     ASSERT_EQ(should_launch, delegate_.has_launched());

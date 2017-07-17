@@ -33,6 +33,7 @@
 #include "core/loader/FrameLoaderClient.h"
 #include "core/loader/HttpEquiv.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "wtf/text/StringToNumber.h"
 
 namespace blink {
 
@@ -455,7 +456,7 @@ void HTMLMetaElement::didNotifySubtreeInsertionsToDocument()
 
 static bool inDocumentHead(HTMLMetaElement* element)
 {
-    if (!element->inDocument())
+    if (!element->inShadowIncludingDocument())
         return false;
 
     return Traversal<HTMLHeadElement>::firstAncestor(*element);
@@ -463,7 +464,7 @@ static bool inDocumentHead(HTMLMetaElement* element)
 
 void HTMLMetaElement::process()
 {
-    if (!inDocument())
+    if (!inShadowIncludingDocument())
         return;
 
     // All below situations require a content attribute (which can be the empty string).
@@ -476,7 +477,7 @@ void HTMLMetaElement::process()
         if (equalIgnoringCase(nameValue, "viewport"))
             processViewportContentAttribute(contentValue, ViewportDescription::ViewportMeta);
         else if (equalIgnoringCase(nameValue, "referrer"))
-            document().processReferrerPolicy(contentValue);
+            document().parseAndSetReferrerPolicy(contentValue);
         else if (equalIgnoringCase(nameValue, "handheldfriendly") && equalIgnoringCase(contentValue, "true"))
             processViewportContentAttribute("width=device-width", ViewportDescription::HandheldFriendlyMeta);
         else if (equalIgnoringCase(nameValue, "mobileoptimized"))
@@ -500,7 +501,7 @@ WTF::TextEncoding HTMLMetaElement::computeEncoding() const
 {
     HTMLAttributeList attributeList;
     for (const Attribute& attr : attributes())
-        attributeList.append(std::make_pair(attr.name().localName(), attr.value().string()));
+        attributeList.append(std::make_pair(attr.name().localName(), attr.value().getString()));
     return encodingFromMetaAttributes(attributeList);
 }
 

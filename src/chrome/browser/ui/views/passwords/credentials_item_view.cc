@@ -105,7 +105,7 @@ CredentialsItemView::CredentialsItemView(
     AddChildView(lower_label_);
   }
 
-  SetFocusable(true);
+  SetFocusBehavior(FocusBehavior::ALWAYS);
 }
 
 CredentialsItemView::~CredentialsItemView() = default;
@@ -121,6 +121,10 @@ void CredentialsItemView::SetLowerLabelColor(SkColor color) {
 
 void CredentialsItemView::SetHoverColor(SkColor color) {
   hover_color_ = color;
+}
+
+int CredentialsItemView::GetPreferredHeight() const {
+  return GetPreferredSize().height();
 }
 
 gfx::Size CredentialsItemView::GetPreferredSize() const {

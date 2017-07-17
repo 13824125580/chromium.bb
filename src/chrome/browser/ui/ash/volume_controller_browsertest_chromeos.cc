@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <vector>
 
-#include "ash/accessibility_delegate.h"
-#include "ash/ash_switches.h"
+#include "ash/common/accessibility_delegate.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/ash_switches.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/ui/ash/volume_controller_chromeos.h"
@@ -89,7 +90,7 @@ class VolumeControllerTest : public InProcessBrowserTest {
   chromeos::CrasAudioHandler* audio_handler_;  // Not owned.
 
  private:
-  scoped_ptr<VolumeController> volume_controller_;
+  std::unique_ptr<VolumeController> volume_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(VolumeControllerTest);
 };
@@ -175,7 +176,7 @@ class VolumeControllerSoundsTest : public VolumeControllerTest {
   void EnableSpokenFeedback(bool enabled) {
     chromeos::AccessibilityManager* manager =
         chromeos::AccessibilityManager::Get();
-    manager->EnableSpokenFeedback(enabled, ui::A11Y_NOTIFICATION_NONE);
+    manager->EnableSpokenFeedback(enabled, ash::A11Y_NOTIFICATION_NONE);
   }
 
   bool is_sound_initialized() const {

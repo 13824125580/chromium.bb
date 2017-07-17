@@ -6,18 +6,21 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/containers/hash_tables.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/shared_memory.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/output/compositor_frame_ack.h"
-#include "content/browser/android/in_process/synchronous_compositor_factory_impl.h"
-#include "content/browser/android/in_process/synchronous_compositor_renderer_statics.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
+#include "content/browser/web_contents/web_contents_android.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/android/sync_compositor_messages.h"
+#include "content/common/android/sync_compositor_statics.h"
 #include "content/public/browser/android/synchronous_compositor_client.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/common/content_switches.h"
 #include "ipc/ipc_sender.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -27,6 +30,36 @@
 
 namespace content {
 
+// static
+void SynchronousCompositor::SetClientForWebContents(
+    WebContents* contents,
+    SynchronousCompositorClient* client) {
+  DCHECK(contents);
+  DCHECK(client);
+  WebContentsAndroid* web_contents_android =
+      static_cast<WebContentsImpl*>(contents)->GetWebContentsAndroid();
+  DCHECK(!web_contents_android->synchronous_compositor_client());
+  web_contents_android->set_synchronous_compositor_client(client);
+}
+
+// static
+std::unique_ptr<SynchronousCompositorHost> SynchronousCompositorHost::Create(
+    RenderWidgetHostViewAndroid* rwhva,
+    WebContents* web_contents) {
+  DCHECK(web_contents);
+  WebContentsAndroid* web_contents_android =
+      static_cast<WebContentsImpl*>(web_contents)->GetWebContentsAndroid();
+  if (!web_contents_android->synchronous_compositor_client())
+    return nullptr;  // Not using sync compositing.
+
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  bool use_in_proc_software_draw =
+      command_line->HasSwitch(switches::kSingleProcess);
+  return base::WrapUnique(new SynchronousCompositorHost(
+      rwhva, web_contents_android->synchronous_compositor_client(),
+      use_in_proc_software_draw));
+}
+
 SynchronousCompositorHost::SynchronousCompositorHost(
     RenderWidgetHostViewAndroid* rwhva,
     SynchronousCompositorClient* client,
@@ -35,42 +68,34 @@ SynchronousCompositorHost::SynchronousCompositorHost(
       client_(client),
       ui_task_runner_(
           BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI)),
+      process_id_(rwhva_->GetRenderWidgetHost()->GetProcess()->GetID()),
       routing_id_(rwhva_->GetRenderWidgetHost()->GetRoutingID()),
       sender_(rwhva_->GetRenderWidgetHost()),
       use_in_process_zero_copy_software_draw_(use_in_proc_software_draw),
-      is_active_(false),
       bytes_limit_(0u),
-      root_scroll_offset_updated_by_browser_(false),
       renderer_param_version_(0u),
       need_animate_scroll_(false),
       need_invalidate_count_(0u),
-      need_begin_frame_(false),
-      did_activate_pending_tree_count_(0u),
-      weak_ptr_factory_(this) {
-  client_->DidInitializeCompositor(this);
+      did_activate_pending_tree_count_(0u) {
+  client_->DidInitializeCompositor(this, process_id_, routing_id_);
 }
 
 SynchronousCompositorHost::~SynchronousCompositorHost() {
-  client_->DidDestroyCompositor(this);
-  if (weak_ptr_factory_.HasWeakPtrs())
-    UpdateStateTask();
+  client_->DidDestroyCompositor(this, process_id_, routing_id_);
 }
 
 bool SynchronousCompositorHost::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(SynchronousCompositorHost, message)
+    IPC_MESSAGE_HANDLER(SyncCompositorHostMsg_OutputSurfaceCreated,
+                        OutputSurfaceCreated)
     IPC_MESSAGE_HANDLER(SyncCompositorHostMsg_UpdateState, ProcessCommonParams)
-    IPC_MESSAGE_HANDLER(SyncCompositorHostMsg_OverScroll, OnOverScroll)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
 }
 
-void SynchronousCompositorHost::DidBecomeCurrent() {
-  client_->DidBecomeCurrent(this);
-}
-
-scoped_ptr<cc::CompositorFrame> SynchronousCompositorHost::DemandDrawHw(
+SynchronousCompositor::Frame SynchronousCompositorHost::DemandDrawHw(
     const gfx::Size& surface_size,
     const gfx::Transform& transform,
     const gfx::Rect& viewport,
@@ -80,28 +105,28 @@ scoped_ptr<cc::CompositorFrame> SynchronousCompositorHost::DemandDrawHw(
   SyncCompositorDemandDrawHwParams params(surface_size, transform, viewport,
                                           clip, viewport_rect_for_tile_priority,
                                           transform_for_tile_priority);
-  scoped_ptr<cc::CompositorFrame> frame(new cc::CompositorFrame);
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
+  SynchronousCompositor::Frame frame;
+  frame.frame.reset(new cc::CompositorFrame);
   SyncCompositorCommonRendererParams common_renderer_params;
   if (!sender_->Send(new SyncCompositorMsg_DemandDrawHw(
-          routing_id_, common_browser_params, params, &common_renderer_params,
-          frame.get()))) {
-    return nullptr;
+          routing_id_, params, &common_renderer_params,
+          &frame.output_surface_id, frame.frame.get()))) {
+    return SynchronousCompositor::Frame();
   }
   ProcessCommonParams(common_renderer_params);
-  if (!frame->delegated_frame_data) {
+  if (!frame.frame->delegated_frame_data) {
     // This can happen if compositor did not swap in this draw.
-    frame.reset();
+    frame.frame.reset();
   }
-  if (frame)
-    UpdateFrameMetaData(frame->metadata);
+  if (frame.frame) {
+    UpdateFrameMetaData(frame.frame->metadata.Clone());
+  }
   return frame;
 }
 
 void SynchronousCompositorHost::UpdateFrameMetaData(
-    const cc::CompositorFrameMetadata& frame_metadata) {
-  rwhva_->SynchronousFrameMetadata(frame_metadata);
+    cc::CompositorFrameMetadata frame_metadata) {
+  rwhva_->SynchronousFrameMetadata(std::move(frame_metadata));
 }
 
 namespace {
@@ -123,22 +148,20 @@ class ScopedSetSkCanvas {
 }
 
 bool SynchronousCompositorHost::DemandDrawSwInProc(SkCanvas* canvas) {
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
   SyncCompositorCommonRendererParams common_renderer_params;
   bool success = false;
-  scoped_ptr<cc::CompositorFrame> frame(new cc::CompositorFrame);
+  std::unique_ptr<cc::CompositorFrame> frame(new cc::CompositorFrame);
   ScopedSetSkCanvas set_sk_canvas(canvas);
   SyncCompositorDemandDrawSwParams params;  // Unused.
   if (!sender_->Send(new SyncCompositorMsg_DemandDrawSw(
-          routing_id_, common_browser_params, params, &success,
-          &common_renderer_params, frame.get()))) {
+          routing_id_, params, &success, &common_renderer_params,
+          frame.get()))) {
     return false;
   }
   if (!success)
     return false;
   ProcessCommonParams(common_renderer_params);
-  UpdateFrameMetaData(frame->metadata);
+  UpdateFrameMetaData(std::move(frame->metadata));
   return true;
 }
 
@@ -191,14 +214,12 @@ bool SynchronousCompositorHost::DemandDrawSw(SkCanvas* canvas) {
   if (!software_draw_shm_)
     return false;
 
-  scoped_ptr<cc::CompositorFrame> frame(new cc::CompositorFrame);
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
+  std::unique_ptr<cc::CompositorFrame> frame(new cc::CompositorFrame);
   SyncCompositorCommonRendererParams common_renderer_params;
   bool success = false;
   if (!sender_->Send(new SyncCompositorMsg_DemandDrawSw(
-          routing_id_, common_browser_params, params, &success,
-          &common_renderer_params, frame.get()))) {
+          routing_id_, params, &success, &common_renderer_params,
+          frame.get()))) {
     return false;
   }
   ScopedSendZeroMemory send_zero_memory(this);
@@ -206,7 +227,7 @@ bool SynchronousCompositorHost::DemandDrawSw(SkCanvas* canvas) {
     return false;
 
   ProcessCommonParams(common_renderer_params);
-  UpdateFrameMetaData(frame->metadata);
+  UpdateFrameMetaData(std::move(frame->metadata));
 
   SkBitmap bitmap;
   if (!bitmap.installPixels(info, software_draw_shm_->shm.memory(), stride))
@@ -230,7 +251,7 @@ void SynchronousCompositorHost::SetSoftwareDrawSharedMemoryIfNeeded(
       software_draw_shm_->buffer_size == buffer_size)
     return;
   software_draw_shm_.reset();
-  scoped_ptr<SharedMemoryWithSize> software_draw_shm(
+  std::unique_ptr<SharedMemoryWithSize> software_draw_shm(
       new SharedMemoryWithSize(stride, buffer_size));
   {
     TRACE_EVENT1("browser", "AllocateSharedMemory", "buffer_size", buffer_size);
@@ -247,13 +268,10 @@ void SynchronousCompositorHost::SetSoftwareDrawSharedMemoryIfNeeded(
     return;
   }
 
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
   bool success = false;
   SyncCompositorCommonRendererParams common_renderer_params;
   if (!sender_->Send(new SyncCompositorMsg_SetSharedMemory(
-          routing_id_, common_browser_params, set_shm_params, &success,
-          &common_renderer_params)) ||
+          routing_id_, set_shm_params, &success, &common_renderer_params)) ||
       !success) {
     return;
   }
@@ -267,25 +285,20 @@ void SynchronousCompositorHost::SendZeroMemory() {
 }
 
 void SynchronousCompositorHost::ReturnResources(
+    uint32_t output_surface_id,
     const cc::CompositorFrameAck& frame_ack) {
-  returned_resources_.insert(returned_resources_.end(),
-                             frame_ack.resources.begin(),
-                             frame_ack.resources.end());
+  DCHECK(!frame_ack.resources.empty());
+  sender_->Send(new SyncCompositorMsg_ReclaimResources(
+      routing_id_, output_surface_id, frame_ack));
 }
 
 void SynchronousCompositorHost::SetMemoryPolicy(size_t bytes_limit) {
   if (bytes_limit_ == bytes_limit)
     return;
-  size_t current_bytes_limit = bytes_limit_;
-  bytes_limit_ = bytes_limit;
-  SendAsyncCompositorStateIfNeeded();
 
-  if (bytes_limit && !current_bytes_limit) {
-    SynchronousCompositorStreamTextureFactoryImpl::GetInstance()
-        ->CompositorInitializedHardwareDraw();
-  } else if (!bytes_limit && current_bytes_limit) {
-    SynchronousCompositorStreamTextureFactoryImpl::GetInstance()
-        ->CompositorReleasedHardwareDraw();
+  if (sender_->Send(
+          new SyncCompositorMsg_SetMemoryPolicy(routing_id_, bytes_limit))) {
+    bytes_limit_ = bytes_limit;
   }
 }
 
@@ -293,34 +306,19 @@ void SynchronousCompositorHost::DidChangeRootLayerScrollOffset(
     const gfx::ScrollOffset& root_offset) {
   if (root_scroll_offset_ == root_offset)
     return;
-  root_scroll_offset_updated_by_browser_ = true;
   root_scroll_offset_ = root_offset;
-  SendAsyncCompositorStateIfNeeded();
-}
-
-void SynchronousCompositorHost::SendAsyncCompositorStateIfNeeded() {
-  if (weak_ptr_factory_.HasWeakPtrs())
-    return;
-
-  ui_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SynchronousCompositorHost::UpdateStateTask,
-                            weak_ptr_factory_.GetWeakPtr()));
-}
-
-void SynchronousCompositorHost::UpdateStateTask() {
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
   sender_->Send(
-      new SyncCompositorMsg_UpdateState(routing_id_, common_browser_params));
-  DCHECK(!weak_ptr_factory_.HasWeakPtrs());
+      new SyncCompositorMsg_SetScroll(routing_id_, root_scroll_offset_));
 }
 
-void SynchronousCompositorHost::SetIsActive(bool is_active) {
-  if (is_active_ == is_active)
+void SynchronousCompositorHost::SynchronouslyZoomBy(float zoom_delta,
+                                                    const gfx::Point& anchor) {
+  SyncCompositorCommonRendererParams common_renderer_params;
+  if (!sender_->Send(new SyncCompositorMsg_ZoomBy(
+          routing_id_, zoom_delta, anchor, &common_renderer_params))) {
     return;
-  is_active_ = is_active;
-  UpdateNeedsBeginFrames();
-  SendAsyncCompositorStateIfNeeded();
+  }
+  ProcessCommonParams(common_renderer_params);
 }
 
 void SynchronousCompositorHost::OnComputeScroll(
@@ -329,66 +327,32 @@ void SynchronousCompositorHost::OnComputeScroll(
     return;
   need_animate_scroll_ = false;
 
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
   SyncCompositorCommonRendererParams common_renderer_params;
-  sender_->Send(new SyncCompositorMsg_ComputeScroll(
-      routing_id_, common_browser_params, animation_time));
+  sender_->Send(
+      new SyncCompositorMsg_ComputeScroll(routing_id_, animation_time));
 }
 
-InputEventAckState SynchronousCompositorHost::HandleInputEvent(
-    const blink::WebInputEvent& input_event) {
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
-  SyncCompositorCommonRendererParams common_renderer_params;
-  InputEventAckState ack = INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
-  if (!sender_->Send(new SyncCompositorMsg_HandleInputEvent(
-          routing_id_, common_browser_params, &input_event,
-          &common_renderer_params, &ack))) {
-    return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
-  }
-  ProcessCommonParams(common_renderer_params);
-  return ack;
-}
-
-void SynchronousCompositorHost::BeginFrame(const cc::BeginFrameArgs& args) {
-  if (!is_active_ || !need_begin_frame_)
-    return;
-
-  SyncCompositorCommonBrowserParams common_browser_params;
-  PopulateCommonParams(&common_browser_params);
-  SyncCompositorCommonRendererParams common_renderer_params;
-  if (!sender_->Send(
-          new SyncCompositorMsg_BeginFrame(routing_id_, common_browser_params,
-                                           args, &common_renderer_params))) {
-    return;
-  }
-  ProcessCommonParams(common_renderer_params);
-}
-
-void SynchronousCompositorHost::OnOverScroll(
-    const SyncCompositorCommonRendererParams& params,
+void SynchronousCompositorHost::DidOverscroll(
     const DidOverscrollParams& over_scroll_params) {
-  ProcessCommonParams(params);
-  client_->DidOverscroll(over_scroll_params.accumulated_overscroll,
+  client_->DidOverscroll(this, over_scroll_params.accumulated_overscroll,
                          over_scroll_params.latest_overscroll_delta,
                          over_scroll_params.current_fling_velocity);
 }
 
-void SynchronousCompositorHost::PopulateCommonParams(
-    SyncCompositorCommonBrowserParams* params) {
-  DCHECK(params);
-  DCHECK(params->ack.resources.empty());
-  params->bytes_limit = bytes_limit_;
-  params->ack.resources.swap(returned_resources_);
-  if (root_scroll_offset_updated_by_browser_) {
-    params->root_scroll_offset = root_scroll_offset_;
-    params->update_root_scroll_offset = root_scroll_offset_updated_by_browser_;
-    root_scroll_offset_updated_by_browser_ = false;
+void SynchronousCompositorHost::DidSendBeginFrame() {
+  SyncCompositorCommonRendererParams common_renderer_params;
+  if (!sender_->Send(new SyncCompositorMsg_SynchronizeRendererState(
+          routing_id_, &common_renderer_params))) {
+    return;
   }
-  params->begin_frame_source_paused = !is_active_;
+  ProcessCommonParams(common_renderer_params);
+}
 
-  weak_ptr_factory_.InvalidateWeakPtrs();
+void SynchronousCompositorHost::OutputSurfaceCreated() {
+  // New output surface is not aware of state from Browser side. So need to
+  // re-send all browser side state here.
+  sender_->Send(
+      new SyncCompositorMsg_SetMemoryPolicy(routing_id_, bytes_limit_));
 }
 
 void SynchronousCompositorHost::ProcessCommonParams(
@@ -400,21 +364,17 @@ void SynchronousCompositorHost::ProcessCommonParams(
   }
   renderer_param_version_ = params.version;
   need_animate_scroll_ = params.need_animate_scroll;
-  if (need_begin_frame_ != params.need_begin_frame) {
-    need_begin_frame_ = params.need_begin_frame;
-    UpdateNeedsBeginFrames();
-  }
   root_scroll_offset_ = params.total_scroll_offset;
 
   if (need_invalidate_count_ != params.need_invalidate_count) {
     need_invalidate_count_ = params.need_invalidate_count;
-    client_->PostInvalidate();
+    client_->PostInvalidate(this);
   }
 
   if (did_activate_pending_tree_count_ !=
       params.did_activate_pending_tree_count) {
     did_activate_pending_tree_count_ = params.did_activate_pending_tree_count;
-    client_->DidUpdateContent();
+    client_->DidUpdateContent(this);
   }
 
   // Ensure only valid values from compositor are sent to client.
@@ -422,15 +382,11 @@ void SynchronousCompositorHost::ProcessCommonParams(
   // for that case here.
   if (params.page_scale_factor) {
     client_->UpdateRootLayerState(
-        gfx::ScrollOffsetToVector2dF(params.total_scroll_offset),
+        this, gfx::ScrollOffsetToVector2dF(params.total_scroll_offset),
         gfx::ScrollOffsetToVector2dF(params.max_scroll_offset),
         params.scrollable_size, params.page_scale_factor,
         params.min_page_scale_factor, params.max_page_scale_factor);
   }
-}
-
-void SynchronousCompositorHost::UpdateNeedsBeginFrames() {
-  rwhva_->OnSetNeedsBeginFrames(is_active_ && need_begin_frame_);
 }
 
 }  // namespace content

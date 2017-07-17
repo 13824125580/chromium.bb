@@ -12,6 +12,7 @@
 #include "modules/serviceworkers/ExtendableEvent.h"
 #include "modules/serviceworkers/FetchEventInit.h"
 #include "modules/serviceworkers/RespondWithObserver.h"
+#include "modules/serviceworkers/WaitUntilObserver.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -26,9 +27,9 @@ class RespondWithObserver;
 class MODULES_EXPORT FetchEvent final : public ExtendableEvent {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<FetchEvent> create();
-    static PassRefPtrWillBeRawPtr<FetchEvent> create(const AtomicString& type, const FetchEventInit&);
-    static PassRefPtrWillBeRawPtr<FetchEvent> create(const AtomicString& type, const FetchEventInit&, RespondWithObserver*);
+    static FetchEvent* create();
+    static FetchEvent* create(ScriptState*, const AtomicString& type, const FetchEventInit&);
+    static FetchEvent* create(ScriptState*, const AtomicString& type, const FetchEventInit&, RespondWithObserver*, WaitUntilObserver*);
 
     Request* request() const;
     String clientId() const;
@@ -42,11 +43,11 @@ public:
 
 protected:
     FetchEvent();
-    FetchEvent(const AtomicString& type, const FetchEventInit&, RespondWithObserver*);
+    FetchEvent(ScriptState*, const AtomicString& type, const FetchEventInit&, RespondWithObserver*, WaitUntilObserver*);
 
 private:
-    PersistentWillBeMember<RespondWithObserver> m_observer;
-    PersistentWillBeMember<Request> m_request;
+    Member<RespondWithObserver> m_observer;
+    Member<Request> m_request;
     String m_clientId;
     bool m_isReload;
 };

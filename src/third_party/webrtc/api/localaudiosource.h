@@ -14,7 +14,6 @@
 #include "webrtc/api/mediastreaminterface.h"
 #include "webrtc/api/notifier.h"
 #include "webrtc/api/peerconnectioninterface.h"
-#include "webrtc/base/scoped_ptr.h"
 #include "webrtc/media/base/mediachannel.h"
 
 // LocalAudioSource implements AudioSourceInterface.
@@ -31,7 +30,11 @@ class LocalAudioSource : public Notifier<AudioSourceInterface> {
       const PeerConnectionFactoryInterface::Options& options,
       const MediaConstraintsInterface* constraints);
 
-  SourceState state() const override { return source_state_; }
+  static rtc::scoped_refptr<LocalAudioSource> Create(
+      const PeerConnectionFactoryInterface::Options& options,
+      const cricket::AudioOptions* audio_options);
+
+  SourceState state() const override { return kLive; }
   bool remote() const override { return false; }
 
   virtual const cricket::AudioOptions& options() const { return options_; }
@@ -40,15 +43,16 @@ class LocalAudioSource : public Notifier<AudioSourceInterface> {
   void RemoveSink(AudioTrackSinkInterface* sink) override {}
 
  protected:
-  LocalAudioSource() : source_state_(kInitializing) {}
+  LocalAudioSource() {}
   ~LocalAudioSource() override {}
 
  private:
   void Initialize(const PeerConnectionFactoryInterface::Options& options,
                   const MediaConstraintsInterface* constraints);
+  void Initialize(const PeerConnectionFactoryInterface::Options& options,
+                  const cricket::AudioOptions* audio_options);
 
   cricket::AudioOptions options_;
-  SourceState source_state_;
 };
 
 }  // namespace webrtc

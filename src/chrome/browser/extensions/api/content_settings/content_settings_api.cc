@@ -4,12 +4,13 @@
 
 #include "chrome/browser/extensions/api/content_settings/content_settings_api.h"
 
+#include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
@@ -70,7 +71,7 @@ bool ContentSettingsContentSettingClearFunction::RunSync() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
-  scoped_ptr<Clear::Params> params(Clear::Params::Create(*args_));
+  std::unique_ptr<Clear::Params> params(Clear::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   ExtensionPrefsScope scope = kExtensionPrefsScopeRegular;
@@ -104,7 +105,7 @@ bool ContentSettingsContentSettingGetFunction::RunSync() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
-  scoped_ptr<Get::Params> params(Get::Params::Create(*args_));
+  std::unique_ptr<Get::Params> params(Get::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   GURL primary_url(params->details.primary_url);
@@ -165,13 +166,13 @@ bool ContentSettingsContentSettingGetFunction::RunSync() {
                                      resource_identifier);
   }
 
-  base::DictionaryValue* result = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   std::string setting_string =
       content_settings::ContentSettingToString(setting);
   DCHECK(!setting_string.empty());
   result->SetString(keys::kContentSettingKey, setting_string);
 
-  SetResult(result);
+  SetResult(std::move(result));
 
   return true;
 }
@@ -180,7 +181,7 @@ bool ContentSettingsContentSettingSetFunction::RunSync() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
-  scoped_ptr<Set::Params> params(Set::Params::Create(*args_));
+  std::unique_ptr<Set::Params> params(Set::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   std::string primary_error;
@@ -306,21 +307,22 @@ void ContentSettingsContentSettingGetResourceIdentifiersFunction::OnGotPlugins(
     const std::vector<content::WebPluginInfo>& plugins) {
   PluginFinder* finder = PluginFinder::GetInstance();
   std::set<std::string> group_identifiers;
-  base::ListValue* list = new base::ListValue();
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   for (std::vector<content::WebPluginInfo>::const_iterator it = plugins.begin();
        it != plugins.end(); ++it) {
-    scoped_ptr<PluginMetadata> plugin_metadata(finder->GetPluginMetadata(*it));
+    std::unique_ptr<PluginMetadata> plugin_metadata(
+        finder->GetPluginMetadata(*it));
     const std::string& group_identifier = plugin_metadata->identifier();
     if (group_identifiers.find(group_identifier) != group_identifiers.end())
       continue;
 
     group_identifiers.insert(group_identifier);
-    base::DictionaryValue* dict = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString(keys::kIdKey, group_identifier);
     dict->SetString(keys::kDescriptionKey, plugin_metadata->name());
-    list->Append(dict);
+    list->Append(std::move(dict));
   }
-  SetResult(list);
+  SetResult(std::move(list));
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE, base::Bind(
           &ContentSettingsContentSettingGetResourceIdentifiersFunction::

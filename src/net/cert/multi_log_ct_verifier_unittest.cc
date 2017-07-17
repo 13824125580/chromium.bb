@@ -4,6 +4,7 @@
 
 #include "net/cert/multi_log_ct_verifier.h"
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
@@ -13,7 +14,6 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/ct_log_verifier.h"
 #include "net/cert/ct_serialization.h"
 #include "net/cert/ct_verify_result.h"
@@ -26,6 +26,7 @@
 #include "net/log/test_net_log_entry.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/ct_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -97,7 +98,7 @@ class MultiLogCTVerifierTest : public ::testing::Test {
     std::string origin;
     if (!the_sct->GetString("origin", &origin))
       return false;
-    if (origin != "embedded_in_certificate")
+    if (origin != "Embedded in certificate")
       return false;
 
     base::ListValue* other_scts;
@@ -158,7 +159,8 @@ class MultiLogCTVerifierTest : public ::testing::Test {
     if (histogram == NULL)
       return 0;
 
-    scoped_ptr<base::HistogramSamples> samples = histogram->SnapshotSamples();
+    std::unique_ptr<base::HistogramSamples> samples =
+        histogram->SnapshotSamples();
     return samples->GetCount(sample_index);
   }
 
@@ -177,7 +179,7 @@ class MultiLogCTVerifierTest : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<MultiLogCTVerifier> verifier_;
+  std::unique_ptr<MultiLogCTVerifier> verifier_;
   scoped_refptr<X509Certificate> chain_;
   scoped_refptr<X509Certificate> embedded_sct_chain_;
   std::vector<scoped_refptr<const CTLogVerifier>> log_verifiers_;

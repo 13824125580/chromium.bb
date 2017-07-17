@@ -7,10 +7,12 @@
 #include <stddef.h>
 
 #include <cmath>
+#include <numeric>
 
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
 #include "cc/output/filter_operation.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace cc {
 
@@ -19,10 +21,18 @@ FilterOperations::FilterOperations() {}
 FilterOperations::FilterOperations(const FilterOperations& other)
     : operations_(other.operations_) {}
 
+FilterOperations::FilterOperations(std::vector<FilterOperation>&& operations)
+    : operations_(std::move(operations)) {}
+
 FilterOperations::~FilterOperations() {}
 
 FilterOperations& FilterOperations::operator=(const FilterOperations& other) {
   operations_ = other.operations_;
+  return *this;
+}
+
+FilterOperations& FilterOperations::operator=(FilterOperations&& other) {
+  operations_ = std::move(other.operations_);
   return *this;
 }
 
@@ -49,11 +59,28 @@ bool FilterOperations::IsEmpty() const {
 }
 
 static int SpreadForStdDeviation(float std_deviation) {
-  // https://dvcs.w3.org/hg/FXTF/raw-file/tip/filters/index.html#feGaussianBlurElement
-  // provides this approximation for evaluating a gaussian blur by a triple box
-  // filter.
-  float d = floorf(std_deviation * 3.f * sqrt(8.f * atan(1.f)) / 4.f + 0.5f);
-  return static_cast<int>(ceilf(d * 3.f / 2.f));
+  // Corresponds to MapStdDeviation in filter_operation.cc.
+  return std_deviation * 3;
+}
+
+gfx::Rect FilterOperations::MapRect(const gfx::Rect& rect,
+                                    const SkMatrix& matrix) const {
+  auto accumulate_rect = [matrix](const gfx::Rect& rect,
+                                  const FilterOperation& op) {
+    return op.MapRect(rect, matrix);
+  };
+  return std::accumulate(operations_.begin(), operations_.end(), rect,
+                         accumulate_rect);
+}
+
+gfx::Rect FilterOperations::MapRectReverse(const gfx::Rect& rect,
+                                           const SkMatrix& matrix) const {
+  auto accumulate_rect = [&matrix](const gfx::Rect& rect,
+                                   const FilterOperation& op) {
+    return op.MapRectReverse(rect, matrix);
+  };
+  return std::accumulate(operations_.rbegin(), operations_.rend(), rect,
+                         accumulate_rect);
 }
 
 void FilterOperations::GetOutsets(int* top,
@@ -68,9 +95,7 @@ void FilterOperations::GetOutsets(int* top,
       if (!op.image_filter())
         continue;
       SkIRect src = SkIRect::MakeWH(0, 0);
-      SkIRect dst;
-      bool result = op.image_filter()->filterBounds(src, SkMatrix::I(), &dst);
-      DCHECK(result);
+      SkIRect dst = op.image_filter()->filterBounds(src, SkMatrix::I());
       *top += std::max(0, -dst.top());
       *right += std::max(0, dst.right());
       *bottom += std::max(0, dst.bottom());

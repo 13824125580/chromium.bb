@@ -9,12 +9,15 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/webrtc/api/dtlsidentitystore.h"
+#include "third_party/webrtc/base/optional.h"
 #include "url/gurl.h"
 
 namespace content {
 
 // This class is associated with a peer connection and handles WebRTC DTLS
 // identity requests by delegating to the per-renderer WebRTCIdentityProxy.
+// TODO(hbos): Remove this store, it is no longer used.
+// See bugs.webrtc.org/5707, bugs.webrtc.org/5708.
 class PeerConnectionIdentityStore
     : public webrtc::DtlsIdentityStoreInterface {
  public:
@@ -27,7 +30,8 @@ class PeerConnectionIdentityStore
 
   // webrtc::DtlsIdentityStoreInterface override;
   void RequestIdentity(
-      rtc::KeyParams key_params,
+      const rtc::KeyParams& key_params,
+      const rtc::Optional<uint64_t>& expires_ms,
       const rtc::scoped_refptr<webrtc::DtlsIdentityRequestObserver>& observer)
           override;
 

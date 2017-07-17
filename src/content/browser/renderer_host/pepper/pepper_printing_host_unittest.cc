@@ -5,6 +5,7 @@
 #include "content/browser/renderer_host/pepper/pepper_printing_host.h"
 
 #include <stdint.h>
+#include <tuple>
 #include <utility>
 
 #include "base/macros.h"
@@ -81,7 +82,7 @@ TEST_F(PepperPrintingHostTest, GetDefaultPrintSettings) {
                                             PP_PRINTOUTPUTFORMAT_PDF};
 
   // Construct the resource host.
-  scoped_ptr<PepperPrintSettingsManager> manager(
+  std::unique_ptr<PepperPrintSettingsManager> manager(
       new MockPepperPrintSettingsManager(expected_settings));
   PepperPrintingHost printing(GetBrowserPpapiHost()->GetPpapiHost(),
                               pp_instance, pp_resource, std::move(manager));
@@ -108,7 +109,7 @@ TEST_F(PepperPrintingHostTest, GetDefaultPrintSettings) {
       reply_msg_param;
   ASSERT_TRUE(PpapiPluginMsg_Printing_GetDefaultPrintSettingsReply::Read(
       &reply_msg, &reply_msg_param));
-  PP_PrintSettings_Dev actual_settings = base::get<0>(reply_msg_param);
+  PP_PrintSettings_Dev actual_settings = std::get<0>(reply_msg_param);
 
   EXPECT_TRUE(PP_RectEqual(expected_settings.printable_area,
                            actual_settings.printable_area));

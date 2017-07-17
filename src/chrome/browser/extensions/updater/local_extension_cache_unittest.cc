@@ -98,14 +98,13 @@ class LocalExtensionCacheTest : public testing::Test {
                                         base::FilePath* filename) {
     std::string data(size, 0);
 
-    crypto::SecureHash* hash =
+    std::unique_ptr<crypto::SecureHash> hash =
         crypto::SecureHash::Create(crypto::SecureHash::SHA256);
     hash->Update(data.c_str(), size);
     uint8_t output[crypto::kSHA256Length];
     hash->Finish(output, sizeof(output));
     const std::string hex_hash =
         base::ToLowerASCII(base::HexEncode(output, sizeof(output)));
-    delete hash;
 
     const base::FilePath file =
         GetExtensionFileName(dir, id, version, hex_hash);
@@ -139,7 +138,7 @@ class LocalExtensionCacheTest : public testing::Test {
  private:
   content::TestBrowserThreadBundle thread_bundle_;
 
-  scoped_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
   scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
 
   base::ScopedTempDir cache_dir_;
@@ -339,7 +338,7 @@ TEST_F(LocalExtensionCacheTest, Complex) {
   EXPECT_TRUE(cache.GetExtension(kTestExtensionId1, hash22, NULL, NULL));
 }
 
-static void OnPutExtension(scoped_ptr<base::RunLoop>* run_loop,
+static void OnPutExtension(std::unique_ptr<base::RunLoop>* run_loop,
                            const base::FilePath& file_path,
                            bool file_ownership_passed) {
   ASSERT_TRUE(*run_loop);
@@ -351,7 +350,7 @@ static void PutExtensionAndWait(LocalExtensionCache& cache,
                                 const std::string& expected_hash,
                                 const base::FilePath& path,
                                 const std::string& version) {
-  scoped_ptr<base::RunLoop> run_loop;
+  std::unique_ptr<base::RunLoop> run_loop;
   run_loop.reset(new base::RunLoop);
   cache.PutExtension(id, expected_hash, path, version,
                      base::Bind(&OnPutExtension, &run_loop));

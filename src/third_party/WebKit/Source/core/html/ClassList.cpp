@@ -25,26 +25,13 @@
 #include "core/html/ClassList.h"
 
 #include "core/dom/Document.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
 using namespace HTMLNames;
 
 ClassList::ClassList(Element* element) : DOMTokenList(nullptr), m_element(element) { }
-
-#if !ENABLE(OILPAN)
-void ClassList::ref()
-{
-    m_element->ref();
-    DOMTokenList::ref();
-}
-
-void ClassList::deref()
-{
-    m_element->deref();
-    DOMTokenList::deref();
-}
-#endif
 
 unsigned ClassList::length() const
 {
@@ -68,7 +55,7 @@ const SpaceSplitString& ClassList::classNames() const
     ASSERT(m_element->hasClass());
     if (m_element->document().inQuirksMode()) {
         if (!m_classNamesForQuirksMode)
-            m_classNamesForQuirksMode = adoptPtr(new SpaceSplitString(value(), SpaceSplitString::ShouldNotFoldCase));
+            m_classNamesForQuirksMode = wrapUnique(new SpaceSplitString(value(), SpaceSplitString::ShouldNotFoldCase));
         return *m_classNamesForQuirksMode.get();
     }
     return m_element->classNames();

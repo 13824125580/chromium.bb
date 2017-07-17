@@ -1,41 +1,129 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [180, 120, 20, 20],
-        [180, 120, 20, 20],
-        [180, 60, 20, 20],
-        [101, 0, 99, 200],
-        [89, 86, 111, 18],
-        [89, 86, 111, 18],
-        [80, 120, 20, 20],
-        [80, 120, 20, 20],
-        [80, 60, 20, 20],
-        [0, 86, 101, 18],
-        [0, 86, 101, 18],
-        [0, 0, 200, 200],
-        [0, 0, 200, 200],
-        [0, 0, 101, 200],
-        [0, 0, 100, 200]
-      ],
-      "paintInvalidationClients": [
-        "RootInlineBox",
-        "InlineTextBox 'right-aligned text'",
-        "LayoutSVGRoot svg",
-        "LayoutSVGViewportContainer svg id='inner'",
-        "LayoutSVGRect rect",
-        "LayoutSVGRect rect",
-        "LayoutSVGText text",
-        "RootInlineBox",
-        "LayoutSVGInlineText #text",
-        "InlineTextBox 'right-aligned text'",
-        "LayoutSVGContainer use",
-        "LayoutSVGPath polygon id='triangle'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 0, 200, 200],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGViewportContainer svg id='inner'",
+          "rect": [0, 0, 200, 200],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [89, 86, 111, 18],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutSVGText text",
+          "rect": [89, 86, 111, 18],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [0, 86, 101, 18],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutSVGText text",
+          "rect": [0, 86, 101, 18],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGRoot svg",
+          "rect": [101, 0, 99, 200],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutSVGContainer use",
+          "rect": [180, 120, 20, 20],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGPath polygon id='triangle'",
+          "rect": [180, 120, 20, 20],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [180, 60, 20, 20],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGContainer use",
+          "rect": [80, 120, 20, 20],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGPath polygon id='triangle'",
+          "rect": [80, 120, 20, 20],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [80, 60, 20, 20],
+          "reason": "full"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGRoot svg",
+      "reason": "incremental"
+    },
+    {
+      "object": "LayoutSVGViewportContainer svg id='inner'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGHiddenContainer defs",
+      "reason": "none"
+    },
+    {
+      "object": "LayoutSVGPath polygon id='triangle'",
+      "reason": "none"
+    },
+    {
+      "object": "LayoutSVGRect rect",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGRect rect",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGText text",
+      "reason": "full"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGInlineText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'right-aligned text'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutSVGContainer use",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGPath polygon id='triangle'",
+      "reason": "bounds change"
     }
   ]
 }

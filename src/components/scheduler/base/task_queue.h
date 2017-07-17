@@ -8,9 +8,17 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/trace_event/trace_event.h"
 #include "components/scheduler/scheduler_export.h"
 
+namespace base {
+namespace trace_event {
+class BlameContext;
+}
+}
+
 namespace scheduler {
+class LazyNow;
 class TimeDomain;
 
 class SCHEDULER_EXPORT TaskQueue : public base::SingleThreadTaskRunner {
@@ -175,7 +183,7 @@ class SCHEDULER_EXPORT TaskQueue : public base::SingleThreadTaskRunner {
   // TaskQueueManager::MaybeScheduleImmediateWork.
   // TODO(alexclarke): Add a base::RunLoop observer so we can get rid of
   // |may_post_dowork|.
-  virtual void PumpQueue(bool may_post_dowork) = 0;
+  virtual void PumpQueue(LazyNow* lazy_now, bool may_post_dowork) = 0;
 
   // These functions can only be called on the same thread that the task queue
   // manager executes its tasks on.
@@ -183,6 +191,12 @@ class SCHEDULER_EXPORT TaskQueue : public base::SingleThreadTaskRunner {
       base::MessageLoop::TaskObserver* task_observer) = 0;
   virtual void RemoveTaskObserver(
       base::MessageLoop::TaskObserver* task_observer) = 0;
+
+  // Set the blame context which is entered and left while executing tasks from
+  // this task queue. |blame_context| must be null or outlive this task queue.
+  // Must be called on the thread this TaskQueue was created by.
+  virtual void SetBlameContext(
+      base::trace_event::BlameContext* blame_context) = 0;
 
   // Removes the task queue from the previous TimeDomain and adds it to
   // |domain|.  This is a moderately expensive operation.

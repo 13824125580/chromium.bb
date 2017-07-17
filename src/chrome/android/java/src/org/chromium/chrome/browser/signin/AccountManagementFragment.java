@@ -28,13 +28,15 @@ import android.os.UserManager;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceFragment;
-import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Pair;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.childaccounts.ChildAccountService;
 import org.chromium.chrome.browser.preferences.ChromeBasePreference;
 import org.chromium.chrome.browser.preferences.ManagedPreferenceDelegate;
@@ -68,7 +70,8 @@ import java.util.HashMap;
  */
 public class AccountManagementFragment extends PreferenceFragment
         implements SignOutDialogListener, ProfileDownloader.Observer,
-                SyncStateChangedListener, SignInStateObserver {
+                SyncStateChangedListener, SignInStateObserver,
+                ConfirmManagedSyncDataDialog.Listener {
     public static final String SIGN_OUT_DIALOG_TAG = "sign_out_dialog_tag";
     private static final String CLEAR_DATA_PROGRESS_DIALOG_TAG = "clear_data_progress";
 
@@ -106,6 +109,7 @@ public class AccountManagementFragment extends PreferenceFragment
     public static final String PREF_PARENT_ACCOUNTS = "parent_accounts";
     public static final String PREF_CHILD_CONTENT = "child_content";
     public static final String PREF_CHILD_SAFE_SITES = "child_safe_sites";
+    public static final String PREF_GOOGLE_ACTIVITY_CONTROLS = "google_activity_controls";
     public static final String PREF_SYNC_SETTINGS = "sync_settings";
 
     private int mGaiaServiceType;
@@ -115,6 +119,13 @@ public class AccountManagementFragment extends PreferenceFragment
     @Override
     public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
+
+        // Prevent sync from starting if it hasn't already to give the user a chance to change
+        // their sync settings.
+        ProfileSyncService syncService = ProfileSyncService.get();
+        if (syncService != null) {
+            syncService.setSetupInProgress(true);
+        }
 
         mGaiaServiceType = AccountManagementScreenHelper.GAIA_SERVICE_TYPE_NONE;
         if (getArguments() != null) {
@@ -150,6 +161,17 @@ public class AccountManagementFragment extends PreferenceFragment
         ProfileSyncService syncService = ProfileSyncService.get();
         if (syncService != null) {
             syncService.removeSyncStateChangedListener(this);
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+
+        // Allow sync to begin syncing if it hasn't yet.
+        ProfileSyncService syncService = ProfileSyncService.get();
+        if (syncService != null) {
+            syncService.setSetupInProgress(false);
         }
     }
 
@@ -196,6 +218,7 @@ public class AccountManagementFragment extends PreferenceFragment
         configureAddAccountPreference();
         configureChildAccountPreferences();
         configureSyncSettings();
+        configureGoogleActivityControls();
 
         updateAccountsList();
     }
@@ -228,13 +251,24 @@ public class AccountManagementFragment extends PreferenceFragment
                                 ProfileAccountManagementMetrics.TOGGLE_SIGNOUT,
                                 mGaiaServiceType);
 
-                        SignOutDialogFragment signOutFragment = new SignOutDialogFragment();
-                        Bundle args = new Bundle();
-                        args.putInt(SHOW_GAIA_SERVICE_TYPE_EXTRA, mGaiaServiceType);
-                        signOutFragment.setArguments(args);
+                        String managementDomain =
+                                SigninManager.get(getActivity()).getManagementDomain();
+                        if (managementDomain != null) {
+                            // Show the 'You are signing out of a managed account' dialog.
+                            ConfirmManagedSyncDataDialog.showSignOutFromManagedAccountDialog(
+                                    AccountManagementFragment.this, getFragmentManager(),
+                                    getResources(), managementDomain);
+                        } else {
+                            // Show the 'You are signing out' dialog.
+                            SignOutDialogFragment signOutFragment = new SignOutDialogFragment();
+                            Bundle args = new Bundle();
+                            args.putInt(SHOW_GAIA_SERVICE_TYPE_EXTRA, mGaiaServiceType);
+                            signOutFragment.setArguments(args);
 
-                        signOutFragment.setTargetFragment(AccountManagementFragment.this, 0);
-                        signOutFragment.show(getFragmentManager(), SIGN_OUT_DIALOG_TAG);
+                            signOutFragment.setTargetFragment(AccountManagementFragment.this, 0);
+                            signOutFragment.show(getFragmentManager(), SIGN_OUT_DIALOG_TAG);
+                        }
+
                         return true;
                     }
 
@@ -246,25 +280,42 @@ public class AccountManagementFragment extends PreferenceFragment
     }
 
     private void configureSyncSettings() {
-        SyncPreference pref = (SyncPreference) findPreference(PREF_SYNC_SETTINGS);
         final Preferences preferences = (Preferences) getActivity();
         final Account account = ChromeSigninController.get(getActivity()).getSignedInUser();
+        findPreference(PREF_SYNC_SETTINGS)
+                .setOnPreferenceClickListener(new OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        if (!isVisible() || !isResumed()) return false;
 
+                        if (ProfileSyncService.get() == null) return true;
+
+                        if (AndroidSyncSettings.isMasterSyncEnabled(preferences)) {
+                            Bundle args = new Bundle();
+                            args.putString(
+                                    SyncCustomizationFragment.ARGUMENT_ACCOUNT, account.name);
+                            preferences.startFragment(
+                                    SyncCustomizationFragment.class.getName(), args);
+                        } else {
+                            openSyncSettingsPage(preferences);
+                        }
+
+                        return true;
+                    }
+                });
+    }
+
+    private void configureGoogleActivityControls() {
+        Preference pref = findPreference(PREF_GOOGLE_ACTIVITY_CONTROLS);
         pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
             @Override
             public boolean onPreferenceClick(Preference preference) {
-                if (!isVisible() || !isResumed()) return false;
-
-                if (ProfileSyncService.get() == null) return true;
-
-                if (AndroidSyncSettings.isMasterSyncEnabled(preferences)) {
-                    Bundle args = new Bundle();
-                    args.putString(SyncCustomizationFragment.ARGUMENT_ACCOUNT, account.name);
-                    preferences.startFragment(SyncCustomizationFragment.class.getName(), args);
-                } else {
-                    openSyncSettingsPage(preferences);
-                }
-
+                Activity activity = getActivity();
+                ((ChromeApplication) (activity.getApplicationContext()))
+                        .createGoogleActivityController()
+                        .openWebAndAppActivitySettings(activity,
+                                ChromeSigninController.get(activity).getSignedInAccountName());
+                RecordUserAction.record("Signin_AccountSettings_GoogleActivityControlsClicked");
                 return true;
             }
         });
@@ -463,12 +514,25 @@ public class AccountManagementFragment extends PreferenceFragment
         }
     }
 
+    // ConfirmManagedSyncDataDialog.Listener implementation
+    @Override
+    public void onConfirm() {
+        onSignOutClicked();
+    }
+
+    @Override
+    public void onCancel() {
+        onSignOutDialogDismissed(false);
+    }
+
     // ProfileSyncServiceListener implementation:
 
     @Override
     public void syncStateChanged() {
         SyncPreference pref = (SyncPreference) findPreference(PREF_SYNC_SETTINGS);
-        pref.updateSyncSummary();
+        if (pref != null) {
+            pref.updateSyncSummaryAndIcon();
+        }
 
         // TODO(crbug/557784): Show notification for sync error
     }
@@ -666,7 +730,7 @@ public class AccountManagementFragment extends PreferenceFragment
      * @return Whether the sign out is not disabled due to a child/EDU account.
      */
     private static boolean getSignOutAllowedPreferenceValue(Context context) {
-        return PreferenceManager.getDefaultSharedPreferences(context)
+        return ContextUtils.getAppSharedPreferences()
                 .getBoolean(SIGN_OUT_ALLOWED, true);
     }
 
@@ -677,7 +741,7 @@ public class AccountManagementFragment extends PreferenceFragment
      * @param isAllowed True if the sign out is not disabled due to a child/EDU account
      */
     public static void setSignOutAllowedPreferenceValue(Context context, boolean isAllowed) {
-        PreferenceManager.getDefaultSharedPreferences(context)
+        ContextUtils.getAppSharedPreferences()
                 .edit()
                 .putBoolean(SIGN_OUT_ALLOWED, isAllowed)
                 .apply();

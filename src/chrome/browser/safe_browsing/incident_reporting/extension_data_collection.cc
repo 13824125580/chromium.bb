@@ -8,6 +8,7 @@
 #include "base/stl_util.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_signer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.h"
@@ -56,7 +57,8 @@ void PopulateExtensionInfo(
   }
 
   extension_info->set_installed_by_custodian(
-      extension.was_installed_by_custodian());
+      extensions::util::WasInstalledByCustodian(
+          extension.id(), extension_registry.browser_context()));
   extension_info->set_installed_by_default(
       extension.was_installed_by_default());
   extension_info->set_installed_by_oem(extension.was_installed_by_oem());
@@ -71,7 +73,7 @@ void PopulateExtensionInfo(
   const base::DictionaryValue* signature =
       extension_prefs.GetInstallSignature();
   if (signature) {
-    scoped_ptr<extensions::InstallSignature> signature_from_prefs =
+    std::unique_ptr<extensions::InstallSignature> signature_from_prefs =
         extensions::InstallSignature::FromValue(*signature);
     if (signature_from_prefs) {
       if (ContainsKey(signature_from_prefs->ids, extension_id)) {
@@ -108,7 +110,7 @@ void CollectExtensionData(ClientIncidentReport_ExtensionData* data) {
     if (!IncidentReportingService::IsEnabledForProfile(profile))
       continue;
 
-    scoped_ptr<const extensions::ExtensionSet> extensions(
+    std::unique_ptr<const extensions::ExtensionSet> extensions(
         extensions::ExtensionRegistryFactory::GetForBrowserContext(profile)
             ->GenerateInstalledExtensionsSet());
     extensions::ExtensionPrefs* extension_prefs =

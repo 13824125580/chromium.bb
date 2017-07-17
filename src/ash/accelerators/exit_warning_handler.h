@@ -5,9 +5,10 @@
 #ifndef ASH_ACCELERATORS_EXIT_WARNING_HANDLER_H_
 #define ASH_ACCELERATORS_EXIT_WARNING_HANDLER_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
 #include "ui/base/accelerators/accelerator.h"
 
@@ -57,11 +58,7 @@ class ASH_EXPORT ExitWarningHandler {
  private:
   friend class AcceleratorControllerTest;
 
-  enum State {
-    IDLE,
-    WAIT_FOR_DOUBLE_PRESS,
-    EXITING
-  };
+  enum State { IDLE, WAIT_FOR_DOUBLE_PRESS, EXITING };
 
   // Performs actions when the time limit is exceeded.
   void TimerAction();
@@ -73,7 +70,7 @@ class ASH_EXPORT ExitWarningHandler {
   void Hide();
 
   State state_;
-  scoped_ptr<views::Widget> widget_;
+  std::unique_ptr<views::Widget> widget_;
   base::OneShotTimer timer_;
 
   // Flag to suppress starting the timer for testing. For test we call

@@ -48,16 +48,19 @@
 #include "components/history/content/browser/web_contents_top_sites_observer.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/password_manager/core/browser/password_manager.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/subresource_filter/content/browser/content_subresource_filter_driver_factory.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(ANDROID_JAVA_UI)
 #include "chrome/browser/android/data_usage/data_use_tab_helper.h"
 #include "chrome/browser/android/offline_pages/offline_page_tab_helper.h"
+#include "chrome/browser/android/offline_pages/recent_tab_helper.h"
 #include "chrome/browser/android/voice_search_tab_helper.h"
 #include "chrome/browser/android/webapps/single_tab_mode_tab_helper.h"
 #include "chrome/browser/ui/android/context_menu_helper.h"
 #include "chrome/browser/ui/android/view_android_helper.h"
+#include "components/offline_pages/offline_page_feature.h"
 #else
 #include "chrome/browser/banners/app_banner_manager_desktop.h"
 #include "chrome/browser/plugins/plugin_observer.h"
@@ -70,8 +73,8 @@
 #include "chrome/browser/ui/sync/tab_contents_synced_tab_delegate.h"
 #include "chrome/browser/ui/website_settings/permission_bubble_manager.h"
 #include "components/pdf/browser/pdf_web_contents_helper.h"
-#include "components/ui/zoom/zoom_controller.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/zoom/zoom_controller.h"
 #endif  // BUILDFLAG(ANDROID_JAVA_UI)
 
 #if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
@@ -93,7 +96,6 @@
 #if defined(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/print_preview_message_handler.h"
 #include "chrome/browser/printing/print_view_manager.h"
-#include "chrome/browser/ui/webui/print_preview/print_preview_distiller.h"
 #else
 #include "chrome/browser/printing/print_view_manager_basic.h"
 #endif  // defined(ENABLE_PRINT_PREVIEW)
@@ -133,7 +135,7 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
 #if !BUILDFLAG(ANDROID_JAVA_UI)
   // ZoomController comes before common tab helpers since ChromeAutofillClient
   // may want to register as a ZoomObserver with it.
-  ui_zoom::ZoomController::CreateForWebContents(web_contents);
+  zoom::ZoomController::CreateForWebContents(web_contents);
 #endif
 
   // --- Common tab helpers ---
@@ -170,7 +172,9 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   SearchTabHelper::CreateForWebContents(web_contents);
   ChromeSecurityStateModelClient::CreateForWebContents(web_contents);
   if (SiteEngagementService::IsEnabled())
-    SiteEngagementHelper::CreateForWebContents(web_contents);
+    SiteEngagementService::Helper::CreateForWebContents(web_contents);
+  subresource_filter::ContentSubresourceFilterDriverFactory::
+      CreateForWebContents(web_contents);
   // TODO(vabr): Remove TabSpecificContentSettings from here once their function
   // is taken over by ChromeContentSettingsClient. http://crbug.com/387075
   TabSpecificContentSettings::CreateForWebContents(web_contents);
@@ -180,7 +184,11 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
 #if BUILDFLAG(ANDROID_JAVA_UI)
   ContextMenuHelper::CreateForWebContents(web_contents);
   DataUseTabHelper::CreateForWebContents(web_contents);
+
   offline_pages::OfflinePageTabHelper::CreateForWebContents(web_contents);
+  if (offline_pages::IsOffliningRecentPagesEnabled())
+    offline_pages::RecentTabHelper::CreateForWebContents(web_contents);
+
   SingleTabModeTabHelper::CreateForWebContents(web_contents);
   ViewAndroidHelper::CreateForWebContents(web_contents);
   VoiceSearchTabHelper::CreateForWebContents(web_contents);
@@ -192,9 +200,8 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
   HungPluginTabHelper::CreateForWebContents(web_contents);
   ManagePasswordsUIController::CreateForWebContents(web_contents);
   pdf::PDFWebContentsHelper::CreateForWebContentsWithClient(
-      web_contents,
-      scoped_ptr<pdf::PDFWebContentsHelperClient>(
-          new ChromePDFWebContentsHelperClient()));
+      web_contents, std::unique_ptr<pdf::PDFWebContentsHelperClient>(
+                        new ChromePDFWebContentsHelperClient()));
   PermissionBubbleManager::CreateForWebContents(web_contents);
   PluginObserver::CreateForWebContents(web_contents);
   SadTabHelper::CreateForWebContents(web_contents);
@@ -235,11 +242,6 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents) {
 
   bool enabled_distiller = base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableDomDistiller);
-#if defined(ENABLE_PRINT_PREVIEW)
-  if (PrintPreviewDistiller::IsEnabled())
-    enabled_distiller = true;
-#endif  // defined(ENABLE_PRINT_PREVIEW)
-
   if (enabled_distiller) {
     dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
         web_contents);

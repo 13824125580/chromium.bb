@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webui/signin/user_manager_screen_handler.h"
 
 #include <stddef.h>
+
 #include <utility>
 #include <vector>
 
@@ -14,19 +15,20 @@
 #include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/screenlock_private/screenlock_private_api.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_statistics.h"
+#include "chrome/browser/profiles/profile_statistics_factory.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/local_auth.h"
@@ -39,14 +41,18 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/user_manager.h"
+#include "chrome/browser/ui/webui/profile_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/google_chrome_strings.h"
 #include "components/prefs/pref_service.h"
 #include "components/proximity_auth/screenlock_bridge.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
@@ -96,20 +102,12 @@ const char kJsApiUserManagerRemoveUserWarningLoadStats[] =
     "removeUserWarningLoadStats";
 const char kJsApiUserManagerGetRemoveWarningDialogMessage[] =
     "getRemoveWarningDialogMessage";
+const char kJsApiUserManagerAreAllProfilesLocked[] =
+    "areAllProfilesLocked";
 const size_t kAvatarIconSize = 180;
 const int kMaxOAuthRetries = 3;
 
 void HandleAndDoNothing(const base::ListValue* args) {
-}
-
-// This callback is run if the only profile has been deleted, and a new
-// profile has been created to replace it.
-void OpenNewWindowForProfile(Profile* profile, Profile::CreateStatus status) {
-  if (status != Profile::CREATE_STATUS_INITIALIZED)
-    return;
-  profiles::FindOrCreateNewWindowForProfile(
-      profile, chrome::startup::IS_PROCESS_STARTUP,
-      chrome::startup::IS_FIRST_RUN, false);
 }
 
 std::string GetAvatarImage(const ProfileAttributesEntry* entry) {
@@ -142,12 +140,16 @@ extensions::ScreenlockPrivateEventRouter* GetScreenlockRouter(
 }
 
 bool IsGuestModeEnabled() {
+  if (switches::IsMaterialDesignUserManager())
+    return true;
   PrefService* service = g_browser_process->local_state();
   DCHECK(service);
   return service->GetBoolean(prefs::kBrowserGuestModeEnabled);
 }
 
 bool IsAddPersonEnabled() {
+  if (switches::IsMaterialDesignUserManager())
+    return true;
   PrefService* service = g_browser_process->local_state();
   DCHECK(service);
   return service->GetBoolean(prefs::kBrowserAddPersonEnabled);
@@ -209,8 +211,6 @@ void UrlHashHelper::ExecuteUrlHash() {
     chrome::ShowAboutChrome(target_browser);
   else if (hash_ == profiles::kUserManagerSelectProfileChromeSettings)
     chrome::ShowSettings(target_browser);
-  else if (hash_ == profiles::kUserManagerSelectProfileChromeMemory)
-    chrome::ShowMemory(target_browser);
 }
 
 void HandleLogRemoveUserWarningShown(const base::ListValue* args) {
@@ -304,7 +304,7 @@ UserManagerScreenHandler::~UserManagerScreenHandler() {
 
 void UserManagerScreenHandler::ShowBannerMessage(
     const base::string16& message) {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "login.AccountPickerScreen.showBannerMessage",
       base::StringValue(message));
 }
@@ -313,17 +313,18 @@ void UserManagerScreenHandler::ShowUserPodCustomIcon(
     const AccountId& account_id,
     const proximity_auth::ScreenlockBridge::UserPodCustomIconOptions&
         icon_options) {
-  scoped_ptr<base::DictionaryValue> icon = icon_options.ToDictionaryValue();
+  std::unique_ptr<base::DictionaryValue> icon =
+      icon_options.ToDictionaryValue();
   if (!icon || icon->empty())
     return;
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "login.AccountPickerScreen.showUserPodCustomIcon",
       base::StringValue(account_id.GetUserEmail()), *icon);
 }
 
 void UserManagerScreenHandler::HideUserPodCustomIcon(
     const AccountId& account_id) {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "login.AccountPickerScreen.hideUserPodCustomIcon",
       base::StringValue(account_id.GetUserEmail()));
 }
@@ -341,10 +342,10 @@ void UserManagerScreenHandler::SetAuthType(
     return;
 
   user_auth_type_map_[account_id.GetUserEmail()] = auth_type;
-  web_ui()->CallJavascriptFunction("login.AccountPickerScreen.setAuthType",
-                                   base::StringValue(account_id.GetUserEmail()),
-                                   base::FundamentalValue(auth_type),
-                                   base::StringValue(auth_value));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "login.AccountPickerScreen.setAuthType",
+      base::StringValue(account_id.GetUserEmail()),
+      base::FundamentalValue(auth_type), base::StringValue(auth_value));
 }
 
 proximity_auth::ScreenlockBridge::LockHandler::AuthType
@@ -380,7 +381,8 @@ void UserManagerScreenHandler::HandleInitialize(const base::ListValue* args) {
   args->GetString(0, &url_hash_);
 
   SendUserList();
-  web_ui()->CallJavascriptFunction("cr.ui.Oobe.showUserManagerScreen",
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "cr.ui.UserManager.showUserManagerScreen",
       base::FundamentalValue(IsGuestModeEnabled()),
       base::FundamentalValue(IsAddPersonEnabled()));
 
@@ -439,8 +441,9 @@ void UserManagerScreenHandler::HandleAuthenticatedLaunchUser(
     // change makes use of a token so we do that... if it's available.
     if (!oauth_client_) {
       oauth_client_.reset(new gaia::GaiaOAuthClient(
-          web_ui()->GetWebContents()->GetBrowserContext()
-              ->GetRequestContext()));
+          content::BrowserContext::GetDefaultStoragePartition(
+              web_ui()->GetWebContents()->GetBrowserContext())->
+                  GetURLRequestContext()));
     }
 
     const std::string token = entry->GetPasswordChangeDetectionToken();
@@ -453,7 +456,8 @@ void UserManagerScreenHandler::HandleAuthenticatedLaunchUser(
   // In order to support the upgrade case where we have a local hash but no
   // password token, the user perform a full online reauth.
   UserManager::ShowReauthDialog(web_ui()->GetWebContents()->GetBrowserContext(),
-                                email_address_);
+                                email_address_,
+                                signin_metrics::Reason::REASON_UNLOCK);
 }
 
 void UserManagerScreenHandler::HandleRemoveUser(const base::ListValue* args) {
@@ -470,15 +474,23 @@ void UserManagerScreenHandler::HandleRemoveUser(const base::ListValue* args) {
     return;
   }
 
-  if (!profiles::IsMultipleProfilesEnabled()) {
-    NOTREACHED();
+  DCHECK(profiles::IsMultipleProfilesEnabled());
+
+  if (switches::IsMaterialDesignUserManager() &&
+      profiles::AreAllProfilesLocked()) {
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "cr.webUIListenerCallback",
+        base::StringValue("show-error-dialog"),
+        base::StringValue(l10n_util::GetStringUTF8(
+            IDS_USER_MANAGER_REMOVE_PROFILE_PROFILES_LOCKED_ERROR)));
     return;
   }
 
-  g_browser_process->profile_manager()->ScheduleProfileForDeletion(
-      profile_path, base::Bind(&OpenNewWindowForProfile));
-  ProfileMetrics::LogProfileDeleteUser(
-      ProfileMetrics::DELETE_PROFILE_USER_MANAGER);
+  // The callback is run if the only profile has been deleted, and a new
+  // profile has been created to replace it.
+  webui::DeleteProfileAtPath(profile_path,
+                             web_ui(),
+                             ProfileMetrics::DELETE_PROFILE_USER_MANAGER);
 }
 
 void UserManagerScreenHandler::HandleLaunchGuest(const base::ListValue* args) {
@@ -491,6 +503,19 @@ void UserManagerScreenHandler::HandleLaunchGuest(const base::ListValue* args) {
     // guest mode.
     NOTREACHED();
   }
+}
+
+void UserManagerScreenHandler::HandleAreAllProfilesLocked(
+    const base::ListValue* args) {
+  std::string webui_callback_id;
+  CHECK_EQ(1U, args->GetSize());
+  bool success = args->GetString(0, &webui_callback_id);
+  DCHECK(success);
+
+  AllowJavascript();
+  ResolveJavascriptCallback(
+      base::StringValue(webui_callback_id),
+      base::FundamentalValue(profiles::AreAllProfilesLocked()));
 }
 
 void UserManagerScreenHandler::HandleLaunchUser(const base::ListValue* args) {
@@ -573,29 +598,28 @@ void UserManagerScreenHandler::HandleRemoveUserWarningLoadStats(
     // statistics are queried instead.
     base::DictionaryValue return_value;
     profiles::ProfileCategoryStats stats =
-        profiles::GetProfileStatisticsFromCache(profile_path);
+        ProfileStatistics::GetProfileStatisticsFromAttributesStorage(
+            profile_path);
     bool stats_success = true;
     for (const auto& item : stats) {
-      scoped_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
+      std::unique_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
       stat->SetIntegerWithoutPathExpansion("count", item.count);
       stat->SetBooleanWithoutPathExpansion("success", item.success);
       return_value.SetWithoutPathExpansion(item.category, std::move(stat));
       stats_success &= item.success;
     }
     if (stats_success) {
-      web_ui()->CallJavascriptFunction("updateRemoveWarningDialog",
-                                       base::StringValue(profile_path.value()),
-                                       return_value);
+      web_ui()->CallJavascriptFunctionUnsafe(
+          "updateRemoveWarningDialog", base::StringValue(profile_path.value()),
+          return_value);
       return;
     }
   }
 
-  profiles::GatherProfileStatistics(
-      profile,
+  ProfileStatisticsFactory::GetForProfile(profile)->GatherStatistics(
       base::Bind(
           &UserManagerScreenHandler::RemoveUserDialogLoadStatsCallback,
-          weak_ptr_factory_.GetWeakPtr(), profile_path),
-      &tracker_);
+          weak_ptr_factory_.GetWeakPtr(), profile_path));
 }
 
 void UserManagerScreenHandler::RemoveUserDialogLoadStatsCallback(
@@ -604,14 +628,14 @@ void UserManagerScreenHandler::RemoveUserDialogLoadStatsCallback(
   // Copy result into return_value.
   base::DictionaryValue return_value;
   for (const auto& item : result) {
-    scoped_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
     stat->SetIntegerWithoutPathExpansion("count", item.count);
     stat->SetBooleanWithoutPathExpansion("success", item.success);
     return_value.SetWithoutPathExpansion(item.category, std::move(stat));
   }
-  web_ui()->CallJavascriptFunction("updateRemoveWarningDialog",
-                                   base::StringValue(profile_path.value()),
-                                   return_value);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "updateRemoveWarningDialog", base::StringValue(profile_path.value()),
+      return_value);
 }
 
 void UserManagerScreenHandler::HandleGetRemoveWarningDialogMessage(
@@ -642,14 +666,13 @@ void UserManagerScreenHandler::HandleGetRemoveWarningDialogMessage(
   base::StringValue message = base::StringValue(
       l10n_util::GetPluralStringFUTF16(message_id, total_count));
 
-  web_ui()->CallJavascriptFunction("updateRemoveWarningDialogSetMessage",
-                                   base::StringValue(profile_path),
-                                   message,
-                                   base::FundamentalValue(total_count));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "updateRemoveWarningDialogSetMessage", base::StringValue(profile_path),
+      message, base::FundamentalValue(total_count));
 }
 
 void UserManagerScreenHandler::OnGetTokenInfoResponse(
-    scoped_ptr<base::DictionaryValue> token_info) {
+    std::unique_ptr<base::DictionaryValue> token_info) {
   // Password is unchanged so user just mistyped it.  Ask again.
   ReportAuthenticationResult(false, ProfileMetrics::AUTH_FAILED);
 }
@@ -659,7 +682,8 @@ void UserManagerScreenHandler::OnOAuthError() {
   DCHECK(!email_address_.empty());
   oauth_client_.reset();
   UserManager::ShowReauthDialog(web_ui()->GetWebContents()->GetBrowserContext(),
-                                email_address_);
+                                email_address_,
+                                signin_metrics::Reason::REASON_UNLOCK);
 }
 
 void UserManagerScreenHandler::OnNetworkError(int response_code) {
@@ -698,6 +722,10 @@ void UserManagerScreenHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       kJsApiUserManagerGetRemoveWarningDialogMessage,
       base::Bind(&UserManagerScreenHandler::HandleGetRemoveWarningDialogMessage,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kJsApiUserManagerAreAllProfilesLocked,
+      base::Bind(&UserManagerScreenHandler::HandleAreAllProfilesLocked,
                  base::Unretained(this)));
 
   const content::WebUI::MessageCallback& kDoNothingCallback =
@@ -836,6 +864,15 @@ void UserManagerScreenHandler::GetLocalizedValues(
                                 base::string16());
   localized_strings->SetString("multiProfilesOwnerPrimaryOnlyMsg",
                                 base::string16());
+
+  // Error message when trying to add a profile while all profiles are locked.
+  localized_strings->SetString("addProfileAllProfilesLockedError",
+      l10n_util::GetStringUTF16(
+          IDS_USER_MANAGER_ADD_PROFILE_PROFILES_LOCKED_ERROR));
+  // Error message when trying to browse as guest while all profiles are locked.
+  localized_strings->SetString("browseAsGuestAllProfilesLockedError",
+      l10n_util::GetStringUTF16(
+          IDS_USER_MANAGER_GO_GUEST_PROFILES_LOCKED_ERROR));
 }
 
 void UserManagerScreenHandler::SendUserList() {
@@ -857,7 +894,8 @@ void UserManagerScreenHandler::SendUserList() {
     if (entry->IsOmitted())
       continue;
 
-    base::DictionaryValue* profile_value = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> profile_value(
+        new base::DictionaryValue());
     base::FilePath profile_path = entry->GetPath();
 
     profile_value->SetString(kKeyUsername, entry->GetUserName());
@@ -879,10 +917,12 @@ void UserManagerScreenHandler::SendUserList() {
     profile_value->SetString(kKeyAvatarUrl, GetAvatarImage(entry));
 
     profiles::ProfileCategoryStats stats =
-        profiles::GetProfileStatisticsFromCache(profile_path);
-    scoped_ptr<base::DictionaryValue> stats_dict(new base::DictionaryValue);
+        ProfileStatistics::GetProfileStatisticsFromAttributesStorage(
+            profile_path);
+    std::unique_ptr<base::DictionaryValue> stats_dict(
+        new base::DictionaryValue);
     for (const auto& item : stats) {
-      scoped_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
+      std::unique_ptr<base::DictionaryValue> stat(new base::DictionaryValue);
       stat->SetIntegerWithoutPathExpansion("count", item.count);
       stat->SetBooleanWithoutPathExpansion("success", item.success);
       stats_dict->SetWithoutPathExpansion(item.category, std::move(stat));
@@ -896,11 +936,12 @@ void UserManagerScreenHandler::SendUserList() {
         g_browser_process->profile_manager()->GetProfileByPath(profile_path);
     profile_value->SetBoolean(kKeyIsProfileLoaded, profile != nullptr);
 
-    users_list.Append(profile_value);
+    users_list.Append(std::move(profile_value));
   }
 
-  web_ui()->CallJavascriptFunction("login.AccountPickerScreen.loadUsers",
-      users_list, base::FundamentalValue(IsGuestModeEnabled()));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "login.AccountPickerScreen.loadUsers", users_list,
+      base::FundamentalValue(IsGuestModeEnabled()));
 
   // This is the latest C++ code we have in the flow to show the UserManager.
   // This may be invoked more than once per UserManager lifetime; the
@@ -921,15 +962,13 @@ void UserManagerScreenHandler::ReportAuthenticationResult(
                    weak_ptr_factory_.GetWeakPtr()),
         ProfileMetrics::SWITCH_PROFILE_UNLOCK);
   } else {
-    web_ui()->CallJavascriptFunction(
-        "cr.ui.Oobe.showSignInError",
-        base::FundamentalValue(0),
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "cr.ui.UserManager.showSignInError", base::FundamentalValue(0),
         base::StringValue(l10n_util::GetStringUTF8(
-            auth == ProfileMetrics::AUTH_FAILED_OFFLINE ?
-                IDS_LOGIN_ERROR_AUTHENTICATING_OFFLINE :
-                IDS_LOGIN_ERROR_AUTHENTICATING)),
-        base::StringValue(""),
-        base::FundamentalValue(0));
+            auth == ProfileMetrics::AUTH_FAILED_OFFLINE
+                ? IDS_LOGIN_ERROR_AUTHENTICATING_OFFLINE
+                : IDS_LOGIN_ERROR_AUTHENTICATING)),
+        base::StringValue(""), base::FundamentalValue(0));
   }
 }
 
@@ -963,17 +1002,12 @@ void UserManagerScreenHandler::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_BROWSER_WINDOW_READY:
-      // Only respond to one Browser Window Ready event.
-      registrar_.Remove(this,
-                        chrome::NOTIFICATION_BROWSER_WINDOW_READY,
-                        content::NotificationService::AllSources());
-      OnBrowserWindowReady(content::Source<Browser>(source).ptr());
-    break;
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_WINDOW_READY, type);
+
+  // Only respond to one Browser Window Ready event.
+  registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
+                    content::NotificationService::AllSources());
+  OnBrowserWindowReady(content::Source<Browser>(source).ptr());
 }
 
 // This callback is run after switching to a new profile has finished. This

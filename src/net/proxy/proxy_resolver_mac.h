@@ -15,15 +15,17 @@ namespace net {
 
 // Implementation of ProxyResolverFactory that uses the Mac CFProxySupport to
 // implement proxies.
+// TODO(kapishnikov): make ProxyResolverMac async as per
+// https://bugs.chromium.org/p/chromium/issues/detail?id=166387#c95
 class NET_EXPORT ProxyResolverFactoryMac : public ProxyResolverFactory {
  public:
   ProxyResolverFactoryMac();
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolver>* resolver,
+      std::unique_ptr<ProxyResolver>* resolver,
       const CompletionCallback& callback,
-      scoped_ptr<Request>* request) override;
+      std::unique_ptr<Request>* request) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ProxyResolverFactoryMac);

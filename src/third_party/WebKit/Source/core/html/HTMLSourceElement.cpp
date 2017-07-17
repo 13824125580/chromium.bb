@@ -36,14 +36,16 @@
 #include "core/html/HTMLPictureElement.h"
 #include "platform/Logging.h"
 
+#define SOURCE_LOG_LEVEL 3
+
 namespace blink {
 
 using namespace HTMLNames;
 
 static SourceEventSender& sourceErrorEventSender()
 {
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<SourceEventSender>, sharedErrorEventSender, (SourceEventSender::create(EventTypeNames::error)));
-    return *sharedErrorEventSender;
+    DEFINE_STATIC_LOCAL(SourceEventSender, sharedErrorEventSender, (SourceEventSender::create(EventTypeNames::error)));
+    return sharedErrorEventSender;
 }
 
 class HTMLSourceElement::Listener final : public MediaQueryListListener {
@@ -62,24 +64,20 @@ public:
         MediaQueryListListener::trace(visitor);
     }
 private:
-    RawPtrWillBeMember<HTMLSourceElement> m_element;
+    Member<HTMLSourceElement> m_element;
 };
 
 inline HTMLSourceElement::HTMLSourceElement(Document& document)
     : HTMLElement(sourceTag, document)
-    , m_listener(adoptRefWillBeNoop(new Listener(this)))
+    , m_listener(new Listener(this))
 {
-    WTF_LOG(Media, "HTMLSourceElement::HTMLSourceElement - %p", this);
+    DVLOG(SOURCE_LOG_LEVEL) << "HTMLSourceElement - " << (void*)this;
 }
 
 DEFINE_NODE_FACTORY(HTMLSourceElement)
 
 HTMLSourceElement::~HTMLSourceElement()
 {
-#if !ENABLE(OILPAN)
-    sourceErrorEventSender().cancelEvent(this);
-    m_listener->clearElement();
-#endif
 }
 
 void HTMLSourceElement::createMediaQueryList(const AtomicString& media)
@@ -89,8 +87,8 @@ void HTMLSourceElement::createMediaQueryList(const AtomicString& media)
 
     if (m_mediaQueryList)
         m_mediaQueryList->removeListener(m_listener);
-    RefPtrWillBeRawPtr<MediaQuerySet> set = MediaQuerySet::create(media);
-    m_mediaQueryList = MediaQueryList::create(&document(), &document().mediaQueryMatcher(), set.release());
+    MediaQuerySet* set = MediaQuerySet::create(media);
+    m_mediaQueryList = MediaQueryList::create(&document(), &document().mediaQueryMatcher(), set);
     m_mediaQueryList->addListener(m_listener);
 }
 
@@ -140,20 +138,20 @@ void HTMLSourceElement::setType(const AtomicString& type)
 
 void HTMLSourceElement::scheduleErrorEvent()
 {
-    WTF_LOG(Media, "HTMLSourceElement::scheduleErrorEvent - %p", this);
+    DVLOG(SOURCE_LOG_LEVEL) << "scheduleErrorEvent - " << (void*)this;
     sourceErrorEventSender().dispatchEventSoon(this);
 }
 
 void HTMLSourceElement::cancelPendingErrorEvent()
 {
-    WTF_LOG(Media, "HTMLSourceElement::cancelPendingErrorEvent - %p", this);
+    DVLOG(SOURCE_LOG_LEVEL) << "cancelPendingErrorEvent - " << (void*)this;
     sourceErrorEventSender().cancelEvent(this);
 }
 
 void HTMLSourceElement::dispatchPendingEvent(SourceEventSender* eventSender)
 {
     ASSERT_UNUSED(eventSender, eventSender == &sourceErrorEventSender());
-    WTF_LOG(Media, "HTMLSourceElement::dispatchPendingEvent - %p", this);
+    DVLOG(SOURCE_LOG_LEVEL) << "dispatchPendingEvent - " << (void*)this;
     dispatchEvent(Event::createCancelable(EventTypeNames::error));
 }
 

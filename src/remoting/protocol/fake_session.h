@@ -6,12 +6,13 @@
 #define REMOTING_PROTOCOL_FAKE_SESSION_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "remoting/protocol/fake_stream_socket.h"
 #include "remoting/protocol/session.h"
 #include "remoting/protocol/transport.h"
@@ -34,6 +35,11 @@ class FakeSession : public Session {
   void set_error(ErrorCode error) { error_ = error; }
   bool is_closed() const { return closed_; }
 
+  // Sets delay for signaling message deliver when connected to a peer.
+  void set_signaling_delay(base::TimeDelta signaling_delay) {
+    signaling_delay_ = signaling_delay;
+  }
+
   // Session interface.
   void SetEventHandler(EventHandler* event_handler) override;
   ErrorCode error() override;
@@ -44,20 +50,24 @@ class FakeSession : public Session {
 
  private:
   // Callback provided to the |transport_|.
-  void SendTransportInfo(scoped_ptr<buzz::XmlElement> transport_info);
+  void SendTransportInfo(std::unique_ptr<buzz::XmlElement> transport_info);
+
+  // Called by the |peer_| to deliver incoming |transport_info|.
+  void ProcessTransportInfo(std::unique_ptr<buzz::XmlElement> transport_info);
 
   EventHandler* event_handler_ = nullptr;
-  scoped_ptr<SessionConfig> config_;
+  std::unique_ptr<SessionConfig> config_;
 
   std::string jid_;
 
-  scoped_ptr<FakeAuthenticator> authenticator_;
+  std::unique_ptr<FakeAuthenticator> authenticator_;
   Transport* transport_;
 
   ErrorCode error_ = OK;
   bool closed_ = false;
 
   base::WeakPtr<FakeSession> peer_;
+  base::TimeDelta signaling_delay_;
 
   base::WeakPtrFactory<FakeSession> weak_factory_;
 

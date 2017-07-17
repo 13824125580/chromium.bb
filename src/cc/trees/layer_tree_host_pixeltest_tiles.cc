@@ -98,7 +98,7 @@ class LayerTreeHostTilesPixelTest : public LayerTreePixelTest {
   }
 
   base::FilePath ref_file_;
-  scoped_ptr<SkBitmap> result_bitmap_;
+  std::unique_ptr<SkBitmap> result_bitmap_;
   RasterMode raster_mode_;
 };
 
@@ -116,8 +116,8 @@ class BlueYellowClient : public ContentLayerClient {
         DisplayItemList::Create(PaintableRegion(), settings);
 
     SkPictureRecorder recorder;
-    skia::RefPtr<SkCanvas> canvas = skia::SharePtr(
-        recorder.beginRecording(gfx::RectToSkRect(gfx::Rect(size_))));
+    sk_sp<SkCanvas> canvas =
+        sk_ref_sp(recorder.beginRecording(gfx::RectToSkRect(gfx::Rect(size_))));
     gfx::Rect top(0, 0, size_.width(), size_.height() / 2);
     gfx::Rect bottom(0, size_.height() / 2, size_.width(), size_.height() / 2);
 
@@ -133,7 +133,7 @@ class BlueYellowClient : public ContentLayerClient {
     canvas->drawRect(gfx::RectToSkRect(yellow_rect), paint);
 
     display_list->CreateAndAppendItem<DrawingDisplayItem>(
-        PaintableRegion(), skia::AdoptRef(recorder.endRecordingAsPicture()));
+        PaintableRegion(), recorder.finishRecordingAsPicture());
     display_list->Finalize();
     return display_list;
   }
@@ -153,7 +153,7 @@ class LayerTreeHostTilesTestPartialInvalidation
  public:
   LayerTreeHostTilesTestPartialInvalidation()
       : client_(gfx::Size(200, 200)),
-        picture_layer_(PictureLayer::Create(layer_settings(), &client_)) {
+        picture_layer_(PictureLayer::Create(&client_)) {
     picture_layer_->SetBounds(gfx::Size(200, 200));
     picture_layer_->SetIsDrawable(true);
   }

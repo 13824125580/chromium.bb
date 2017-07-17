@@ -9,9 +9,11 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -19,6 +21,7 @@
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/sync/glue/sync_start_util.h"
@@ -28,6 +31,7 @@
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/themes/theme_syncable_service.h"
+#include "chrome/browser/ui/app_list/arc/arc_package_sync_data_type_controller.h"
 #include "chrome/browser/ui/sync/browser_synced_window_delegates_getter.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
@@ -99,6 +103,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/app_list/arc/arc_package_syncable_service.h"
 #include "components/wifi_sync/wifi_credential_syncable_service.h"
 #include "components/wifi_sync/wifi_credential_syncable_service_factory.h"
 #endif
@@ -159,17 +164,17 @@ class SyncSessionsClientImpl : public sync_sessions::SyncSessionsClient {
     return window_delegates_getter_.get();
   }
 
-  scoped_ptr<browser_sync::LocalSessionEventRouter> GetLocalSessionEventRouter()
-      override {
+  std::unique_ptr<browser_sync::LocalSessionEventRouter>
+  GetLocalSessionEventRouter() override {
     syncer::SyncableService::StartSyncFlare flare(
         sync_start_util::GetFlareForSyncableService(profile_->GetPath()));
-    return make_scoped_ptr(
+    return base::WrapUnique(
         new NotificationServiceSessionsRouter(profile_, this, flare));
   }
 
  private:
   Profile* profile_;
-  scoped_ptr<SyncedWindowDelegatesGetter> window_delegates_getter_;
+  std::unique_ptr<SyncedWindowDelegatesGetter> window_delegates_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncSessionsClientImpl);
 };
@@ -409,6 +414,8 @@ ChromeSyncClient::GetSyncableServiceForType(syncer::ModelType type) {
     case syncer::WIFI_CREDENTIALS:
       return wifi_sync::WifiCredentialSyncableServiceFactory::
           GetForBrowserContext(profile_)->AsWeakPtr();
+    case syncer::ARC_PACKAGE:
+      return arc::ArcPackageSyncableService::Get(profile_)->AsWeakPtr();
 #endif
     default:
       // The following datatypes still need to be transitioned to the
@@ -419,16 +426,15 @@ ChromeSyncClient::GetSyncableServiceForType(syncer::ModelType type) {
   }
 }
 
-base::WeakPtr<syncer_v2::ModelTypeService>
-ChromeSyncClient::GetModelTypeServiceForType(syncer::ModelType type) {
+syncer_v2::ModelTypeService* ChromeSyncClient::GetModelTypeServiceForType(
+    syncer::ModelType type) {
   switch (type) {
     case syncer::DEVICE_INFO:
-      // TODO(gangwu): crbug.com/547087: after the bug(crbug.com/570080) fixed,
-      // Return a real service here.
-      return base::WeakPtr<syncer_v2::ModelTypeService>();
+      return ProfileSyncServiceFactory::GetForProfile(profile_)
+          ->GetDeviceInfoService();
     default:
       NOTREACHED();
-      return base::WeakPtr<syncer_v2::ModelTypeService>();
+      return nullptr;
   }
 }
 
@@ -477,8 +483,30 @@ ChromeSyncClient::GetSyncApiComponentFactory() {
 }
 
 void ChromeSyncClient::SetSyncApiComponentFactoryForTesting(
-    scoped_ptr<sync_driver::SyncApiComponentFactory> component_factory) {
+    std::unique_ptr<sync_driver::SyncApiComponentFactory> component_factory) {
   component_factory_ = std::move(component_factory);
+}
+
+// static
+void ChromeSyncClient::GetDeviceInfoTrackers(
+    std::vector<const sync_driver::DeviceInfoTracker*>* trackers) {
+  DCHECK(trackers);
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  std::vector<Profile*> profile_list = profile_manager->GetLoadedProfiles();
+  for (Profile* profile : profile_list) {
+    const ProfileSyncService* profile_sync_service =
+        ProfileSyncServiceFactory::GetForProfile(profile);
+    if (profile_sync_service != nullptr) {
+      const sync_driver::DeviceInfoTracker* tracker =
+          profile_sync_service->GetDeviceInfoTracker();
+      if (tracker != nullptr) {
+        // Even when sync is disabled and/or user is signed out, a tracker will
+        // still be present. It will only be missing when the ProfileSyncService
+        // has not sufficiently initialized yet.
+        trackers->push_back(tracker);
+      }
+    }
+  }
 }
 
 void ChromeSyncClient::RegisterDesktopDataTypes(
@@ -585,6 +613,9 @@ void ChromeSyncClient::RegisterDesktopDataTypes(
     sync_service->RegisterDataTypeController(new UIDataTypeController(
         ui_thread, error_callback, syncer::WIFI_CREDENTIALS, this));
   }
+  // TODO (lgcheng@) Add switch for this.
+  sync_service->RegisterDataTypeController(new ArcPackageSyncDataTypeController(
+      syncer::ARC_PACKAGE, error_callback, this, profile_));
 #endif
 }
 

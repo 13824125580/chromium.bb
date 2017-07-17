@@ -66,12 +66,15 @@
         '../../skia/skia.gyp:skia',
         '../../third_party/icu/icu.gyp:icui18n',
         '../../third_party/icu/icu.gyp:icuuc',
+        '../../third_party/zlib/zlib.gyp:zlib',
         '../../url/url.gyp:url_lib',
+        '../display/display.gyp:display',
         '../events/events.gyp:events',
         '../events/events.gyp:events_base',
         '../events/platform/events_platform.gyp:events_platform',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
+        '../gfx/gfx.gyp:gfx_range',
         '../resources/ui_resources.gyp:ui_resources',
         '../strings/ui_strings.gyp:ui_strings',
       ],
@@ -111,14 +114,18 @@
         'clipboard/clipboard_constants.cc',
         'clipboard/clipboard_mac.h',
         'clipboard/clipboard_mac.mm',
+        'clipboard/clipboard_monitor.cc',
+        'clipboard/clipboard_monitor.h',        
+        'clipboard/clipboard_observer.h',
         'clipboard/clipboard_types.h',
+        'clipboard/clipboard_util_mac.h',
+        'clipboard/clipboard_util_mac.mm',
         'clipboard/clipboard_util_win.cc',
         'clipboard/clipboard_util_win.h',
         'clipboard/clipboard_win.cc',
         'clipboard/clipboard_win.h',
         'clipboard/custom_data_helper.cc',
         'clipboard/custom_data_helper.h',
-        'clipboard/custom_data_helper_linux.cc',
         'clipboard/custom_data_helper_mac.mm',
         'clipboard/scoped_clipboard_writer.cc',
         'clipboard/scoped_clipboard_writer.h',
@@ -206,10 +213,10 @@
         'cursor/image_cursors.h',
         'cursor/ozone/bitmap_cursor_factory_ozone.cc',
         'cursor/ozone/bitmap_cursor_factory_ozone.h',
+        'default_style.h',
         'default_theme_provider.cc',
         'default_theme_provider.h',
         'default_theme_provider_mac.mm',
-        'default_style.h',
         'device_form_factor.h',
         'device_form_factor_android.cc',
         'device_form_factor_android.h',
@@ -218,13 +225,12 @@
         'dragdrop/cocoa_dnd_util.h',
         'dragdrop/cocoa_dnd_util.mm',
         'dragdrop/drag_drop_types.h',
+        'dragdrop/drag_drop_types_mac.mm',
         'dragdrop/drag_drop_types_win.cc',
         'dragdrop/drag_source_win.cc',
         'dragdrop/drag_source_win.h',
         'dragdrop/drag_utils.cc',
         'dragdrop/drag_utils.h',
-        'dragdrop/drag_utils_aura.cc',
-        'dragdrop/drag_utils_mac.mm',
         'dragdrop/drag_utils_win.cc',
         'dragdrop/drop_target_event.cc',
         'dragdrop/drop_target_event.h',
@@ -254,10 +260,6 @@
         'idle/idle_win.cc',
         'idle/screensaver_window_finder_x11.cc',
         'idle/screensaver_window_finder_x11.h',
-        'ios/cru_context_menu_controller.h',
-        'ios/cru_context_menu_controller.mm',
-        'ios/cru_context_menu_holder.h',
-        'ios/cru_context_menu_holder.mm',
         'l10n/formatter.cc',
         'l10n/formatter.h',
         'l10n/l10n_font_util.cc',
@@ -325,8 +327,6 @@
         'text/bytes_formatting.h',
         'theme_provider.cc',
         'theme_provider.h',
-        'touch/selection_bound.cc',
-        'touch/selection_bound.h',
         'touch/touch_device.cc',
         'touch/touch_device.h',
         'touch/touch_device_android.cc',
@@ -378,6 +378,9 @@
         'win/open_file_name_win.h',
         'win/rubberband_windows.cc',
         'win/rubberband_windows.h',
+        'win/osk_display_manager.cc',
+        'win/osk_display_manager.h',
+        'win/osk_display_observer.h',
         'win/scoped_ole_initializer.cc',
         'win/scoped_ole_initializer.h',
         'win/shell.cc',
@@ -395,13 +398,6 @@
         'x/selection_requestor.h',
         'x/selection_utils.cc',
         'x/selection_utils.h',
-        'x/x11_foreign_window_manager.cc',
-        'x/x11_foreign_window_manager.h',
-        'x/x11_menu_list.cc',
-        'x/x11_menu_list.h',
-        'x/x11_util.cc',
-        'x/x11_util.h',
-        'x/x11_util_internal.h',
       ],
       'target_conditions': [
         ['OS == "ios"', {
@@ -438,6 +434,7 @@
             ['exclude', 'clipboard/clipboard_mac.mm'],
             ['exclude', 'layout_mac.mm'],
             ['exclude', 'work_area_watcher_observer.h'],
+            ['include', 'window_tracker_template.h'],
           ],
         }, {  # use_aura!=1
           'sources!': [
@@ -454,7 +451,7 @@
             'x/selection_requestor.h',
             'x/selection_utils.cc',
             'x/selection_utils.h',
-          ]
+          ],
         }],
         ['use_aura==0 or OS!="linux"', {
           'sources!': [
@@ -464,13 +461,9 @@
         ['use_ozone==1', {
           'dependencies': [
             '../events/devices/events_devices.gyp:events_devices',
+            '../events/ozone/events_ozone.gyp:events_ozone_evdev',
             '../events/ozone/events_ozone.gyp:events_ozone_layout',
             '../ozone/ozone.gyp:ozone_base',
-          ],
-        }],
-        ['use_aura==1 and OS=="win"', {
-          'sources/': [
-            ['exclude', 'dragdrop/drag_utils_aura.cc'],
           ],
         }],
         ['use_glib == 1', {
@@ -581,8 +574,6 @@
           'sources!': [
             'cursor/image_cursors.cc',
             'cursor/image_cursors.h',
-            'dragdrop/drag_utils.cc',
-            'dragdrop/drag_utils.h',
           ],
           'link_settings': {
             'libraries': [
@@ -605,8 +596,10 @@
             '../../build/linux/system.gyp:xfixes',
             '../../build/linux/system.gyp:xrender',  # For XRender* function calls in x11_util.cc.
             '../events/devices/events_devices.gyp:events_devices',
+            '../events/devices/x11/events_devices_x11.gyp:events_devices_x11',
             '../events/platform/x11/x11_events_platform.gyp:x11_events_platform',
             '../gfx/x/gfx_x11.gyp:gfx_x11',
+            'x/ui_base_x.gyp:ui_base_x',
           ],
         }],
         ['use_x11==1 and chromeos==0', {
@@ -703,6 +696,7 @@
         '../../skia/skia.gyp:skia',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
+        '../gfx/gfx.gyp:gfx_range',
       ],
       'sources': [
         # Note: file list duplicated in GN build.
@@ -726,7 +720,8 @@
       ],
       'conditions': [
         ['OS!="ios"', {
-          'dependecies': [
+          'dependencies': [
+            '../events/events.gyp:events',
             'ime/ui_base_ime.gyp:ui_base_ime',
           ],
           'sources': [
@@ -736,6 +731,8 @@
             'ime/dummy_text_input_client.h',
             'test/nswindow_fullscreen_notification_waiter.h',
             'test/nswindow_fullscreen_notification_waiter.mm',
+            'test/scoped_fake_full_keyboard_access.h',
+            'test/scoped_fake_full_keyboard_access.mm',
             'test/scoped_fake_nswindow_focus.h',
             'test/scoped_fake_nswindow_focus.mm',
             'test/scoped_fake_nswindow_fullscreen.h',

@@ -13,6 +13,7 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
@@ -22,7 +23,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
-#include "content/browser/fileapi/chrome_blob_storage_context.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/histogram_internals_request_job.h"
 #include "content/browser/net/view_blob_internals_job_factory.h"
 #include "content/browser/net/view_http_cache_job_factory.h"
@@ -45,7 +46,6 @@
 #include "net/url_request/url_request_error_job.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory.h"
-
 #include "url/url_util.h"
 
 namespace content {
@@ -53,11 +53,10 @@ namespace content {
 namespace {
 
 const char kChromeURLContentSecurityPolicyHeaderBase[] =
-    "Content-Security-Policy: script-src chrome://resources 'self'";
+    "Content-Security-Policy: ";
 
 const char kChromeURLXFrameOptionsHeader[] = "X-Frame-Options: DENY";
 static const char kNetworkErrorKey[] = "netError";
-const int kNoRenderProcessId = -1;
 
 bool SchemeIsInSchemes(const std::string& scheme,
                        const std::vector<std::string>& schemes) {
@@ -154,9 +153,24 @@ class URLRequestChromeJob : public net::URLRequestJob {
     content_security_policy_object_source_ = data;
   }
 
-  void set_content_security_policy_frame_source(
+  void set_content_security_policy_script_source(
       const std::string& data) {
-    content_security_policy_frame_source_ = data;
+    content_security_policy_script_source_ = data;
+  }
+
+  void set_content_security_policy_child_source(
+      const std::string& data) {
+    content_security_policy_child_source_ = data;
+  }
+
+  void set_content_security_policy_style_source(
+      const std::string& data) {
+    content_security_policy_style_source_ = data;
+  }
+
+  void set_content_security_policy_image_source(
+      const std::string& data) {
+    content_security_policy_image_source_ = data;
   }
 
   void set_deny_xframe_options(bool deny_xframe_options) {
@@ -181,16 +195,14 @@ class URLRequestChromeJob : public net::URLRequestJob {
 
   // Helper for Start(), to let us start asynchronously.
   // (This pattern is shared by most net::URLRequestJob implementations.)
-  void StartAsync(bool allowed);
+  void StartAsync();
 
-  // Called on the UI thread to check if this request is allowed.
-  static void CheckStoragePartitionMatches(
-      int render_process_id,
-      const GURL& url,
+  // Due to a race condition, DevTools relies on a legacy thread hop to the UI
+  // thread before calling StartAsync.
+  // TODO(caseq): Fix the race condition and remove this thread hop in
+  // https://crbug.com/616641.
+  static void DelayStartForDevTools(
       const base::WeakPtr<URLRequestChromeJob>& job);
-
-  // Specific resources require unsafe-eval in the Content Security Policy.
-  bool RequiresUnsafeEval() const;
 
   // Do the actual copy from data_ (the data we're serving) into |buf|.
   // Separate from ReadRawData so we can handle async I/O. Returns the number of
@@ -216,8 +228,11 @@ class URLRequestChromeJob : public net::URLRequestJob {
   bool add_content_security_policy_;
 
   // These are used with the CSP.
+  std::string content_security_policy_script_source_;
   std::string content_security_policy_object_source_;
-  std::string content_security_policy_frame_source_;
+  std::string content_security_policy_child_source_;
+  std::string content_security_policy_style_source_;
+  std::string content_security_policy_image_source_;
 
   // If true, sets  the "X-Frame-Options: DENY" header.
   bool deny_xframe_options_;
@@ -249,8 +264,6 @@ URLRequestChromeJob::URLRequestChromeJob(net::URLRequest* request,
       pending_buf_size_(0),
       allow_caching_(true),
       add_content_security_policy_(true),
-      content_security_policy_object_source_("object-src 'none';"),
-      content_security_policy_frame_source_("frame-src 'none';"),
       deny_xframe_options_(true),
       send_content_type_header_(false),
       is_incognito_(is_incognito),
@@ -264,19 +277,29 @@ URLRequestChromeJob::~URLRequestChromeJob() {
 }
 
 void URLRequestChromeJob::Start() {
-  int render_process_id, unused;
-  bool is_renderer_request = ResourceRequestInfo::GetRenderFrameForRequest(
-      request_, &render_process_id, &unused);
-  if (!is_renderer_request)
-    render_process_id = kNoRenderProcessId;
-  BrowserThread::PostTask(
-      BrowserThread::UI,
+  const GURL url = request_->url();
+
+  // Due to a race condition, DevTools relies on a legacy thread hop to the UI
+  // thread before calling StartAsync.
+  // TODO(caseq): Fix the race condition and remove this thread hop in
+  // https://crbug.com/616641.
+  if (url.SchemeIs(kChromeDevToolsScheme)) {
+    BrowserThread::PostTask(
+        BrowserThread::UI,
+        FROM_HERE,
+        base::Bind(&URLRequestChromeJob::DelayStartForDevTools,
+                   weak_factory_.GetWeakPtr()));
+    return;
+  }
+
+  // Start reading asynchronously so that all error reporting and data
+  // callbacks happen as they would for network requests.
+  base::MessageLoop::current()->PostTask(
       FROM_HERE,
-      base::Bind(&URLRequestChromeJob::CheckStoragePartitionMatches,
-                 render_process_id, request_->url(),
-                 weak_factory_.GetWeakPtr()));
+      base::Bind(&URLRequestChromeJob::StartAsync, weak_factory_.GetWeakPtr()));
+
   TRACE_EVENT_ASYNC_BEGIN1("browser", "DataManager:Request", this, "URL",
-      request_->url().possibly_invalid_spec());
+      url.possibly_invalid_spec());
 }
 
 void URLRequestChromeJob::Kill() {
@@ -306,9 +329,11 @@ void URLRequestChromeJob::GetResponseInfo(net::HttpResponseInfo* info) {
   // response headers.
   if (add_content_security_policy_) {
     std::string base = kChromeURLContentSecurityPolicyHeaderBase;
-    base.append(RequiresUnsafeEval() ? " 'unsafe-eval'; " : "; ");
+    base.append(content_security_policy_script_source_);
     base.append(content_security_policy_object_source_);
-    base.append(content_security_policy_frame_source_);
+    base.append(content_security_policy_child_source_);
+    base.append(content_security_policy_style_source_);
+    base.append(content_security_policy_image_source_);
     info->headers->AddHeader(base);
   }
 
@@ -386,55 +411,22 @@ int URLRequestChromeJob::CompleteRead(net::IOBuffer* buf, int buf_size) {
   return buf_size;
 }
 
-void URLRequestChromeJob::CheckStoragePartitionMatches(
-    int render_process_id,
-    const GURL& url,
+void URLRequestChromeJob::DelayStartForDevTools(
     const base::WeakPtr<URLRequestChromeJob>& job) {
-  // The embedder could put some webui pages in separate storage partition.
-  // RenderProcessHostImpl::IsSuitableHost would guard against top level pages
-  // being in the same process. We do an extra check to guard against an
-  // exploited renderer pretending to add them as a subframe. We skip this check
-  // for resources.
-  bool allowed = false;
-  std::vector<std::string> hosts;
-  GetContentClient()->
-      browser()->GetAdditionalWebUIHostsToIgnoreParititionCheck(&hosts);
-  if (url.SchemeIs(kChromeUIScheme) &&
-      (url.SchemeIs(kChromeUIScheme) ||
-       std::find(hosts.begin(), hosts.end(), url.host()) != hosts.end())) {
-    allowed = true;
-  } else if (render_process_id == kNoRenderProcessId) {
-    // Request was not issued by renderer.
-    allowed = true;
-  } else {
-    RenderProcessHost* process = RenderProcessHost::FromID(render_process_id);
-    if (process) {
-      StoragePartition* partition = BrowserContext::GetStoragePartitionForSite(
-          process->GetBrowserContext(), url);
-      allowed = partition == process->GetStoragePartition();
-    }
-  }
-
   BrowserThread::PostTask(
       BrowserThread::IO,
       FROM_HERE,
-      base::Bind(&URLRequestChromeJob::StartAsync, job, allowed));
+      base::Bind(&URLRequestChromeJob::StartAsync, job));
 }
 
-void URLRequestChromeJob::StartAsync(bool allowed) {
+void URLRequestChromeJob::StartAsync() {
   if (!request_)
     return;
 
-  if (!allowed || !backend_->StartRequest(request_, this)) {
+  if (!backend_->StartRequest(request_, this)) {
     NotifyStartError(net::URLRequestStatus(net::URLRequestStatus::FAILED,
                                            net::ERR_INVALID_URL));
   }
-}
-
-// TODO(tsepez,mfoltz): Refine this method when tests have been fixed to not use
-// eval()/new Function().  http://crbug.com/525224
-bool URLRequestChromeJob::RequiresUnsafeEval() const {
-  return true;
 }
 
 namespace {
@@ -458,7 +450,7 @@ void GetMimeTypeOnUI(URLDataSourceImpl* source,
 namespace {
 
 bool IsValidNetworkErrorCode(int error_code) {
-  scoped_ptr<base::DictionaryValue> error_codes = net::GetNetConstants();
+  std::unique_ptr<base::DictionaryValue> error_codes = net::GetNetConstants();
   const base::DictionaryValue* net_error_codes_dict = nullptr;
 
   for (base::DictionaryValue::Iterator itr(*error_codes); !itr.IsAtEnd();
@@ -573,13 +565,13 @@ URLDataManagerBackend::~URLDataManagerBackend() {
 }
 
 // static
-scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>
 URLDataManagerBackend::CreateProtocolHandler(
     content::ResourceContext* resource_context,
     bool is_incognito,
     ChromeBlobStorageContext* blob_storage_context) {
   DCHECK(resource_context);
-  return make_scoped_ptr(new ChromeProtocolHandler(
+  return base::WrapUnique(new ChromeProtocolHandler(
       resource_context, is_incognito, blob_storage_context));
 }
 
@@ -629,10 +621,16 @@ bool URLDataManagerBackend::StartRequest(const net::URLRequest* request,
   job->set_allow_caching(source->source()->AllowCaching());
   job->set_add_content_security_policy(
       source->source()->ShouldAddContentSecurityPolicy());
+  job->set_content_security_policy_script_source(
+      source->source()->GetContentSecurityPolicyScriptSrc());
   job->set_content_security_policy_object_source(
       source->source()->GetContentSecurityPolicyObjectSrc());
-  job->set_content_security_policy_frame_source(
-      source->source()->GetContentSecurityPolicyFrameSrc());
+  job->set_content_security_policy_child_source(
+      source->source()->GetContentSecurityPolicyChildSrc());
+  job->set_content_security_policy_style_source(
+      source->source()->GetContentSecurityPolicyStyleSrc());
+  job->set_content_security_policy_image_source(
+      source->source()->GetContentSecurityPolicyImgSrc());
   job->set_deny_xframe_options(
       source->source()->ShouldDenyXFrameOptions());
   job->set_send_content_type_header(
@@ -674,15 +672,14 @@ bool URLDataManagerBackend::StartRequest(const net::URLRequest* request,
     // message loop before request for data. And correspondingly their
     // replies are put on the IO thread in the same order.
     target_message_loop->task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&GetMimeTypeOnUI, scoped_refptr<URLDataSourceImpl>(source),
-                   path, job->AsWeakPtr()));
+        FROM_HERE, base::Bind(&GetMimeTypeOnUI, base::RetainedRef(source), path,
+                              job->AsWeakPtr()));
 
     // The DataSource wants StartDataRequest to be called on a specific thread,
     // usually the UI thread, for this path.
     target_message_loop->task_runner()->PostTask(
         FROM_HERE, base::Bind(&URLDataManagerBackend::CallStartRequest,
-                              make_scoped_refptr(source), path,
+                              base::RetainedRef(source), path,
                               render_process_id, render_frame_id, request_id));
   }
   return true;

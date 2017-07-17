@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/aura/accessibility/ax_root_obj_wrapper.h"
 #include "ui/accessibility/ax_tree_data.h"
 #include "ui/accessibility/ax_tree_source.h"
@@ -37,7 +37,7 @@ class AXTreeSourceAura
   void ShowContextMenu(int32_t id);
 
   // AXTreeSource implementation.
-  ui::AXTreeData GetTreeData() const override;
+  bool GetTreeData(ui::AXTreeData* data) const override;
   views::AXAuraObjWrapper* GetRoot() const override;
   views::AXAuraObjWrapper* GetFromId(int32_t id) const override;
   int32_t GetId(views::AXAuraObjWrapper* node) const override;
@@ -57,7 +57,7 @@ class AXTreeSourceAura
   std::string ToString(views::AXAuraObjWrapper* root, std::string prefix);
 
  private:
-  scoped_ptr<AXRootObjWrapper> root_;
+  std::unique_ptr<AXRootObjWrapper> root_;
 
   DISALLOW_COPY_AND_ASSIGN(AXTreeSourceAura);
 };

@@ -13,8 +13,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_message_loop.h"
 #include "base/sequenced_task_runner_helpers.h"
-#include "components/sync_driver/data_type_error_handler.h"
 #include "sync/internal_api/public/base/model_type.h"
+#include "sync/internal_api/public/data_type_error_handler.h"
 #include "sync/internal_api/public/util/unrecoverable_error_handler.h"
 
 namespace base {
@@ -33,7 +33,7 @@ class BackendDataTypeConfigurer;
 // need to run model associator or change processor on other threads.
 class DataTypeController
     : public base::RefCountedDeleteOnMessageLoop<DataTypeController>,
-      public DataTypeErrorHandler {
+      public syncer::DataTypeErrorHandler {
  public:
   enum State {
     NOT_RUNNING,     // The controller has never been started or has previously
@@ -86,12 +86,23 @@ class DataTypeController
   // Returns true if the datatype started successfully.
   static bool IsSuccessfulResult(ConfigureResult result);
 
+  // Returns true if DataTypeManager should wait for LoadModels to complete
+  // successfully before starting configuration. Directory based types should
+  // return false while USS datatypes should return true.
+  virtual bool ShouldLoadModelBeforeConfigure() const = 0;
+
   // Begins asynchronous operation of loading the model to get it ready for
   // model association. Once the models are loaded the callback will be invoked
   // with the result. If the models are already loaded it is safe to call the
   // callback right away. Else the callback needs to be stored and called when
   // the models are ready.
   virtual void LoadModels(const ModelLoadCallback& model_load_callback) = 0;
+
+  // Registers with sync backend if needed. This function is called by
+  // DataTypeManager before downloading initial data. Non-blocking types need to
+  // pass activation context containing progress marker to sync backend before
+  // initial download starts.
+  virtual void RegisterWithBackend(BackendDataTypeConfigurer* configurer) = 0;
 
   // Will start a potentially asynchronous operation to perform the
   // model association. Once the model association is done the callback will

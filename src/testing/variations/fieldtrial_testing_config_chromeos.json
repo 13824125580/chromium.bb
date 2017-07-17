@@ -38,11 +38,14 @@
             "group_name": "Enabled"
         }
     ],
-    "DataReductionProxyConfigService": [
+    "DisallowFetchForDocWrittenScriptsInMainFrame": [
         {
-            "group_name": "Enabled",
+            "disable_features": [
+                "DocumentWriteEvaluator"
+            ],
+            "group_name": "DocumentWriteScriptBlockGroup",
             "params": {
-                "minimum_refresh_interval_on_success_msec": "21600000"
+                "disallowFetchForDocWrittenScriptsInMainFrame": "true"
             }
         }
     ],
@@ -51,13 +54,36 @@
             "group_name": "Button"
         }
     ],
+    "EnableMediaRouter": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "EnableMediaRouterWithCastExtension": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
     "ExtensionActionRedesign": [
         {
             "group_name": "Enabled"
         }
     ],
+    "GoogleBrandedContextMenu": [
+        {
+            "group_name": "branded"
+        }
+    ],
     "LocalNTPSuggestionsService": [
         {
+            "group_name": "Enabled"
+        }
+    ],
+    "MainFrameBeforeActivation": [
+        {
+            "enable_features": [
+                "MainFrameBeforeActivation"
+            ],
             "group_name": "Enabled"
         }
     ],
@@ -66,7 +92,25 @@
             "group_name": "Enabled"
         }
     ],
+    "MojoChannel": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "NetworkTimeQueries": [
+        {
+            "enable_features": [
+                "NetworkTimeServiceQuerying"
+            ],
+            "group_name": "NetworkTimeQueriesEnabled"
+        }
+    ],
     "OfferUploadCreditCards": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "OutOfProcessPac": [
         {
             "group_name": "Enabled"
         }
@@ -81,14 +125,25 @@
             "group_name": "SmartLockBrandingSavePromptOnly"
         }
     ],
-    "QUIC": [
+    "PasswordManagerSettingsMigration": [
         {
+            "group_name": "Enable"
+        }
+    ],
+    "PreconnectMore": [
+        {
+            "enable_features": [
+                "PreconnectMore"
+            ],
             "group_name": "Enabled"
         }
     ],
-    "RenderingPipelineThrottling": [
+    "QUIC": [
         {
-            "group_name": "Enabled"
+            "group_name": "Enabled",
+            "params": {
+                "delay_tcp_race": "true"
+            }
         }
     ],
     "ReportCertificateErrors": [
@@ -120,14 +175,46 @@
             "group_name": "DontShowAndDontSend"
         }
     ],
-    "SafeBrowsingUnverifiedDownloads": [
+    "SSLCommonNameMismatchHandling": [
         {
-            "group_name": "DisableByParameterMostSbTypes2",
+            "group_name": "Enabled"
+        }
+    ],
+    "SafeBrowsingIncidentReportingService": [
+        {
+            "enable_features": [
+                "IncidentReportingDisableUpload"
+            ],
+            "group_name": "Enabled",
             "params": {
-                "blacklist": ".exe-,.zip-",
-                "block_sb_types": "true",
-                "whitelist": ".rar,.svg,.url,.xml,.zip"
+                "collect_reg_data": "true"
             }
+        },
+        {
+            "group_name": "Default"
+        }
+    ],
+    "SafeBrowsingIncidentReportingServiceFeatures": [
+        {
+            "enable_features": [
+                "IncidentReportingModuleLoadAnalysis",
+                "IncidentReportingSuspiciousModuleReporting"
+            ],
+            "group_name": "WithSuspiciousModuleReporting"
+        },
+        {
+            "enable_features": [
+                "IncidentReportingModuleLoadAnalysis"
+            ],
+            "group_name": "WithModuleLoadAnalysis"
+        },
+        {
+            "group_name": "Default"
+        }
+    ],
+    "SafeBrowsingV4LocalDatabaseManagerEnabled": [
+        {
+            "group_name": "Enabled"
         }
     ],
     "SchedulerExpensiveTaskBlocking": [
@@ -140,9 +227,9 @@
             "group_name": "Enabled"
         }
     ],
-    "SpdyEnableDependencies": [
+    "SimpleCacheTrial": [
         {
-            "group_name": "Enable"
+            "group_name": "ExperimentYes"
         }
     ],
     "StrictSecureCookies": [
@@ -163,6 +250,28 @@
             "group_name": "Enabled"
         }
     ],
+    "TokenBinding": [
+        {
+            "enable_features": [
+                "token-binding"
+            ],
+            "group_name": "TokenBinding"
+        }
+    ],
+    "V8CacheStrategiesForCacheStorage": [
+        {
+            "group_name": "default"
+        },
+        {
+            "group_name": "none"
+        },
+        {
+            "group_name": "normal"
+        },
+        {
+            "group_name": "aggressive"
+        }
+    ],
     "VarationsServiceControl": [
         {
             "group_name": "Interval_30min",
@@ -171,8 +280,19 @@
             }
         }
     ],
-    "WebFontsIntervention": [
+    "WebRTC-EnableWebRtcEcdsa": [
         {
+            "enable_features": [
+                "WebRTC-EnableWebRtcEcdsa"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
+    "WebRTC-H264WithOpenH264FFmpeg": [
+        {
+            "enable_features": [
+                "WebRTC-H264WithOpenH264FFmpeg"
+            ],
             "group_name": "Enabled"
         }
     ],

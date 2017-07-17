@@ -17,11 +17,11 @@ from google.appengine.api import app_identity
 from dashboard import buildbucket_job
 from dashboard import buildbucket_service
 from dashboard import can_bisect
+from dashboard import list_tests
 from dashboard import namespaced_stored_object
 from dashboard import quick_logger
 from dashboard import request_handler
 from dashboard import rietveld_service
-from dashboard import stored_object
 from dashboard import utils
 from dashboard.models import graph_data
 from dashboard.models import try_job
@@ -43,7 +43,7 @@ _INTERNAL_MASTERS_KEY = 'internal_masters'
 _BUILDER_TYPES_KEY = 'bisect_builder_types'
 _TESTER_DIRECTOR_MAP_KEY = 'recipe_tester_director_map'
 _MASTER_TRY_SERVER_MAP_KEY = 'master_try_server_map'
-
+_MASTER_BUILDBUCKET_MAP_KEY = 'master_buildbucket_map'
 _NON_TELEMETRY_TEST_COMMANDS = {
     'angle_perftests': [
         './out/Release/angle_perftests',
@@ -70,6 +70,14 @@ _NON_TELEMETRY_TEST_COMMANDS = {
         './out/Release/performance_browser_tests',
         '--test-launcher-print-test-stdio=always',
         '--enable-gpu',
+    ],
+    'resource_sizes': [
+        'src/build/android/resource_sizes.py',
+        'src/out/Release/apks/Chrome.apk',
+        '--so-path src/out/Release/libchrome.so',
+        '--so-with-symbols-path src/out/Release/lib.unstripped/libchrome.so',
+        '--chartjson',
+        '--build_type Release',
     ],
 }
 
@@ -119,7 +127,7 @@ class StartBisectHandler(request_handler.RequestHandler):
     internal_only = self.request.get('internal_only') == 'true'
     bisect_bot = self.request.get('bisect_bot')
     bypass_no_repro_check = self.request.get('bypass_no_repro_check') == 'true'
-    use_recipe = bool(GetBisectDirectorForTester(bisect_bot))
+    use_recipe = bool(GetBisectDirectorForTester(master_name, bisect_bot))
 
     bisect_config = GetBisectConfig(
         bisect_bot=bisect_bot,
@@ -210,7 +218,7 @@ def _PrefillInfo(test_path):
   graph_path = '/'.join(test_path.split('/')[:4])
   graph_key = utils.TestKey(graph_path)
 
-  info = {'suite': suite.key.string_id()}
+  info = {'suite': suite.test_name}
   info['master'] = suite.master_name
   info['internal_only'] = suite.internal_only
   info['use_archive'] = _CanDownloadBuilds(suite.master_name)
@@ -229,9 +237,7 @@ def _PrefillInfo(test_path):
   info['email'] = user.email()
 
   info['all_metrics'] = []
-  metric_keys_query = graph_data.Test.query(
-      graph_data.Test.has_rows == True, ancestor=graph_key)
-  metric_keys = metric_keys_query.fetch(keys_only=True)
+  metric_keys = list_tests.GetTestDescendants(graph_key, has_rows=True)
   for metric_key in metric_keys:
     metric_path = utils.TestPath(metric_key)
     if metric_path.endswith('/ref') or metric_path.endswith('_ref'):
@@ -325,7 +331,7 @@ def _BuilderType(master_name, use_archive):
 
 
 def GuessTargetArch(bisect_bot):
-  """Return target architecture for the bisect job."""
+  """Returns target architecture for the bisect job."""
   if 'x64' in bisect_bot or 'win64' in bisect_bot:
     return 'x64'
   elif bisect_bot in ['android_nexus9_perf_bisect']:
@@ -369,7 +375,7 @@ def _GetPerfTryConfig(
 
 
 def _GetAvailableBisectBots(master_name):
-  """Get all available bisect bots corresponding to a master name."""
+  """Gets all available bisect bots corresponding to a master name."""
   bisect_bot_map = namespaced_stored_object.Get(can_bisect.BISECT_BOT_MAP_KEY)
   for master, platform_bot_pairs in bisect_bot_map.iteritems():
     if master_name.startswith(master):
@@ -378,7 +384,7 @@ def _GetAvailableBisectBots(master_name):
 
 
 def _CanDownloadBuilds(master_name):
-  """Check whether bisecting using archives is supported."""
+  """Checks whether bisecting using archives is supported."""
   return master_name.startswith('ChromiumPerf')
 
 
@@ -393,7 +399,7 @@ def GuessBisectBot(master_name, bot_name):
     # Treat ChromiumPerfFyi (etc.) the same as ChromiumPerf.
     if master_name.startswith(master):
       for platform, bisect_bot in platform_bot_pairs:
-        if platform in bot_name:
+        if platform.lower() in bot_name:
           return bisect_bot
   # Nothing was found; log a warning and return a fall-back name.
   logging.warning('No bisect bot for %s/%s.', master_name, bot_name)
@@ -443,8 +449,6 @@ def _GuessCommandTelemetry(
   # TODO(qyearsley): Use metric to add a --story-filter flag for Telemetry.
   # See: http://crbug.com/448628
   command = []
-  if bisect_bot.startswith('win'):
-    command.append('python')
 
   if use_buildbucket:
     test_cmd = 'src/tools/perf/run_benchmark'
@@ -456,6 +460,7 @@ def _GuessCommandTelemetry(
       '-v',
       '--browser=%s' % _GuessBrowserName(bisect_bot),
       '--output-format=%s' % ('chartjson' if use_buildbucket else 'buildbot'),
+      '--upload-results',
       '--also-run-disabled-tests',
   ])
 
@@ -514,7 +519,7 @@ def GuessMetric(test_path):
     # whether this is a story-level test or interaction-level test with
     # story-level children.
     # TODO(qyearsley): When a more reliable way of telling is available
-    # (e.g. a property on the Test entity), use that instead.
+    # (e.g. a property on the TestMetadata entity), use that instead.
     chart = '%s-%s' % (parts[4], parts[3])
   elif len(parts) == 5:
     # master/bot/benchmark/chart/trace
@@ -534,7 +539,8 @@ def GuessMetric(test_path):
 
 def _HasChildTest(test_path):
   key = utils.TestKey(test_path)
-  child = graph_data.Test.query(graph_data.Test.parent_test == key).get()
+  child = graph_data.TestMetadata.query(
+      graph_data.TestMetadata.parent_test == key).get()
   return bool(child)
 
 
@@ -784,10 +790,6 @@ def _MakeBuildbucketBisectJob(bisect_job):
   if bisect_job.job_type not in ['bisect', 'bisect-fyi']:
     raise request_handler.InvalidInputError(
         'Recipe only supports bisect jobs at this time.')
-  if not bisect_job.master_name.startswith('ChromiumPerf'):
-    raise request_handler.InvalidInputError(
-        'Recipe is only implemented for tests run on chromium.perf '
-        '(and chromium.perf.fyi).')
 
   # Recipe bisect supports 'perf' and 'return_code' test types only.
   # TODO (prasadv): Update bisect form on dashboard to support test_types.
@@ -800,7 +802,8 @@ def _MakeBuildbucketBisectJob(bisect_job):
 
   return buildbucket_job.BisectJob(
       try_job_id=bisect_job.key.id(),
-      bisect_director=GetBisectDirectorForTester(tester_name),
+      bisect_director=GetBisectDirectorForTester(
+          bisect_job.master_name, tester_name),
       good_revision=config['good_revision'],
       bad_revision=config['bad_revision'],
       test_command=config['command'],
@@ -822,9 +825,10 @@ def _PerformBuildbucketBisect(bisect_job):
                   'that use buildbucket. Config: %s', config_dict)
     return {'error': 'No "recipe_tester_name" given.'}
 
+  bucket = _GetTryServerBucket(bisect_job)
   try:
     bisect_job.buildbucket_job_id = buildbucket_service.PutJob(
-        _MakeBuildbucketBisectJob(bisect_job))
+        _MakeBuildbucketBisectJob(bisect_job), bucket)
     bisect_job.SetStarted()
     hostname = app_identity.get_default_version_hostname()
     job_id = bisect_job.buildbucket_job_id
@@ -843,17 +847,31 @@ def _PerformBuildbucketBisect(bisect_job):
     }
 
 
-def GetBisectDirectorForTester(bot):
+def GetBisectDirectorForTester(master_name, bot):
   """Maps the name of a tester bot to its corresponding bisect director.
 
   Args:
     bot (str): The name of the tester bot in the tryserver.chromium.perf
         waterfall. (e.g. 'linux_perf_tester').
+    master_name (str): The name of the master where the bot is hosted.
 
   Returns:
     The name of the bisect director that can use the given tester (e.g.
         'linux_perf_bisector')
   """
-  recipe_tester_director_mapping = stored_object.Get(
-      _TESTER_DIRECTOR_MAP_KEY)
-  return recipe_tester_director_mapping.get(bot)
+  master_tester_map = namespaced_stored_object.Get(_TESTER_DIRECTOR_MAP_KEY)
+  for master, recipe_tester_director_mapping in master_tester_map.iteritems():
+    if master_name.startswith(master):
+      return recipe_tester_director_mapping.get(bot)
+  return []
+
+
+def _GetTryServerBucket(bisect_job):
+  """Returns the bucket name to be used by buildbucket."""
+  master_bucket_map = namespaced_stored_object.Get(_MASTER_BUILDBUCKET_MAP_KEY)
+  default = 'master.tryserver.chromium.perf'
+  if not master_bucket_map:
+    logging.warning(
+        'Could not get bucket to be used by buildbucket, using default.')
+    return default
+  return master_bucket_map.get(bisect_job.master_name, default)

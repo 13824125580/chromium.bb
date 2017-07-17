@@ -6,27 +6,26 @@
 
 #include <utility>
 
+#include "ash/common/shelf/shelf_item_delegate_manager.h"
+#include "ash/common/shelf/shelf_model.h"
+#include "ash/common/shell_window_ids.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_item_delegate_manager.h"
-#include "ash/shelf/shelf_model.h"
 #include "ash/shelf/shelf_util.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell/window_watcher_shelf_item_delegate.h"
-#include "ash/shell_window_ids.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 
 namespace ash {
 namespace shell {
 
 class WindowWatcher::WorkspaceWindowWatcher : public aura::WindowObserver {
  public:
-  explicit WorkspaceWindowWatcher(WindowWatcher* watcher) : watcher_(watcher) {
-  }
+  explicit WorkspaceWindowWatcher(WindowWatcher* watcher) : watcher_(watcher) {}
 
   ~WorkspaceWindowWatcher() override {}
 
@@ -45,7 +44,7 @@ class WindowWatcher::WorkspaceWindowWatcher : public aura::WindowObserver {
     panel_container->AddObserver(watcher_);
 
     aura::Window* container =
-        Shelf::ForWindow(root)->shelf_widget()->window_container();
+        ash::Shell::GetContainer(root, kShellWindowId_ShelfContainer);
     container->AddObserver(this);
     for (size_t i = 0; i < container->children().size(); ++i)
       container->children()[i]->AddObserver(watcher_);
@@ -57,7 +56,7 @@ class WindowWatcher::WorkspaceWindowWatcher : public aura::WindowObserver {
     panel_container->RemoveObserver(watcher_);
 
     aura::Window* container =
-        Shelf::ForWindow(root)->shelf_widget()->window_container();
+        ash::Shell::GetContainer(root, kShellWindowId_ShelfContainer);
     container->RemoveObserver(this);
     for (size_t i = 0; i < container->children().size(); ++i)
       container->children()[i]->RemoveObserver(watcher_);
@@ -73,7 +72,7 @@ WindowWatcher::WindowWatcher() {
   workspace_window_watcher_.reset(new WorkspaceWindowWatcher(this));
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   for (aura::Window::Windows::iterator iter = root_windows.begin();
-       iter != root_windows.end(); ++ iter) {
+       iter != root_windows.end(); ++iter) {
     workspace_window_watcher_->RootWindowAdded(*iter);
   }
 }
@@ -81,7 +80,7 @@ WindowWatcher::WindowWatcher() {
 WindowWatcher::~WindowWatcher() {
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   for (aura::Window::Windows::iterator iter = root_windows.begin();
-       iter != root_windows.end(); ++ iter) {
+       iter != root_windows.end(); ++iter) {
     workspace_window_watcher_->RootWindowRemoved(*iter);
   }
 }
@@ -107,10 +106,8 @@ void WindowWatcher::OnWindowAdded(aura::Window* new_window) {
 
   SkBitmap icon_bitmap;
   icon_bitmap.allocN32Pixels(16, 16);
-  icon_bitmap.eraseARGB(255,
-                        image_count == 0 ? 255 : 0,
-                        image_count == 1 ? 255 : 0,
-                        image_count == 2 ? 255 : 0);
+  icon_bitmap.eraseARGB(255, image_count == 0 ? 255 : 0,
+                        image_count == 1 ? 255 : 0, image_count == 2 ? 255 : 0);
   image_count = (image_count + 1) % 3;
   item.image = gfx::ImageSkia(gfx::ImageSkiaRep(icon_bitmap, 1.0f));
 
@@ -118,15 +115,15 @@ void WindowWatcher::OnWindowAdded(aura::Window* new_window) {
 
   ShelfItemDelegateManager* manager =
       Shell::GetInstance()->shelf_item_delegate_manager();
-  scoped_ptr<ShelfItemDelegate> delegate(
+  std::unique_ptr<ShelfItemDelegate> delegate(
       new WindowWatcherShelfItemDelegate(id, this));
   manager->SetShelfItemDelegate(id, std::move(delegate));
   SetShelfIDForWindow(id, new_window);
 }
 
 void WindowWatcher::OnWillRemoveWindow(aura::Window* window) {
-  for (IDToWindow::iterator i = id_to_window_.begin();
-       i != id_to_window_.end(); ++i) {
+  for (IDToWindow::iterator i = id_to_window_.begin(); i != id_to_window_.end();
+       ++i) {
     if (i->second == window) {
       ShelfModel* model = Shell::GetInstance()->shelf_model();
       int index = model->ItemIndexByID(i->first);
@@ -138,19 +135,19 @@ void WindowWatcher::OnWillRemoveWindow(aura::Window* window) {
   }
 }
 
-void WindowWatcher::OnDisplayAdded(const gfx::Display& new_display) {
+void WindowWatcher::OnDisplayAdded(const display::Display& new_display) {
   aura::Window* root = Shell::GetInstance()
                            ->window_tree_host_manager()
                            ->GetRootWindowForDisplayId(new_display.id());
   workspace_window_watcher_->RootWindowAdded(root);
 }
 
-void WindowWatcher::OnDisplayRemoved(const gfx::Display& old_display) {
+void WindowWatcher::OnDisplayRemoved(const display::Display& old_display) {
   // All windows in the display has already been removed, so no need to
   // remove observers.
 }
 
-void WindowWatcher::OnDisplayMetricsChanged(const gfx::Display&, uint32_t) {
+void WindowWatcher::OnDisplayMetricsChanged(const display::Display&, uint32_t) {
 }
 
 }  // namespace shell

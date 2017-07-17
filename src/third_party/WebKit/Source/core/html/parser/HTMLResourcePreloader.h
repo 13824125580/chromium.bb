@@ -33,23 +33,24 @@
 #include "core/loader/NetworkHintsInterface.h"
 #include "wtf/CurrentTime.h"
 #include "wtf/text/TextPosition.h"
+#include <memory>
 
 namespace blink {
 
-class CORE_EXPORT HTMLResourcePreloader final : public NoBaseWillBeGarbageCollected<HTMLResourcePreloader>, public ResourcePreloader {
-    WTF_MAKE_NONCOPYABLE(HTMLResourcePreloader); USING_FAST_MALLOC_WILL_BE_REMOVED(HTMLResourcePreloader);
+class CORE_EXPORT HTMLResourcePreloader final : public GarbageCollected<HTMLResourcePreloader>, public ResourcePreloader {
+    WTF_MAKE_NONCOPYABLE(HTMLResourcePreloader);
     friend class HTMLResourcePreloaderTest;
 public:
-    static PassOwnPtrWillBeRawPtr<HTMLResourcePreloader> create(Document&);
+    static HTMLResourcePreloader* create(Document&);
     DECLARE_TRACE();
 
 protected:
-    void preload(PassOwnPtr<PreloadRequest>, const NetworkHintsInterface&) override;
+    void preload(std::unique_ptr<PreloadRequest>, const NetworkHintsInterface&) override;
 
 private:
     explicit HTMLResourcePreloader(Document&);
 
-    RawPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
 };
 
 } // namespace blink

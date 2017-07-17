@@ -11,7 +11,7 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/renderer/media/audio_device_factory.h"
@@ -72,7 +72,7 @@ void RendererWebAudioDeviceImpl::start() {
   RenderFrame* const render_frame =
       web_frame ? RenderFrame::FromWebFrame(web_frame) : NULL;
   sink_ = AudioDeviceFactory::NewAudioRendererSink(
-      AudioDeviceFactory::kSourceWebAudio,
+      AudioDeviceFactory::kSourceWebAudioInteractive,
       render_frame ? render_frame->GetRoutingID() : MSG_ROUTING_NONE,
       session_id_, std::string(), security_origin_);
   sink_->Initialize(params_, this);

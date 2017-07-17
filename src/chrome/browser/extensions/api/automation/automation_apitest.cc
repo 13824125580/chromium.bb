@@ -7,7 +7,7 @@
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -160,7 +160,12 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, Desktop) {
 }
 
 #if defined(OS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopInitialFocus) {
+#if defined(MEMORY_SANITIZER)
+#define MAYBE_DesktopInitialFocus DISABLED_DesktopInitialFocus
+#else
+#define MAYBE_DesktopInitialFocus DesktopInitialFocus
+#endif
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, MAYBE_DesktopInitialFocus) {
   ASSERT_TRUE(
       RunExtensionSubtest("automation/tests/desktop", "initial_focus.html"))
       << message_;
@@ -169,6 +174,13 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopInitialFocus) {
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusWeb) {
   ASSERT_TRUE(
       RunExtensionSubtest("automation/tests/desktop", "focus_web.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusIframe) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "focus_iframe.html"))
       << message_;
 }
 

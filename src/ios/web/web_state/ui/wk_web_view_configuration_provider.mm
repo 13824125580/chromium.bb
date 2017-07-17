@@ -22,9 +22,9 @@ const char kWKWebViewConfigProviderKeyName[] = "wk_web_view_config_provider";
 
 // Returns an autoreleased instance of WKUserScript to be added to
 // configuration's userContentController.
-WKUserScript* GetEarlyPageScript() {
+WKUserScript* InternalGetEarlyPageScript() {
   return [[[WKUserScript alloc]
-        initWithSource:GetEarlyPageScript(WK_WEB_VIEW_TYPE)
+        initWithSource:GetEarlyPageScript()
          injectionTime:WKUserScriptInjectionTimeAtDocumentStart
       forMainFrameOnly:YES] autorelease];
 }
@@ -63,9 +63,16 @@ WKWebViewConfigurationProvider::GetWebViewConfiguration() {
       [configuration_
           setWebsiteDataStore:[WKWebsiteDataStore nonPersistentDataStore]];
     }
+// TODO(crbug.com/620878) Remove these guards after moving to iOS10 SDK.
+#if defined(__IPHONE_10_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_10_0
+    if (base::ios::IsRunningOnIOS10OrLater()) {
+      [configuration_ setDataDetectorTypes:WKDataDetectorTypePhoneNumber];
+    }
+#endif
     // setJavaScriptCanOpenWindowsAutomatically is required to support popups.
     [[configuration_ preferences] setJavaScriptCanOpenWindowsAutomatically:YES];
-    [[configuration_ userContentController] addUserScript:GetEarlyPageScript()];
+    [[configuration_ userContentController]
+        addUserScript:InternalGetEarlyPageScript()];
   }
   // Prevent callers from changing the internals of configuration.
   return [[configuration_ copy] autorelease];

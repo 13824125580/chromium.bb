@@ -33,17 +33,16 @@
 
 namespace blink {
 
-MediaStreamSource* MediaStreamSource::create(const String& id, Type type, const String& name, bool remote, bool readonly, ReadyState readyState, bool requiresConsumer)
+MediaStreamSource* MediaStreamSource::create(const String& id, StreamType type, const String& name, bool remote, ReadyState readyState, bool requiresConsumer)
 {
-    return new MediaStreamSource(id, type, name, remote, readonly, readyState, requiresConsumer);
+    return new MediaStreamSource(id, type, name, remote, readyState, requiresConsumer);
 }
 
-MediaStreamSource::MediaStreamSource(const String& id, Type type, const String& name, bool remote, bool readonly, ReadyState readyState, bool requiresConsumer)
+MediaStreamSource::MediaStreamSource(const String& id, StreamType type, const String& name, bool remote, ReadyState readyState, bool requiresConsumer)
     : m_id(id)
     , m_type(type)
     , m_name(name)
     , m_remote(remote)
-    , m_readonly(readonly)
     , m_readyState(readyState)
     , m_requiresConsumer(requiresConsumer)
 {
@@ -53,8 +52,13 @@ void MediaStreamSource::setReadyState(ReadyState readyState)
 {
     if (m_readyState != ReadyStateEnded && m_readyState != readyState) {
         m_readyState = readyState;
-        for (auto i = m_observers.begin(); i != m_observers.end(); ++i)
-            (*i)->sourceChangedState();
+
+        // Observers may dispatch events which create and add new Observers;
+        // take a snapshot so as to safely iterate.
+        HeapVector<Member<Observer>> observers;
+        copyToVector(m_observers, observers);
+        for (auto observer : observers)
+            observer->sourceChangedState();
     }
 }
 

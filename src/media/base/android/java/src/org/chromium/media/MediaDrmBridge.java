@@ -4,6 +4,7 @@
 
 package org.chromium.media;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.media.MediaCrypto;
 import android.media.MediaDrm;
@@ -12,6 +13,7 @@ import android.os.Build;
 import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
@@ -26,6 +28,7 @@ import java.util.UUID;
  * sessions for a single MediaSourcePlayer.
  */
 @JNINamespace("media")
+@SuppressLint("WrongConstant")
 @TargetApi(Build.VERSION_CODES.KITKAT)
 public class MediaDrmBridge {
     // Implementation Notes:
@@ -56,6 +59,10 @@ public class MediaDrmBridge {
     private static final char[] HEX_CHAR_LOOKUP = "0123456789ABCDEF".toCharArray();
     private static final long INVALID_NATIVE_MEDIA_DRM_BRIDGE = 0;
 
+    // Scheme UUID for Widevine. See http://dashif.org/identifiers/protection/
+    private static final UUID WIDEVINE_UUID =
+            UUID.fromString("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed");
+
     // On Android L and before, MediaDrm doesn't support KeyStatus. Use a dummy
     // key ID to report key status info.
     // See details: https://github.com/w3c/encrypted-media/issues/32
@@ -85,6 +92,7 @@ public class MediaDrmBridge {
     /**
      *  An equivalent of MediaDrm.KeyStatus, which is only available on M+.
      */
+    @MainDex
     private static class KeyStatus {
         private final byte[] mKeyId;
         private final int mStatusCode;
@@ -118,6 +126,7 @@ public class MediaDrmBridge {
     /**
      *  This class contains data needed to call createSession().
      */
+    @MainDex
     private static class PendingCreateSessionData {
         private final byte[] mInitData;
         private final String mMimeType;
@@ -181,6 +190,10 @@ public class MediaDrmBridge {
         return mNativeMediaDrmBridge != INVALID_NATIVE_MEDIA_DRM_BRIDGE;
     }
 
+    private boolean isWidevine() {
+        return mSchemeUUID.equals(WIDEVINE_UUID);
+    }
+
     @TargetApi(Build.VERSION_CODES.M)
     private MediaDrmBridge(UUID schemeUUID, long nativeMediaDrmBridge)
             throws android.media.UnsupportedSchemeException {
@@ -201,8 +214,10 @@ public class MediaDrmBridge {
             mMediaDrm.setOnKeyStatusChangeListener(new KeyStatusChangeListener(), null);
         }
 
-        mMediaDrm.setPropertyString(PRIVACY_MODE, ENABLE);
-        mMediaDrm.setPropertyString(SESSION_SHARING, ENABLE);
+        if (isWidevine()) {
+            mMediaDrm.setPropertyString(PRIVACY_MODE, ENABLE);
+            mMediaDrm.setPropertyString(SESSION_SHARING, ENABLE);
+        }
     }
 
     /**
@@ -251,7 +266,12 @@ public class MediaDrmBridge {
             Log.e(TAG, "Cannot create MediaCrypto", e);
         }
 
-        mMediaDrm.closeSession(mMediaCryptoSession);
+        try {
+            // Some implementations let this method throw exception, crbug/611865
+            mMediaDrm.closeSession(mMediaCryptoSession);
+        } catch (Exception e) {
+            Log.e(TAG, "closeSession failed: ", e);
+        }
         mMediaCryptoSession = null;
 
         return false;
@@ -353,6 +373,11 @@ public class MediaDrmBridge {
      * @return whether the security level was successfully set.
      */
     private boolean setSecurityLevel(String securityLevel) {
+        if (!isWidevine()) {
+            Log.d(TAG, "Security level is not supported.");
+            return true;
+        }
+
         assert mMediaDrm != null;
         assert !securityLevel.isEmpty();
 
@@ -386,6 +411,11 @@ public class MediaDrmBridge {
      */
     @CalledByNative
     private boolean setServerCertificate(byte[] certificate) {
+        if (!isWidevine()) {
+            Log.d(TAG, "Setting server certificate is not supported.");
+            return true;
+        }
+
         try {
             mMediaDrm.setPropertyByteArray(SERVER_CERTIFICATE, certificate);
             return true;
@@ -446,7 +476,13 @@ public class MediaDrmBridge {
             } catch (Exception e) {
                 Log.e(TAG, "removeKeys failed: ", e);
             }
-            mMediaDrm.closeSession(sessionId.array());
+
+            try {
+                // Some implementations let this method throw exception, crbug/611865
+                mMediaDrm.closeSession(sessionId.array());
+            } catch (Exception e) {
+                Log.e(TAG, "closeSession failed: ", e);
+            }
             onSessionClosed(sessionId.array());
         }
         mSessionIds.clear();
@@ -458,7 +494,12 @@ public class MediaDrmBridge {
             // MediaCrypto never notified. Notify a null one now.
             onMediaCryptoReady(null);
         } else {
-            mMediaDrm.closeSession(mMediaCryptoSession);
+            try {
+                // Some implementations let this method throw exception, crbug/611865
+                mMediaDrm.closeSession(mMediaCryptoSession);
+            } catch (Exception e) {
+                Log.e(TAG, "closeSession failed: ", e);
+            }
             mMediaCryptoSession = null;
         }
 
@@ -611,7 +652,12 @@ public class MediaDrmBridge {
             MediaDrm.KeyRequest request = null;
             request = getKeyRequest(sessionId, initData, mime, optionalParameters);
             if (request == null) {
-                mMediaDrm.closeSession(sessionId);
+                try {
+                    // Some implementations let this method throw exception, crbug/611865
+                    mMediaDrm.closeSession(sessionId);
+                } catch (Exception e) {
+                    Log.e(TAG, "closeSession failed", e);
+                }
                 onPromiseRejected(promiseId, "Generate request failed.");
                 return;
             }
@@ -624,7 +670,12 @@ public class MediaDrmBridge {
         } catch (android.media.NotProvisionedException e) {
             Log.e(TAG, "Device not provisioned", e);
             if (newSessionOpened) {
-                mMediaDrm.closeSession(sessionId);
+                try {
+                    // Some implementations let this method throw exception, crbug/611865
+                    mMediaDrm.closeSession(sessionId);
+                } catch (Exception ex) {
+                    Log.e(TAG, "closeSession failed", ex);
+                }
             }
             savePendingCreateSessionData(initData, mime, optionalParameters, promiseId);
             startProvisioning();
@@ -674,7 +725,12 @@ public class MediaDrmBridge {
         } catch (Exception e) {
             Log.e(TAG, "removeKeys failed: ", e);
         }
-        mMediaDrm.closeSession(sessionId);
+        try {
+            // Some implementations let this method throw exception, crbug/611865
+            mMediaDrm.closeSession(sessionId);
+        } catch (Exception e) {
+            Log.e(TAG, "closeSession failed: ", e);
+        }
         mSessionIds.remove(ByteBuffer.wrap(sessionId));
         onPromiseResolved(promiseId);
         onSessionClosed(sessionId);
@@ -735,8 +791,8 @@ public class MediaDrmBridge {
      */
     @CalledByNative
     private String getSecurityLevel() {
-        if (mMediaDrm == null) {
-            Log.e(TAG, "getSecurityLevel() called when MediaDrm is null.");
+        if (mMediaDrm == null || !isWidevine()) {
+            Log.e(TAG, "getSecurityLevel(): MediaDrm is null or security level is not supported.");
             return null;
         }
         return mMediaDrm.getPropertyString("securityLevel");
@@ -893,6 +949,7 @@ public class MediaDrmBridge {
         }
     }
 
+    @MainDex
     private class EventListener implements MediaDrm.OnEventListener {
         @Override
         public void onEvent(
@@ -956,6 +1013,7 @@ public class MediaDrmBridge {
     }
 
     @TargetApi(Build.VERSION_CODES.M)
+    @MainDex
     private class KeyStatusChangeListener implements MediaDrm.OnKeyStatusChangeListener {
         private List<KeyStatus> getKeysInfo(List<MediaDrm.KeyStatus> keyInformation) {
             List<KeyStatus> keysInfo = new ArrayList<KeyStatus>();
@@ -975,6 +1033,7 @@ public class MediaDrmBridge {
     }
 
     @TargetApi(Build.VERSION_CODES.M)
+    @MainDex
     private class ExpirationUpdateListener implements MediaDrm.OnExpirationUpdateListener {
         @Override
         public void onExpirationUpdate(MediaDrm md, byte[] sessionId, long expirationTime) {

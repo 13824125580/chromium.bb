@@ -87,6 +87,8 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
 #endif
   registry->RegisterBooleanPref(prefs::kSessionExitedCleanly, true);
   registry->RegisterStringPref(prefs::kSessionExitType, std::string());
+  registry->RegisterInt64Pref(prefs::kSiteEngagementLastUpdateTime, 0,
+                              PrefRegistry::LOSSY_PREF);
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingEnabled,
       true,
@@ -99,9 +101,6 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterDictionaryPref(prefs::kSafeBrowsingIncidentsSent);
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingExtendedReportingOptInAllowed, true);
-#if BUILDFLAG(ENABLE_GOOGLE_NOW)
-  registry->RegisterBooleanPref(prefs::kGoogleGeolocationAccessEnabled, false);
-#endif
   // This pref is intentionally outside the above #if. That flag corresponds
   // to the Notifier extension and does not gate the launcher page.
   // TODO(skare): Remove or rename ENABLE_GOOGLE_NOW: http://crbug.com/459827.
@@ -149,6 +148,8 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
 
 #if defined(OS_ANDROID)
   registry->RegisterBooleanPref(prefs::kClickedUpdateMenuItem, false);
+  registry->RegisterStringPref(prefs::kLatestVersionWhenClickedUpdateMenuItem,
+                               std::string());
 #endif
 
 #if defined(ENABLE_MEDIA_ROUTER)
@@ -166,6 +167,10 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kMediaRouterFirstRunFlowAcknowledged,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+#endif
+
+#if defined(OS_CHROMEOS)
+  registry->RegisterBooleanPref(prefs::kAllowScreenLock, true);
 #endif
 }
 

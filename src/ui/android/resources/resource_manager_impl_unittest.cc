@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "base/macros.h"
+#include "cc/animation/animation_host.h"
 #include "cc/resources/ui_resource_bitmap.h"
 #include "cc/test/fake_layer_tree_host_client.h"
 #include "cc/test/test_task_graph_runner.h"
@@ -96,6 +97,8 @@ class ResourceManagerTest : public testing::Test {
     params.client = &fake_client_;
     params.settings = &settings;
     params.task_graph_runner = &task_graph_runner_;
+    params.animation_host =
+        cc::AnimationHost::CreateForTesting(cc::ThreadInstance::MAIN);
     host_.reset(new MockLayerTreeHost(&params,
                                       cc::CompositorMode::SINGLE_THREADED));
     resource_manager_.Init(host_.get());
@@ -121,7 +124,7 @@ class ResourceManagerTest : public testing::Test {
   WindowAndroid* window_android_;
 
  protected:
-  scoped_ptr<MockLayerTreeHost> host_;
+  std::unique_ptr<MockLayerTreeHost> host_;
   TestResourceManagerImpl resource_manager_;
   cc::TestTaskGraphRunner task_graph_runner_;
   cc::FakeLayerTreeHostClient fake_client_;

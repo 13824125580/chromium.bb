@@ -10,13 +10,13 @@
 
 #include "base/macros.h"
 #include "net/quic/crypto/proof_verifier_chromium.h"
-#include "net/quic/quic_crypto_client_stream.h"
 #include "net/quic/quic_crypto_client_stream_factory.h"
+#include "net/quic/quic_server_id.h"
 #include "net/quic/test_tools/mock_crypto_client_stream.h"
 
 namespace net {
 
-class QuicServerId;
+class QuicCryptoClientStream;
 
 class MockCryptoClientStreamFactory : public QuicCryptoClientStreamFactory {
  public:
@@ -26,7 +26,7 @@ class MockCryptoClientStreamFactory : public QuicCryptoClientStreamFactory {
   QuicCryptoClientStream* CreateQuicCryptoClientStream(
       const QuicServerId& server_id,
       QuicChromiumClientSession* session,
-      scoped_ptr<ProofVerifyContext> proof_verify_context,
+      std::unique_ptr<ProofVerifyContext> proof_verify_context,
       QuicCryptoClientConfig* crypto_config) override;
 
   void set_handshake_mode(

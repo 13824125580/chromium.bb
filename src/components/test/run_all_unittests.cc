@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
@@ -20,23 +21,23 @@
 
 #if !defined(OS_IOS)
 #include "content/public/test/test_content_client_initializer.h"
+#include "mojo/edk/embedder/embedder.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 #endif
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
+#include "components/gcm_driver/instance_id/android/component_jni_registrar.h"
+#include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
 #include "components/invalidation/impl/android/component_jni_registrar.h"
 #include "components/policy/core/browser/android/component_jni_registrar.h"
 #include "components/safe_json/android/component_jni_registrar.h"
 #include "components/signin/core/browser/android/component_jni_registrar.h"
+#include "components/web_restrictions/browser/mock_web_restrictions_client.h"
 #include "content/public/test/test_utils.h"
 #include "net/android/net_jni_registrar.h"
 #include "ui/base/android/ui_base_jni_registrar.h"
 #include "ui/gfx/android/gfx_jni_registrar.h"
-#endif
-
-#if defined(OS_CHROMEOS)
-#include "mojo/edk/embedder/embedder.h"
 #endif
 
 namespace {
@@ -55,19 +56,22 @@ class ComponentsTestSuite : public base::TestSuite {
     base::StatisticsRecorder::Initialize();
 
 #if !defined(OS_IOS)
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
+    gl::GLSurfaceTestSupport::InitializeOneOff();
 #endif
 #if defined(OS_ANDROID)
     // Register JNI bindings for android.
     JNIEnv* env = base::android::AttachCurrentThread();
+    ASSERT_TRUE(content::RegisterJniForTesting(env));
     ASSERT_TRUE(gfx::android::RegisterJni(env));
-    ASSERT_TRUE(ui::android::RegisterJni(env));
+    ASSERT_TRUE(instance_id::android::RegisterInstanceIDJni(env));
+    ASSERT_TRUE(instance_id::ScopedUseFakeInstanceIDAndroid::RegisterJni(env));
     ASSERT_TRUE(invalidation::android::RegisterInvalidationJni(env));
     ASSERT_TRUE(policy::android::RegisterPolicy(env));
     ASSERT_TRUE(safe_json::android::RegisterSafeJsonJni(env));
     ASSERT_TRUE(signin::android::RegisterSigninJni(env));
     ASSERT_TRUE(net::android::RegisterJni(env));
-    ASSERT_TRUE(content::RegisterJniForTesting(env));
+    ASSERT_TRUE(ui::android::RegisterJni(env));
+    ASSERT_TRUE(web_restrictions::MockWebRestrictionsClient::Register(env));
 #endif
 
     ui::RegisterPathProvider();
@@ -127,7 +131,7 @@ class ComponentsUnitTestEventListener : public testing::EmptyTestEventListener {
 
  private:
 #if !defined(OS_IOS)
-  scoped_ptr<content::TestContentClientInitializer> content_initializer_;
+  std::unique_ptr<content::TestContentClientInitializer> content_initializer_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(ComponentsUnitTestEventListener);
@@ -144,7 +148,7 @@ int main(int argc, char** argv) {
       testing::UnitTest::GetInstance()->listeners();
   listeners.Append(new ComponentsUnitTestEventListener());
 
-#if defined(OS_CHROMEOS)
+#if !defined(OS_IOS)
   mojo::edk::Init();
 #endif
 

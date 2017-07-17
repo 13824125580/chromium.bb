@@ -123,7 +123,10 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase,
   void OnStoreRegistrationComplete(ServiceWorkerStatusCode status);
   void InstallAndContinue();
   void DispatchInstallEvent();
-  void OnInstallFinished(ServiceWorkerStatusCode status);
+  void OnInstallFinished(int request_id,
+                         blink::WebServiceWorkerEventResult result,
+                         bool has_fetch_handler);
+  void OnInstallFailed(ServiceWorkerStatusCode status);
   void Complete(ServiceWorkerStatusCode status);
   void Complete(ServiceWorkerStatusCode status,
                 const std::string& status_message);
@@ -146,7 +149,7 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase,
 
   RegistrationJobType job_type_;
   const GURL pattern_;
-  const GURL script_url_;
+  GURL script_url_;
   std::vector<RegistrationCallback> callbacks_;
   Phase phase_;
   Internal internal_;

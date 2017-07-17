@@ -4,13 +4,8 @@
 
 #include "core/paint/InlineFlowBoxPainter.h"
 
-#include "core/layout/LayoutBlock.h"
-#include "core/layout/LayoutInline.h"
-#include "core/layout/LayoutView.h"
 #include "core/layout/api/LineLayoutAPIShim.h"
-#include "core/layout/api/LineLayoutBoxModel.h"
-#include "core/layout/api/SelectionState.h"
-#include "core/layout/line/InlineFlowBox.h"
+#include "core/layout/line/RootInlineBox.h"
 #include "core/layout/line/InlineTextBox.h"
 #include "core/paint/BoxPainter.h"
 #include "core/paint/PaintInfo.h"
@@ -88,7 +83,7 @@ void InlineFlowBoxPainter::paintFillLayer(const PaintInfo& paintInfo, const Colo
     bool hasFillImage = img && img->canRender();
     if ((!hasFillImage && !m_inlineFlowBox.getLineLayoutItem().style()->hasBorderRadius()) || (!m_inlineFlowBox.prevLineBox() && !m_inlineFlowBox.nextLineBox()) || !m_inlineFlowBox.parent()) {
         BoxPainter::paintFillLayer(*boxModel, paintInfo, c, fillLayer, rect, BackgroundBleedNone, &m_inlineFlowBox, rect.size(), op);
-    } else if (m_inlineFlowBox.getLineLayoutItem().style()->boxDecorationBreak() == DCLONE) {
+    } else if (m_inlineFlowBox.getLineLayoutItem().style()->boxDecorationBreak() == BoxDecorationBreakClone) {
         GraphicsContextStateSaver stateSaver(paintInfo.context);
         paintInfo.context.clip(pixelSnappedIntRect(rect));
         BoxPainter::paintFillLayer(*boxModel, paintInfo, c, fillLayer, rect, BackgroundBleedNone, &m_inlineFlowBox, rect.size(), op);
@@ -274,7 +269,7 @@ void InlineFlowBoxPainter::paintMask(const PaintInfo& paintInfo, const LayoutPoi
     // Figure out if we need to push a transparency layer to render our mask.
     bool pushTransparencyLayer = false;
     bool compositedMask = m_inlineFlowBox.getLineLayoutItem().hasLayer() && m_inlineFlowBox.boxModelObject().layer()->hasCompositedMask();
-    bool flattenCompositingLayers = paintInfo.globalPaintFlags() & GlobalPaintFlattenCompositingLayers;
+    bool flattenCompositingLayers = paintInfo.getGlobalPaintFlags() & GlobalPaintFlattenCompositingLayers;
     SkXfermode::Mode compositeOp = SkXfermode::kSrcOver_Mode;
     if (!compositedMask || flattenCompositingLayers) {
         if ((maskBoxImage && m_inlineFlowBox.getLineLayoutItem().style()->maskLayers().hasImage()) || m_inlineFlowBox.getLineLayoutItem().style()->maskLayers().next()) {

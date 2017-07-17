@@ -63,14 +63,13 @@ class PossibleDesktopBrowser(possible_browser.PossibleBrowser):
     browser_backend = desktop_browser_backend.DesktopBrowserBackend(
         self._platform_backend,
         finder_options.browser_options, self._local_executable,
-        self._flash_path, self._is_content_shell, self._browser_directory,
-        output_profile_path=finder_options.output_profile_path,
-        extensions_to_load=finder_options.extensions_to_load)
+        self._flash_path, self._is_content_shell, self._browser_directory)
     return browser.Browser(
         browser_backend, self._platform_backend, self._credentials_path)
 
-  def SupportsOptions(self, finder_options):
-    if (len(finder_options.extensions_to_load) != 0) and self._is_content_shell:
+  def SupportsOptions(self, browser_options):
+    if ((len(browser_options.extensions_to_load) != 0)
+        and self._is_content_shell):
       return False
     return True
 
@@ -144,8 +143,8 @@ def FindAllAvailableBrowsers(finder_options, device):
   except dependency_manager.NoPathFoundError:
     flash_path = None
     logging.warning(
-        'Chrome build location is not specified. Browser will be run without '
-        'Flash.')
+        'Chrome build location for %s_%s not found. Browser will be run '
+        'without Flash.', os_name, arch_name)
 
   chromium_app_names = []
   if sys.platform == 'darwin':
@@ -268,12 +267,12 @@ def FindAllAvailableBrowsers(finder_options, device):
 
     for browser_name, app_path in app_paths:
       for chromium_app_name in chromium_app_names:
-        app_path = os.path.join(app_path, chromium_app_name)
-        app_path = path_module.FindInstalledWindowsApplication(app_path)
-        if app_path:
+        full_path = path_module.FindInstalledWindowsApplication(
+            os.path.join(app_path, chromium_app_name))
+        if full_path:
           browsers.append(PossibleDesktopBrowser(
-              browser_name, finder_options, app_path,
-              None, False, os.path.dirname(app_path)))
+              browser_name, finder_options, full_path,
+              None, False, os.path.dirname(full_path)))
 
   has_ozone_platform = False
   for arg in finder_options.browser_options.extra_browser_args:

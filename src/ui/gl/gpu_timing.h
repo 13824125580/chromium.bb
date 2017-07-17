@@ -12,7 +12,6 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gl/gl_export.h"
 
 // The gpu_timing classes handles the abstraction of GL GPU Timing extensions
@@ -44,7 +43,7 @@
 //     The constructor and destructor of this object handles the actual
 //     creation and deletion of the GL Queries within GL.
 
-namespace gfx {
+namespace gl {
 
 class GLContextReal;
 class GPUTimingClient;
@@ -129,7 +128,7 @@ class GL_EXPORT GPUTimingClient
  public:
   explicit GPUTimingClient(GPUTimingImpl* gpu_timing = nullptr);
 
-  scoped_ptr<GPUTimer> CreateGPUTimer(bool prefer_elapsed_time);
+  std::unique_ptr<GPUTimer> CreateGPUTimer(bool prefer_elapsed_time);
   bool IsAvailable();
 
   const char* GetTimerTypeName() const;
@@ -160,6 +159,6 @@ class GL_EXPORT GPUTimingClient
   DISALLOW_COPY_AND_ASSIGN(GPUTimingClient);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GPU_TIMING_H_

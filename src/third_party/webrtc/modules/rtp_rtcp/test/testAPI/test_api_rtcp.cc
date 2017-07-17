@@ -9,6 +9,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "testing/gmock/include/gmock/gmock.h"
@@ -101,7 +102,7 @@ class RtpRtcpRtcpTest : public ::testing::Test {
     rtp_feedback1_.reset(new TestRtpFeedback(module1));
 
     rtp_receiver1_.reset(RtpReceiver::CreateAudioReceiver(
-        &fake_clock, NULL, receiver, rtp_feedback1_.get(),
+        &fake_clock, receiver, rtp_feedback1_.get(),
         rtp_payload_registry1_.get()));
 
     configuration.receive_statistics = receive_statistics2_.get();
@@ -113,7 +114,7 @@ class RtpRtcpRtcpTest : public ::testing::Test {
     rtp_feedback2_.reset(new TestRtpFeedback(module2));
 
     rtp_receiver2_.reset(RtpReceiver::CreateAudioReceiver(
-        &fake_clock, NULL, receiver, rtp_feedback2_.get(),
+        &fake_clock, receiver, rtp_feedback2_.get(),
         rtp_payload_registry2_.get()));
 
     transport1->SetSendModule(module2, rtp_payload_registry2_.get(),
@@ -175,14 +176,14 @@ class RtpRtcpRtcpTest : public ::testing::Test {
     delete receiver;
   }
 
-  rtc::scoped_ptr<TestRtpFeedback> rtp_feedback1_;
-  rtc::scoped_ptr<TestRtpFeedback> rtp_feedback2_;
-  rtc::scoped_ptr<ReceiveStatistics> receive_statistics1_;
-  rtc::scoped_ptr<ReceiveStatistics> receive_statistics2_;
-  rtc::scoped_ptr<RTPPayloadRegistry> rtp_payload_registry1_;
-  rtc::scoped_ptr<RTPPayloadRegistry> rtp_payload_registry2_;
-  rtc::scoped_ptr<RtpReceiver> rtp_receiver1_;
-  rtc::scoped_ptr<RtpReceiver> rtp_receiver2_;
+  std::unique_ptr<TestRtpFeedback> rtp_feedback1_;
+  std::unique_ptr<TestRtpFeedback> rtp_feedback2_;
+  std::unique_ptr<ReceiveStatistics> receive_statistics1_;
+  std::unique_ptr<ReceiveStatistics> receive_statistics2_;
+  std::unique_ptr<RTPPayloadRegistry> rtp_payload_registry1_;
+  std::unique_ptr<RTPPayloadRegistry> rtp_payload_registry2_;
+  std::unique_ptr<RtpReceiver> rtp_receiver1_;
+  std::unique_ptr<RtpReceiver> rtp_receiver2_;
   RtpRtcp* module1;
   RtpRtcp* module2;
   TestRtpReceiver* receiver;

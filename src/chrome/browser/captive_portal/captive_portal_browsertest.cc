@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -14,7 +15,6 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
@@ -56,11 +56,11 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/transport_security_state.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "net/test/url_request/url_request_failed_job.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request.h"
@@ -411,7 +411,7 @@ class URLRequestMockCaptivePortalJobFactory {
 
   // Create a new Interceptor and add it to |interceptors_|, though it returns
   // ownership.
-  scoped_ptr<net::URLRequestInterceptor> CreateInterceptor();
+  std::unique_ptr<net::URLRequestInterceptor> CreateInterceptor();
 
   // These variables are only accessed on IO thread, though
   // URLRequestMockCaptivePortalJobFactory is created and
@@ -441,10 +441,11 @@ void URLRequestMockCaptivePortalJobFactory::SetBehindCaptivePortal(
                  base::Unretained(this), behind_captive_portal));
 }
 
-scoped_ptr<net::URLRequestInterceptor>
+std::unique_ptr<net::URLRequestInterceptor>
 URLRequestMockCaptivePortalJobFactory::CreateInterceptor() {
   EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  scoped_ptr<Interceptor> interceptor(new Interceptor(behind_captive_portal_));
+  std::unique_ptr<Interceptor> interceptor(
+      new Interceptor(behind_captive_portal_));
   interceptors_.push_back(interceptor.get());
   return std::move(interceptor);
 }
@@ -2796,7 +2797,7 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalBrowserTest, HstsLogin) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
       base::Bind(&AddHstsHost,
-                 make_scoped_refptr(browser()->profile()->GetRequestContext()),
+                 base::RetainedRef(browser()->profile()->GetRequestContext()),
                  http_timeout_url.host()));
 
   SlowLoadBehindCaptivePortal(browser(), true, http_timeout_url, 1, 1);

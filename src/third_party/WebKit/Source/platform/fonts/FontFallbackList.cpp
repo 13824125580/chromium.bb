@@ -50,7 +50,7 @@ FontFallbackList::FontFallbackList()
 {
 }
 
-void FontFallbackList::invalidate(PassRefPtrWillBeRawPtr<FontSelector> fontSelector)
+void FontFallbackList::invalidate(FontSelector* fontSelector)
 {
     releaseFontData();
     m_fontList.clear();
@@ -133,8 +133,8 @@ const SimpleFontData* FontFallbackList::determinePrimarySimpleFontData(const Fon
 
         if (fontData->isSegmented()) {
             const SegmentedFontData* segmented = toSegmentedFontData(fontData);
-            for (unsigned i = 0; i < segmented->numRanges(); i++) {
-                const SimpleFontData* rangeFontData = segmented->rangeAt(i).fontData().get();
+            for (unsigned i = 0; i < segmented->numFaces(); i++) {
+                const SimpleFontData* rangeFontData = segmented->faceAt(i)->fontData();
                 if (!rangeFontData->isLoadingFallback())
                     return rangeFontData;
             }
@@ -195,8 +195,11 @@ FallbackListCompositeKey FontFallbackList::compositeKey(const FontDescription& f
                 if (FontPlatformData* platformData = FontCache::fontCache()->getFontPlatformData(fontDescription, params))
                     result = FontCache::fontCache()->fontDataFromFontPlatformData(platformData);
             }
-            if (result)
+            if (result) {
                 key.add(fontDescription.cacheKey(params));
+                if (!result->isSegmented() && !result->isCustomFont())
+                    FontCache::fontCache()->releaseFontData(toSimpleFontData(result));
+            }
         }
         currentFamily = currentFamily->next();
     }

@@ -45,10 +45,7 @@ source_set("libsystem_java") {
   deps = [
     ":system_java_jni_headers",
     "//base",
-    "//mojo/edk/system",
-    "//mojo/environment:chromium",
     "//mojo/message_pump",
-    "//mojo/public/cpp/environment",
   ]
 }
 
@@ -100,6 +97,8 @@ android_library("mojo_javatests") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//mojo/public/interfaces/bindings/tests:test_interfaces_java",
+    "//mojo/public/interfaces/bindings/tests:test_mojom_import2_java",
+    "//mojo/public/interfaces/bindings/tests:test_mojom_import_java",
     "//mojo/public/java:bindings",
     "//mojo/public/java:system",
   ]
@@ -126,7 +125,6 @@ shared_library("mojo_java_unittests") {
     "//mojo/edk/system",
     "//mojo/message_pump",
     "//mojo/public/cpp/bindings/tests:mojo_public_bindings_test_utils",
-    "//mojo/public/cpp/environment",
     "//mojo/public/cpp/test_support:test_utils",
   ]
   defines = [ "UNIT_TEST" ]
@@ -134,14 +132,14 @@ shared_library("mojo_java_unittests") {
 
 instrumentation_test_apk("mojo_test_apk") {
   deps = [
-    ":mojo_java_unittests",
     ":mojo_javatests",
     ":system_java",
     "//base:base_java",
     "//mojo/public/interfaces/bindings/tests:test_interfaces",
     "//mojo/public/java:bindings",
   ]
-  native_libs = [ "libmojo_java_unittests.so" ]
+  shared_libraries = [ ":mojo_java_unittests" ]
   apk_name = "MojoTest"
   android_manifest = "javatests/AndroidManifest.xml"
+  isolate_file = "../mojo_test_apk.isolate"
 }

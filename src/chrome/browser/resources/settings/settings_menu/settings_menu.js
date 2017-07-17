@@ -5,14 +5,6 @@
 /**
  * @fileoverview
  * 'settings-menu' shows a menu with a hardcoded set of pages and subpages.
- *
- * Example:
- *
- *     <settings-menu selected-page-id="{{selectedPageId}}">
- *     </settings-menu>
- *
- * @group Chrome Settings Elements
- * @element settings-menu
  */
 Polymer({
   is: 'settings-menu',
@@ -21,11 +13,9 @@ Polymer({
     /** @private */
     advancedOpened_: Boolean,
 
-    /** @private */
-    basicOpened_: Boolean,
-
     /**
      * The current active route.
+     * @type {!SettingsRoute}
      */
     currentRoute: {
       type: Object,
@@ -34,22 +24,56 @@ Polymer({
     },
   },
 
-  /** @private */
-  currentRouteChanged_: function() {
-    var submenu = this.shadowRoot.querySelector(
-        'paper-submenu[data-page="' + this.currentRoute.page + '"]');
-    if (submenu)
-      submenu.opened = true;
+  attached: function() {
+    document.addEventListener('toggle-advanced-page', function(e) {
+      if (e.detail)
+        this.$.advancedPage.open();
+      else
+        this.$.advancedPage.close();
+    }.bind(this));
+
+    this.$.advancedPage.addEventListener('paper-submenu-open', function() {
+      this.fire('toggle-advanced-page', true);
+    }.bind(this));
+
+    this.$.advancedPage.addEventListener('paper-submenu-close', function() {
+      this.fire('toggle-advanced-page', false);
+    }.bind(this));
+
+    this.fire('toggle-advanced-page', this.currentRoute.page == 'advanced');
   },
 
-  /** @private */
+  /**
+   * @param {!SettingsRoute} newRoute
+   * @private
+   */
+  currentRouteChanged_: function(newRoute) {
+    // Sync URL changes to the side nav menu.
+
+    if (newRoute.page == 'advanced') {
+      this.$.advancedMenu.selected = this.currentRoute.section;
+      this.$.basicMenu.selected = null;
+    } else if (newRoute.page == 'basic') {
+      this.$.advancedMenu.selected = null;
+      this.$.basicMenu.selected = this.currentRoute.section;
+    } else {
+      this.$.advancedMenu.selected = null;
+      this.$.basicMenu.selected = null;
+    }
+  },
+
+  /**
+   * @param {!Event} event
+   * @private
+   */
   openPage_: function(event) {
-    var submenuRoute = event.currentTarget.dataset.page;
+    var submenuRoute = event.currentTarget.parentNode.dataset.page;
     if (submenuRoute) {
       this.currentRoute = {
         page: submenuRoute,
-        section: '',
+        section: event.currentTarget.dataset.section,
         subpage: [],
+        url: '',
       };
     }
   },
@@ -60,6 +84,6 @@ Polymer({
    * @private
    * */
   arrowState_: function(opened) {
-    return opened ? 'arrow-drop-up' : 'arrow-drop-down';
+    return opened ? 'settings:arrow-drop-up' : 'cr:arrow-drop-down';
   },
 });

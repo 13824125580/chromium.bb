@@ -8,7 +8,6 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/fetch/Resource.h"
-#include "core/frame/ConsoleTypes.h"
 #include "core/frame/UseCounter.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "platform/Crypto.h"
@@ -121,7 +120,7 @@ bool SubresourceIntegrity::CheckSubresourceIntegrity(const IntegrityMetadataSet&
 {
     Document& document = element.document();
 
-    if (!resource.isEligibleForIntegrityCheck(document.securityOrigin())) {
+    if (!resource.isEligibleForIntegrityCheck(document.getSecurityOrigin())) {
         UseCounter::count(document, UseCounter::SRIElementIntegrityAttributeButIneligible);
         logErrorToConsole("Subresource Integrity: The resource '" + resourceUrl.elidedString() + "' has an integrity attribute, but the resource requires the request to be CORS enabled to check the integrity, and it is not. The resource has been blocked because the integrity cannot be enforced.", document);
         return false;

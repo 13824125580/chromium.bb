@@ -149,7 +149,7 @@ Element.prototype.positionAt = function(x, y, relativeTo)
 {
     var shift = {x: 0, y: 0};
     if (relativeTo)
-       shift = relativeTo.boxInWindow(this.ownerDocument.defaultView);
+        shift = relativeTo.boxInWindow(this.ownerDocument.defaultView);
 
     if (typeof x === "number")
         this.style.setProperty("left", (shift.x + x) + "px");
@@ -186,7 +186,7 @@ Element.prototype.isScrolledToBottom = function()
  */
 function removeSubsequentNodes(fromNode, toNode)
 {
-    for (var node = fromNode; node && node !== toNode; ) {
+    for (var node = fromNode; node && node !== toNode;) {
         var nodeToRemove = node;
         node = node.nextSibling;
         nodeToRemove.remove();
@@ -301,7 +301,8 @@ Node.prototype.isComponentSelectionCollapsed = function()
 {
     // FIXME: crbug.com/447523, use selection.isCollapsed when it is fixed for shadow dom.
     var selection = this.getComponentSelection();
-    return selection && selection.rangeCount ? selection.getRangeAt(0).collapsed : true;
+    var range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    return range ? range.collapsed : true;
 }
 
 /**
@@ -348,9 +349,10 @@ Element.prototype.removeChildren = function()
 Element.prototype.isInsertionCaretInside = function()
 {
     var selection = this.getComponentSelection();
-    if (!selection.rangeCount || !selection.isCollapsed)
+    // @see crbug.com/602541
+    var selectionRange = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    if (!selectionRange || !selection.isCollapsed)
         return false;
-    var selectionRange = selection.getRangeAt(0);
     return selectionRange.startContainer.isSelfOrDescendant(this);
 }
 
@@ -632,16 +634,16 @@ KeyboardEvent.prototype.__defineGetter__("data", function()
     // Emulate "data" attribute from DOM 3 TextInput event.
     // See http://www.w3.org/TR/DOM-Level-3-Events/#events-Events-TextEvent-data
     switch (this.type) {
-        case "keypress":
-            if (!this.ctrlKey && !this.metaKey)
-                return String.fromCharCode(this.charCode);
-            else
+    case "keypress":
+        if (!this.ctrlKey && !this.metaKey)
+            return String.fromCharCode(this.charCode);
+        else
                 return "";
-        case "keydown":
-        case "keyup":
-            if (!this.ctrlKey && !this.metaKey && !this.altKey)
-                return String.fromCharCode(this.which);
-            else
+    case "keydown":
+    case "keyup":
+        if (!this.ctrlKey && !this.metaKey && !this.altKey)
+            return String.fromCharCode(this.which);
+        else
                 return "";
     }
 });
@@ -744,7 +746,7 @@ Node.prototype.appendChildren = function(var_args)
  */
 Node.prototype.deepTextContent = function()
 {
-    return this.childTextNodes().map(function (node) { return node.textContent; }).join("");
+    return this.childTextNodes().map(function(node) { return node.textContent; }).join("");
 }
 
 /**
@@ -930,7 +932,7 @@ Event.prototype.deepElementFromPoint = function()
 Event.prototype.deepActiveElement = function()
 {
     var activeElement = this.target && this.target.ownerDocument ? this.target.ownerDocument.activeElement : null;
-    while (activeElement && activeElement.shadowRoot)
+    while (activeElement && activeElement.shadowRoot && activeElement.shadowRoot.activeElement)
         activeElement = activeElement.shadowRoot.activeElement;
     return activeElement;
 }
@@ -955,7 +957,7 @@ Document.prototype.deepElementFromPoint = function(x, y)
 function isEnterKey(event)
 {
     // Check if in IME.
-    return event.keyCode !== 229 && event.keyIdentifier === "Enter";
+    return event.keyCode !== 229 && event.key === "Enter";
 }
 
 /**

@@ -26,6 +26,7 @@
 #include "ui/gfx/text_utils.h"
 
 using content::DownloadItem;
+using safe_browsing::DownloadFileType;
 using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Return;
@@ -143,6 +144,8 @@ TEST_F(DownloadItemModelTest, InterruptedStatus) {
        "Failed - File truncated"},
       {content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
        "Failed - System busy"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH,
+       "Failed - Download error"},
       {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
        "Failed - Network error"},
       {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
@@ -215,6 +218,8 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
        "foo.bar\nFile truncated"},
       {content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
        "foo.bar\nSystem busy"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH,
+       "foo.bar\nDownload error"},
       {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
        "foo.bar\nNetwork error"},
       {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
@@ -371,10 +376,10 @@ TEST_F(DownloadItemModelTest, DangerLevel) {
   SetupDownloadItemDefaults();
 
   // Default danger level is NOT_DANGEROUS.
-  EXPECT_EQ(download_util::NOT_DANGEROUS, model().GetDangerLevel());
+  EXPECT_EQ(DownloadFileType::NOT_DANGEROUS, model().GetDangerLevel());
 
-  model().SetDangerLevel(download_util::ALLOW_ON_USER_GESTURE);
-  EXPECT_EQ(download_util::ALLOW_ON_USER_GESTURE, model().GetDangerLevel());
+  model().SetDangerLevel(DownloadFileType::ALLOW_ON_USER_GESTURE);
+  EXPECT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE, model().GetDangerLevel());
 }
 
 TEST_F(DownloadItemModelTest, ShouldRemoveFromShelfWhenComplete) {

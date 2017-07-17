@@ -54,10 +54,6 @@ const char kDisableGpuShaderDiskCache[]     = "disable-gpu-shader-disk-cache";
 const char kEnableShareGroupAsyncTextureUpload[] =
     "enable-share-group-async-texture-upload";
 
-// Enable WebGL subscribe uniform extension.
-const char kEnableSubscribeUniformExtension[] =
-    "enable-subscribe-uniform-extension";
-
 // Simulates shared textures when share groups are not available. Not available
 // everywhere.
 const char kEnableThreadedTextureMailboxes[] =
@@ -71,33 +67,8 @@ const char kGLShaderIntermOutput[] = "gl-shader-interm-output";
 // round intermediate values in ANGLE.
 const char kEmulateShaderPrecision[] = "emulate-shader-precision";
 
-// Enables using path rendering implementation implemented currently
-// in NV_path_rendering OpenGL extension. Requires compatible hardware
-// and driver. This is used in GPU rasterization.
-const char kEnableGLPathRendering[] = "enable-gl-path-rendering";
-
-const char* kGpuSwitches[] = {
-    kCompileShaderAlwaysSucceeds,
-    kDisableGLErrorLimit,
-    kDisableGLSLTranslator,
-    kDisableGpuDriverBugWorkarounds,
-    kDisableShaderNameHashing,
-    kEnableGPUCommandLogging,
-    kEnableGPUDebugging,
-    kEnableGPUServiceLoggingGPU,
-    kDisableGpuProgramCache,
-    kEnforceGLMinimums,
-    kForceGpuMemAvailableMb,
-    kGpuDriverBugWorkarounds,
-    kGpuProgramCacheSizeKb,
-    kDisableGpuShaderDiskCache,
-    kEnableShareGroupAsyncTextureUpload,
-    kEnableSubscribeUniformExtension,
-    kGLShaderIntermOutput,
-    kEmulateShaderPrecision,
-    kEnableGLPathRendering,
-};
-
-const int kNumGpuSwitches = arraysize(kGpuSwitches);
+// Use the Pass-through command decoder, skipping all validation and state
+// tracking.
+const char kUsePassthroughCmdDecoder[] = "use-passthrough-cmd-decoder";
 
 }  // namespace switches

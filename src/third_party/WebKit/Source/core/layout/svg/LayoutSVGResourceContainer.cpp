@@ -73,11 +73,9 @@ void LayoutSVGResourceContainer::willBeDestroyed()
     // LayoutSVGHiddenContainer::willBeDestroyed() below.
     detachAllClients();
 
-#if !ENABLE(OILPAN)
     for (SVGResourceClient* client : m_resourceClients)
         client->filterWillBeDestroyed(toSVGFilterElement(element()));
     m_resourceClients.clear();
-#endif
 
     LayoutSVGHiddenContainer::willBeDestroyed();
     if (m_registered)
@@ -229,7 +227,7 @@ void LayoutSVGResourceContainer::registerResource()
         return;
     }
 
-    OwnPtrWillBeRawPtr<SVGDocumentExtensions::SVGPendingElements> clients(extensions.removePendingResource(m_id));
+    SVGDocumentExtensions::SVGPendingElements* clients(extensions.removePendingResource(m_id));
 
     // Cache us with the new id.
     extensions.addResource(m_id, this);
@@ -247,14 +245,13 @@ void LayoutSVGResourceContainer::registerResource()
         // If the client has a layer (is a non-SVGElement) we need to signal
         // invalidation in the same way as is done in markAllResourceClientsForInvalidation above.
         if (layoutObject->hasLayer() && resourceType() == FilterResourceType) {
-            if (style.hasFilter())
-                toLayoutBoxModelObject(layoutObject)->layer()->filterNeedsPaintInvalidation();
-            // If this is the SVG root, we could have both 'filter' and
-            // '-webkit-filter' applied, so we need to do the invalidation
-            // below as well, unless we can optimistically determine that
-            // 'filter' does not apply to the element in question.
-            if (!layoutObject->isSVGRoot() || !style.svgStyle().hasFilter())
+            if (!style.hasFilter())
                 continue;
+            toLayoutBoxModelObject(layoutObject)->layer()->filterNeedsPaintInvalidation();
+            if (!layoutObject->isSVGRoot())
+                continue;
+            // A root SVG element with a filter, however, still needs to run
+            // the full invalidation step below.
         }
 
         StyleDifference diff;
@@ -289,17 +286,17 @@ static inline void removeFromCacheAndInvalidateDependencies(LayoutObject* object
     // reference graph adjustments on changes, so we need to break possible cycles here.
     // This strong reference is safe, as it is guaranteed that this set will be emptied
     // at the end of recursion.
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<SVGElementSet>, invalidatingDependencies, (adoptPtrWillBeNoop(new SVGElementSet)));
+    DEFINE_STATIC_LOCAL(SVGElementSet, invalidatingDependencies, (new SVGElementSet));
 
     for (SVGElement* element : *dependencies) {
         if (LayoutObject* layoutObject = element->layoutObject()) {
-            if (UNLIKELY(!invalidatingDependencies->add(element).isNewEntry)) {
+            if (UNLIKELY(!invalidatingDependencies.add(element).isNewEntry)) {
                 // Reference cycle: we are in process of invalidating this dependant.
                 continue;
             }
 
             LayoutSVGResourceContainer::markForLayoutAndParentResourceInvalidation(layoutObject, needsLayout);
-            invalidatingDependencies->remove(element);
+            invalidatingDependencies.remove(element);
         }
     }
 }

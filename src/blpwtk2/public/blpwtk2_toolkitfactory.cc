@@ -215,13 +215,6 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
         toolkit->appendCommandLineSwitch(switchString.c_str());
     }
 
-    for (size_t i = 0; i < params.numSideLoadedFonts(); ++i) {
-        StringRef fontFileRef = params.sideLoadedFontAt(i);
-        base::FilePath filePath = base::FilePath::FromUTF8Unsafe(
-            std::string(fontFileRef.data(), fontFileRef.length()));
-        content::AddCustomFontFile(filePath);
-    }
-
     std::string html(params.headerFooterHTMLContent().data(),
                      params.headerFooterHTMLContent().length());
     printing::PrintSettings::SetDefaultPrinterSettings(

@@ -35,6 +35,8 @@ namespace {
 const long kDefaultWidth = 1024;
 const long kDefaultHeight = 768;
 
+const DWORD kDefaultRdpPort = 3389;
+
 class MockRdpClientEventHandler : public RdpClient::EventHandler {
  public:
   MockRdpClientEventHandler() {}
@@ -93,7 +95,7 @@ class RdpClientTest : public testing::Test {
 
  protected:
   // The ATL module instance required by the ATL code.
-  scoped_ptr<RdpClientModule> module_;
+  std::unique_ptr<RdpClientModule> module_;
 
   // The UI message loop used by RdpClient. The loop is stopped once there is no
   // more references to |task_runner_|.
@@ -105,7 +107,7 @@ class RdpClientTest : public testing::Test {
   MockRdpClientEventHandler event_handler_;
 
   // Points to the object being tested.
-  scoped_ptr<RdpClient> rdp_client_;
+  std::unique_ptr<RdpClient> rdp_client_;
 
   // Unique terminal identifier passed to RdpClient.
   std::string terminal_id_;
@@ -162,10 +164,10 @@ TEST_F(RdpClientTest, Basic) {
       .Times(AtMost(1))
       .WillOnce(InvokeWithoutArgs(this, &RdpClientTest::CloseRdpClient));
 
-  rdp_client_.reset(new RdpClient(
-      task_runner_, task_runner_,
-      webrtc::DesktopSize(kDefaultWidth, kDefaultHeight),
-      terminal_id_, &event_handler_));
+  rdp_client_.reset(
+      new RdpClient(task_runner_, task_runner_,
+                    webrtc::DesktopSize(kDefaultWidth, kDefaultHeight),
+                    terminal_id_, kDefaultRdpPort, &event_handler_));
   task_runner_ = nullptr;
 
   run_loop_.Run();

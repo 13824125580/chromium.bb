@@ -5,39 +5,40 @@
 #ifndef ASH_SHELF_SHELF_WIDGET_H_
 #define ASH_SHELF_SHELF_WIDGET_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "ash/shelf/background_animator.h"
+#include "ash/common/shelf/shelf_types.h"
+#include "ash/common/wm/background_animator.h"
 #include "ash/shelf/shelf_layout_manager_observer.h"
-#include "ash/shelf/shelf_types.h"
+#include "base/macros.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
-
-namespace aura {
-class Window;
-}
 
 namespace ash {
 class FocusCycler;
 class Shelf;
 class ShelfLayoutManager;
 class StatusAreaWidget;
+class WmShelfAura;
+class WmWindow;
 class WorkspaceController;
 
 class ASH_EXPORT ShelfWidget : public views::Widget,
                                public views::WidgetObserver,
                                public ShelfLayoutManagerObserver {
  public:
-  ShelfWidget(aura::Window* shelf_container,
-              aura::Window* status_container,
+  ShelfWidget(WmWindow* wm_shelf_container,
+              WmWindow* wm_status_container,
+              WmShelfAura* wm_shelf_aura,
               WorkspaceController* workspace_controller);
   ~ShelfWidget() override;
 
-  // Returns if shelf alignment option is enabled, and the user is able
-  // to adjust the alignment (guest and supervised mode users cannot for
-  // example).
+  // Returns if shelf alignment option is enabled, and the user is able to
+  // adjust the alignment (guest and supervised mode users cannot for example).
   static bool ShelfAlignmentAllowed();
 
-  void SetAlignment(ShelfAlignment alignmnet);
+  void OnShelfAlignmentChanged();
   ShelfAlignment GetAlignment() const;
 
   // Sets the shelf's background type.
@@ -58,7 +59,8 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   Shelf* shelf() const { return shelf_.get(); }
   StatusAreaWidget* status_area_widget() const { return status_area_widget_; }
 
-  void CreateShelf();
+  void CreateShelf(WmShelfAura* wm_shelf_aura);
+  void PostCreateShelf();
 
   // Set visibility of the shelf.
   void SetShelfVisibility(bool visible);
@@ -72,10 +74,8 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   // when no other windows are visible.
   void WillActivateAsFallback() { activating_as_fallback_ = true; }
 
-  aura::Window* window_container() { return window_container_; }
-
-  // TODO(harrym): Remove when Status Area Widget is a child view.
-  void ShutdownStatusAreaWidget();
+  // Clean up prior to deletion.
+  void Shutdown();
 
   // Force the shelf to be presented in an undimmed state.
   void ForceUndimming(bool force);
@@ -95,21 +95,27 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   void DisableDimmingAnimationsForTest();
 
   // ShelfLayoutManagerObserver overrides:
-  void WillDeleteShelf() override;
+  void WillDeleteShelfLayoutManager() override;
 
  private:
   class DelegateView;
 
+  // views::Widget:
+  void OnMouseEvent(ui::MouseEvent* event) override;
+  void OnGestureEvent(ui::GestureEvent* event) override;
+
+  // Owned by the shelf container's aura::Window.
   ShelfLayoutManager* shelf_layout_manager_;
-  scoped_ptr<Shelf> shelf_;
+  std::unique_ptr<Shelf> shelf_;
   StatusAreaWidget* status_area_widget_;
 
-  // delegate_view_ is attached to window_container_ and is cleaned up
+  // |delegate_view_| is the contents view of this widget and is cleaned up
   // during CloseChildWindows of the associated RootWindowController.
   DelegateView* delegate_view_;
   BackgroundAnimator background_animator_;
   bool activating_as_fallback_;
-  aura::Window* window_container_;
+
+  DISALLOW_COPY_AND_ASSIGN(ShelfWidget);
 };
 
 }  // namespace ash

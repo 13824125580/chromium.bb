@@ -24,7 +24,7 @@ SurfaceLayerImpl::~SurfaceLayerImpl() {
   layer_tree_impl()->RemoveSurfaceLayer(this);
 }
 
-scoped_ptr<LayerImpl> SurfaceLayerImpl::CreateLayerImpl(
+std::unique_ptr<LayerImpl> SurfaceLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return SurfaceLayerImpl::Create(tree_impl, id());
 }
@@ -179,7 +179,7 @@ void SurfaceLayerImpl::AppendRainbowDebugBorder(RenderPass* render_pass) {
 
 void SurfaceLayerImpl::AsValueInto(base::trace_event::TracedValue* dict) const {
   LayerImpl::AsValueInto(dict);
-  dict->SetInteger("surface_id", surface_id_.id);
+  dict->SetString("surface_id", surface_id_.ToString());
 }
 
 const char* SurfaceLayerImpl::LayerTypeAsString() const {

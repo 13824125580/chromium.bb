@@ -6,11 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
@@ -72,7 +72,7 @@ scoped_refptr<extensions::Extension> MakeApp(const std::string& name,
   return app;
 }
 
-const char kDefaultApps[] = "Packaged App 1,Packaged App 2,Hosted App";
+const char kDefaultApps[] = "Hosted App,Packaged App 1,Packaged App 2";
 const size_t kDefaultAppCount = 3u;
 
 }  // namespace
@@ -107,9 +107,9 @@ class ExtensionAppModelBuilderTest : public AppListTestBase {
     model_.reset();
   }
 
-  scoped_ptr<app_list::AppListModel> model_;
-  scoped_ptr<test::TestAppListControllerDelegate> controller_;
-  scoped_ptr<ExtensionAppModelBuilder> builder_;
+  std::unique_ptr<app_list::AppListModel> model_;
+  std::unique_ptr<test::TestAppListControllerDelegate> controller_;
+  std::unique_ptr<ExtensionAppModelBuilder> builder_;
 
   base::ScopedTempDir second_profile_temp_dir_;
 
@@ -183,7 +183,7 @@ TEST_F(ExtensionAppModelBuilderTest, Uninstall) {
                                extensions::UNINSTALL_REASON_FOR_TESTING,
                                base::Bind(&base::DoNothing),
                                NULL);
-  EXPECT_EQ(std::string("Packaged App 1,Hosted App"),
+  EXPECT_EQ(std::string("Hosted App,Packaged App 1"),
             GetModelContent(model_.get()));
 
   base::RunLoop().RunUntilIdle();
@@ -201,7 +201,7 @@ TEST_F(ExtensionAppModelBuilderTest, UninstallTerminatedApp) {
                                extensions::UNINSTALL_REASON_FOR_TESTING,
                                base::Bind(&base::DoNothing),
                                NULL);
-  EXPECT_EQ(std::string("Packaged App 1,Hosted App"),
+  EXPECT_EQ(std::string("Hosted App,Packaged App 1"),
             GetModelContent(model_.get()));
 
   base::RunLoop().RunUntilIdle();

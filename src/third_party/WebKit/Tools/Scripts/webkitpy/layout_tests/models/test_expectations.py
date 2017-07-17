@@ -47,7 +47,7 @@ _log = logging.getLogger(__name__)
 (PASS, FAIL, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, TIMEOUT, CRASH, LEAK, SKIP, WONTFIX,
  SLOW, REBASELINE, NEEDS_REBASELINE, NEEDS_MANUAL_REBASELINE, MISSING, FLAKY, NOW, NONE) = range(19)
 
-# FIXME: Perhas these two routines should be part of the Port instead?
+# FIXME: Perhaps these two routines should be part of the Port instead?
 BASELINE_SUFFIX_LIST = ('png', 'wav', 'txt')
 
 WEBKIT_BUG_PREFIX = 'webkit.org/b/'
@@ -61,6 +61,7 @@ NEEDS_MANUAL_REBASELINE_KEYWORD = 'NeedsManualRebaseline'
 
 
 class ParseError(Exception):
+
     def __init__(self, warnings):
         super(ParseError, self).__init__()
         self.warnings = warnings
@@ -75,7 +76,8 @@ class ParseError(Exception):
 class TestExpectationParser(object):
     """Provides parsing facilities for lines in the test_expectation.txt file."""
 
-    # FIXME: Rename these to *_KEYWORD as in MISSING_KEYWORD above, but make the case studdly-caps to match the actual file contents.
+    # FIXME: Rename these to *_KEYWORD as in MISSING_KEYWORD above, but make
+    # the case studdly-caps to match the actual file contents.
     REBASELINE_MODIFIER = 'rebaseline'
     NEEDS_REBASELINE_MODIFIER = 'needsrebaseline'
     NEEDS_MANUAL_REBASELINE_MODIFIER = 'needsmanualrebaseline'
@@ -90,7 +92,8 @@ class TestExpectationParser(object):
 
     def __init__(self, port, all_tests, is_lint_mode):
         self._port = port
-        self._test_configuration_converter = TestConfigurationConverter(set(port.all_test_configurations()), port.configuration_specifier_macros())
+        self._test_configuration_converter = TestConfigurationConverter(
+            set(port.all_test_configurations()), port.configuration_specifier_macros())
 
         if all_tests:
             self._all_tests = set(all_tests)
@@ -121,7 +124,6 @@ class TestExpectationParser(object):
         expectation_line = self._create_expectation_line(test_name, expectations, '<Bot TestExpectations>')
         self._parse_line(expectation_line)
         return expectation_line
-
 
     def expectation_for_skipped_test(self, test_name):
         if not self._port.test_exists(test_name):
@@ -158,7 +160,8 @@ class TestExpectationParser(object):
             self._lint_line(expectation_line)
 
         parsed_specifiers = set([self._parse_specifier(specifier) for specifier in expectation_line.specifiers])
-        expectation_line.matching_configurations = self._test_configuration_converter.to_config_set(parsed_specifiers, expectation_line.warnings)
+        expectation_line.matching_configurations = self._test_configuration_converter.to_config_set(
+            parsed_specifiers, expectation_line.warnings)
 
     def _lint_line(self, expectation_line):
         expectations = [expectation.lower() for expectation in expectation_line.expectations]
@@ -170,10 +173,14 @@ class TestExpectationParser(object):
         if self.NEEDS_REBASELINE_MODIFIER in expectations or self.NEEDS_MANUAL_REBASELINE_MODIFIER in expectations:
             for test in expectation_line.matching_tests:
                 if self._port.reference_files(test):
-                    expectation_line.warnings.append('A reftest cannot be marked as NeedsRebaseline/NeedsManualRebaseline')
+                    text_expected_filename = self._port.expected_filename(test, '.txt')
+                    if not self._port.host.filesystem.exists(text_expected_filename):
+                        expectation_line.warnings.append(
+                            'A reftest without text expectation cannot be marked as NeedsRebaseline/NeedsManualRebaseline')
 
         specifiers = [specifier.lower() for specifier in expectation_line.specifiers]
-        if (self.REBASELINE_MODIFIER in expectations or self.NEEDS_REBASELINE_MODIFIER in expectations) and ('debug' in specifiers or 'release' in specifiers):
+        if (self.REBASELINE_MODIFIER in expectations or self.NEEDS_REBASELINE_MODIFIER in expectations) and (
+                'debug' in specifiers or 'release' in specifiers):
             expectation_line.warnings.append('A test cannot be rebaselined for Debug/Release.')
 
     def _parse_expectations(self, expectation_line):
@@ -290,9 +297,9 @@ class TestExpectationParser(object):
         state = 'start'
         for token in tokens:
             if (token.startswith(WEBKIT_BUG_PREFIX) or
-                token.startswith(CHROMIUM_BUG_PREFIX) or
-                token.startswith(V8_BUG_PREFIX) or
-                token.startswith(NAMED_BUG_PREFIX)):
+                    token.startswith(CHROMIUM_BUG_PREFIX) or
+                    token.startswith(V8_BUG_PREFIX) or
+                    token.startswith(NAMED_BUG_PREFIX)):
                 if state != 'start':
                     warnings.append('"%s" is not at the start of the line.' % token)
                     break
@@ -359,7 +366,8 @@ class TestExpectationParser(object):
             warnings.append('SLOW tests should ony be added to SlowTests and not to TestExpectations.')
 
         if 'WONTFIX' in expectations and ('NeverFixTests' not in filename and 'StaleTestExpectations' not in filename):
-            warnings.append('WONTFIX tests should ony be added to NeverFixTests or StaleTestExpectations and not to TestExpectations.')
+            warnings.append(
+                'WONTFIX tests should ony be added to NeverFixTests or StaleTestExpectations and not to TestExpectations.')
 
         if 'NeverFixTests' in filename and expectations != ['WONTFIX', 'SKIP']:
             warnings.append('Only WONTFIX expectations are allowed in NeverFixTests')
@@ -405,24 +413,25 @@ class TestExpectationLine(object):
         self.is_skipped_outside_expectations_file = False
 
     def __str__(self):
-        return "TestExpectationLine{name=%s, matching_configurations=%s, original_string=%s}" % (self.name, self.matching_configurations, self.original_string)
+        return "TestExpectationLine{name=%s, matching_configurations=%s, original_string=%s}" % (
+            self.name, self.matching_configurations, self.original_string)
 
     def __eq__(self, other):
         return (self.original_string == other.original_string
-            and self.filename == other.filename
-            and self.line_numbers == other.line_numbers
-            and self.name == other.name
-            and self.path == other.path
-            and self.bugs == other.bugs
-            and self.specifiers == other.specifiers
-            and self.parsed_specifiers == other.parsed_specifiers
-            and self.matching_configurations == other.matching_configurations
-            and self.expectations == other.expectations
-            and self.parsed_expectations == other.parsed_expectations
-            and self.comment == other.comment
-            and self.matching_tests == other.matching_tests
-            and self.warnings == other.warnings
-            and self.is_skipped_outside_expectations_file == other.is_skipped_outside_expectations_file)
+                and self.filename == other.filename
+                and self.line_numbers == other.line_numbers
+                and self.name == other.name
+                and self.path == other.path
+                and self.bugs == other.bugs
+                and self.specifiers == other.specifiers
+                and self.parsed_specifiers == other.parsed_specifiers
+                and self.matching_configurations == other.matching_configurations
+                and self.expectations == other.expectations
+                and self.parsed_expectations == other.parsed_expectations
+                and self.comment == other.comment
+                and self.matching_tests == other.matching_tests
+                and self.warnings == other.warnings
+                and self.is_skipped_outside_expectations_file == other.is_skipped_outside_expectations_file)
 
     def is_invalid(self):
         return bool(self.warnings and self.warnings != [TestExpectationParser.MISSING_BUG_WARNING])
@@ -430,8 +439,11 @@ class TestExpectationLine(object):
     def is_flaky(self):
         return len(self.parsed_expectations) > 1
 
-    def is_whitespace_or_comment(self):
-        return bool(re.match("^\s*$", self.original_string.split('#')[0]))
+    def is_comment(self):
+        return bool(re.match(r"^\s*#.*$", self.original_string))
+
+    def is_whitespace(self):
+        return not self.original_string.strip()
 
     @staticmethod
     def create_passing_expectation(test):
@@ -474,7 +486,8 @@ class TestExpectationLine(object):
         return result
 
     def to_string(self, test_configuration_converter, include_specifiers=True, include_expectations=True, include_comment=True):
-        parsed_expectation_to_string = dict([[parsed_expectation, expectation_string] for expectation_string, parsed_expectation in TestExpectations.EXPECTATIONS.items()])
+        parsed_expectation_to_string = dict([[parsed_expectation, expectation_string]
+                                             for expectation_string, parsed_expectation in TestExpectations.EXPECTATIONS.items()])
 
         if self.is_invalid():
             return self.original_string or ''
@@ -493,7 +506,7 @@ class TestExpectationLine(object):
             return "\n".join(result) if result else None
 
         return self._format_line(self.bugs, self.specifiers, self.name, self.expectations, self.comment,
-            include_specifiers, include_expectations, include_comment)
+                                 include_specifiers, include_expectations, include_comment)
 
     def to_csv(self):
         # Note that this doesn't include the comments.
@@ -521,7 +534,8 @@ class TestExpectationLine(object):
         return expectations
 
     @staticmethod
-    def _format_line(bugs, specifiers, name, expectations, comment, include_specifiers=True, include_expectations=True, include_comment=True):
+    def _format_line(bugs, specifiers, name, expectations, comment, include_specifiers=True,
+                     include_expectations=True, include_comment=True):
         new_specifiers = []
         new_expectations = []
         for specifier in specifiers:
@@ -648,7 +662,7 @@ class TestExpectationsModel(object):
         return self._test_to_expectations[test]
 
     def get_expectations_string(self, test):
-        """Returns the expectatons for the given test as an uppercase string.
+        """Returns the expectations for the given test as an uppercase string.
         If there are no expectations for the test, then "PASS" is returned."""
         if self.get_expectation_line(test).is_skipped_outside_expectations_file:
             return 'NOTRUN'
@@ -690,7 +704,8 @@ class TestExpectationsModel(object):
                 continue
 
             if model_all_expectations:
-                expectation_line = TestExpectationLine.merge_expectation_lines(self.get_expectation_line(test), expectation_line, model_all_expectations)
+                expectation_line = TestExpectationLine.merge_expectation_lines(
+                    self.get_expectation_line(test), expectation_line, model_all_expectations)
 
             self._clear_expectations_for_test(test)
             self._test_to_expectation_line[test] = expectation_line
@@ -724,7 +739,7 @@ class TestExpectationsModel(object):
             self._result_type_to_tests[FAIL].add(test)
 
     def _clear_expectations_for_test(self, test):
-        """Remove prexisting expectations for this test.
+        """Remove preexisting expectations for this test.
         This happens if we are seeing a more precise path
         than a previous listing.
         """
@@ -787,21 +802,24 @@ class TestExpectationsModel(object):
 
         if prev_expectation_line.matching_configurations >= expectation_line.matching_configurations:
             expectation_line.warnings.append('More specific entry for %s on line %s:%s overrides line %s:%s.' % (expectation_line.name,
-                self._shorten_filename(prev_expectation_line.filename), prev_expectation_line.line_numbers,
-                self._shorten_filename(expectation_line.filename), expectation_line.line_numbers))
+                                                                                                                 self._shorten_filename(
+                                                                                                                     prev_expectation_line.filename), prev_expectation_line.line_numbers,
+                                                                                                                 self._shorten_filename(expectation_line.filename), expectation_line.line_numbers))
             # FIXME: return False if we want more specific to win.
             return True
 
         if prev_expectation_line.matching_configurations <= expectation_line.matching_configurations:
             expectation_line.warnings.append('More specific entry for %s on line %s:%s overrides line %s:%s.' % (expectation_line.name,
-                self._shorten_filename(expectation_line.filename), expectation_line.line_numbers,
-                self._shorten_filename(prev_expectation_line.filename), prev_expectation_line.line_numbers))
+                                                                                                                 self._shorten_filename(
+                                                                                                                     expectation_line.filename), expectation_line.line_numbers,
+                                                                                                                 self._shorten_filename(prev_expectation_line.filename), prev_expectation_line.line_numbers))
             return True
 
         if prev_expectation_line.matching_configurations & expectation_line.matching_configurations:
             expectation_line.warnings.append('Entries for %s on lines %s:%s and %s:%s match overlapping sets of configurations.' % (expectation_line.name,
-                self._shorten_filename(prev_expectation_line.filename), prev_expectation_line.line_numbers,
-                self._shorten_filename(expectation_line.filename), expectation_line.line_numbers))
+                                                                                                                                    self._shorten_filename(
+                                                                                                                                        prev_expectation_line.filename), prev_expectation_line.line_numbers,
+                                                                                                                                    self._shorten_filename(expectation_line.filename), expectation_line.line_numbers))
             return True
 
         # Configuration sets are disjoint, then.
@@ -854,7 +872,7 @@ class TestExpectations(object):
                     TestExpectationParser.WONTFIX_MODIFIER: WONTFIX,
                     TestExpectationParser.SLOW_MODIFIER: SLOW,
                     TestExpectationParser.REBASELINE_MODIFIER: REBASELINE,
-    }
+                    }
 
     EXPECTATIONS_TO_STRING = dict((k, v) for (v, k) in EXPECTATIONS.iteritems())
 
@@ -885,7 +903,7 @@ class TestExpectations(object):
 
     @classmethod
     def expectation_from_string(cls, string):
-        assert(' ' not in string)  # This only handles one expectation at a time.
+        assert ' ' not in string  # This only handles one expectation at a time.
         return cls.EXPECTATIONS.get(string.lower())
 
     @staticmethod
@@ -895,12 +913,13 @@ class TestExpectations(object):
             result: actual result of a test execution
             expected_results: set of results listed in test_expectations
             test_needs_rebaselining: whether test was marked as REBASELINE"""
-        if not (set(expected_results) - (set(TestExpectations.NON_TEST_OUTCOME_EXPECTATIONS))):
+        if not set(expected_results) - set(TestExpectations.NON_TEST_OUTCOME_EXPECTATIONS):
             expected_results = set([PASS])
 
         if result in expected_results:
             return True
-        if result in (PASS, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, MISSING) and (NEEDS_REBASELINE in expected_results or NEEDS_MANUAL_REBASELINE in expected_results):
+        if result in (PASS, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, MISSING) and (
+                NEEDS_REBASELINE in expected_results or NEEDS_MANUAL_REBASELINE in expected_results):
             return True
         if result in (TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO) and (FAIL in expected_results):
             return True
@@ -949,24 +968,30 @@ class TestExpectations(object):
         return set(suffixes)
 
     @staticmethod
-    def suffixes_for_actual_expectations_string(expectations):
+    # test_result is an instance of webkitpy.common.net.layouttestresults.LayoutTestResult
+    def suffixes_for_test_result(test_result):
         suffixes = set()
-        if 'TEXT' in expectations:
+        actual_results = test_result.actual_results()
+        if 'TEXT' in actual_results:
             suffixes.add('txt')
-        if 'IMAGE' in expectations:
+        if 'IMAGE' in actual_results:
             suffixes.add('png')
-        if 'AUDIO' in expectations:
+        if 'AUDIO' in actual_results:
             suffixes.add('wav')
-        if 'MISSING' in expectations:
-            suffixes.add('txt')
-            suffixes.add('png')
-            suffixes.add('wav')
+        if 'MISSING' in actual_results:
+            if test_result.is_missing_text():
+                suffixes.add('txt')
+            if test_result.is_missing_image():
+                suffixes.add('png')
+            if test_result.is_missing_audio():
+                suffixes.add('wav')
         return suffixes
 
     # FIXME: This constructor does too much work. We should move the actual parsing of
     # the expectations into separate routines so that linting and handling overrides
     # can be controlled separately, and the constructor can be more of a no-op.
-    def __init__(self, port, tests=None, include_overrides=True, expectations_dict=None, model_all_expectations=False, is_lint_mode=False):
+    def __init__(self, port, tests=None, include_overrides=True, expectations_dict=None,
+                 model_all_expectations=False, is_lint_mode=False):
         self._full_test_list = tests
         self._test_config = port.test_configuration()
         self._is_lint_mode = is_lint_mode
@@ -1058,7 +1083,7 @@ class TestExpectations(object):
         for expectation in self._expectations:
             for warning in expectation.warnings:
                 warnings.append('%s:%s %s %s' % (self._shorten_filename(expectation.filename), expectation.line_numbers,
-                                warning, expectation.name if expectation.expectations else expectation.original_string))
+                                                 warning, expectation.name if expectation.expectations else expectation.original_string))
 
         if warnings:
             self._has_warnings = True
@@ -1099,8 +1124,11 @@ class TestExpectations(object):
             index = self._expectations.index(expectation)
             self._expectations.remove(expectation)
 
-            if index == len(self._expectations) or self._expectations[index].is_whitespace_or_comment():
-                while index and self._expectations[index - 1].is_whitespace_or_comment():
+            if index == len(self._expectations) or self._expectations[index].is_whitespace() or self._expectations[index].is_comment():
+                while index and self._expectations[index - 1].is_comment():
+                    index = index - 1
+                    self._expectations.pop(index)
+                while index and self._expectations[index - 1].is_whitespace():
                     index = index - 1
                     self._expectations.pop(index)
 

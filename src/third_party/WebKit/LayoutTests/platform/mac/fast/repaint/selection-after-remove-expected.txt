@@ -1,57 +1,109 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [112, 165, 42, 18],
-        [74, 75, 39, 18],
-        [39, 75, 119, 108],
-        [39, 75, 36, 18],
-        [38, 94, 152, 90],
-        [38, 93, 152, 91],
-        [38, 75, 152, 108]
-      ],
-      "paintInvalidationClients": [
-        "InlineTextBox 'world hello'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello world hello'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello world hello'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'world hello'",
-        "LayoutText #text",
-        "LayoutInline SPAN id='removeme'",
-        "InlineTextBox 'hello '",
-        "RootInlineBox",
-        "RootInlineBox",
-        "RootInlineBox",
-        "RootInlineBox",
-        "RootInlineBox",
-        "InlineTextBox ' world'",
-        "InlineTextBox '\n'",
-        "RootInlineBox",
-        "LayoutBlockFlow HTML",
-        "LayoutBlockFlow BODY",
-        "LayoutBlockFlow DIV id='test'",
-        "LayoutBlockFlow DIV id='test'",
-        "LayoutBlockFlow DIV id='test'",
-        "RootInlineBox",
-        "LayoutText #text",
-        "InlineTextBox 'hello '",
-        "LayoutText #text",
-        "InlineTextBox 'world'",
-        "LayoutText #text",
-        "InlineTextBox 'world'",
-        "LayoutBR BR",
-        "InlineTextBox '\n'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='test'",
+          "rect": [38, 74, 152, 110],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [39, 75, 123, 108],
+          "reason": "layoutObject removal"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [112, 165, 42, 18],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [74, 75, 39, 18],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [39, 75, 36, 18],
+          "reason": "forced by layout"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutText #text",
+      "reason": "layoutObject removal"
+    },
+    {
+      "object": "LayoutInline SPAN id='removeme'",
+      "reason": "layoutObject removal"
+    },
+    {
+      "object": "LayoutBlockFlow HTML",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutBlockFlow BODY",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='test'",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='test'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "selection"
+    },
+    {
+      "object": "InlineTextBox 'hello '",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'hello '",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "selection"
+    },
+    {
+      "object": "InlineTextBox 'world'",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutText #text",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox 'world'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutBR BR",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox '\n'",
+      "reason": "forced by layout"
     }
   ]
 }

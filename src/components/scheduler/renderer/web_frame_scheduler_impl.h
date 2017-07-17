@@ -5,15 +5,19 @@
 #ifndef COMPONENTS_SCHEDULER_RENDERER_WEB_FRAME_SCHEDULER_IMPL_H_
 #define COMPONENTS_SCHEDULER_RENDERER_WEB_FRAME_SCHEDULER_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/trace_event/trace_event.h"
 #include "components/scheduler/base/task_queue.h"
 #include "components/scheduler/scheduler_export.h"
 #include "third_party/WebKit/public/platform/WebFrameScheduler.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 
 namespace base {
+namespace trace_event {
+class BlameContext;
+}  // namespace trace_event
 class SingleThreadTaskRunner;
 }  // namespace base
 
@@ -28,7 +32,8 @@ class WebViewSchedulerImpl;
 class SCHEDULER_EXPORT WebFrameSchedulerImpl : public blink::WebFrameScheduler {
  public:
   WebFrameSchedulerImpl(RendererSchedulerImpl* renderer_scheduler,
-                        WebViewSchedulerImpl* parent_web_view_scheduler);
+                        WebViewSchedulerImpl* parent_web_view_scheduler,
+                        base::trace_event::BlameContext* blame_context);
 
   ~WebFrameSchedulerImpl() override;
 
@@ -37,7 +42,6 @@ class SCHEDULER_EXPORT WebFrameSchedulerImpl : public blink::WebFrameScheduler {
   void setPageVisible(bool page_visible) override;
   blink::WebTaskRunner* loadingTaskRunner() override;
   blink::WebTaskRunner* timerTaskRunner() override;
-  void setFrameOrigin(const blink::WebSecurityOrigin& origin) override;
 
   void OnVirtualTimeDomainChanged();
 
@@ -49,12 +53,12 @@ class SCHEDULER_EXPORT WebFrameSchedulerImpl : public blink::WebFrameScheduler {
 
   scoped_refptr<TaskQueue> loading_task_queue_;
   scoped_refptr<TaskQueue> timer_task_queue_;
-  scoped_ptr<WebTaskRunnerImpl> loading_web_task_runner_;
-  scoped_ptr<WebTaskRunnerImpl> timer_web_task_runner_;
+  std::unique_ptr<WebTaskRunnerImpl> loading_web_task_runner_;
+  std::unique_ptr<WebTaskRunnerImpl> timer_web_task_runner_;
   RendererSchedulerImpl* renderer_scheduler_;            // NOT OWNED
   WebViewSchedulerImpl* parent_web_view_scheduler_;      // NOT OWNED
+  base::trace_event::BlameContext* blame_context_;       // NOT OWNED
   TaskQueue::PumpPolicy virtual_time_pump_policy_;
-  blink::WebSecurityOrigin origin_;
   bool frame_visible_;
   bool page_visible_;
 

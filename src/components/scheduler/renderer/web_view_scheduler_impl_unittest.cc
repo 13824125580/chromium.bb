@@ -4,8 +4,10 @@
 
 #include "components/scheduler/renderer/web_view_scheduler_impl.h"
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "cc/test/ordered_simple_task_runner.h"
 #include "components/scheduler/base/test_time_source.h"
@@ -32,11 +34,12 @@ class WebViewSchedulerImplTest : public testing::Test {
     mock_task_runner_ =
         make_scoped_refptr(new cc::OrderedSimpleTaskRunner(clock_.get(), true));
     delagate_ = SchedulerTqmDelegateForTest::Create(
-        mock_task_runner_, make_scoped_ptr(new TestTimeSource(clock_.get())));
+        mock_task_runner_, base::WrapUnique(new TestTimeSource(clock_.get())));
     scheduler_.reset(new RendererSchedulerImpl(delagate_));
     web_view_scheduler_.reset(new WebViewSchedulerImpl(
         nullptr, scheduler_.get(), DisableBackgroundTimerThrottling()));
-    web_frame_scheduler_ = web_view_scheduler_->createWebFrameSchedulerImpl();
+    web_frame_scheduler_ =
+        web_view_scheduler_->createWebFrameSchedulerImpl(nullptr);
   }
 
   void TearDown() override {
@@ -48,26 +51,26 @@ class WebViewSchedulerImplTest : public testing::Test {
 
   virtual bool DisableBackgroundTimerThrottling() const { return false; }
 
-  scoped_ptr<base::SimpleTestTickClock> clock_;
+  std::unique_ptr<base::SimpleTestTickClock> clock_;
   scoped_refptr<cc::OrderedSimpleTaskRunner> mock_task_runner_;
   scoped_refptr<SchedulerTqmDelegate> delagate_;
-  scoped_ptr<RendererSchedulerImpl> scheduler_;
-  scoped_ptr<WebViewSchedulerImpl> web_view_scheduler_;
-  scoped_ptr<WebFrameSchedulerImpl> web_frame_scheduler_;
+  std::unique_ptr<RendererSchedulerImpl> scheduler_;
+  std::unique_ptr<WebViewSchedulerImpl> web_view_scheduler_;
+  std::unique_ptr<WebFrameSchedulerImpl> web_frame_scheduler_;
 };
 
 TEST_F(WebViewSchedulerImplTest, TestDestructionOfFrameSchedulersBefore) {
-  blink::WebPassOwnPtr<blink::WebFrameScheduler> frame1(
-      web_view_scheduler_->createFrameScheduler());
-  blink::WebPassOwnPtr<blink::WebFrameScheduler> frame2(
-      web_view_scheduler_->createFrameScheduler());
+  std::unique_ptr<blink::WebFrameScheduler> frame1(
+      web_view_scheduler_->createFrameScheduler(nullptr));
+  std::unique_ptr<blink::WebFrameScheduler> frame2(
+      web_view_scheduler_->createFrameScheduler(nullptr));
 }
 
 TEST_F(WebViewSchedulerImplTest, TestDestructionOfFrameSchedulersAfter) {
-  blink::WebPassOwnPtr<blink::WebFrameScheduler> frame1(
-      web_view_scheduler_->createFrameScheduler());
-  blink::WebPassOwnPtr<blink::WebFrameScheduler> frame2(
-      web_view_scheduler_->createFrameScheduler());
+  std::unique_ptr<blink::WebFrameScheduler> frame1(
+      web_view_scheduler_->createFrameScheduler(nullptr));
+  std::unique_ptr<blink::WebFrameScheduler> frame2(
+      web_view_scheduler_->createFrameScheduler(nullptr));
   web_view_scheduler_.reset();
 }
 
@@ -131,10 +134,10 @@ TEST_F(WebViewSchedulerImplTest, RepeatingLoadingTask_PageInBackground) {
 }
 
 TEST_F(WebViewSchedulerImplTest, RepeatingTimers_OneBackgroundOneForeground) {
-  scoped_ptr<WebViewSchedulerImpl> web_view_scheduler2(
+  std::unique_ptr<WebViewSchedulerImpl> web_view_scheduler2(
       new WebViewSchedulerImpl(nullptr, scheduler_.get(), false));
-  scoped_ptr<WebFrameSchedulerImpl> web_frame_scheduler2 =
-      web_view_scheduler2->createWebFrameSchedulerImpl();
+  std::unique_ptr<WebFrameSchedulerImpl> web_frame_scheduler2 =
+      web_view_scheduler2->createWebFrameSchedulerImpl(nullptr);
 
   web_view_scheduler_->setPageVisible(true);
   web_view_scheduler2->setPageVisible(false);
@@ -411,8 +414,8 @@ TEST_F(WebViewSchedulerImplTest, VirtualTimeSettings_NewWebFrameScheduler) {
   web_view_scheduler_->setAllowVirtualTimeToAdvance(false);
   web_view_scheduler_->enableVirtualTime();
 
-  scoped_ptr<WebFrameSchedulerImpl> web_frame_scheduler =
-      web_view_scheduler_->createWebFrameSchedulerImpl();
+  std::unique_ptr<WebFrameSchedulerImpl> web_frame_scheduler =
+      web_view_scheduler_->createWebFrameSchedulerImpl(nullptr);
 
   web_frame_scheduler->timerTaskRunner()->postDelayedTask(
       BLINK_FROM_HERE, new RunOrderTask(1, &run_order), 0.1);
@@ -431,7 +434,7 @@ class DeleteWebFrameSchedulerTask : public blink::WebTaskRunner::Task {
  public:
   explicit DeleteWebFrameSchedulerTask(WebViewSchedulerImpl* web_view_scheduler)
       : web_frame_scheduler_(
-            web_view_scheduler->createWebFrameSchedulerImpl()) {}
+            web_view_scheduler->createWebFrameSchedulerImpl(nullptr)) {}
 
   ~DeleteWebFrameSchedulerTask() override {}
 
@@ -442,7 +445,7 @@ class DeleteWebFrameSchedulerTask : public blink::WebTaskRunner::Task {
   }
 
  private:
-  scoped_ptr<WebFrameSchedulerImpl> web_frame_scheduler_;
+  std::unique_ptr<WebFrameSchedulerImpl> web_frame_scheduler_;
 };
 
 class DeleteWebViewSchedulerTask : public blink::WebTaskRunner::Task {
@@ -455,7 +458,7 @@ class DeleteWebViewSchedulerTask : public blink::WebTaskRunner::Task {
   void run() override { web_view_scheduler_.reset(); }
 
  private:
-  scoped_ptr<WebViewSchedulerImpl> web_view_scheduler_;
+  std::unique_ptr<WebViewSchedulerImpl> web_view_scheduler_;
 };
 }  // namespace
 

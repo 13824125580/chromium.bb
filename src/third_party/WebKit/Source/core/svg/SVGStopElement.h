@@ -35,7 +35,7 @@ public:
 
     Color stopColorIncludingOpacity() const;
 
-    SVGAnimatedNumber* offset() { return m_offset.get(); }
+    SVGAnimatedNumber* offset() const { return m_offset.get(); }
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -47,7 +47,7 @@ private:
     LayoutObject* createLayoutObject(const ComputedStyle&) override;
     bool layoutObjectIsNeeded(const ComputedStyle&) override;
 
-    RefPtrWillBeMember<SVGAnimatedNumber> m_offset;
+    Member<SVGAnimatedNumber> m_offset;
 };
 
 } // namespace blink

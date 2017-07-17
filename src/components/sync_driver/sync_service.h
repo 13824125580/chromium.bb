@@ -5,9 +5,10 @@
 #ifndef COMPONENTS_SYNC_DRIVER_SYNC_SERVICE_H_
 #define COMPONENTS_SYNC_DRIVER_SYNC_SERVICE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -45,6 +46,21 @@ class LocalDeviceInfoProvider;
 class OpenTabsUIDelegate;
 class SyncClient;
 
+// UIs that need to prevent Sync startup should hold an instance of this class
+// until the user has finished modifying sync settings. This is not an inner
+// class of SyncService to enable forward declarations.
+class SyncSetupInProgressHandle {
+ public:
+  // UIs should not construct this directly, but instead call
+  // SyncService::GetSetupInProgress().
+  explicit SyncSetupInProgressHandle(base::Closure on_destroy);
+
+  ~SyncSetupInProgressHandle();
+
+ private:
+  base::Closure on_destroy_;
+};
+
 class SyncService : public DataTypeEncryptionHandler {
  public:
   // Used to specify the kind of passphrase with which sync data is encrypted.
@@ -66,7 +82,6 @@ class SyncService : public DataTypeEncryptionHandler {
   // Status of sync server connection, sync token and token request.
   struct SyncTokenStatus {
     SyncTokenStatus();
-    ~SyncTokenStatus();
 
     // Sync server connection status reported by sync backend.
     base::Time connection_status_update_time;
@@ -175,12 +190,13 @@ class SyncService : public DataTypeEncryptionHandler {
   // Called by the UI to notify the SyncService that UI is visible so it will
   // not start syncing. This tells sync whether it's safe to start downloading
   // data types yet (we don't start syncing until after sync setup is complete).
-  // The UI calls this as soon as any part of the signin wizard is displayed
-  // (even just the login UI).
-  // If |setup_in_progress| is false, this also kicks the sync engine to ensure
-  // that data download starts. In this case, |ReconfigureDatatypeManager| will
-  // get triggered.
-  virtual void SetSetupInProgress(bool setup_in_progress) = 0;
+  // The UI calls this and holds onto the instance for as long as any part of
+  // the signin wizard is displayed (even just the login UI).
+  // When the last outstanding handle is deleted, this kicks off the sync engine
+  // to ensure that data download starts. In this case,
+  // |ReconfigureDatatypeManager| will get triggered.
+  virtual std::unique_ptr<SyncSetupInProgressHandle>
+  GetSetupInProgressHandle() = 0;
 
   // Used by tests.
   virtual bool IsSetupInProgress() const = 0;
@@ -320,7 +336,8 @@ class SyncService : public DataTypeEncryptionHandler {
   // For safety, the callback should be bound to some sort of WeakPtr<> or
   // scoped_refptr<>.
   virtual void GetAllNodes(
-      const base::Callback<void(scoped_ptr<base::ListValue>)>& callback) = 0;
+      const base::Callback<void(std::unique_ptr<base::ListValue>)>&
+          callback) = 0;
 
  protected:
   SyncService() {}

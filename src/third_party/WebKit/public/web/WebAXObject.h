@@ -42,6 +42,8 @@
 namespace WTF { template <typename T> class PassRefPtr; }
 #endif
 
+class SkMatrix44;
+
 namespace blink {
 
 class AXObject;
@@ -51,6 +53,7 @@ class WebNode;
 class WebDocument;
 class WebString;
 class WebURL;
+struct WebFloatRect;
 struct WebPoint;
 struct WebRect;
 
@@ -90,6 +93,10 @@ public:
     BLINK_EXPORT bool isDetached() const;
 
     BLINK_EXPORT int axID() const;
+
+    // Get a new AXID that's not used by any accessibility node in this process, for when the
+    // client needs to insert additional nodes into the accessibility tree.
+    BLINK_EXPORT int generateAXID() const;
 
     // Update layout on the underlying tree, and return true if this object is
     // still valid (not detached). Note that calling this method
@@ -135,13 +142,14 @@ public:
     BLINK_EXPORT WebAXObject ariaActiveDescendant() const;
     BLINK_EXPORT WebString ariaAutoComplete() const;
     BLINK_EXPORT bool ariaControls(WebVector<WebAXObject>& controlsElements) const;
+    BLINK_EXPORT WebAXAriaCurrentState ariaCurrentState() const;
     BLINK_EXPORT bool ariaFlowTo(WebVector<WebAXObject>& flowToElements) const;
     BLINK_EXPORT bool ariaHasPopup() const;
     BLINK_EXPORT bool isEditable() const;
     BLINK_EXPORT bool isMultiline() const;
     BLINK_EXPORT bool isRichlyEditable() const;
     BLINK_EXPORT bool ariaOwns(WebVector<WebAXObject>& ownsElements) const;
-    BLINK_EXPORT WebRect boundingBoxRect() const;
+    BLINK_EXPORT WebString fontFamily() const;
     BLINK_EXPORT float fontSize() const;
     BLINK_EXPORT bool canvasHasFallbackContent() const;
     BLINK_EXPORT WebPoint clickPoint() const;
@@ -201,6 +209,7 @@ public:
     BLINK_EXPORT bool liveRegionBusy() const;
     BLINK_EXPORT WebString liveRegionRelevant() const;
     BLINK_EXPORT WebString liveRegionStatus() const;
+    BLINK_EXPORT WebAXObject liveRegionRoot() const;
     BLINK_EXPORT bool containerLiveRegionAtomic() const;
     BLINK_EXPORT bool containerLiveRegionBusy() const;
     BLINK_EXPORT WebString containerLiveRegionRelevant() const;
@@ -218,6 +227,10 @@ public:
     BLINK_EXPORT WebString computedStyleDisplay() const;
     BLINK_EXPORT bool accessibilityIsIgnored() const;
     BLINK_EXPORT bool lineBreaks(WebVector<int>&) const;
+    BLINK_EXPORT void markers(
+        WebVector<WebAXMarkerType>& types,
+        WebVector<int>& starts,
+        WebVector<int>& ends) const;
 
     // Actions
     BLINK_EXPORT WebString actionVerb() const; // The verb corresponding to performDefaultAction.
@@ -280,6 +293,23 @@ public:
     BLINK_EXPORT WebPoint minimumScrollOffset() const;
     BLINK_EXPORT WebPoint maximumScrollOffset() const;
     BLINK_EXPORT void setScrollOffset(const WebPoint&) const;
+
+    // Old bounds calculation interface. DEPRECATED, to be replaced with getRelativeBounds.
+    BLINK_EXPORT WebRect boundingBoxRect() const;
+
+    // NEW bounds calculation interface. Every object's bounding box is returned
+    // relative to a container object (which is guaranteed to be an ancestor) and
+    // optionally a transformation matrix that needs to be applied too.
+    // To compute the absolute bounding box of an element, start with its
+    // boundsInContainer and apply the transform. Then as long as its container is
+    // not null, walk up to its container and offset by the container's offset from
+    // origin, the container's scroll position if any, and apply the container's transform.
+    // Do this until you reach the root of the tree.
+    BLINK_EXPORT void getRelativeBounds(WebAXObject& offsetContainer, WebFloatRect& boundsInContainer, SkMatrix44& containerTransform) const;
+
+    // Transformation relative to the parent frame, if local (otherwise returns identity).
+    // DEPRECATED, to be replaced with getRelativeBounds.
+    BLINK_EXPORT SkMatrix44 transformFromLocalParentFrame() const;
 
     // Make this object visible by scrolling as many nested scrollable views as needed.
     BLINK_EXPORT void scrollToMakeVisible() const;

@@ -13,7 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "components/url_formatter/elide_url.h"
@@ -21,13 +21,14 @@
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkRRect.h"
 #include "ui/base/theme_provider.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/linear_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
@@ -38,7 +39,13 @@
 #include "url/gurl.h"
 
 #if defined(USE_ASH)
-#include "ash/wm/window_state.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
+#endif
+
+#if defined(MOJO_SHELL_CLIENT)
+#include "components/mus/public/cpp/property_type_converters.h"
+#include "components/mus/public/interfaces/window_manager.mojom.h"
 #endif
 
 // The alpha and color of the bubble's shadow.
@@ -79,11 +86,11 @@ class StatusBubbleViews::StatusViewAnimation : public gfx::LinearAnimation,
                                                public gfx::AnimationDelegate {
  public:
   StatusViewAnimation(StatusView* status_view,
-                      double opacity_start,
-                      double opacity_end);
+                      float opacity_start,
+                      float opacity_end);
   ~StatusViewAnimation() override;
 
-  double GetCurrentOpacity();
+  float GetCurrentOpacity();
 
  private:
   // gfx::LinearAnimation:
@@ -97,8 +104,8 @@ class StatusBubbleViews::StatusViewAnimation : public gfx::LinearAnimation,
   // Start and end opacities for the current transition - note that as a
   // fade-in can easily turn into a fade out, opacity_start_ is sometimes
   // a value between 0 and 1.
-  double opacity_start_;
-  double opacity_end_;
+  float opacity_start_;
+  float opacity_end_;
 
   DISALLOW_COPY_AND_ASSIGN(StatusViewAnimation);
 };
@@ -151,7 +158,7 @@ class StatusBubbleViews::StatusView : public views::View {
   void ResetTimer();
 
   // This call backs the StatusView in order to fade the bubble in and out.
-  void SetOpacity(double opacity);
+  void SetOpacity(float opacity);
 
   // Depending on the state of the bubble this will either hide the popup or
   // not.
@@ -167,7 +174,7 @@ class StatusBubbleViews::StatusView : public views::View {
   void RestartTimer(base::TimeDelta delay);
 
   // Manage the fades and starting and stopping the animations correctly.
-  void StartFade(double start, double end, int duration);
+  void StartFade(float start, float end, int duration);
   void StartHiding();
   void StartShowing();
 
@@ -178,7 +185,7 @@ class StatusBubbleViews::StatusView : public views::View {
   BubbleState state_;
   BubbleStyle style_;
 
-  scoped_ptr<StatusViewAnimation> animation_;
+  std::unique_ptr<StatusViewAnimation> animation_;
 
   // Handle to the widget that contains us.
   views::Widget* popup_;
@@ -255,10 +262,10 @@ void StatusBubbleViews::StatusView::StartTimer(base::TimeDelta time) {
 void StatusBubbleViews::StatusView::OnTimer() {
   if (state_ == BUBBLE_HIDING_TIMER) {
     state_ = BUBBLE_HIDING_FADE;
-    StartFade(1.0, 0.0, kHideFadeDurationMS);
+    StartFade(1.0f, 0.0f, kHideFadeDurationMS);
   } else if (state_ == BUBBLE_SHOWING_TIMER) {
     state_ = BUBBLE_SHOWING_FADE;
-    StartFade(0.0, 1.0, kShowFadeDurationMS);
+    StartFade(0.0f, 1.0f, kShowFadeDurationMS);
   }
 }
 
@@ -280,8 +287,8 @@ void StatusBubbleViews::StatusView::ResetTimer() {
   }
 }
 
-void StatusBubbleViews::StatusView::StartFade(double start,
-                                              double end,
+void StatusBubbleViews::StatusView::StartFade(float start,
+                                              float end,
                                               int duration) {
   animation_.reset(new StatusViewAnimation(this, start, end));
 
@@ -301,10 +308,10 @@ void StatusBubbleViews::StatusView::StartHiding() {
   } else if (state_ == BUBBLE_SHOWING_FADE) {
     state_ = BUBBLE_HIDING_FADE;
     // Figure out where we are in the current fade.
-    double current_opacity = animation_->GetCurrentOpacity();
+    float current_opacity = animation_->GetCurrentOpacity();
 
     // Start a fade in the opposite direction.
-    StartFade(current_opacity, 0.0,
+    StartFade(current_opacity, 0.0f,
               static_cast<int>(kHideFadeDurationMS * current_opacity));
   }
 }
@@ -322,10 +329,10 @@ void StatusBubbleViews::StatusView::StartShowing() {
     state_ = BUBBLE_SHOWING_FADE;
 
     // Figure out where we are in the current fade.
-    double current_opacity = animation_->GetCurrentOpacity();
+    float current_opacity = animation_->GetCurrentOpacity();
 
     // Start a fade in the opposite direction.
-    StartFade(current_opacity, 1.0,
+    StartFade(current_opacity, 1.0f,
               static_cast<int>(kShowFadeDurationMS * current_opacity));
   } else if (state_ == BUBBLE_SHOWING_TIMER) {
     // We hadn't yet begun showing anything when we received a new request
@@ -334,8 +341,8 @@ void StatusBubbleViews::StatusView::StartShowing() {
   }
 }
 
-void StatusBubbleViews::StatusView::SetOpacity(double opacity) {
-  popup_->SetOpacity(static_cast<unsigned char>(opacity * 255));
+void StatusBubbleViews::StatusView::SetOpacity(float opacity) {
+  popup_->SetOpacity(opacity);
 }
 
 void StatusBubbleViews::StatusView::SetStyle(BubbleStyle style) {
@@ -420,22 +427,26 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
   rrect.setRectRadii(RectToSkRect(rect), (const SkVector*)rad);
   canvas->sk_canvas()->drawRRect(rrect, paint);
 
-  // Draw highlight text and then the text body. In order to make sure the text
-  // is aligned to the right on RTL UIs, we mirror the text bounds if the
-  // locale is RTL.
+  // Compute text bounds.
   const gfx::FontList font_list;
   int text_width =
       std::min(gfx::GetStringWidth(text_, font_list),
                width - shadow_size - kTextPositionX - kTextHorizPadding);
   int text_height = height - shadow_size;
-  gfx::Rect body_bounds(kShadowThickness + kTextPositionX,
+  gfx::Rect text_bounds(kShadowThickness + kTextPositionX,
                         kShadowThickness,
                         std::max(0, text_width),
                         std::max(0, text_height));
-  body_bounds.set_x(GetMirroredXForRect(body_bounds));
-  SkColor text_color =
-      theme_provider_->GetColor(ThemeProperties::COLOR_STATUS_BAR_TEXT);
-  canvas->DrawStringRect(text_, font_list, text_color, body_bounds);
+  // Make sure the text is aligned to the right on RTL UIs.
+  text_bounds.set_x(GetMirroredXForRect(text_bounds));
+
+  // Text color is the foreground tab text color at 60% alpha.
+  SkColor text_color = color_utils::AlphaBlend(
+      theme_provider_->GetColor(ThemeProperties::COLOR_TAB_TEXT), toolbar_color,
+      0x99);
+  canvas->DrawStringRect(
+      text_, font_list,
+      color_utils::GetReadableColor(text_color, toolbar_color), text_bounds);
 }
 
 
@@ -443,13 +454,12 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
 
 StatusBubbleViews::StatusViewAnimation::StatusViewAnimation(
     StatusView* status_view,
-    double opacity_start,
-    double opacity_end)
+    float opacity_start,
+    float opacity_end)
     : gfx::LinearAnimation(kFramerate, this),
       status_view_(status_view),
       opacity_start_(opacity_start),
-      opacity_end_(opacity_end) {
-}
+      opacity_end_(opacity_end) {}
 
 StatusBubbleViews::StatusViewAnimation::~StatusViewAnimation() {
   // Remove ourself as a delegate so that we don't get notified when
@@ -457,9 +467,10 @@ StatusBubbleViews::StatusViewAnimation::~StatusViewAnimation() {
   set_delegate(NULL);
 }
 
-double StatusBubbleViews::StatusViewAnimation::GetCurrentOpacity() {
-  return opacity_start_ + (opacity_end_ - opacity_start_) *
-      gfx::LinearAnimation::GetCurrentValue();
+float StatusBubbleViews::StatusViewAnimation::GetCurrentOpacity() {
+  return static_cast<float>(opacity_start_ +
+                            (opacity_end_ - opacity_start_) *
+                                gfx::LinearAnimation::GetCurrentValue());
 }
 
 void StatusBubbleViews::StatusViewAnimation::AnimateToState(double state) {
@@ -596,10 +607,15 @@ void StatusBubbleViews::Init() {
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.parent = frame->GetNativeView();
     params.context = frame->GetNativeWindow();
+#if defined(MOJO_SHELL_CLIENT)
+    params.mus_properties
+        [mus::mojom::WindowManager::kWindowIgnoredByShelf_Property] =
+        mojo::ConvertTo<std::vector<uint8_t>>(true);
+#endif
     popup_->Init(params);
     // We do our own animation and don't want any from the system.
     popup_->SetVisibilityChangedAnimationsEnabled(false);
-    popup_->SetOpacity(0x00);
+    popup_->SetOpacity(0.f);
     popup_->SetContentsView(view_);
 #if defined(USE_ASH)
     ash::wm::GetWindowState(popup_->GetNativeWindow())->
@@ -667,9 +683,8 @@ void StatusBubbleViews::SetStatus(const base::string16& status_text) {
   }
 }
 
-void StatusBubbleViews::SetURL(const GURL& url, const std::string& languages) {
+void StatusBubbleViews::SetURL(const GURL& url) {
   url_ = url;
-  languages_ = languages;
   if (size_.IsEmpty())
     return;  // We have no bounds, don't attempt to show the popup.
 
@@ -695,7 +710,7 @@ void StatusBubbleViews::SetURL(const GURL& url, const std::string& languages) {
   int text_width = static_cast<int>(popup_bounds.width() -
       (kShadowThickness * 2) - kTextPositionX - kTextHorizPadding - 1);
   url_text_ =
-      url_formatter::ElideUrl(url, gfx::FontList(), text_width, languages);
+      url_formatter::ElideUrl(url, gfx::FontList(), text_width);
 
   // An URL is always treated as a left-to-right string. On right-to-left UIs
   // we need to explicitly mark the URL as LTR to make sure it is displayed
@@ -711,7 +726,7 @@ void StatusBubbleViews::SetURL(const GURL& url, const std::string& languages) {
     // size (shrinking or expanding). Otherwise delay.
     if (is_expanded_ && !url.is_empty()) {
       ExpandBubble();
-    } else if (url_formatter::FormatUrl(url, languages).length() >
+    } else if (url_formatter::FormatUrl(url).length() >
                url_text_.length()) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&StatusBubbleViews::ExpandBubble,
@@ -804,8 +819,9 @@ void StatusBubbleViews::AvoidMouse(const gfx::Point& location) {
     // Check if the bubble sticks out from the monitor or will obscure
     // download shelf.
     gfx::NativeView window = base_view_->GetWidget()->GetNativeView();
-    gfx::Rect monitor_rect =
-        gfx::Screen::GetScreen()->GetDisplayNearestWindow(window).work_area();
+    gfx::Rect monitor_rect = display::Screen::GetScreen()
+                                 ->GetDisplayNearestWindow(window)
+                                 .work_area();
     const int bubble_bottom_y = top_left.y() + position_.y() + size_.height();
 
     if (bubble_bottom_y + offset > monitor_rect.height() ||
@@ -859,8 +875,7 @@ void StatusBubbleViews::ExpandBubble() {
   gfx::Rect popup_bounds = popup_->GetWindowBoundsInScreen();
   int max_status_bubble_width = GetMaxStatusBubbleWidth();
   const gfx::FontList font_list;
-  url_text_ = url_formatter::ElideUrl(url_, font_list, max_status_bubble_width,
-                                       languages_);
+  url_text_ = url_formatter::ElideUrl(url_, font_list, max_status_bubble_width);
   int expanded_bubble_width =
       std::max(GetStandardStatusBubbleWidth(),
                std::min(gfx::GetStringWidth(url_text_, font_list) +

@@ -26,15 +26,21 @@
 
 #include "core/paint/FilterEffectBuilder.h"
 
-#include "core/layout/LayoutObject.h"
 #include "core/layout/svg/ReferenceFilterBuilder.h"
+#include "core/paint/PaintLayer.h"
+#include "core/svg/SVGFilterElement.h"
+#include "core/svg/SVGLengthContext.h"
+#include "core/svg/graphics/filters/SVGFilterBuilder.h"
 #include "platform/FloatConversion.h"
 #include "platform/LengthFunctions.h"
 #include "platform/graphics/ColorSpace.h"
+#include "platform/graphics/filters/FEBoxReflect.h"
 #include "platform/graphics/filters/FEColorMatrix.h"
 #include "platform/graphics/filters/FEComponentTransfer.h"
 #include "platform/graphics/filters/FEDropShadow.h"
 #include "platform/graphics/filters/FEGaussianBlur.h"
+#include "platform/graphics/filters/Filter.h"
+#include "platform/graphics/filters/FilterOperations.h"
 #include "platform/graphics/filters/SourceGraphic.h"
 #include "wtf/MathExtras.h"
 #include <algorithm>
@@ -114,6 +120,18 @@ Vector<float> sepiaMatrix(double amount)
     return matrix;
 }
 
+FloatRect computeReferenceBox(const Element& element, const FloatSize* zoomedReferenceBoxSize, float zoom)
+{
+    FloatSize size;
+    if (zoomedReferenceBoxSize) {
+        size = *zoomedReferenceBoxSize;
+    } else if (element.inShadowIncludingDocument() && element.layoutObject() && element.layoutObject()->enclosingLayer()) {
+        size = FloatSize(element.layoutObject()->enclosingLayer()->physicalBoundingBoxIncludingReflectionAndStackingChildren(LayoutPoint()).size());
+    }
+    size.scale(1.0f / zoom);
+    return FloatRect(FloatPoint(), size);
+}
+
 } // namespace
 
 FilterEffectBuilder::FilterEffectBuilder()
@@ -127,46 +145,43 @@ FilterEffectBuilder::~FilterEffectBuilder()
 DEFINE_TRACE(FilterEffectBuilder)
 {
     visitor->trace(m_lastEffect);
-    visitor->trace(m_referenceFilters);
 }
 
-bool FilterEffectBuilder::build(Element* element, const FilterOperations& operations, float zoom, const FloatSize* referenceBoxSize, const SkPaint* fillPaint, const SkPaint* strokePaint)
+bool FilterEffectBuilder::build(Element* element, const FilterOperations& operations, float zoom, const FloatSize* zoomedReferenceBoxSize, const SkPaint* fillPaint, const SkPaint* strokePaint)
 {
     // Create a parent filter for shorthand filters. These have already been scaled by the CSS code for page zoom, so scale is 1.0 here.
-    RefPtrWillBeRawPtr<Filter> parentFilter = Filter::create(1.0f);
-    RefPtrWillBeRawPtr<FilterEffect> previousEffect = parentFilter->sourceGraphic();
+    Filter* parentFilter = Filter::create(1.0f);
+    FilterEffect* previousEffect = parentFilter->getSourceGraphic();
     for (size_t i = 0; i < operations.operations().size(); ++i) {
-        RefPtrWillBeRawPtr<FilterEffect> effect = nullptr;
+        FilterEffect* effect = nullptr;
         FilterOperation* filterOperation = operations.operations().at(i).get();
         switch (filterOperation->type()) {
         case FilterOperation::REFERENCE: {
-            RefPtrWillBeRawPtr<Filter> referenceFilter = ReferenceFilterBuilder::build(zoom, element, previousEffect.get(), toReferenceFilterOperation(*filterOperation), referenceBoxSize, fillPaint, strokePaint);
-            if (referenceFilter) {
+            Filter* referenceFilter = buildReferenceFilter(toReferenceFilterOperation(*filterOperation), zoomedReferenceBoxSize, fillPaint, strokePaint, *element, previousEffect, zoom);
+            if (referenceFilter)
                 effect = referenceFilter->lastEffect();
-                m_referenceFilters.append(referenceFilter);
-            }
             break;
         }
         case FilterOperation::GRAYSCALE: {
             Vector<float> inputParameters = grayscaleMatrix(toBasicColorMatrixFilterOperation(filterOperation)->amount());
-            effect = FEColorMatrix::create(parentFilter.get(), FECOLORMATRIX_TYPE_MATRIX, inputParameters);
+            effect = FEColorMatrix::create(parentFilter, FECOLORMATRIX_TYPE_MATRIX, inputParameters);
             break;
         }
         case FilterOperation::SEPIA: {
             Vector<float> inputParameters = sepiaMatrix(toBasicColorMatrixFilterOperation(filterOperation)->amount());
-            effect = FEColorMatrix::create(parentFilter.get(), FECOLORMATRIX_TYPE_MATRIX, inputParameters);
+            effect = FEColorMatrix::create(parentFilter, FECOLORMATRIX_TYPE_MATRIX, inputParameters);
             break;
         }
         case FilterOperation::SATURATE: {
             Vector<float> inputParameters;
             inputParameters.append(narrowPrecisionToFloat(toBasicColorMatrixFilterOperation(filterOperation)->amount()));
-            effect = FEColorMatrix::create(parentFilter.get(), FECOLORMATRIX_TYPE_SATURATE, inputParameters);
+            effect = FEColorMatrix::create(parentFilter, FECOLORMATRIX_TYPE_SATURATE, inputParameters);
             break;
         }
         case FilterOperation::HUE_ROTATE: {
             Vector<float> inputParameters;
             inputParameters.append(narrowPrecisionToFloat(toBasicColorMatrixFilterOperation(filterOperation)->amount()));
-            effect = FEColorMatrix::create(parentFilter.get(), FECOLORMATRIX_TYPE_HUEROTATE, inputParameters);
+            effect = FEColorMatrix::create(parentFilter, FECOLORMATRIX_TYPE_HUEROTATE, inputParameters);
             break;
         }
         case FilterOperation::INVERT: {
@@ -179,7 +194,7 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
             transferFunction.tableValues = transferParameters;
 
             ComponentTransferFunction nullFunction;
-            effect = FEComponentTransfer::create(parentFilter.get(), transferFunction, transferFunction, transferFunction, nullFunction);
+            effect = FEComponentTransfer::create(parentFilter, transferFunction, transferFunction, transferFunction, nullFunction);
             break;
         }
         case FilterOperation::OPACITY: {
@@ -191,7 +206,7 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
             transferFunction.tableValues = transferParameters;
 
             ComponentTransferFunction nullFunction;
-            effect = FEComponentTransfer::create(parentFilter.get(), nullFunction, nullFunction, nullFunction, transferFunction);
+            effect = FEComponentTransfer::create(parentFilter, nullFunction, nullFunction, nullFunction, transferFunction);
             break;
         }
         case FilterOperation::BRIGHTNESS: {
@@ -201,7 +216,7 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
             transferFunction.intercept = 0;
 
             ComponentTransferFunction nullFunction;
-            effect = FEComponentTransfer::create(parentFilter.get(), transferFunction, transferFunction, transferFunction, nullFunction);
+            effect = FEComponentTransfer::create(parentFilter, transferFunction, transferFunction, transferFunction, nullFunction);
             break;
         }
         case FilterOperation::CONTRAST: {
@@ -212,12 +227,12 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
             transferFunction.intercept = -0.5 * amount + 0.5;
 
             ComponentTransferFunction nullFunction;
-            effect = FEComponentTransfer::create(parentFilter.get(), transferFunction, transferFunction, transferFunction, nullFunction);
+            effect = FEComponentTransfer::create(parentFilter, transferFunction, transferFunction, transferFunction, nullFunction);
             break;
         }
         case FilterOperation::BLUR: {
             float stdDeviation = floatValueForLength(toBlurFilterOperation(filterOperation)->stdDeviation(), 0);
-            effect = FEGaussianBlur::create(parentFilter.get(), stdDeviation, stdDeviation);
+            effect = FEGaussianBlur::create(parentFilter, stdDeviation, stdDeviation);
             break;
         }
         case FilterOperation::DROP_SHADOW: {
@@ -225,7 +240,12 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
             float stdDeviation = dropShadowOperation->stdDeviation();
             float x = dropShadowOperation->x();
             float y = dropShadowOperation->y();
-            effect = FEDropShadow::create(parentFilter.get(), stdDeviation, stdDeviation, x, y, dropShadowOperation->color(), 1);
+            effect = FEDropShadow::create(parentFilter, stdDeviation, stdDeviation, x, y, dropShadowOperation->getColor(), 1);
+            break;
+        }
+        case FilterOperation::BOX_REFLECT: {
+            BoxReflectFilterOperation* boxReflectOperation = toBoxReflectFilterOperation(filterOperation);
+            effect = FEBoxReflect::create(parentFilter, boxReflectOperation->reflection());
             break;
         }
         default:
@@ -239,11 +259,11 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
                 effect->setOperatingColorSpace(ColorSpaceDeviceRGB);
                 effect->inputEffects().append(previousEffect);
             }
-            previousEffect = effect.release();
+            if (previousEffect->originTainted())
+                effect->setOriginTainted();
+            previousEffect = effect;
         }
     }
-
-    m_referenceFilters.append(parentFilter);
 
     // We need to keep the old effects alive until this point, so that SVG reference filters
     // can share cached resources across frames.
@@ -254,6 +274,50 @@ bool FilterEffectBuilder::build(Element* element, const FilterOperations& operat
         return false;
 
     return true;
+}
+
+Filter* FilterEffectBuilder::buildReferenceFilter(
+    const ReferenceFilterOperation& referenceOperation,
+    const FloatSize* zoomedReferenceBoxSize,
+    const SkPaint* fillPaint,
+    const SkPaint* strokePaint,
+    Element& element,
+    FilterEffect* previousEffect,
+    float zoom)
+{
+    SVGFilterElement* filterElement = ReferenceFilterBuilder::resolveFilterReference(referenceOperation, element);
+    if (!filterElement)
+        return nullptr;
+
+    const FloatRect referenceBox = computeReferenceBox(element, zoomedReferenceBoxSize, zoom);
+    return buildReferenceFilter(*filterElement, referenceBox, fillPaint, strokePaint, previousEffect, zoom);
+}
+
+Filter* FilterEffectBuilder::buildReferenceFilter(
+    SVGFilterElement& filterElement,
+    const FloatRect& referenceBox,
+    const SkPaint* fillPaint,
+    const SkPaint* strokePaint,
+    FilterEffect* previousEffect,
+    float zoom,
+    SVGFilterGraphNodeMap* nodeMap)
+{
+    FloatRect filterRegion = SVGLengthContext::resolveRectangle<SVGFilterElement>(&filterElement, filterElement.filterUnits()->currentValue()->enumValue(), referenceBox);
+    // TODO(fs): We rely on the presence of a node map here to opt-in to the
+    // check for an empty filter region. The reason for this is that we lack a
+    // viewport to resolve against for HTML content. This is crbug.com/512453.
+    if (nodeMap && filterRegion.isEmpty())
+        return nullptr;
+
+    bool primitiveBoundingBoxMode = filterElement.primitiveUnits()->currentValue()->enumValue() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX;
+    Filter::UnitScaling unitScaling = primitiveBoundingBoxMode ? Filter::BoundingBox : Filter::UserSpace;
+    Filter* result = Filter::create(referenceBox, filterRegion, zoom, unitScaling);
+    if (!previousEffect)
+        previousEffect = result->getSourceGraphic();
+    SVGFilterBuilder builder(previousEffect, nodeMap, fillPaint, strokePaint);
+    builder.buildGraph(result, filterElement, referenceBox);
+    result->setLastEffect(builder.lastEffect());
+    return result;
 }
 
 } // namespace blink

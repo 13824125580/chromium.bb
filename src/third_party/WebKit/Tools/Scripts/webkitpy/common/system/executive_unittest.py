@@ -32,7 +32,6 @@ import errno
 import signal
 import subprocess
 import sys
-import time
 import unittest
 
 # Since we execute this script directly as part of the unit tests, we need to ensure
@@ -47,19 +46,24 @@ from webkitpy.common.system.filesystem_mock import MockFileSystem
 
 
 class ScriptErrorTest(unittest.TestCase):
+
     def test_message_with_output(self):
         error = ScriptError('My custom message!', '', -1)
         self.assertEqual(error.message_with_output(), 'My custom message!')
         error = ScriptError('My custom message!', '', -1, 'My output.')
         self.assertEqual(error.message_with_output(), 'My custom message!\n\noutput: My output.')
         error = ScriptError('', 'my_command!', -1, 'My output.', '/Users/username/blah')
-        self.assertEqual(error.message_with_output(), 'Failed to run "\'my_command!\'" exit_code: -1 cwd: /Users/username/blah\n\noutput: My output.')
+        self.assertEqual(error.message_with_output(),
+                         'Failed to run "\'my_command!\'" exit_code: -1 cwd: /Users/username/blah\n\noutput: My output.')
         error = ScriptError('', 'my_command!', -1, 'ab' + '1' * 499)
-        self.assertEqual(error.message_with_output(), 'Failed to run "\'my_command!\'" exit_code: -1\n\noutput: Last 500 characters of output:\nb' + '1' * 499)
+        self.assertEqual(error.message_with_output(),
+                         'Failed to run "\'my_command!\'" exit_code: -1\n\noutput: Last 500 characters of output:\nb' + '1' * 499)
 
     def test_message_with_tuple(self):
         error = ScriptError('', ('my', 'command'), -1, 'My output.', '/Users/username/blah')
-        self.assertEqual(error.message_with_output(), 'Failed to run "(\'my\', \'command\')" exit_code: -1 cwd: /Users/username/blah\n\noutput: My output.')
+        self.assertEqual(error.message_with_output(),
+                         'Failed to run "(\'my\', \'command\')" exit_code: -1 cwd: /Users/username/blah\n\noutput: My output.')
+
 
 def never_ending_command():
     """Arguments for a command that will never end (useful for testing process
@@ -75,7 +79,8 @@ def command_line(cmd, *args):
 
 
 class ExecutiveTest(unittest.TestCase):
-    def assert_interpreter_for_content(self, intepreter, content):
+
+    def assert_interpreter_for_content(self, interpreter, content):
         fs = MockFileSystem()
 
         tempfile, temp_name = fs.open_binary_tempfile('')
@@ -83,7 +88,7 @@ class ExecutiveTest(unittest.TestCase):
         tempfile.close()
         file_interpreter = Executive.interpreter_for_script(temp_name, fs)
 
-        self.assertEqual(file_interpreter, intepreter)
+        self.assertEqual(file_interpreter, interpreter)
 
     def test_interpreter_for_script(self):
         self.assert_interpreter_for_content(None, '')
@@ -116,7 +121,7 @@ class ExecutiveTest(unittest.TestCase):
 
     def test_popen_args(self):
         executive = Executive()
-        # Explicitly naming the 'args' argument should not thow an exception.
+        # Explicitly naming the 'args' argument should not throw an exception.
         executive.popen(args=command_line('echo', 1), stdout=executive.PIPE).wait()
 
     def test_run_command_with_unicode(self):

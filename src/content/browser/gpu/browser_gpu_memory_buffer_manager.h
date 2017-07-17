@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/callback.h"
@@ -17,6 +18,7 @@
 #include "base/trace_event/memory_dump_provider.h"
 #include "content/common/content_export.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+#include "gpu/ipc/common/surface_handle.h"
 
 namespace content {
 
@@ -62,11 +64,12 @@ class CONTENT_EXPORT BrowserGpuMemoryBufferManager
                                         gfx::BufferUsage usage);
 
   // Overridden from gpu::GpuMemoryBufferManager:
-  scoped_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBuffer(
+  std::unique_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBuffer(
       const gfx::Size& size,
       gfx::BufferFormat format,
-      gfx::BufferUsage usage) override;
-  scoped_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBufferFromHandle(
+      gfx::BufferUsage usage,
+      gpu::SurfaceHandle surface_handle) override;
+  std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBufferFromHandle(
       const gfx::GpuMemoryBufferHandle& handle,
       const gfx::Size& size,
       gfx::BufferFormat format) override;
@@ -78,12 +81,6 @@ class CONTENT_EXPORT BrowserGpuMemoryBufferManager
   // Overridden from base::trace_event::MemoryDumpProvider:
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
-
-  // Virtual for testing.
-  virtual scoped_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBufferForScanout(
-      const gfx::Size& size,
-      gfx::BufferFormat format,
-      int32_t surface_id);
 
   void AllocateGpuMemoryBufferForChildProcess(
       gfx::GpuMemoryBufferId id,
@@ -105,27 +102,20 @@ class CONTENT_EXPORT BrowserGpuMemoryBufferManager
 
  private:
   struct BufferInfo {
-    BufferInfo()
-        : type(gfx::EMPTY_BUFFER),
-          format(gfx::BufferFormat::RGBA_8888),
-          usage(gfx::BufferUsage::GPU_READ),
-          gpu_host_id(0) {}
+    BufferInfo();
     BufferInfo(const gfx::Size& size,
                gfx::GpuMemoryBufferType type,
                gfx::BufferFormat format,
                gfx::BufferUsage usage,
-               int gpu_host_id)
-        : size(size),
-          type(type),
-          format(format),
-          usage(usage),
-          gpu_host_id(gpu_host_id) {}
+               int gpu_host_id);
+    BufferInfo(const BufferInfo& other);
+    ~BufferInfo();
 
     gfx::Size size;
-    gfx::GpuMemoryBufferType type;
-    gfx::BufferFormat format;
-    gfx::BufferUsage usage;
-    int gpu_host_id;
+    gfx::GpuMemoryBufferType type = gfx::EMPTY_BUFFER;
+    gfx::BufferFormat format = gfx::BufferFormat::RGBA_8888;
+    gfx::BufferUsage usage = gfx::BufferUsage::GPU_READ;
+    int gpu_host_id = 0;
   };
 
   struct CreateGpuMemoryBufferRequest;
@@ -139,11 +129,11 @@ class CONTENT_EXPORT BrowserGpuMemoryBufferManager
                                              int client_id,
                                              const CreateCallback& callback)>;
 
-  scoped_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBufferForSurface(
+  std::unique_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBufferForSurface(
       const gfx::Size& size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage,
-      int32_t surface_id);
+      gpu::SurfaceHandle surface_handle);
 
   // Functions that handle synchronous buffer creation requests.
   void HandleCreateGpuMemoryBufferOnIO(CreateGpuMemoryBufferRequest* request);

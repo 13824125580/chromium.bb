@@ -31,15 +31,17 @@
 #ifndef MediaSource_h
 #define MediaSource_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ActiveDOMObject.h"
-#include "core/events/EventTarget.h"
 #include "core/html/HTMLMediaSource.h"
+#include "core/html/TimeRanges.h"
 #include "core/html/URLRegistry.h"
+#include "modules/EventTargetModules.h"
 #include "modules/mediasource/SourceBuffer.h"
 #include "modules/mediasource/SourceBufferList.h"
 #include "public/platform/WebMediaSource.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -48,12 +50,12 @@ class GenericEventQueue;
 class WebSourceBuffer;
 
 class MediaSource final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<MediaSource>
+    : public EventTargetWithInlineData
     , public HTMLMediaSource
+    , public ActiveScriptWrappable
     , public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(MediaSource);
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MediaSource);
+    USING_GARBAGE_COLLECTED_MIXIN(MediaSource);
 public:
     static const AtomicString& openKeyword();
     static const AtomicString& closedKeyword();
@@ -70,30 +72,36 @@ public:
     SourceBuffer* addSourceBuffer(const String& type, ExceptionState&);
     void removeSourceBuffer(SourceBuffer*, ExceptionState&);
     void setDuration(double, ExceptionState&);
+
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(sourceopen);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(sourceended);
+    DEFINE_ATTRIBUTE_EVENT_LISTENER(sourceclose);
+
     const AtomicString& readyState() const { return m_readyState; }
     void endOfStream(const AtomicString& error, ExceptionState&);
     void endOfStream(ExceptionState&);
+    void setLiveSeekableRange(double start, double end, ExceptionState&);
+    void clearLiveSeekableRange(ExceptionState&);
+
     static bool isTypeSupported(const String& type);
 
     // HTMLMediaSource
     bool attachToElement(HTMLMediaElement*) override;
-    void setWebMediaSourceAndOpen(PassOwnPtr<WebMediaSource>) override;
+    void setWebMediaSourceAndOpen(std::unique_ptr<WebMediaSource>) override;
     void close() override;
     bool isClosed() const override;
     double duration() const override;
     TimeRanges* buffered() const override;
     TimeRanges* seekable() const override;
-#if !ENABLE(OILPAN)
-    void refHTMLMediaSource() override { ref(); }
-    void derefHTMLMediaSource() override { deref(); }
-#endif
 
     // EventTarget interface
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final;
 
     // ActiveDOMObject interface
-    bool hasPendingActivity() const override;
     void stop() override;
 
     // URLRegistrable interface
@@ -119,21 +127,23 @@ private:
 
     bool isUpdating() const;
 
-    PassOwnPtr<WebSourceBuffer> createWebSourceBuffer(const String& type, const String& codecs, ExceptionState&);
+    std::unique_ptr<WebSourceBuffer> createWebSourceBuffer(const String& type, const String& codecs, ExceptionState&);
     void scheduleEvent(const AtomicString& eventName);
     void endOfStreamInternal(const WebMediaSource::EndOfStreamStatus, ExceptionState&);
 
     // Implements the duration change algorithm.
-    // https://dvcs.w3.org/hg/html-media/raw-file/default/media-source/media-source.html#duration-change-algorithm
-    void durationChangeAlgorithm(double newDuration);
+    // http://w3c.github.io/media-source/#duration-change-algorithm
+    void durationChangeAlgorithm(double newDuration, ExceptionState&);
 
-    OwnPtr<WebMediaSource> m_webMediaSource;
+    std::unique_ptr<WebMediaSource> m_webMediaSource;
     AtomicString m_readyState;
-    OwnPtrWillBeMember<GenericEventQueue> m_asyncEventQueue;
-    RawPtrWillBeWeakMember<HTMLMediaElement> m_attachedElement;
+    Member<GenericEventQueue> m_asyncEventQueue;
+    WeakMember<HTMLMediaElement> m_attachedElement;
 
     Member<SourceBufferList> m_sourceBuffers;
     Member<SourceBufferList> m_activeSourceBuffers;
+
+    Member<TimeRanges> m_liveSeekableRange;
 
     bool m_isAddedToRegistry;
 };

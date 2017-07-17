@@ -241,24 +241,19 @@ TEST_PPAPI_NACL(Graphics2D_BindNull)
 // These tests fail with the test compositor which is what's used by default for
 // browser tests on Windows Aura. Renable when the software compositor is
 // available.
-#define MAYBE_IN_Graphics3D DISABLED_Graphics3D
 #define MAYBE_OUT_Graphics3D DISABLED_Graphics3D
 #define MAYBE_NACL_Graphics3D DISABLED_Graphics3D
 #else  // defined(USE_AURA)
-// In-process and NaCl tests are having flaky failures on Win: crbug.com/242252
-#define MAYBE_IN_Graphics3D DISABLED_Graphics3D
+// NaCl tests are having flaky failures on Win: crbug.com/242252
 #define MAYBE_OUT_Graphics3D Graphics3D
 #define MAYBE_NACL_Graphics3D DISABLED_Graphics3D
 #endif  // defined(USE_AURA)
 #elif defined(OS_MACOSX)
 // These tests fail when using the legacy software mode. Reenable when the
 // software compositor is enabled crbug.com/286038
-#define MAYBE_IN_Graphics3D DISABLED_Graphics3D
 #define MAYBE_OUT_Graphics3D DISABLED_Graphics3D
 #define MAYBE_NACL_Graphics3D DISABLED_Graphics3D
 #else
-// The tests are failing in-process. crbug.com/280282
-#define MAYBE_IN_Graphics3D DISABLED_Graphics3D
 #define MAYBE_OUT_Graphics3D Graphics3D
 #define MAYBE_NACL_Graphics3D Graphics3D
 #endif
@@ -1169,7 +1164,13 @@ TEST_PPAPI_NACL(NetworkProxy)
 
 TEST_PPAPI_NACL(TrueTypeFont)
 
-TEST_PPAPI_NACL(VideoDecoder)
+// TODO(crbug.com/602875), TODO(crbug.com/602876) Flaky on Win and CrOS.
+#if defined(OS_CHROMEOS) || defined(OS_WIN)
+#define MAYBE_VideoDecoder DISABLED_VideoDecoder
+#else
+#define MAYBE_VideoDecoder VideoDecoder
+#endif
+TEST_PPAPI_NACL(MAYBE_VideoDecoder)
 
 TEST_PPAPI_NACL(VideoEncoder)
 
@@ -1258,7 +1259,7 @@ class PackagedAppTest : public ExtensionBrowserTest {
   }
 
   void RunTests(const std::string& extension_dirname) {
-    ExtensionTestMessageListener listener("PASS", true);
+    ExtensionTestMessageListener listener("PASS", false);
     LaunchTestingApp(extension_dirname);
     EXPECT_TRUE(listener.WaitUntilSatisfied());
   }

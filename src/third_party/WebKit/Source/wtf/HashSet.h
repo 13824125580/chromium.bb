@@ -22,7 +22,8 @@
 #define WTF_HashSet_h
 
 #include "wtf/HashTable.h"
-#include "wtf/PartitionAllocator.h"
+#include "wtf/allocator/PartitionAllocator.h"
+#include <initializer_list>
 
 namespace WTF {
 
@@ -42,8 +43,6 @@ private:
     typedef HashArg HashFunctions;
     typedef TraitsArg ValueTraits;
     typedef typename ValueTraits::PeekInType ValuePeekInType;
-    typedef typename ValueTraits::PassInType ValuePassInType;
-    typedef typename ValueTraits::PassOutType ValuePassOutType;
 
 public:
     typedef typename ValueTraits::TraitType ValueType;
@@ -57,14 +56,17 @@ public:
     typedef HashTableConstIteratorAdapter<HashTableType, ValueTraits> const_iterator;
     typedef typename HashTableType::AddResult AddResult;
 
+    HashSet() = default;
+    HashSet(const HashSet&) = default;
+    HashSet& operator=(const HashSet&) = default;
+    HashSet(HashSet&&) = default;
+    HashSet& operator=(HashSet&&) = default;
+
+    HashSet(std::initializer_list<ValueType> elements);
+    HashSet& operator=(std::initializer_list<ValueType> elements);
+
     void swap(HashSet& ref)
     {
-        m_impl.swap(ref.m_impl);
-    }
-
-    void swap(typename Allocator::template OtherType<HashSet>::Type other)
-    {
-        HashSet& ref = Allocator::getOther(other);
         m_impl.swap(ref.m_impl);
     }
 
@@ -93,7 +95,8 @@ public:
 
     // The return value is a pair of an iterator to the new value's location,
     // and a bool that is true if an new entry was added.
-    AddResult add(ValuePassInType);
+    template <typename IncomingValueType>
+    AddResult add(IncomingValueType&&);
 
     // An alternate version of add() that finds the object by hashing and
     // comparing with some other type, to avoid the cost of type conversion if
@@ -101,8 +104,8 @@ public:
     // following function members:
     //   static unsigned hash(const T&);
     //   static bool equal(const ValueType&, const T&);
-    //   static translate(ValueType&, const T&, unsigned hashCode);
-    template <typename HashTranslator, typename T> AddResult add(const T&);
+    //   static translate(ValueType&, T&&, unsigned hashCode);
+    template <typename HashTranslator, typename T> AddResult addWithTranslator(T&&);
 
     void remove(ValuePeekInType);
     void remove(iterator);
@@ -110,11 +113,9 @@ public:
     template <typename Collection>
     void removeAll(const Collection& toBeRemoved) { WTF::removeAll(*this, toBeRemoved); }
 
-    static bool isValidValue(ValuePeekInType);
-
-    ValuePassOutType take(iterator);
-    ValuePassOutType take(ValuePeekInType);
-    ValuePassOutType takeAny();
+    ValueType take(iterator);
+    ValueType take(ValuePeekInType);
+    ValueType takeAny();
 
     template <typename VisitorDispatcher>
     void trace(VisitorDispatcher visitor) { m_impl.trace(visitor); }
@@ -134,11 +135,27 @@ struct HashSetTranslatorAdapter {
     STATIC_ONLY(HashSetTranslatorAdapter);
     template <typename T> static unsigned hash(const T& key) { return Translator::hash(key); }
     template <typename T, typename U> static bool equal(const T& a, const U& b) { return Translator::equal(a, b); }
-    template <typename T, typename U> static void translate(T& location, const U& key, const U&, unsigned hashCode)
+    template <typename T, typename U, typename V> static void translate(T& location, U&& key, const V&, unsigned hashCode)
     {
-        Translator::translate(location, key, hashCode);
+        Translator::translate(location, std::forward<U>(key), hashCode);
     }
 };
+
+template <typename Value, typename HashFunctions, typename Traits, typename Allocator>
+HashSet<Value, HashFunctions, Traits, Allocator>::HashSet(std::initializer_list<ValueType> elements)
+{
+    if (elements.size())
+        m_impl.reserveCapacityForSize(elements.size());
+    for (const ValueType& element : elements)
+        add(element);
+}
+
+template <typename Value, typename HashFunctions, typename Traits, typename Allocator>
+auto HashSet<Value, HashFunctions, Traits, Allocator>::operator=(std::initializer_list<ValueType> elements) -> HashSet&
+{
+    *this = HashSet(std::move(elements));
+    return *this;
+}
 
 template <typename T, typename U, typename V, typename W>
 inline unsigned HashSet<T, U, V, W>::size() const
@@ -198,17 +215,19 @@ inline bool HashSet<Value, HashFunctions, Traits, Allocator>::contains(const T& 
 }
 
 template <typename T, typename U, typename V, typename W>
-inline typename HashSet<T, U, V, W>::AddResult HashSet<T, U, V, W>::add(ValuePassInType value)
+template <typename IncomingValueType>
+inline typename HashSet<T, U, V, W>::AddResult HashSet<T, U, V, W>::add(IncomingValueType&& value)
 {
-    return m_impl.add(value);
+    return m_impl.add(std::forward<IncomingValueType>(value));
 }
 
 template <typename Value, typename HashFunctions, typename Traits, typename Allocator>
 template <typename HashTranslator, typename T>
 inline typename HashSet<Value, HashFunctions, Traits, Allocator>::AddResult
-HashSet<Value, HashFunctions, Traits, Allocator>::add(const T& value)
+HashSet<Value, HashFunctions, Traits, Allocator>::addWithTranslator(T&& value)
 {
-    return m_impl.template addPassingHashCode<HashSetTranslatorAdapter<HashTranslator>>(value, value);
+    // Forward only the first argument, because the second argument isn't actually used in HashSetTranslatorAdapter.
+    return m_impl.template addPassingHashCode<HashSetTranslatorAdapter<HashTranslator>>(std::forward<T>(value), value);
 }
 
 template <typename T, typename U, typename V, typename W>
@@ -230,42 +249,25 @@ inline void HashSet<T, U, V, W>::clear()
 }
 
 template <typename T, typename U, typename V, typename W>
-inline bool HashSet<T, U, V, W>::isValidValue(ValuePeekInType value)
-{
-    if (ValueTraits::isDeletedValue(value))
-        return false;
-
-    if (HashFunctions::safeToCompareToEmptyOrDeleted) {
-        if (value == ValueTraits::emptyValue())
-            return false;
-    } else {
-        if (isHashTraitsEmptyValue<ValueTraits>(value))
-            return false;
-    }
-
-    return true;
-}
-
-template <typename T, typename U, typename V, typename W>
-inline typename HashSet<T, U, V, W>::ValuePassOutType HashSet<T, U, V, W>::take(iterator it)
+inline auto HashSet<T, U, V, W>::take(iterator it) -> ValueType
 {
     if (it == end())
         return ValueTraits::emptyValue();
 
-    ValuePassOutType result = ValueTraits::passOut(const_cast<ValueType&>(*it));
+    ValueType result = std::move(const_cast<ValueType&>(*it));
     remove(it);
 
     return result;
 }
 
 template <typename T, typename U, typename V, typename W>
-inline typename HashSet<T, U, V, W>::ValuePassOutType HashSet<T, U, V, W>::take(ValuePeekInType value)
+inline auto HashSet<T, U, V, W>::take(ValuePeekInType value) -> ValueType
 {
     return take(find(value));
 }
 
 template <typename T, typename U, typename V, typename W>
-inline typename HashSet<T, U, V, W>::ValuePassOutType HashSet<T, U, V, W>::takeAny()
+inline auto HashSet<T, U, V, W>::takeAny() -> ValueType
 {
     return take(begin());
 }
@@ -286,13 +288,6 @@ inline void copyToVector(const C& collection, W& vector)
     for (unsigned i = 0; it != end; ++it, ++i)
         vector[i] = *it;
 }
-
-#if !ENABLE(OILPAN)
-template <typename T, typename U, typename V>
-struct NeedsTracing<HashSet<T, U, V>> {
-    static const bool value = false;
-};
-#endif
 
 } // namespace WTF
 

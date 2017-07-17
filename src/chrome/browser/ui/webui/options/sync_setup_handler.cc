@@ -31,7 +31,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/singleton_tabs.h"
-#include "chrome/browser/ui/webui/options/options_handlers_helper.h"
+#include "chrome/browser/ui/webui/profile_helper.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/chrome_switches.h"
@@ -77,7 +77,6 @@ struct SyncConfigInfo {
 
   bool encrypt_all;
   bool sync_everything;
-  bool sync_nothing;
   syncer::ModelTypeSet data_types;
   bool payments_integration_enabled;
   std::string passphrase;
@@ -87,14 +86,13 @@ struct SyncConfigInfo {
 SyncConfigInfo::SyncConfigInfo()
     : encrypt_all(false),
       sync_everything(false),
-      sync_nothing(false),
       payments_integration_enabled(false),
       passphrase_is_gaia(false) {}
 
 SyncConfigInfo::~SyncConfigInfo() {}
 
 bool GetConfiguration(const std::string& json, SyncConfigInfo* config) {
-  scoped_ptr<base::Value> parsed_value = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> parsed_value = base::JSONReader::Read(json);
   base::DictionaryValue* result;
   if (!parsed_value || !parsed_value->GetAsDictionary(&result)) {
     DLOG(ERROR) << "GetConfiguration() not passed a Dictionary";
@@ -105,14 +103,6 @@ bool GetConfiguration(const std::string& json, SyncConfigInfo* config) {
     DLOG(ERROR) << "GetConfiguration() not passed a syncAllDataTypes value";
     return false;
   }
-
-  if (!result->GetBoolean("syncNothing", &config->sync_nothing)) {
-    DLOG(ERROR) << "GetConfiguration() not passed a syncNothing value";
-    return false;
-  }
-
-  DCHECK(!(config->sync_everything && config->sync_nothing))
-      << "syncAllDataTypes and syncNothing cannot both be true";
 
   if (!result->GetBoolean("paymentsIntegrationEnabled",
                           &config->payments_integration_enabled)) {
@@ -201,6 +191,14 @@ void SyncSetupHandler::GetStaticLocalizedValues(
       "encryptionSectionMessage",
       GetStringFUTF16(IDS_SYNC_ENCRYPTION_SECTION_MESSAGE, product_name));
   localized_strings->SetString(
+      "personalizeGoogleServicesTitle",
+      GetStringUTF16(IDS_SYNC_CONFIRMATION_PERSONALIZE_SERVICES_TITLE));
+  localized_strings->SetString(
+      "personalizeGoogleServicesMessage",
+      GetStringFUTF16(
+          IDS_SYNC_PERSONALIZE_GOOGLE_SERVICES_MESSAGE,
+          base::ASCIIToUTF16(chrome::kGoogleAccountActivityControlsURL)));
+  localized_strings->SetString(
       "passphraseRecover",
       GetStringFUTF16(
           IDS_SYNC_PASSPHRASE_RECOVER,
@@ -240,7 +238,6 @@ void SyncSetupHandler::GetStaticLocalizedValues(
       {"settingUp", IDS_SYNC_LOGIN_SETTING_UP},
       {"syncAllDataTypes", IDS_SYNC_EVERYTHING},
       {"chooseDataTypes", IDS_SYNC_CHOOSE_DATATYPES},
-      {"syncNothing", IDS_SYNC_NOTHING},
       {"bookmarks", IDS_SYNC_DATATYPE_BOOKMARKS},
       {"preferences", IDS_SYNC_DATATYPE_PREFERENCES},
       {"autofill", IDS_SYNC_DATATYPE_AUTOFILL},
@@ -249,7 +246,6 @@ void SyncSetupHandler::GetStaticLocalizedValues(
       {"extensions", IDS_SYNC_DATATYPE_EXTENSIONS},
       {"typedURLs", IDS_SYNC_DATATYPE_TYPED_URLS},
       {"apps", IDS_SYNC_DATATYPE_APPS},
-      {"wifiCredentials", IDS_SYNC_DATATYPE_WIFI_CREDENTIALS},
       {"openTabs", IDS_SYNC_DATATYPE_TABS},
       {"enablePaymentsIntegration", IDS_AUTOFILL_USE_PAYMENTS_DATA},
       {"serviceUnavailableError", IDS_SYNC_SETUP_ABORTED_BY_PENDING_CLEAR},
@@ -289,8 +285,8 @@ void SyncSetupHandler::GetStaticLocalizedValues(
 
 void SyncSetupHandler::ConfigureSyncDone() {
   base::StringValue page("done");
-  web_ui()->CallJavascriptFunction(
-      "SyncSetupOverlay.showSyncSetupPage", page);
+  web_ui()->CallJavascriptFunctionUnsafe("SyncSetupOverlay.showSyncSetupPage",
+                                         page);
 
   // Suppress the sign in promo once the user starts sync. This way the user
   // doesn't see the sign in promo even if they sign out later on.
@@ -305,7 +301,7 @@ void SyncSetupHandler::ConfigureSyncDone() {
 
     // We're done configuring, so notify ProfileSyncService that it is OK to
     // start syncing.
-    service->SetSetupInProgress(false);
+    sync_blocker_.reset();
     service->SetFirstSetupComplete();
   }
 }
@@ -423,7 +419,7 @@ bool SyncSetupHandler::PrepareSyncSetup() {
 
   ProfileSyncService* service = GetSyncService();
   if (service)
-    service->SetSetupInProgress(true);
+    sync_blocker_ = service->GetSetupInProgressHandle();
 
   return true;
 }
@@ -440,8 +436,8 @@ void SyncSetupHandler::DisplaySpinner() {
                               base::TimeDelta::FromSeconds(kTimeoutSec),
                               this, &SyncSetupHandler::DisplayTimeout);
 
-  web_ui()->CallJavascriptFunction(
-      "SyncSetupOverlay.showSyncSetupPage", page, args);
+  web_ui()->CallJavascriptFunctionUnsafe("SyncSetupOverlay.showSyncSetupPage",
+                                         page, args);
 }
 
 // TODO(kochi): Handle error conditions other than timeout.
@@ -455,8 +451,8 @@ void SyncSetupHandler::DisplayTimeout() {
 
   base::StringValue page("timeout");
   base::DictionaryValue args;
-  web_ui()->CallJavascriptFunction(
-      "SyncSetupOverlay.showSyncSetupPage", page, args);
+  web_ui()->CallJavascriptFunctionUnsafe("SyncSetupOverlay.showSyncSetupPage",
+                                         page, args);
 }
 
 void SyncSetupHandler::OnDidClosePage(const base::ListValue* args) {
@@ -520,19 +516,6 @@ void SyncSetupHandler::HandleConfigure(const base::ListValue* args) {
   // dialog.
   if (!service || !service->IsBackendInitialized()) {
     CloseUI();
-    return;
-  }
-
-  // Disable sync, but remain signed in if the user selected "Sync nothing" in
-  // the advanced settings dialog. Note: In order to disable sync across
-  // restarts on Chrome OS, we must call RequestStop(CLEAR_DATA), which
-  // suppresses sync startup in addition to disabling it.
-  if (configuration.sync_nothing) {
-    ProfileSyncService::SyncEvent(
-        ProfileSyncService::STOP_FROM_ADVANCED_DIALOG);
-    CloseUI();
-    service->RequestStop(ProfileSyncService::CLEAR_DATA);
-    service->SetSetupInProgress(false);
     return;
   }
 
@@ -685,7 +668,9 @@ void SyncSetupHandler::HandleStopSyncing(const base::ListValue* args) {
 
   if (delete_profile) {
     // Do as BrowserOptionsHandler::DeleteProfile().
-    options::helper::DeleteProfileAtPath(GetProfile()->GetPath(), web_ui());
+    webui::DeleteProfileAtPath(GetProfile()->GetPath(),
+                               web_ui(),
+                               ProfileMetrics::DELETE_PROFILE_SETTINGS);
   }
 }
 #endif
@@ -741,8 +726,7 @@ void SyncSetupHandler::CloseSyncSetup() {
   // Alert the sync service anytime the sync setup dialog is closed. This can
   // happen due to the user clicking the OK or Cancel button, or due to the
   // dialog being closed by virtue of sync being disabled in the background.
-  if (sync_service)
-    sync_service->SetSetupInProgress(false);
+  sync_blocker_.reset();
 
   configuring_sync_ = false;
 }
@@ -809,8 +793,8 @@ void SyncSetupHandler::FocusUI() {
 void SyncSetupHandler::CloseUI() {
   CloseSyncSetup();
   base::StringValue page("done");
-  web_ui()->CallJavascriptFunction(
-      "SyncSetupOverlay.showSyncSetupPage", page);
+  web_ui()->CallJavascriptFunctionUnsafe("SyncSetupOverlay.showSyncSetupPage",
+                                         page);
 }
 
 bool SyncSetupHandler::IsExistingWizardPresent() {
@@ -953,8 +937,8 @@ void SyncSetupHandler::DisplayConfigureSync(bool passphrase_failed) {
   }
 
   base::StringValue page("configure");
-  web_ui()->CallJavascriptFunction(
-      "SyncSetupOverlay.showSyncSetupPage", page, args);
+  web_ui()->CallJavascriptFunctionUnsafe("SyncSetupOverlay.showSyncSetupPage",
+                                         page, args);
 
   // Make sure the tab used for the Gaia sign in does not cover the settings
   // tab.

@@ -5,10 +5,12 @@
 #ifndef CompositorAnimation_h
 #define CompositorAnimation_h
 
-#include "base/memory/scoped_ptr.h"
+#include "cc/animation/animation.h"
 #include "platform/PlatformExport.h"
 #include "platform/animation/CompositorTargetProperty.h"
 #include "wtf/Noncopyable.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace cc {
 class Animation;
@@ -17,69 +19,60 @@ class Animation;
 namespace blink {
 
 class CompositorAnimationCurve;
+class CompositorFloatAnimationCurve;
 
 // A compositor driven animation.
 class PLATFORM_EXPORT CompositorAnimation {
     WTF_MAKE_NONCOPYABLE(CompositorAnimation);
 public:
-    enum Direction {
-        DirectionNormal,
-        DirectionReverse,
-        DirectionAlternate,
-        DirectionAlternateReverse
-    };
+    using Direction = cc::Animation::Direction;
+    using FillMode = cc::Animation::FillMode;
 
-    enum FillMode {
-        FillModeNone,
-        FillModeForwards,
-        FillModeBackwards,
-        FillModeBoth
-    };
+    static std::unique_ptr<CompositorAnimation> create(const blink::CompositorAnimationCurve& curve, CompositorTargetProperty::Type target, int groupId, int animationId)
+    {
+        return wrapUnique(new CompositorAnimation(curve, target, animationId, groupId));
+    }
 
-    CompositorAnimation(const CompositorAnimationCurve&, CompositorTargetProperty::Type, int animationId, int groupId);
-    virtual ~CompositorAnimation();
+    ~CompositorAnimation();
 
     // An id must be unique.
-    virtual int id();
-    virtual int group();
+    int id() const;
+    int group() const;
 
-    virtual CompositorTargetProperty::Type targetProperty() const;
+    CompositorTargetProperty::Type targetProperty() const;
 
     // This is the number of times that the animation will play. If this
     // value is zero the animation will not play. If it is negative, then
     // the animation will loop indefinitely.
-    virtual double iterations() const;
-    virtual void setIterations(double);
+    double iterations() const;
+    void setIterations(double);
 
-    virtual double startTime() const;
-    virtual void setStartTime(double monotonicTime);
+    double startTime() const;
+    void setStartTime(double monotonicTime);
 
-    virtual double timeOffset() const;
-    virtual void setTimeOffset(double monotonicTime);
+    double timeOffset() const;
+    void setTimeOffset(double monotonicTime);
 
-    virtual Direction direction() const;
-    virtual void setDirection(Direction);
+    Direction getDirection() const;
+    void setDirection(Direction);
 
-    virtual double playbackRate() const;
-    virtual void setPlaybackRate(double);
+    double playbackRate() const;
+    void setPlaybackRate(double);
 
-    virtual FillMode fillMode() const;
-    virtual void setFillMode(FillMode);
+    FillMode getFillMode() const;
+    void setFillMode(FillMode);
 
-    virtual double iterationStart() const;
-    virtual void setIterationStart(double);
+    double iterationStart() const;
+    void setIterationStart(double);
 
-    scoped_ptr<cc::Animation> passAnimation();
+    std::unique_ptr<cc::Animation> passAnimation();
 
-    // Removes ownership over cc animation. Identical to PassAnimation.
-    // TODO(loyso): Erase this method. crbug.com/575041
-    cc::Animation* releaseCCAnimation();
-
-protected:
-    CompositorAnimation();
+    std::unique_ptr<CompositorFloatAnimationCurve> floatCurveForTesting() const;
 
 private:
-    scoped_ptr<cc::Animation> m_animation;
+    CompositorAnimation(const CompositorAnimationCurve&, CompositorTargetProperty::Type, int animationId, int groupId);
+
+    std::unique_ptr<cc::Animation> m_animation;
 };
 
 } // namespace blink

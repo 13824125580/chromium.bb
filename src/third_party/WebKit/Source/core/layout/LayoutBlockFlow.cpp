@@ -30,36 +30,38 @@
 
 #include "core/layout/LayoutBlockFlow.h"
 
-#include "core/dom/AXObjectCache.h"
+#include "core/editing/Editor.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
-#include "core/frame/Settings.h"
 #include "core/html/HTMLDialogElement.h"
 #include "core/layout/HitTestLocation.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutFlowThread.h"
+#include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutMultiColumnFlowThread.h"
 #include "core/layout/LayoutMultiColumnSpannerPlaceholder.h"
 #include "core/layout/LayoutPagedFlowThread.h"
-#include "core/layout/LayoutText.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/TextAutosizer.h"
-#include "core/layout/api/SelectionState.h"
-#include "core/layout/line/LineBreaker.h"
+#include "core/layout/line/GlyphOverflow.h"
+#include "core/layout/line/InlineIterator.h"
+#include "core/layout/line/InlineTextBox.h"
 #include "core/layout/line/LineWidth.h"
 #include "core/layout/shapes/ShapeOutsideInfo.h"
-#include "core/paint/BlockFlowPainter.h"
-#include "core/paint/ClipScope.h"
-#include "core/paint/LayoutObjectDrawingRecorder.h"
-#include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/geometry/TransformState.h"
-#include "platform/text/BidiTextRun.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 bool LayoutBlockFlow::s_canPropagateFloatIntoSibling = false;
+
+struct SameSizeAsLayoutBlockFlow : public LayoutBlock {
+    LineBoxList lineBoxes;
+    void* pointers[2];
+};
+
+static_assert(sizeof(LayoutBlockFlow) == sizeof(SameSizeAsLayoutBlockFlow), "LayoutBlockFlow should stay small");
 
 struct SameSizeAsMarginInfo {
     uint16_t bitfields;
@@ -68,6 +70,7 @@ struct SameSizeAsMarginInfo {
 
 static_assert(sizeof(LayoutBlockFlow::MarginValues) == sizeof(LayoutUnit[4]), "MarginValues should stay small");
 
+// Caches all our current margin collapsing state.
 class MarginInfo {
     // Collapsing flags for whether we can collapse our margins with our children's margins.
     bool m_canCollapseWithChildren : 1;
@@ -153,6 +156,33 @@ public:
     bool lastChildIsSelfCollapsingBlockWithClearance() const { return m_lastChildIsSelfCollapsingBlockWithClearance; }
 };
 
+// Some features, such as floats, margin collapsing and fragmentation, require some knowledge about
+// things that happened when laying out previous block child siblings. Only looking at the object
+// currently being laid out isn't always enough.
+class BlockChildrenLayoutInfo {
+public:
+    BlockChildrenLayoutInfo(LayoutBlockFlow* blockFlow, LayoutUnit beforeEdge, LayoutUnit afterEdge)
+        : m_marginInfo(blockFlow, beforeEdge, afterEdge)
+        , m_previousBreakAfterValue(BreakAuto)
+        , m_isAtFirstInFlowChild(true) { }
+
+    const MarginInfo& marginInfo() const { return m_marginInfo; }
+    MarginInfo& marginInfo() { return m_marginInfo; }
+    LayoutUnit& previousFloatLogicalBottom() { return m_previousFloatLogicalBottom; }
+
+    EBreak previousBreakAfterValue() const { return m_previousBreakAfterValue; }
+    void setPreviousBreakAfterValue(EBreak value) { m_previousBreakAfterValue = value; }
+
+    bool isAtFirstInFlowChild() const { return m_isAtFirstInFlowChild; }
+    void clearIsAtFirstInFlowChild() { m_isAtFirstInFlowChild = false; }
+
+private:
+    MarginInfo m_marginInfo;
+    LayoutUnit m_previousFloatLogicalBottom;
+    EBreak m_previousBreakAfterValue;
+    bool m_isAtFirstInFlowChild;
+};
+
 LayoutBlockFlow::LayoutBlockFlow(ContainerNode* node)
     : LayoutBlock(node)
 {
@@ -204,8 +234,10 @@ void LayoutBlockFlow::checkForPaginationLogicalHeightChange(LayoutUnit& pageLogi
         // don't know the actual height of the content yet, only call that method when height is
         // definite, or we might fool ourselves into believing that columns have a definite height
         // when they in fact don't.
+        // To check if we've a definite height we verify that percentage height is resolvable
+        // on the first in-flow child.
         LayoutUnit columnHeight;
-        if (hasDefiniteLogicalHeight() || isLayoutView()) {
+        if (!firstInFlowChildBox() || firstInFlowChildBox()->percentageLogicalHeightIsResolvable() || isLayoutView()) {
             LogicalExtentComputedValues computedValues;
             computeLogicalHeight(LayoutUnit(), logicalTop(), computedValues);
             columnHeight = computedValues.m_extent - borderAndPaddingLogicalHeight() - scrollbarLogicalHeight();
@@ -268,19 +300,80 @@ void LayoutBlockFlow::clearShouldBreakAtLineToAvoidWidow() const
 
 bool LayoutBlockFlow::isSelfCollapsingBlock() const
 {
-    m_hasOnlySelfCollapsingChildren = LayoutBlock::isSelfCollapsingBlock();
-    return m_hasOnlySelfCollapsingChildren;
+    if (needsLayout()) {
+        // Sometimes we don't lay out objects in DOM order (column spanners being one such relevant
+        // type of object right here). As long as the object in question establishes a new
+        // formatting context, that's nothing to worry about, though.
+        ASSERT(createsNewFormattingContext());
+        return false;
+    }
+    ASSERT(!m_isSelfCollapsing == !checkIfIsSelfCollapsingBlock());
+    return m_isSelfCollapsing;
+}
+
+bool LayoutBlockFlow::checkIfIsSelfCollapsingBlock() const
+{
+    // We are not self-collapsing if we
+    // (a) have a non-zero height according to layout (an optimization to avoid wasting time)
+    // (b) have border/padding,
+    // (c) have a min-height
+    // (d) have specified that one of our margins can't collapse using a CSS extension
+    // (e) establish a new block formatting context.
+
+    // The early exit must be done before we check for clean layout.
+    // We should be able to give a quick answer if the box is a relayout boundary.
+    // Being a relayout boundary implies a block formatting context, and also
+    // our internal layout shouldn't affect our container in any way.
+    if (createsNewFormattingContext())
+        return false;
+
+    // Placeholder elements are not laid out until the dimensions of their parent text control are known, so they
+    // don't get layout until their parent has had layout - this is unique in the layout tree and means
+    // when we call isSelfCollapsingBlock on them we find that they still need layout.
+    ASSERT(!needsLayout() || (node() && node()->isElementNode() && toElement(node())->shadowPseudoId() == "-webkit-input-placeholder"));
+
+    if (logicalHeight() > LayoutUnit()
+        || borderAndPaddingLogicalHeight()
+        || style()->logicalMinHeight().isPositive()
+        || style()->marginBeforeCollapse() == MarginCollapseSeparate || style()->marginAfterCollapse() == MarginCollapseSeparate)
+        return false;
+
+    Length logicalHeightLength = style()->logicalHeight();
+    bool hasAutoHeight = logicalHeightLength.isAuto();
+    if (logicalHeightLength.hasPercent() && !document().inQuirksMode()) {
+        hasAutoHeight = true;
+        for (LayoutBlock* cb = containingBlock(); !cb->isLayoutView(); cb = cb->containingBlock()) {
+            if (cb->style()->logicalHeight().isFixed() || cb->isTableCell())
+                hasAutoHeight = false;
+        }
+    }
+
+    // If the height is 0 or auto, then whether or not we are a self-collapsing block depends
+    // on whether we have content that is all self-collapsing or not.
+    // TODO(alancutter): Make this work correctly for calc lengths.
+    if (hasAutoHeight || ((logicalHeightLength.isFixed() || logicalHeightLength.hasPercent()) && logicalHeightLength.isZero())) {
+        // If the block has inline children, see if we generated any line boxes.  If we have any
+        // line boxes, then we can't be self-collapsing, since we have content.
+        if (childrenInline())
+            return !firstLineBox();
+
+        // Whether or not we collapse is dependent on whether all our normal flow children
+        // are also self-collapsing.
+        for (LayoutBox* child = firstChildBox(); child; child = child->nextSiblingBox()) {
+            if (child->isFloatingOrOutOfFlowPositioned())
+                continue;
+            if (!child->isSelfCollapsingBlock())
+                return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 void LayoutBlockFlow::layoutBlock(bool relayoutChildren)
 {
     ASSERT(needsLayout());
     ASSERT(isInlineBlockOrInlineTable() || !isInline());
-
-    // If we are self-collapsing with self-collapsing descendants this will get set to save us burrowing through our
-    // descendants every time in |isSelfCollapsingBlock|. We reset it here so that |isSelfCollapsingBlock| attempts to burrow
-    // at least once and so that it always gives a reliable result reflecting the latest layout.
-    m_hasOnlySelfCollapsingChildren = false;
 
     if (!relayoutChildren && simplifiedLayout())
         return;
@@ -301,25 +394,13 @@ void LayoutBlockFlow::layoutBlock(bool relayoutChildren)
 
     updateLayerTransformAfterLayout();
 
-    // Update our scroll information if we're overflow:auto/scroll/hidden now that we know if
-    // we overflow or not.
-    updateScrollInfoAfterLayout();
-
-    if (m_paintInvalidationLogicalTop != m_paintInvalidationLogicalBottom) {
-        bool hasVisibleContent = style()->visibility() == VISIBLE;
-        if (!hasVisibleContent) {
-            PaintLayer* layer = enclosingLayer();
-            layer->updateDescendantDependentFlags();
-            hasVisibleContent = layer->hasVisibleContent();
-        }
-        if (hasVisibleContent)
-            setShouldInvalidateOverflowForPaint();
-    }
+    updateAfterLayout();
 
     if (isHTMLDialogElement(node()) && isOutOfFlowPositioned())
         positionDialog();
 
     clearNeedsLayout();
+    m_isSelfCollapsing = checkIfIsSelfCollapsingBlock();
 }
 
 inline bool LayoutBlockFlow::layoutBlockFlow(bool relayoutChildren, LayoutUnit &pageLogicalHeight, SubtreeLayoutScope& layoutScope)
@@ -352,7 +433,21 @@ inline bool LayoutBlockFlow::layoutBlockFlow(bool relayoutChildren, LayoutUnit &
         initMaxMarginValues();
         setHasMarginBeforeQuirk(style()->hasMarginBeforeQuirk());
         setHasMarginAfterQuirk(style()->hasMarginAfterQuirk());
+    }
+
+    if (state.isPaginated()) {
         setPaginationStrutPropagatedFromChild(LayoutUnit());
+
+        // Start with any applicable computed break-after and break-before values for this
+        // object. During child layout, breakBefore will be joined with the breakBefore value of
+        // the first in-flow child, and breakAfter will be joined with the breakAfter value of the
+        // last in-flow child. This is done in order to honor the requirement that a class A break
+        // point [1] may only exists *between* in-flow siblings (i.e. not before the first child
+        // and not after the last child).
+        //
+        // [1] https://drafts.csswg.org/css-break/#possible-breaks
+        setBreakBefore(LayoutBlock::breakBefore());
+        setBreakAfter(LayoutBlock::breakAfter());
     }
 
     LayoutUnit beforeEdge = borderBefore() + paddingBefore();
@@ -360,20 +455,29 @@ inline bool LayoutBlockFlow::layoutBlockFlow(bool relayoutChildren, LayoutUnit &
     LayoutUnit previousHeight = logicalHeight();
     setLogicalHeight(beforeEdge);
 
-    m_paintInvalidationLogicalTop = LayoutUnit();
-    m_paintInvalidationLogicalBottom = LayoutUnit();
     if (!firstChild() && !isAnonymousBlock())
         setChildrenInline(true);
 
-    TextAutosizer::LayoutScope textAutosizerLayoutScope(this);
+    TextAutosizer::LayoutScope textAutosizerLayoutScope(this, &layoutScope);
+
+    bool preferredLogicalWidthsWereDirty = preferredLogicalWidthsDirty();
 
     // Reset the flag here instead of in layoutInlineChildren() in case that
     // all inline children are removed from this block.
     setContainsInlineWithOutlineAndContinuation(false);
     if (childrenInline())
-        layoutInlineChildren(relayoutChildren, m_paintInvalidationLogicalTop, m_paintInvalidationLogicalBottom, afterEdge);
+        layoutInlineChildren(relayoutChildren, afterEdge);
     else
         layoutBlockChildren(relayoutChildren, layoutScope, beforeEdge, afterEdge);
+
+    bool preferredLogicalWidthsBecameDirty = !preferredLogicalWidthsWereDirty && preferredLogicalWidthsDirty();
+    if (preferredLogicalWidthsBecameDirty) {
+        // The only thing that should dirty preferred widths at this point is the addition of
+        // overflow:auto scrollbars in a descendant.  To avoid a potential infinite loop,
+        // run layout again with auto scrollbars frozen in their current state.
+        PaintLayerScrollableArea::FreezeScrollbarsScope freezeScrollbars;
+        return layoutBlockFlow(relayoutChildren, pageLogicalHeight, layoutScope);
+    }
 
     // Expand our intrinsic height to encompass floats.
     if (lowestFloatLogicalBottom() > (logicalHeight() - afterEdge) && createsNewFormattingContext())
@@ -522,9 +626,10 @@ void LayoutBlockFlow::markDescendantsWithFloatsForLayoutIfNeeded(LayoutBlockFlow
         child.markAllDescendantsWithFloatsForLayout();
 }
 
-bool LayoutBlockFlow::positionAndLayoutOnceIfNeeded(LayoutBox& child, LayoutUnit newLogicalTop, LayoutUnit& previousFloatLogicalBottom)
+bool LayoutBlockFlow::positionAndLayoutOnceIfNeeded(LayoutBox& child, LayoutUnit newLogicalTop, BlockChildrenLayoutInfo& layoutInfo)
 {
     if (child.isLayoutBlockFlow()) {
+        LayoutUnit& previousFloatLogicalBottom = layoutInfo.previousFloatLogicalBottom();
         LayoutBlockFlow& childBlockFlow = toLayoutBlockFlow(child);
         if (childBlockFlow.containsFloats() || containsFloats())
             markDescendantsWithFloatsForLayoutIfNeeded(childBlockFlow, newLogicalTop, previousFloatLogicalBottom);
@@ -555,8 +660,33 @@ bool LayoutBlockFlow::positionAndLayoutOnceIfNeeded(LayoutBox& child, LayoutUnit
     return true;
 }
 
-void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo, LayoutUnit& previousFloatLogicalBottom)
+bool LayoutBlockFlow::insertForcedBreakBeforeChildIfNeeded(LayoutBox& child, BlockChildrenLayoutInfo& layoutInfo)
 {
+    if (layoutInfo.isAtFirstInFlowChild()) {
+        // There's no class A break point before the first child (only *between* siblings), so
+        // steal its break value and join it with what we already have here.
+        setBreakBefore(joinFragmentainerBreakValues(breakBefore(), child.breakBefore()));
+        return false;
+    }
+
+    // Figure out if a forced break should be inserted in front of the child. If we insert a forced
+    // break, the margins on this child may not collapse with those preceding the break.
+    EBreak classABreakPointValue = child.classABreakPointValue(layoutInfo.previousBreakAfterValue());
+    if (isForcedFragmentainerBreakValue(classABreakPointValue)) {
+        layoutInfo.marginInfo().clearMargin();
+        LayoutUnit oldLogicalTop = logicalHeight();
+        LayoutUnit newLogicalTop = applyForcedBreak(oldLogicalTop, classABreakPointValue);
+        setLogicalHeight(newLogicalTop);
+        LayoutUnit paginationStrut = newLogicalTop - oldLogicalTop;
+        child.setPaginationStrut(paginationStrut);
+        return true;
+    }
+    return false;
+}
+
+void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, BlockChildrenLayoutInfo& layoutInfo)
+{
+    MarginInfo& marginInfo = layoutInfo.marginInfo();
     LayoutBlockFlow* childLayoutBlockFlow = child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child) : nullptr;
     LayoutUnit oldPosMarginBefore = maxPositiveMarginBefore();
     LayoutUnit oldNegMarginBefore = maxNegativeMarginBefore();
@@ -568,7 +698,7 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
     // be correct. Only if we're wrong (when we compute the real logical top position)
     // will we have to potentially relayout.
     LayoutUnit estimateWithoutPagination;
-    LayoutUnit logicalTopEstimate = estimateLogicalTopPosition(child, marginInfo, estimateWithoutPagination);
+    LayoutUnit logicalTopEstimate = estimateLogicalTopPosition(child, layoutInfo, estimateWithoutPagination);
 
     // Cache our old rect so that we can dirty the proper paint invalidation rects if the child moves.
     LayoutRect oldRect = child.frameRect();
@@ -576,13 +706,18 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
     // Use the estimated block position and lay out the child if needed. After child layout, when
     // we have enough information to perform proper margin collapsing, float clearing and
     // pagination, we may have to reposition and lay out again if the estimate was wrong.
-    bool childNeededLayout = positionAndLayoutOnceIfNeeded(child, logicalTopEstimate, previousFloatLogicalBottom);
+    bool childNeededLayout = positionAndLayoutOnceIfNeeded(child, logicalTopEstimate, layoutInfo);
 
     // Cache if we are at the top of the block right now.
     bool atBeforeSideOfBlock = marginInfo.atBeforeSideOfBlock();
     bool childIsSelfCollapsing = child.isSelfCollapsingBlock();
     bool childDiscardMarginBefore = mustDiscardMarginBeforeForChild(child);
     bool childDiscardMarginAfter = mustDiscardMarginAfterForChild(child);
+    bool paginated = view()->layoutState()->isPaginated();
+
+    // If there should be a forced break before the child, we need to insert it before attempting
+    // to collapse margins or apply clearance.
+    bool forcedBreakWasInserted = paginated && insertForcedBreakBeforeChildIfNeeded(child, layoutInfo);
 
     // Now determine the correct ypos based off examination of collapsing margin
     // values.
@@ -592,17 +727,19 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
     bool childDiscardMargin = childDiscardMarginBefore || childDiscardMarginAfter;
     LayoutUnit newLogicalTop = clearFloatsIfNeeded(child, marginInfo, oldPosMarginBefore, oldNegMarginBefore, logicalTopBeforeClear, childIsSelfCollapsing, childDiscardMargin);
 
-    // Now check for pagination.
-    bool paginated = view()->layoutState()->isPaginated();
-    if (paginated) {
+    // If there's a forced break in front of this child, its final position has already been
+    // determined. Otherwise, see if there are other reasons for breaking before it
+    // (break-inside:avoid, or not enough space for the first piece of child content to fit in the
+    // current fragmentainer), and adjust the position accordingly.
+    if (paginated && !forcedBreakWasInserted) {
         if (estimateWithoutPagination != newLogicalTop) {
             // We got a new position due to clearance or margin collapsing. Before we attempt to
             // paginate (which may result in the position changing again), let's try again at the
             // new position (since a new position may result in a new logical height).
-            positionAndLayoutOnceIfNeeded(child, newLogicalTop, previousFloatLogicalBottom);
+            positionAndLayoutOnceIfNeeded(child, newLogicalTop, layoutInfo);
         }
 
-        newLogicalTop = adjustBlockChildForPagination(newLogicalTop, child, atBeforeSideOfBlock && logicalTopBeforeClear == newLogicalTop);
+        newLogicalTop = adjustBlockChildForPagination(newLogicalTop, child, layoutInfo, atBeforeSideOfBlock && logicalTopBeforeClear == newLogicalTop);
     }
 
     // Clearance, margin collapsing or pagination may have given us a new logical top, in which
@@ -611,7 +748,7 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
     if (newLogicalTop != logicalTopEstimate
         || child.needsLayout()
         || (paginated && childLayoutBlockFlow && childLayoutBlockFlow->shouldBreakAtLineToAvoidWidow())) {
-        positionAndLayoutOnceIfNeeded(child, newLogicalTop, previousFloatLogicalBottom);
+        positionAndLayoutOnceIfNeeded(child, newLogicalTop, layoutInfo);
     }
 
     // If we previously encountered a self-collapsing sibling of this child that had clearance then
@@ -649,10 +786,11 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
         child.invalidatePaintForOverhangingFloats(true);
 
     if (paginated) {
-        // Check for an after page/column break.
-        LayoutUnit newHeight = applyAfterBreak(child, logicalHeight(), marginInfo);
-        if (newHeight != size().height())
-            setLogicalHeight(newHeight);
+        // Keep track of the break-after value of the child, so that it can be joined with the
+        // break-before value of the next in-flow object at the next class A break point.
+        layoutInfo.setPreviousBreakAfterValue(child.breakAfter());
+
+        paginatedContentWasLaidOut(child.logicalBottom());
     }
 
     if (child.isLayoutMultiColumnSpannerPlaceholder()) {
@@ -661,14 +799,18 @@ void LayoutBlockFlow::layoutBlockChild(LayoutBox& child, MarginInfo& marginInfo,
     }
 }
 
-LayoutUnit LayoutBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTop, LayoutBox& child, bool atBeforeSideOfBlock)
+LayoutUnit LayoutBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTop, LayoutBox& child, BlockChildrenLayoutInfo& layoutInfo, bool atBeforeSideOfBlock)
 {
+    // Forced breaks trumps unforced ones, and if we have a forced break, we shouldn't even be here.
+    ASSERT(layoutInfo.isAtFirstInFlowChild() || !isForcedFragmentainerBreakValue(child.classABreakPointValue(layoutInfo.previousBreakAfterValue())));
+
     LayoutBlockFlow* childBlockFlow = child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child) : 0;
 
-    // Calculate the pagination strut for this child. A strut may come from three sources:
+    // See if we need a soft (unforced) break in front of this child, and set the pagination strut
+    // in that case. An unforced break may come from two sources:
     // 1. The first piece of content inside the child doesn't fit in the current page or column
-    // 2. A forced break before the child
-    // 3. The child itself is unsplittable and doesn't fit in the current page or column.
+    // 2. The child itself has breaking restrictions (break-inside:avoid, replaced content, etc.)
+    // and doesn't fully fit in the current page or column.
     //
     // No matter which source, if we need to insert a strut, it should always take us to the exact
     // top of a page or column further ahead, or be zero.
@@ -683,21 +825,20 @@ LayoutUnit LayoutBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTop,
     LayoutUnit strutFromContent = childBlockFlow ? childBlockFlow->paginationStrutPropagatedFromChild() : LayoutUnit();
     LayoutUnit logicalTopWithContentStrut = logicalTop + strutFromContent;
 
-    // If the object has a page or column break value of "before", then we should shift to the top of the next page.
-    LayoutUnit logicalTopAfterForcedBreak = applyBeforeBreak(child, logicalTop);
-
     // For replaced elements and scrolled elements, we want to shift them to the next page if they don't fit on the current one.
     LayoutUnit logicalTopAfterUnsplittable = adjustForUnsplittableChild(child, logicalTop);
 
     // Pick the largest offset. Tall unsplittable content may take us to a page or column further
     // ahead than the next one.
-    LayoutUnit logicalTopAfterPagination = std::max(logicalTopWithContentStrut, std::max(logicalTopAfterForcedBreak, logicalTopAfterUnsplittable));
+    LayoutUnit logicalTopAfterPagination = std::max(logicalTopWithContentStrut, logicalTopAfterUnsplittable);
     LayoutUnit newLogicalTop = logicalTop;
     if (LayoutUnit paginationStrut = logicalTopAfterPagination - logicalTop) {
         ASSERT(paginationStrut > 0);
-        // We are willing to propagate out to our parent block as long as we were at the top of the block prior
-        // to collapsing our margins, and as long as we didn't clear or move as a result of other pagination.
-        if (atBeforeSideOfBlock && logicalTopAfterForcedBreak == logicalTop && allowsPaginationStrut()) {
+        // If we're not at the first in-flow child, there's a class A break point before the child. If we *are* at the
+        // first in-flow child, but the child isn't flush with the content edge of its container, due to e.g. clearance,
+        // there's a class C break point before the child. Otherwise we should propagate the strut to our parent block,
+        // and attempt to break there instead. See https://drafts.csswg.org/css-break/#possible-breaks
+        if (layoutInfo.isAtFirstInFlowChild() && atBeforeSideOfBlock && allowsPaginationStrut()) {
             // FIXME: Should really check if we're exceeding the page height before propagating the strut, but we don't
             // have all the information to do so (the strut only has the remaining amount to push). Gecko gets this wrong too
             // and pushes to the next page anyway, so not too concerned about it.
@@ -711,8 +852,6 @@ LayoutUnit LayoutBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTop,
         }
     }
 
-    paginatedContentWasLaidOut(newLogicalTop + child.logicalHeight());
-
     // Similar to how we apply clearance. Go ahead and boost height() to be the place where we're going to position the child.
     setLogicalHeight(logicalHeight() + (newLogicalTop - logicalTop));
 
@@ -722,26 +861,37 @@ LayoutUnit LayoutBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTop,
 
 static bool shouldSetStrutOnBlock(const LayoutBlockFlow& block, const RootInlineBox& lineBox, LayoutUnit lineLogicalOffset, int lineIndex, LayoutUnit pageLogicalHeight)
 {
-    bool wantsStrutOnBlock = false;
-    if (!block.style()->hasAutoOrphans() && block.style()->orphans() >= lineIndex) {
-        // Not enough orphans here. Push the entire block to the next column / page as an
-        // attempt to better satisfy the orphans requirement.
-        wantsStrutOnBlock = true;
-    } else if (lineBox == block.firstRootBox() && lineLogicalOffset == block.borderAndPaddingBefore()) {
+    if (lineBox == block.firstRootBox()) {
         // This is the first line in the block. We can take the whole block with us to the next page
         // or column, rather than keeping a content-less portion of it in the previous one. Only do
         // this if the line is flush with the content edge of the block, though. If it isn't, it
         // means that the line was pushed downwards by preceding floats that didn't fit beside the
         // line, and we don't want to move all that, since it has already been established that it
-        // fits nicely where it is.
+        // fits nicely where it is. In this case we have a class "C" break point [1] in front of
+        // this line.
+        //
+        // [1] https://drafts.csswg.org/css-break/#possible-breaks
+        if (lineLogicalOffset > block.borderAndPaddingBefore())
+            return false;
+
         LayoutUnit lineHeight = lineBox.lineBottomWithLeading() - lineBox.lineTopWithLeading();
         LayoutUnit totalLogicalHeight = lineHeight + lineLogicalOffset.clampNegativeToZero();
         // It's rather pointless to break before the block if the current line isn't going to
         // fit in the same column or page, so check that as well.
-        if (totalLogicalHeight <= pageLogicalHeight)
-            wantsStrutOnBlock = true;
+        if (totalLogicalHeight > pageLogicalHeight)
+            return false;
+    } else {
+        if (lineIndex > block.style()->orphans())
+            return false;
+
+        // Not enough orphans here. Push the entire block to the next column / page as an attempt to
+        // better satisfy the orphans requirement.
+        //
+        // Note that we should ideally check if the first line in the block is flush with the
+        // content edge of the block here, because if it isn't, we should break at the class "C"
+        // break point in front of the first line, rather than before the entire block.
     }
-    return wantsStrutOnBlock && block.allowsPaginationStrut();
+    return block.allowsPaginationStrut();
 }
 
 void LayoutBlockFlow::adjustLinePositionForPagination(RootInlineBox& lineBox, LayoutUnit& delta)
@@ -835,7 +985,7 @@ void LayoutBlockFlow::adjustLinePositionForPagination(RootInlineBox& lineBox, La
 
 LayoutUnit LayoutBlockFlow::adjustForUnsplittableChild(LayoutBox& child, LayoutUnit logicalOffset) const
 {
-    if (child.paginationBreakability() == AllowAnyBreaks)
+    if (child.getPaginationBreakability() == AllowAnyBreaks)
         return logicalOffset;
     LayoutUnit childLogicalHeight = logicalHeightForChild(child);
     // Floats' margins do not collapse with page or column boundaries.
@@ -901,27 +1051,27 @@ void LayoutBlockFlow::rebuildFloatsFromIntruding()
     // may have shifted to avoid floats, and any objects whose floats cannot interact with objects
     // outside it (i.e. objects that create a new block formatting context).
     LayoutBlockFlow* parentBlockFlow = toLayoutBlockFlow(parent());
-    bool parentHasFloats = false;
+    bool siblingFloatMayIntrude = false;
     LayoutObject* prev = previousSibling();
     while (prev && (!prev->isBox() || !prev->isLayoutBlock() || toLayoutBlock(prev)->avoidsFloats() || toLayoutBlock(prev)->createsNewFormattingContext())) {
         if (prev->isFloating())
-            parentHasFloats = true;
+            siblingFloatMayIntrude = true;
         prev = prev->previousSibling();
     }
 
     // First add in floats from the parent. Self-collapsing blocks let their parent track any floats that intrude into
-    // them (as opposed to floats they contain themselves) so check for those here too.
-    LayoutUnit logicalTopOffset = logicalTop();
-    bool parentHasIntrudingFloats = !parentHasFloats && (!prev || toLayoutBlockFlow(prev)->isSelfCollapsingBlock()) && parentBlockFlow->lowestFloatLogicalBottom() > logicalTopOffset;
-    if (parentHasFloats || parentHasIntrudingFloats)
-        addIntrudingFloats(parentBlockFlow, parentBlockFlow->logicalLeftOffsetForContent(), logicalTopOffset);
+    // them (as opposed to floats they contain themselves) so check for those here too. If margin collapsing has moved
+    // us up past the top a previous sibling then we need to check for floats from the parent too.
+    bool parentFloatsMayIntrude = !siblingFloatMayIntrude && (!prev || toLayoutBlockFlow(prev)->isSelfCollapsingBlock() || toLayoutBlock(prev)->logicalTop() > logicalTop())
+        && parentBlockFlow->lowestFloatLogicalBottom() > logicalTop();
+    if (siblingFloatMayIntrude || parentFloatsMayIntrude)
+        addIntrudingFloats(parentBlockFlow, parentBlockFlow->logicalLeftOffsetForContent(), logicalTop());
 
     // Add overhanging floats from the previous LayoutBlockFlow, but only if it has a float that intrudes into our space.
     if (prev) {
-        LayoutBlockFlow* blockFlow = toLayoutBlockFlow(prev);
-        logicalTopOffset -= blockFlow->logicalTop();
-        if (blockFlow->lowestFloatLogicalBottom() > logicalTopOffset)
-            addIntrudingFloats(blockFlow, LayoutUnit(), logicalTopOffset);
+        LayoutBlockFlow* previousBlockFlow = toLayoutBlockFlow(prev);
+        if (logicalTop() < previousBlockFlow->logicalTop() + previousBlockFlow->lowestFloatLogicalBottom())
+            addIntrudingFloats(previousBlockFlow, LayoutUnit(), logicalTop() - previousBlockFlow->logicalTop());
     }
 
     if (childrenInline()) {
@@ -967,7 +1117,7 @@ void LayoutBlockFlow::rebuildFloatsFromIntruding()
 
         LayoutBoxToFloatInfoMap::iterator end = floatMap.end();
         for (LayoutBoxToFloatInfoMap::iterator it = floatMap.begin(); it != end; ++it) {
-            OwnPtr<FloatingObject>& floatingObject = it->value;
+            std::unique_ptr<FloatingObject>& floatingObject = it->value;
             if (!floatingObject->isDescendant()) {
                 changeLogicalTop = LayoutUnit();
                 changeLogicalBottom = std::max(changeLogicalBottom, logicalBottomForFloat(*floatingObject));
@@ -995,15 +1145,13 @@ void LayoutBlockFlow::layoutBlockChildren(bool relayoutChildren, SubtreeLayoutSc
 {
     dirtyForLayoutFromPercentageHeightDescendants(layoutScope);
 
-    // The margin struct caches all our current margin collapsing state. The compact struct caches state when we encounter compacts,
-    MarginInfo marginInfo(this, beforeEdge, afterEdge);
+    BlockChildrenLayoutInfo layoutInfo(this, beforeEdge, afterEdge);
+    MarginInfo& marginInfo = layoutInfo.marginInfo();
 
     // Fieldsets need to find their legend and position it inside the border of the object.
     // The legend then gets skipped during normal layout. The same is true for ruby text.
     // It doesn't get included in the normal layout process but is instead skipped.
     LayoutObject* childToExclude = layoutSpecialExcludedChild(relayoutChildren, layoutScope);
-
-    LayoutUnit previousFloatLogicalBottom;
 
     LayoutBox* next = firstChildBox();
     LayoutBox* lastNormalFlowChild = nullptr;
@@ -1021,7 +1169,7 @@ void LayoutBlockFlow::layoutBlockChildren(bool relayoutChildren, SubtreeLayoutSc
 
         if (child->isOutOfFlowPositioned()) {
             child->containingBlock()->insertPositionedObject(child);
-            adjustPositionedBlock(*child, marginInfo);
+            adjustPositionedBlock(*child, layoutInfo);
             continue;
         }
         if (child->isFloating()) {
@@ -1043,7 +1191,8 @@ void LayoutBlockFlow::layoutBlockChildren(bool relayoutChildren, SubtreeLayoutSc
         }
 
         // Lay out the child.
-        layoutBlockChild(*child, marginInfo, previousFloatLogicalBottom);
+        layoutBlockChild(*child, layoutInfo);
+        layoutInfo.clearIsAtFirstInFlowChild();
         lastNormalFlowChild = child;
     }
 
@@ -1067,14 +1216,14 @@ MarginInfo::MarginInfo(LayoutBlockFlow* blockFlow, LayoutUnit beforeBorderPaddin
     ASSERT(blockFlow->isLayoutView() || blockFlow->parent());
     m_canCollapseWithChildren = !blockFlow->createsNewFormattingContext() && !blockFlow->isLayoutFlowThread() && !blockFlow->isLayoutView();
 
-    m_canCollapseMarginBeforeWithChildren = m_canCollapseWithChildren && !beforeBorderPadding && blockStyle.marginBeforeCollapse() != MSEPARATE;
+    m_canCollapseMarginBeforeWithChildren = m_canCollapseWithChildren && !beforeBorderPadding && blockStyle.marginBeforeCollapse() != MarginCollapseSeparate;
 
     // If any height other than auto is specified in CSS, then we don't collapse our bottom
     // margins with our children's margins. To do otherwise would be to risk odd visual
     // effects when the children overflow out of the parent block and yet still collapse
     // with it. We also don't collapse if we have any bottom border/padding.
     m_canCollapseMarginAfterWithChildren = m_canCollapseWithChildren && !afterBorderPadding
-        && (blockStyle.logicalHeight().isAuto() && !blockStyle.logicalHeight().value()) && blockStyle.marginAfterCollapse() != MSEPARATE;
+        && (blockStyle.logicalHeight().isAuto() && !blockStyle.logicalHeight().value()) && blockStyle.marginAfterCollapse() != MarginCollapseSeparate;
 
     m_quirkContainer = blockFlow->isTableCell() || blockFlow->isBody();
 
@@ -1302,11 +1451,18 @@ LayoutUnit LayoutBlockFlow::collapseMargins(LayoutBox& child, MarginInfo& margin
     return logicalTop;
 }
 
-void LayoutBlockFlow::adjustPositionedBlock(LayoutBox& child, const MarginInfo& marginInfo)
+void LayoutBlockFlow::adjustPositionedBlock(LayoutBox& child, const BlockChildrenLayoutInfo& layoutInfo)
 {
     LayoutUnit logicalTop = logicalHeight();
+
+    // Forced breaks are only specified on in-flow objects, but auto-positioned out-of-flow objects
+    // may be affected by a break-after value of the previous in-flow object.
+    if (view()->layoutState()->isPaginated())
+        logicalTop = applyForcedBreak(logicalTop, layoutInfo.previousBreakAfterValue());
+
     updateStaticInlinePositionForChild(child, logicalTop);
 
+    const MarginInfo& marginInfo = layoutInfo.marginInfo();
     if (!marginInfo.canCollapseWithMarginBefore()) {
         // Positioned blocks don't collapse margins, so add the margin provided by
         // the container now. The child's own margin is added later when calculating its logical top.
@@ -1371,7 +1527,7 @@ LayoutUnit LayoutBlockFlow::clearFloatsIfNeeded(LayoutBox& child, MarginInfo& ma
         marginInfo.setAtBeforeSideOfBlock(false);
 
         // In case the child discarded the before margin of the block we need to reset the mustDiscardMarginBefore flag to the initial value.
-        setMustDiscardMarginBefore(style()->marginBeforeCollapse() == MDISCARD);
+        setMustDiscardMarginBefore(style()->marginBeforeCollapse() == MarginCollapseDiscard);
     }
 
     return yPos + heightIncrease;
@@ -1408,12 +1564,12 @@ void LayoutBlockFlow::marginBeforeEstimateForChild(LayoutBox& child, LayoutUnit&
     // Give up if in quirks mode and we're a body/table cell and the top margin of the child box is quirky.
     // Give up if the child specified -webkit-margin-collapse: separate that prevents collapsing.
     // FIXME: Use writing mode independent accessor for marginBeforeCollapse.
-    if ((document().inQuirksMode() && hasMarginBeforeQuirk(&child) && (isTableCell() || isBody())) || child.style()->marginBeforeCollapse() == MSEPARATE)
+    if ((document().inQuirksMode() && hasMarginBeforeQuirk(&child) && (isTableCell() || isBody())) || child.style()->marginBeforeCollapse() == MarginCollapseSeparate)
         return;
 
     // The margins are discarded by a child that specified -webkit-margin-collapse: discard.
     // FIXME: Use writing mode independent accessor for marginBeforeCollapse.
-    if (child.style()->marginBeforeCollapse() == MDISCARD) {
+    if (child.style()->marginBeforeCollapse() == MarginCollapseDiscard) {
         positiveMarginBefore = LayoutUnit();
         negativeMarginBefore = LayoutUnit();
         discardMarginBefore = true;
@@ -1457,22 +1613,23 @@ void LayoutBlockFlow::marginBeforeEstimateForChild(LayoutBox& child, LayoutUnit&
     // If we have a 'clear' value but also have a margin we may not actually require clearance to move past any floats.
     // If that's the case we want to be sure we estimate the correct position including margins after any floats rather
     // than use 'clearance' later which could give us the wrong position.
-    if (grandchildBox->style()->clear() != CNONE && childBlockFlow->marginBeforeForChild(*grandchildBox) == 0)
+    if (grandchildBox->style()->clear() != ClearNone && childBlockFlow->marginBeforeForChild(*grandchildBox) == 0)
         return;
 
     // Collapse the margin of the grandchild box with our own to produce an estimate.
     childBlockFlow->marginBeforeEstimateForChild(*grandchildBox, positiveMarginBefore, negativeMarginBefore, discardMarginBefore);
 }
 
-LayoutUnit LayoutBlockFlow::estimateLogicalTopPosition(LayoutBox& child, const MarginInfo& marginInfo, LayoutUnit& estimateWithoutPagination)
+LayoutUnit LayoutBlockFlow::estimateLogicalTopPosition(LayoutBox& child, const BlockChildrenLayoutInfo& layoutInfo, LayoutUnit& estimateWithoutPagination)
 {
+    const MarginInfo& marginInfo = layoutInfo.marginInfo();
     // FIXME: We need to eliminate the estimation of vertical position, because when it's wrong we sometimes trigger a pathological
     // relayout if there are intruding floats.
     LayoutUnit logicalTopEstimate = logicalHeight();
-    if (!marginInfo.canCollapseWithMarginBefore()) {
         LayoutUnit positiveMarginBefore;
         LayoutUnit negativeMarginBefore;
         bool discardMarginBefore = false;
+    if (!marginInfo.canCollapseWithMarginBefore()) {
         if (child.selfNeedsLayout()) {
             // Try to do a basic estimation of how the collapse is going to go.
             marginBeforeEstimateForChild(child, positiveMarginBefore, negativeMarginBefore, discardMarginBefore);
@@ -1501,8 +1658,25 @@ LayoutUnit LayoutBlockFlow::estimateLogicalTopPosition(LayoutBox& child, const M
     estimateWithoutPagination = logicalTopEstimate;
 
     if (layoutState->isPaginated()) {
-        // If the object has a page or column break value of "before", then we should shift to the top of the next page.
-        logicalTopEstimate = applyBeforeBreak(child, logicalTopEstimate);
+        if (!layoutInfo.isAtFirstInFlowChild()) {
+            // Estimate the need for a forced break in front of this child. The final break policy
+            // at this class A break point isn't known until we have laid out the children of
+            // |child|. There may be forced break-before values set on first-children inside that
+            // get propagated up to the child. Just make an estimate with what we know so far.
+            EBreak breakValue = child.classABreakPointValue(layoutInfo.previousBreakAfterValue());
+            if (isForcedFragmentainerBreakValue(breakValue)) {
+                logicalTopEstimate = applyForcedBreak(logicalHeight(), breakValue);
+                // Disregard previous margins, since they will collapse with the fragmentainer
+                // boundary, due to the forced break. Only apply margins that have been specified
+                // on the child or its descendants.
+                if (!discardMarginBefore)
+                    logicalTopEstimate += positiveMarginBefore - negativeMarginBefore;
+
+                // Clearance may already have taken us past the beginning of the next
+                // fragmentainer.
+                return std::max(estimateWithoutPagination, logicalTopEstimate);
+            }
+        }
 
         // For replaced elements and scrolled elements, we want to shift them to the next page if they don't fit on the current one.
         logicalTopEstimate = adjustForUnsplittableChild(child, logicalTopEstimate);
@@ -1561,11 +1735,18 @@ void LayoutBlockFlow::handleAfterSideOfBlock(LayoutBox* lastChild, LayoutUnit be
 
     // Update our bottom collapsed margin info.
     setCollapsedBottomMargin(marginInfo);
+
+    // There's no class A break point right after the last child, only *between* siblings. So
+    // propagate the break-after value, and keep looking for a class A break point (at the next
+    // in-flow block-level object), where we'll join this break-after value with the break-before
+    // value there.
+    if (view()->layoutState()->isPaginated() && lastChild)
+        setBreakAfter(joinFragmentainerBreakValues(breakAfter(), lastChild->breakAfter()));
 }
 
 void LayoutBlockFlow::setMustDiscardMarginBefore(bool value)
 {
-    if (style()->marginBeforeCollapse() == MDISCARD) {
+    if (style()->marginBeforeCollapse() == MarginCollapseDiscard) {
         ASSERT(value);
         return;
     }
@@ -1574,14 +1755,14 @@ void LayoutBlockFlow::setMustDiscardMarginBefore(bool value)
         return;
 
     if (!m_rareData)
-        m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+        m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
 
     m_rareData->m_discardMarginBefore = value;
 }
 
 void LayoutBlockFlow::setMustDiscardMarginAfter(bool value)
 {
-    if (style()->marginAfterCollapse() == MDISCARD) {
+    if (style()->marginAfterCollapse() == MarginCollapseDiscard) {
         ASSERT(value);
         return;
     }
@@ -1590,28 +1771,28 @@ void LayoutBlockFlow::setMustDiscardMarginAfter(bool value)
         return;
 
     if (!m_rareData)
-        m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+        m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
 
     m_rareData->m_discardMarginAfter = value;
 }
 
 bool LayoutBlockFlow::mustDiscardMarginBefore() const
 {
-    return style()->marginBeforeCollapse() == MDISCARD || (m_rareData && m_rareData->m_discardMarginBefore);
+    return style()->marginBeforeCollapse() == MarginCollapseDiscard || (m_rareData && m_rareData->m_discardMarginBefore);
 }
 
 bool LayoutBlockFlow::mustDiscardMarginAfter() const
 {
-    return style()->marginAfterCollapse() == MDISCARD || (m_rareData && m_rareData->m_discardMarginAfter);
+    return style()->marginAfterCollapse() == MarginCollapseDiscard || (m_rareData && m_rareData->m_discardMarginAfter);
 }
 
 bool LayoutBlockFlow::mustDiscardMarginBeforeForChild(const LayoutBox& child) const
 {
     ASSERT(!child.selfNeedsLayout());
     if (!child.isWritingModeRoot())
-        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginBefore() : (child.style()->marginBeforeCollapse() == MDISCARD);
+        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginBefore() : (child.style()->marginBeforeCollapse() == MarginCollapseDiscard);
     if (child.isHorizontalWritingMode() == isHorizontalWritingMode())
-        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginAfter() : (child.style()->marginAfterCollapse() == MDISCARD);
+        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginAfter() : (child.style()->marginAfterCollapse() == MarginCollapseDiscard);
 
     // FIXME: We return false here because the implementation is not geometrically complete. We have values only for before/after, not start/end.
     // In case the boxes are perpendicular we assume the property is not specified.
@@ -1622,9 +1803,9 @@ bool LayoutBlockFlow::mustDiscardMarginAfterForChild(const LayoutBox& child) con
 {
     ASSERT(!child.selfNeedsLayout());
     if (!child.isWritingModeRoot())
-        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginAfter() : (child.style()->marginAfterCollapse() == MDISCARD);
+        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginAfter() : (child.style()->marginAfterCollapse() == MarginCollapseDiscard);
     if (child.isHorizontalWritingMode() == isHorizontalWritingMode())
-        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginBefore() : (child.style()->marginBeforeCollapse() == MDISCARD);
+        return child.isLayoutBlockFlow() ? toLayoutBlockFlow(&child)->mustDiscardMarginBefore() : (child.style()->marginBeforeCollapse() == MarginCollapseDiscard);
 
     // FIXME: See |mustDiscardMarginBeforeForChild| above.
     return false;
@@ -1635,7 +1816,7 @@ void LayoutBlockFlow::setMaxMarginBeforeValues(LayoutUnit pos, LayoutUnit neg)
     if (!m_rareData) {
         if (pos == LayoutBlockFlowRareData::positiveMarginBeforeDefault(this) && neg == LayoutBlockFlowRareData::negativeMarginBeforeDefault(this))
             return;
-        m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+        m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
     }
     m_rareData->m_margins.setPositiveMarginBefore(pos);
     m_rareData->m_margins.setNegativeMarginBefore(neg);
@@ -1646,7 +1827,7 @@ void LayoutBlockFlow::setMaxMarginAfterValues(LayoutUnit pos, LayoutUnit neg)
     if (!m_rareData) {
         if (pos == LayoutBlockFlowRareData::positiveMarginAfterDefault(this) && neg == LayoutBlockFlowRareData::negativeMarginAfterDefault(this))
             return;
-        m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+        m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
     }
     m_rareData->m_margins.setPositiveMarginAfter(pos);
     m_rareData->m_margins.setNegativeMarginAfter(neg);
@@ -1657,9 +1838,9 @@ bool LayoutBlockFlow::mustSeparateMarginBeforeForChild(const LayoutBox& child) c
     ASSERT(!child.selfNeedsLayout());
     const ComputedStyle& childStyle = child.styleRef();
     if (!child.isWritingModeRoot())
-        return childStyle.marginBeforeCollapse() == MSEPARATE;
+        return childStyle.marginBeforeCollapse() == MarginCollapseSeparate;
     if (child.isHorizontalWritingMode() == isHorizontalWritingMode())
-        return childStyle.marginAfterCollapse() == MSEPARATE;
+        return childStyle.marginAfterCollapse() == MarginCollapseSeparate;
 
     // FIXME: See |mustDiscardMarginBeforeForChild| above.
     return false;
@@ -1670,30 +1851,51 @@ bool LayoutBlockFlow::mustSeparateMarginAfterForChild(const LayoutBox& child) co
     ASSERT(!child.selfNeedsLayout());
     const ComputedStyle& childStyle = child.styleRef();
     if (!child.isWritingModeRoot())
-        return childStyle.marginAfterCollapse() == MSEPARATE;
+        return childStyle.marginAfterCollapse() == MarginCollapseSeparate;
     if (child.isHorizontalWritingMode() == isHorizontalWritingMode())
-        return childStyle.marginBeforeCollapse() == MSEPARATE;
+        return childStyle.marginBeforeCollapse() == MarginCollapseSeparate;
 
     // FIXME: See |mustDiscardMarginBeforeForChild| above.
     return false;
 }
 
-LayoutUnit LayoutBlockFlow::applyBeforeBreak(LayoutBox& child, LayoutUnit logicalOffset)
+LayoutUnit LayoutBlockFlow::applyForcedBreak(LayoutUnit logicalOffset, EBreak breakValue)
 {
-    if (child.hasForcedBreakBefore())
+    // TODO(mstensho): honor breakValue. There are different types of forced breaks. We currently
+    // just assume that we want to break to the top of the next fragmentainer of the fragmentation
+    // context we're in. However, we may want to find the next left or right page - even if we're
+    // inside a multicol container when printing.
+    if (isForcedFragmentainerBreakValue(breakValue))
         return nextPageLogicalTop(logicalOffset, AssociateWithFormerPage);
     return logicalOffset;
 }
 
-LayoutUnit LayoutBlockFlow::applyAfterBreak(LayoutBox& child, LayoutUnit logicalOffset, MarginInfo& marginInfo)
+void LayoutBlockFlow::setBreakBefore(EBreak breakValue)
 {
-    if (child.hasForcedBreakAfter()) {
-        // So our margin doesn't participate in the next collapsing steps.
-        marginInfo.clearMargin();
+    if (breakValue != BreakAuto && !isBreakBetweenControllable(breakValue))
+        breakValue = BreakAuto;
+    if (breakValue == BreakAuto && !m_rareData)
+        return;
+    ensureRareData().m_breakBefore = breakValue;
+}
 
-        return nextPageLogicalTop(logicalOffset, AssociateWithFormerPage);
-    }
-    return logicalOffset;
+void LayoutBlockFlow::setBreakAfter(EBreak breakValue)
+{
+    if (breakValue != BreakAuto && !isBreakBetweenControllable(breakValue))
+        breakValue = BreakAuto;
+    if (breakValue == BreakAuto && !m_rareData)
+        return;
+    ensureRareData().m_breakAfter = breakValue;
+}
+
+EBreak LayoutBlockFlow::breakBefore() const
+{
+    return m_rareData ? static_cast<EBreak>(m_rareData->m_breakBefore) : BreakAuto;
+}
+
+EBreak LayoutBlockFlow::breakAfter() const
+{
+    return m_rareData ? static_cast<EBreak>(m_rareData->m_breakAfter) : BreakAuto;
 }
 
 void LayoutBlockFlow::addOverflowFromFloats()
@@ -1717,6 +1919,69 @@ void LayoutBlockFlow::computeOverflow(LayoutUnit oldClientAfterEdge, bool recomp
         addOverflowFromFloats();
 }
 
+void LayoutBlockFlow::computeSelfHitTestRects(Vector<LayoutRect>& rects, const LayoutPoint& layerOffset) const
+{
+    LayoutBlock::computeSelfHitTestRects(rects, layerOffset);
+
+    if (!hasHorizontalLayoutOverflow() && !hasVerticalLayoutOverflow())
+        return;
+
+    for (RootInlineBox* curr = firstRootBox(); curr; curr = curr->nextRootBox()) {
+        LayoutUnit top = std::max<LayoutUnit>(curr->lineTop(), curr->top());
+        LayoutUnit bottom = std::min<LayoutUnit>(curr->lineBottom(), curr->top() + curr->height());
+        LayoutRect rect(layerOffset.x() + curr->x(), layerOffset.y() + top, curr->width(), bottom - top);
+        // It's common for this rect to be entirely contained in our box, so exclude that simple case.
+        if (!rect.isEmpty() && (rects.isEmpty() || !rects[0].contains(rect)))
+            rects.append(rect);
+    }
+}
+
+void LayoutBlockFlow::absoluteRects(Vector<IntRect>& rects, const LayoutPoint& accumulatedOffset) const
+{
+    if (!isAnonymousBlockContinuation()) {
+        LayoutBlock::absoluteRects(rects, accumulatedOffset);
+        return;
+    }
+    // For blocks inside inlines, we go ahead and include margins so that we run right up to the
+    // inline boxes above and below us (thus getting merged with them to form a single irregular
+    // shape).
+    // FIXME: This is wrong for vertical writing-modes.
+    // https://bugs.webkit.org/show_bug.cgi?id=46781
+    LayoutRect rect(accumulatedOffset, size());
+    rect.expand(collapsedMarginBoxLogicalOutsets());
+    rects.append(pixelSnappedIntRect(rect));
+    continuation()->absoluteRects(rects, accumulatedOffset - toLayoutSize(location() + inlineElementContinuation()->containingBlock()->location()));
+}
+
+void LayoutBlockFlow::absoluteQuads(Vector<FloatQuad>& quads) const
+{
+    if (!isAnonymousBlockContinuation()) {
+        LayoutBlock::absoluteQuads(quads);
+        return;
+    }
+    // For blocks inside inlines, we go ahead and include margins so that we run right up to the
+    // inline boxes above and below us (thus getting merged with them to form a single irregular
+    // shape).
+    // FIXME: This is wrong for vertical writing-modes.
+    // https://bugs.webkit.org/show_bug.cgi?id=46781
+    LayoutRect localRect(LayoutPoint(), size());
+    localRect.expand(collapsedMarginBoxLogicalOutsets());
+    quads.append(localToAbsoluteQuad(FloatRect(localRect)));
+    continuation()->absoluteQuads(quads);
+}
+
+LayoutObject* LayoutBlockFlow::hoverAncestor() const
+{
+    return isAnonymousBlockContinuation() ? continuation() : LayoutBlock::hoverAncestor();
+}
+
+void LayoutBlockFlow::updateDragState(bool dragOn)
+{
+    LayoutBlock::updateDragState(dragOn);
+    if (LayoutBoxModelObject* continuation = this->continuation())
+        continuation->updateDragState(dragOn);
+}
+
 RootInlineBox* LayoutBlockFlow::createAndAppendRootInlineBox()
 {
     RootInlineBox* rootBox = createRootInlineBox();
@@ -1731,6 +1996,63 @@ void LayoutBlockFlow::deleteLineBoxTree()
         m_floatingObjects->clearLineBoxTreePointers();
 
     m_lineBoxes.deleteLineBoxTree();
+}
+
+int LayoutBlockFlow::lineCount(const RootInlineBox* stopRootInlineBox) const
+{
+#ifndef NDEBUG
+    ASSERT(!stopRootInlineBox || stopRootInlineBox->block().debugPointer() == this);
+#endif
+    if (!childrenInline())
+        return 0;
+
+    int count = 0;
+    for (const RootInlineBox* box = firstRootBox(); box; box = box->nextRootBox()) {
+        count++;
+        if (box == stopRootInlineBox)
+            break;
+    }
+    return count;
+}
+
+int LayoutBlockFlow::firstLineBoxBaseline() const
+{
+    if (isWritingModeRoot() && !isRubyRun())
+        return -1;
+    if (!childrenInline())
+        return LayoutBlock::firstLineBoxBaseline();
+    if (firstLineBox())
+        return firstLineBox()->logicalTop() + style(true)->getFontMetrics().ascent(firstRootBox()->baselineType());
+    return -1;
+}
+
+int LayoutBlockFlow::inlineBlockBaseline(LineDirectionMode lineDirection) const
+{
+    // CSS2.1 states that the baseline of an 'inline-block' is:
+    // the baseline of the last line box in the normal flow, unless it has
+    // either no in-flow line boxes or if its 'overflow' property has a computed
+    // value other than 'visible', in which case the baseline is the bottom
+    // margin edge.
+    // We likewise avoid using the last line box in the case of size containment,
+    // where the block's contents shouldn't be considered when laying out its
+    // ancestors or siblings.
+
+    if ((!style()->isOverflowVisible() && !shouldIgnoreOverflowPropertyForInlineBlockBaseline()) || style()->containsSize()) {
+        // We are not calling baselinePosition here because the caller should add the margin-top/margin-right, not us.
+        return lineDirection == HorizontalLine ? size().height() + marginBottom() : size().width() + marginLeft();
+    }
+    if (isWritingModeRoot() && !isRubyRun())
+        return -1;
+    if (!childrenInline())
+        return LayoutBlock::inlineBlockBaseline(lineDirection);
+    if (lastLineBox())
+        return lastLineBox()->logicalTop() + style(lastLineBox() == firstLineBox())->getFontMetrics().ascent(lastRootBox()->baselineType());
+    if (!hasLineIfEmpty())
+        return -1;
+    const FontMetrics& fontMetrics = firstLineStyle()->getFontMetrics();
+    return fontMetrics.ascent()
+        + (lineHeight(true, lineDirection, PositionOfInteriorLineBoxes) - fontMetrics.height()) / 2
+        + (lineDirection == HorizontalLine ? borderTop() + paddingTop() : borderRight() + paddingRight());
 }
 
 void LayoutBlockFlow::removeFloatingObjectsFromDescendants()
@@ -1817,18 +2139,18 @@ LayoutUnit LayoutBlockFlow::getClearDelta(LayoutBox* child, LayoutUnit logicalTo
         return LayoutUnit();
 
     // At least one float is present. We need to perform the clearance computation.
-    bool clearSet = child->style()->clear() != CNONE;
+    bool clearSet = child->style()->clear() != ClearNone;
     LayoutUnit logicalBottom;
     switch (child->style()->clear()) {
-    case CNONE:
+    case ClearNone:
         break;
-    case CLEFT:
+    case ClearLeft:
         logicalBottom = lowestFloatLogicalBottom(FloatingObject::FloatLeft);
         break;
-    case CRIGHT:
+    case ClearRight:
         logicalBottom = lowestFloatLogicalBottom(FloatingObject::FloatRight);
         break;
-    case CBOTH:
+    case ClearBoth:
         logicalBottom = lowestFloatLogicalBottom();
         break;
     }
@@ -1869,7 +2191,53 @@ LayoutUnit LayoutBlockFlow::getClearDelta(LayoutBox* child, LayoutUnit logicalTo
 
 void LayoutBlockFlow::createFloatingObjects()
 {
-    m_floatingObjects = adoptPtr(new FloatingObjects(this, isHorizontalWritingMode()));
+    m_floatingObjects = wrapUnique(new FloatingObjects(this, isHorizontalWritingMode()));
+}
+
+void LayoutBlockFlow::willBeDestroyed()
+{
+    // Mark as being destroyed to avoid trouble with merges in removeChild().
+    m_beingDestroyed = true;
+
+    // Make sure to destroy anonymous children first while they are still connected to the rest of the tree, so that they will
+    // properly dirty line boxes that they are removed from. Effects that do :before/:after only on hover could crash otherwise.
+    children()->destroyLeftoverChildren();
+
+    // Destroy our continuation before anything other than anonymous children.
+    // The reason we don't destroy it before anonymous children is that they may
+    // have continuations of their own that are anonymous children of our continuation.
+    LayoutBoxModelObject* continuation = this->continuation();
+    if (continuation) {
+        continuation->destroy();
+        setContinuation(nullptr);
+    }
+
+    if (!documentBeingDestroyed()) {
+        // TODO(mstensho): figure out if we need this. We have no test coverage for it. It looks
+        // like all line boxes have been removed at this point.
+        if (firstLineBox()) {
+            // We can't wait for LayoutBox::destroy to clear the selection,
+            // because by then we will have nuked the line boxes.
+            // FIXME: The FrameSelection should be responsible for this when it
+            // is notified of DOM mutations.
+            if (isSelectionBorder())
+                view()->clearSelection();
+
+            // If we are an anonymous block, then our line boxes might have children
+            // that will outlast this block. In the non-anonymous block case those
+            // children will be destroyed by the time we return from this function.
+            if (isAnonymousBlock()) {
+                for (InlineFlowBox* box = firstLineBox(); box; box = box->nextLineBox()) {
+                    while (InlineBox* childBox = box->firstChild())
+                        childBox->remove();
+                }
+            }
+        }
+    }
+
+    m_lineBoxes.deleteLineBoxes();
+
+    LayoutBlock::willBeDestroyed();
 }
 
 void LayoutBlockFlow::styleWillChange(StyleDifference diff, const ComputedStyle& newStyle)
@@ -1965,6 +2333,12 @@ void LayoutBlockFlow::setStaticInlinePositionForChild(LayoutBox& child, LayoutUn
     child.layer()->setStaticInlinePosition(inlinePosition);
 }
 
+LayoutInline* LayoutBlockFlow::inlineElementContinuation() const
+{
+    LayoutBoxModelObject* continuation = this->continuation();
+    return continuation && continuation->isInline() ? toLayoutInline(continuation) : nullptr;
+}
+
 void LayoutBlockFlow::addChild(LayoutObject* newChild, LayoutObject* beforeChild)
 {
     if (LayoutMultiColumnFlowThread* flowThread = multiColumnFlowThread()) {
@@ -1974,7 +2348,132 @@ void LayoutBlockFlow::addChild(LayoutObject* newChild, LayoutObject* beforeChild
         flowThread->addChild(newChild, beforeChild);
         return;
     }
-    LayoutBlock::addChild(newChild, beforeChild);
+
+    if (beforeChild && beforeChild->parent() != this) {
+        addChildBeforeDescendant(newChild, beforeChild);
+        return;
+    }
+
+    bool madeBoxesNonInline = false;
+
+    // A block has to either have all of its children inline, or all of its children as blocks.
+    // So, if our children are currently inline and a block child has to be inserted, we move all our
+    // inline children into anonymous block boxes.
+    bool childIsBlockLevel = !newChild->isInline() && !newChild->isFloatingOrOutOfFlowPositioned();
+    if (childrenInline()) {
+        if (childIsBlockLevel) {
+            // Wrap the inline content in anonymous blocks, to allow for the new block child to be
+            // inserted.
+            makeChildrenNonInline(beforeChild);
+            madeBoxesNonInline = true;
+
+            if (beforeChild && beforeChild->parent() != this) {
+                beforeChild = beforeChild->parent();
+                ASSERT(beforeChild->isAnonymousBlock());
+                ASSERT(beforeChild->parent() == this);
+            }
+        }
+    } else if (!childIsBlockLevel) {
+        // This block has block children. We may want to put the new child into an anomyous
+        // block. Floats and out-of-flow children may live among either block or inline children,
+        // so for such children, only put them inside an anonymous block if one already exists. If
+        // the child is inline, on the other hand, we *have to* put it inside an anonymous block,
+        // so create a new one if there is none for us there already.
+        LayoutObject* afterChild = beforeChild ? beforeChild->previousSibling() : lastChild();
+
+        if (afterChild && afterChild->isAnonymousBlock()) {
+            afterChild->addChild(newChild);
+            return;
+        }
+
+        if (newChild->isInline()) {
+            // No suitable existing anonymous box - create a new one.
+            LayoutBlockFlow* newBlock = toLayoutBlockFlow(createAnonymousBlock());
+            LayoutBox::addChild(newBlock, beforeChild);
+            // Reparent adjacent floating or out-of-flow siblings to the new box.
+            newBlock->reparentPrecedingFloatingOrOutOfFlowSiblings();
+            newBlock->addChild(newChild);
+            newBlock->reparentSubsequentFloatingOrOutOfFlowSiblings();
+            return;
+        }
+    }
+
+    // Skip the LayoutBlock override, since that one deals with anonymous child insertion in a way
+    // that isn't sufficient for us, and can only cause trouble at this point.
+    LayoutBox::addChild(newChild, beforeChild);
+
+    if (madeBoxesNonInline && parent() && isAnonymousBlock() && parent()->isLayoutBlock()) {
+        toLayoutBlock(parent())->removeLeftoverAnonymousBlock(this);
+        // |this| may be dead now.
+    }
+}
+
+void LayoutBlockFlow::removeChild(LayoutObject* oldChild)
+{
+    // No need to waste time in merging or removing empty anonymous blocks.
+    // We can just bail out if our document is getting destroyed.
+    if (documentBeingDestroyed()) {
+        LayoutBox::removeChild(oldChild);
+        return;
+    }
+
+    // If this child is a block, and if our previous and next siblings are
+    // both anonymous blocks with inline content, then we can go ahead and
+    // fold the inline content back together.
+    LayoutObject* prev = oldChild->previousSibling();
+    LayoutObject* next = oldChild->nextSibling();
+    bool mergedAnonymousBlocks = false;
+    if (prev && next && !oldChild->isInline() && !oldChild->virtualContinuation() && prev->isLayoutBlockFlow() && next->isLayoutBlockFlow()) {
+        if (toLayoutBlockFlow(prev)->mergeSiblingContiguousAnonymousBlock(toLayoutBlockFlow(next))) {
+            mergedAnonymousBlocks = true;
+            next = nullptr;
+        }
+    }
+
+    LayoutBlock::removeChild(oldChild);
+
+    LayoutObject* child = prev ? prev : next;
+    if (mergedAnonymousBlocks && child && !child->previousSibling() && !child->nextSibling()) {
+        // The removal has knocked us down to containing only a single anonymous
+        // box.  We can go ahead and pull the content right back up into our
+        // box.
+        collapseAnonymousBlockChild(toLayoutBlockFlow(child));
+    }
+
+    if (!firstChild()) {
+        // If this was our last child be sure to clear out our line boxes.
+        if (childrenInline())
+            deleteLineBoxTree();
+
+        // If we are an empty anonymous block in the continuation chain,
+        // we need to remove ourself and fix the continuation chain.
+        if (!beingDestroyed() && isAnonymousBlockContinuation() && !oldChild->isListMarker()) {
+            LayoutObject* containingBlockIgnoringAnonymous = containingBlock();
+            while (containingBlockIgnoringAnonymous && containingBlockIgnoringAnonymous->isAnonymous())
+                containingBlockIgnoringAnonymous = containingBlockIgnoringAnonymous->containingBlock();
+            for (LayoutObject* curr = this; curr; curr = curr->previousInPreOrder(containingBlockIgnoringAnonymous)) {
+                if (curr->virtualContinuation() != this)
+                    continue;
+
+                // Found our previous continuation. We just need to point it to
+                // |this|'s next continuation.
+                LayoutBoxModelObject* nextContinuation = continuation();
+                if (curr->isLayoutInline())
+                    toLayoutInline(curr)->setContinuation(nextContinuation);
+                else if (curr->isLayoutBlockFlow())
+                    toLayoutBlockFlow(curr)->setContinuation(nextContinuation);
+                else
+                    ASSERT_NOT_REACHED();
+
+                break;
+            }
+            setContinuation(nullptr);
+            destroy();
+        }
+    } else if (!beingDestroyed() && !oldChild->isFloatingOrOutOfFlowPositioned() && !oldChild->isAnonymousBlock()) {
+        // If the child we're removing means that we can now treat all children as inline without the need for anonymous blocks, then do that.
+        makeChildrenInlineIfPossible();
+    }
 }
 
 void LayoutBlockFlow::moveAllChildrenIncludingFloatsTo(LayoutBlock* toBlock, bool fullRemoveInsert)
@@ -2016,7 +2515,244 @@ void LayoutBlockFlow::moveAllChildrenIncludingFloatsTo(LayoutBlock* toBlock, boo
             toBlockFlow->m_floatingObjects->add(floatingObject.unsafeClone());
         }
     }
+}
 
+void LayoutBlockFlow::childBecameFloatingOrOutOfFlow(LayoutBox* child)
+{
+    makeChildrenInlineIfPossible();
+
+    // Reparent the child to an adjacent anonymous block if one is available.
+    LayoutObject* prev = child->previousSibling();
+    if (prev && prev->isAnonymousBlock() && prev->isLayoutBlockFlow()) {
+        LayoutBlockFlow* newContainer = toLayoutBlockFlow(prev);
+        moveChildTo(newContainer, child, nullptr, false);
+        // The anonymous block we've moved to may now be adjacent to former siblings of ours
+        // that it can contain also.
+        newContainer->reparentSubsequentFloatingOrOutOfFlowSiblings();
+        return;
+    }
+    LayoutObject* next = child->nextSibling();
+    if (next && next->isAnonymousBlock() && next->isLayoutBlockFlow()) {
+        LayoutBlockFlow* newContainer = toLayoutBlockFlow(next);
+        moveChildTo(newContainer, child, newContainer->firstChild(), false);
+    }
+}
+
+void LayoutBlockFlow::collapseAnonymousBlockChild(LayoutBlockFlow* child)
+{
+    // It's possible that this block's destruction may have been triggered by the
+    // child's removal. Just bail if the anonymous child block is already being
+    // destroyed. See crbug.com/282088
+    if (child->beingDestroyed())
+        return;
+    if (child->continuation())
+        return;
+    // Ruby elements use anonymous wrappers for ruby runs and ruby bases by design, so we don't remove them.
+    if (child->isRubyRun() || child->isRubyBase())
+        return;
+    setNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(LayoutInvalidationReason::ChildAnonymousBlockChanged);
+
+    child->moveAllChildrenTo(this, child->nextSibling(), child->hasLayer());
+    setChildrenInline(child->childrenInline());
+
+    children()->removeChildNode(this, child, child->hasLayer());
+    child->destroy();
+}
+
+static bool isMergeableAnonymousBlock(const LayoutBlockFlow* block)
+{
+    return block->isAnonymousBlock() && !block->continuation() && !block->beingDestroyed() && !block->isRubyRun() && !block->isRubyBase();
+}
+
+bool LayoutBlockFlow::mergeSiblingContiguousAnonymousBlock(LayoutBlockFlow* siblingThatMayBeDeleted)
+{
+    // Note: |this| and |siblingThatMayBeDeleted| may not be adjacent siblings at this point. There
+    // may be an object between them which is about to be removed.
+
+    if (!isMergeableAnonymousBlock(this) || !isMergeableAnonymousBlock(siblingThatMayBeDeleted))
+        return false;
+
+    setNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(LayoutInvalidationReason::AnonymousBlockChange);
+
+    // If the inlineness of children of the two block don't match, we'd need special code here
+    // (but there should be no need for it).
+    ASSERT(siblingThatMayBeDeleted->childrenInline() == childrenInline());
+    // Take all the children out of the |next| block and put them in
+    // the |prev| block.
+    siblingThatMayBeDeleted->moveAllChildrenIncludingFloatsTo(this, siblingThatMayBeDeleted->hasLayer() || hasLayer());
+    // Delete the now-empty block's lines and nuke it.
+    siblingThatMayBeDeleted->deleteLineBoxTree();
+    siblingThatMayBeDeleted->destroy();
+    return true;
+}
+
+void LayoutBlockFlow::reparentSubsequentFloatingOrOutOfFlowSiblings()
+{
+    if (!parent() || !parent()->isLayoutBlockFlow())
+        return;
+    if (beingDestroyed() || documentBeingDestroyed())
+        return;
+    LayoutBlockFlow* parentBlockFlow = toLayoutBlockFlow(parent());
+    LayoutObject* child = nextSibling();
+    while (child && child->isFloatingOrOutOfFlowPositioned()) {
+        LayoutObject* sibling = child->nextSibling();
+        parentBlockFlow->moveChildTo(this, child, nullptr, false);
+        child = sibling;
+    }
+
+    if (LayoutObject* next = nextSibling()) {
+        if (next->isLayoutBlockFlow())
+            mergeSiblingContiguousAnonymousBlock(toLayoutBlockFlow(next));
+    }
+}
+
+void LayoutBlockFlow::reparentPrecedingFloatingOrOutOfFlowSiblings()
+{
+    if (!parent() || !parent()->isLayoutBlockFlow())
+        return;
+    if (beingDestroyed() || documentBeingDestroyed())
+        return;
+    LayoutBlockFlow* parentBlockFlow = toLayoutBlockFlow(parent());
+    LayoutObject* child = previousSibling();
+    while (child && child->isFloatingOrOutOfFlowPositioned()) {
+        LayoutObject* sibling = child->previousSibling();
+        parentBlockFlow->moveChildTo(this, child, firstChild(), false);
+        child = sibling;
+    }
+}
+
+void LayoutBlockFlow::makeChildrenInlineIfPossible()
+{
+    // Collapsing away anonymous wrappers isn't relevant for the children of anonymous blocks, unless they are ruby bases.
+    if (isAnonymousBlock() && !isRubyBase())
+        return;
+
+    Vector<LayoutBlockFlow*, 3> blocksToRemove;
+    for (LayoutObject* child = firstChild(); child; child = child->nextSibling()) {
+        if (child->isFloating())
+            continue;
+        if (child->isOutOfFlowPositioned())
+            continue;
+
+        // There are still block children in the container, so any anonymous wrappers are still needed.
+        if (!child->isAnonymousBlock() || !child->isLayoutBlockFlow())
+            return;
+        // If one of the children is being destroyed then it is unsafe to clean up anonymous wrappers as the
+        // entire branch may be being destroyed.
+        if (toLayoutBlockFlow(child)->beingDestroyed())
+            return;
+        // We can't remove anonymous wrappers if they contain continuations as this means there are block children present.
+        if (toLayoutBlockFlow(child)->continuation())
+            return;
+        // We are only interested in removing anonymous wrappers if there are inline siblings underneath them.
+        if (!child->childrenInline())
+            return;
+        // Ruby elements use anonymous wrappers for ruby runs and ruby bases by design, so we don't remove them.
+        if (child->isRubyRun() || child->isRubyBase())
+            return;
+
+        blocksToRemove.append(toLayoutBlockFlow(child));
+    }
+
+    // If we make an object's children inline we are going to frustrate any future attempts to remove
+    // floats from its children's float-lists before the next layout happens so clear down all the floatlists
+    // now - they will be rebuilt at layout.
+    removeFloatingObjectsFromDescendants();
+
+    for (size_t i = 0; i < blocksToRemove.size(); i++)
+        collapseAnonymousBlockChild(blocksToRemove[i]);
+    setChildrenInline(true);
+}
+
+static void getInlineRun(LayoutObject* start, LayoutObject* boundary,
+    LayoutObject*& inlineRunStart,
+    LayoutObject*& inlineRunEnd)
+{
+    // Beginning at |start| we find the largest contiguous run of inlines that
+    // we can.  We denote the run with start and end points, |inlineRunStart|
+    // and |inlineRunEnd|.  Note that these two values may be the same if
+    // we encounter only one inline.
+    //
+    // We skip any non-inlines we encounter as long as we haven't found any
+    // inlines yet.
+    //
+    // |boundary| indicates a non-inclusive boundary point.  Regardless of whether |boundary|
+    // is inline or not, we will not include it in a run with inlines before it.  It's as though we encountered
+    // a non-inline.
+
+    // Start by skipping as many non-inlines as we can.
+    LayoutObject * curr = start;
+    bool sawInline;
+    do {
+        while (curr && !(curr->isInline() || curr->isFloatingOrOutOfFlowPositioned()))
+            curr = curr->nextSibling();
+
+        inlineRunStart = inlineRunEnd = curr;
+
+        if (!curr)
+            return; // No more inline children to be found.
+
+        sawInline = curr->isInline();
+
+        curr = curr->nextSibling();
+        while (curr && (curr->isInline() || curr->isFloatingOrOutOfFlowPositioned()) && (curr != boundary)) {
+            inlineRunEnd = curr;
+            if (curr->isInline())
+                sawInline = true;
+            curr = curr->nextSibling();
+        }
+    } while (!sawInline);
+}
+
+void LayoutBlockFlow::makeChildrenNonInline(LayoutObject *insertionPoint)
+{
+    // makeChildrenNonInline takes a block whose children are *all* inline and it
+    // makes sure that inline children are coalesced under anonymous
+    // blocks.  If |insertionPoint| is defined, then it represents the insertion point for
+    // the new block child that is causing us to have to wrap all the inlines.  This
+    // means that we cannot coalesce inlines before |insertionPoint| with inlines following
+    // |insertionPoint|, because the new child is going to be inserted in between the inlines,
+    // splitting them.
+    ASSERT(!isInline() || isAtomicInlineLevel());
+    ASSERT(!insertionPoint || insertionPoint->parent() == this);
+
+    setChildrenInline(false);
+
+    LayoutObject* child = firstChild();
+    if (!child)
+        return;
+
+    deleteLineBoxTree();
+
+    while (child) {
+        LayoutObject* inlineRunStart;
+        LayoutObject* inlineRunEnd;
+        getInlineRun(child, insertionPoint, inlineRunStart, inlineRunEnd);
+
+        if (!inlineRunStart)
+            break;
+
+        child = inlineRunEnd->nextSibling();
+
+        LayoutBlock* block = createAnonymousBlock();
+        children()->insertChildNode(this, block, inlineRunStart);
+        moveChildrenTo(block, inlineRunStart, child);
+    }
+
+#if ENABLE(ASSERT)
+    for (LayoutObject *c = firstChild(); c; c = c->nextSibling())
+        ASSERT(!c->isInline());
+#endif
+
+    setShouldDoFullPaintInvalidation();
+}
+
+void LayoutBlockFlow::childBecameNonInline(LayoutObject*)
+{
+    makeChildrenNonInline();
+    if (isAnonymousBlock() && parent() && parent()->isLayoutBlock())
+        toLayoutBlock(parent())->removeLeftoverAnonymousBlock(this);
+    // |this| may be dead here
 }
 
 void LayoutBlockFlow::invalidatePaintForOverhangingFloats(bool paintAllDescendants)
@@ -2044,70 +2780,27 @@ void LayoutBlockFlow::invalidatePaintForOverhangingFloats(bool paintAllDescendan
     }
 }
 
-void LayoutBlockFlow::invalidatePaintForOverflow()
+void LayoutBlockFlow::invalidateDisplayItemClients(PaintInvalidationReason invalidationReason) const
 {
-    // FIXME: We could tighten up the left and right invalidation points if we let layoutInlineChildren fill them in based off the particular lines
-    // it had to lay out. We wouldn't need the hasOverflowClip() hack in that case either.
-    LayoutUnit paintInvalidationLogicalLeft = logicalLeftVisualOverflow();
-    LayoutUnit paintInvalidationLogicalRight = logicalRightVisualOverflow();
-    if (hasOverflowClip()) {
-        // If we have clipped overflow, we should use layout overflow as well, since visual overflow from lines didn't propagate to our block's overflow.
-        // Note the old code did this as well but even for overflow:visible. The addition of hasOverflowClip() at least tightens up the hack a bit.
-        // layoutInlineChildren should be patched to compute the entire paint invalidation rect.
-        paintInvalidationLogicalLeft = std::min(paintInvalidationLogicalLeft, logicalLeftLayoutOverflow());
-        paintInvalidationLogicalRight = std::max(paintInvalidationLogicalRight, logicalRightLayoutOverflow());
-    }
+    LayoutBlock::invalidateDisplayItemClients(invalidationReason);
 
-    LayoutRect paintInvalidationRect;
-    if (isHorizontalWritingMode())
-        paintInvalidationRect = LayoutRect(paintInvalidationLogicalLeft, m_paintInvalidationLogicalTop, paintInvalidationLogicalRight - paintInvalidationLogicalLeft, m_paintInvalidationLogicalBottom - m_paintInvalidationLogicalTop);
-    else
-        paintInvalidationRect = LayoutRect(m_paintInvalidationLogicalTop, paintInvalidationLogicalLeft, m_paintInvalidationLogicalBottom - m_paintInvalidationLogicalTop, paintInvalidationLogicalRight - paintInvalidationLogicalLeft);
-
-    if (hasOverflowClip()) {
-        // Adjust the paint invalidation rect for scroll offset
-        paintInvalidationRect.move(-scrolledContentOffset());
-
-        // Don't allow this rect to spill out of our overflow box.
-        paintInvalidationRect.intersect(LayoutRect(LayoutPoint(), size()));
-    }
-
-    // Make sure the rect is still non-empty after intersecting for overflow above
-    if (!paintInvalidationRect.isEmpty()) {
-        // Hits in media/event-attributes.html
-        DisableCompositingQueryAsserts disabler;
-
-        invalidatePaintRectangle(paintInvalidationRect); // We need to do a partial paint invalidation of our content.
-        if (hasReflection())
-            invalidatePaintRectangle(reflectedRect(paintInvalidationRect));
-    }
-
-    m_paintInvalidationLogicalTop = LayoutUnit();
-    m_paintInvalidationLogicalBottom = LayoutUnit();
-}
-
-void LayoutBlockFlow::paintFloats(const PaintInfo& paintInfo, const LayoutPoint& paintOffset) const
-{
-    BlockFlowPainter(*this).paintFloats(paintInfo, paintOffset);
-}
-
-void LayoutBlockFlow::clipOutFloatingObjects(const LayoutBlock* rootBlock, ClipScope& clipScope,
-    const LayoutPoint& rootBlockPhysicalPosition, const LayoutSize& offsetFromRootBlock) const
-{
-    if (!m_floatingObjects)
+    // If the block is a continuation or containing block of an inline continuation, invalidate the
+    // start object of the continuations if it has focus ring because change of continuation may change
+    // the shape of the focus ring.
+    if (!isAnonymous())
         return;
 
-    const FloatingObjectSet& floatingObjectSet = m_floatingObjects->set();
-    FloatingObjectSetIterator end = floatingObjectSet.end();
-    for (FloatingObjectSetIterator it = floatingObjectSet.begin(); it != end; ++it) {
-        const FloatingObject& floatingObject = *it->get();
-        LayoutRect floatBox(LayoutPoint(offsetFromRootBlock), floatingObject.layoutObject()->size());
-        floatBox.move(positionForFloatIncludingMargin(floatingObject));
-        rootBlock->flipForWritingMode(floatBox);
-        floatBox.move(rootBlockPhysicalPosition.x(), rootBlockPhysicalPosition.y());
-
-        clipScope.clip(floatBox, SkRegion::kDifference_Op);
+    LayoutObject* startOfContinuations = nullptr;
+    if (LayoutInline* inlineElementContinuation = this->inlineElementContinuation()) {
+        // This block is an anonymous block continuation.
+        startOfContinuations = inlineElementContinuation->node()->layoutObject();
+    } else if (LayoutObject* firstChild = this->firstChild()) {
+        // This block is the anonymous containing block of an inline element continuation.
+        if (firstChild->isElementContinuation())
+            startOfContinuations = firstChild->node()->layoutObject();
     }
+    if (startOfContinuations && startOfContinuations->styleRef().outlineStyleIsAuto())
+        startOfContinuations->slowSetPaintingLayerNeedsRepaintAndInvalidateDisplayItemClient(*startOfContinuations, invalidationReason);
 }
 
 void LayoutBlockFlow::clearFloats(EClear clear)
@@ -2116,13 +2809,13 @@ void LayoutBlockFlow::clearFloats(EClear clear)
     // set y position
     LayoutUnit newY;
     switch (clear) {
-    case CLEFT:
+    case ClearLeft:
         newY = lowestFloatLogicalBottom(FloatingObject::FloatLeft);
         break;
-    case CRIGHT:
+    case ClearRight:
         newY = lowestFloatLogicalBottom(FloatingObject::FloatRight);
         break;
-    case CBOTH:
+    case ClearBoth:
         newY = lowestFloatLogicalBottom();
     default:
         break;
@@ -2151,11 +2844,9 @@ LayoutPoint LayoutBlockFlow::flipFloatForWritingModeForChild(const FloatingObjec
     if (!style()->isFlippedBlocksWritingMode())
         return point;
 
-    // This is similar to LayoutBox::flipForWritingModeForChild. We have to subtract out our left/top offsets twice, since
+    // This is similar to LayoutBox::flipForWritingModeForChild. We have to subtract out our left offsets twice, since
     // it's going to get added back in. We hide this complication here so that the calling code looks normal for the unflipped
     // case.
-    if (isHorizontalWritingMode())
-        return LayoutPoint(point.x(), point.y() + size().height() - child.layoutObject()->size().height() - 2 * yPositionForFloatIncludingMargin(child));
     return LayoutPoint(point.x() + size().width() - child.layoutObject()->size().width() - 2 * xPositionForFloatIncludingMargin(child), point.y());
 }
 
@@ -2263,7 +2954,7 @@ FloatingObject* LayoutBlockFlow::insertFloatingObject(LayoutBox& floatBox)
 
     // Create the special object entry & append it to the list
 
-    OwnPtr<FloatingObject> newObj = FloatingObject::create(&floatBox);
+    std::unique_ptr<FloatingObject> newObj = FloatingObject::create(&floatBox);
 
     // Our location is irrelevant if we're unsplittable or no pagination is in effect.
     // Just go ahead and lay out the float.
@@ -2275,7 +2966,7 @@ FloatingObject* LayoutBlockFlow::insertFloatingObject(LayoutBox& floatBox)
 
     setLogicalWidthForFloat(*newObj, logicalWidthForChild(floatBox) + marginStartForChild(floatBox) + marginEndForChild(floatBox));
 
-    return m_floatingObjects->add(newObj.release());
+    return m_floatingObjects->add(std::move(newObj));
 }
 
 void LayoutBlockFlow::removeFloatingObject(LayoutBox* floatBox)
@@ -2379,10 +3070,18 @@ bool LayoutBlockFlow::positionNewFloats(LineWidth* width)
         childBox->setMayNeedPaintInvalidation();
 
         LayoutUnit childLogicalLeftMargin = style()->isLeftToRightDirection() ? marginStartForChild(*childBox) : marginEndForChild(*childBox);
-        if (childBox->style()->clear() & CLEFT)
+        if (childBox->style()->clear() & ClearLeft)
             logicalTop = std::max(lowestFloatLogicalBottom(FloatingObject::FloatLeft), logicalTop);
-        if (childBox->style()->clear() & CRIGHT)
+        if (childBox->style()->clear() & ClearRight)
             logicalTop = std::max(lowestFloatLogicalBottom(FloatingObject::FloatRight), logicalTop);
+
+        bool isPaginated = view()->layoutState()->isPaginated();
+        if (isPaginated && !childrenInline()) {
+            // Forced breaks are inserted at class A break points. Floats may be affected by a
+            // break-after value on the previous in-flow sibling.
+            if (LayoutBox* previousInFlowBox = childBox->previousInFlowSiblingBox())
+                logicalTop = applyForcedBreak(logicalTop, previousInFlowBox->breakAfter());
+        }
 
         LayoutPoint floatLogicalLocation = computeLogicalLocationForFloat(floatingObject, logicalTop);
 
@@ -2392,8 +3091,6 @@ bool LayoutBlockFlow::positionNewFloats(LineWidth* width)
         setLogicalTopForChild(*childBox, floatLogicalLocation.y() + marginBeforeForChild(*childBox));
 
         SubtreeLayoutScope layoutScope(*childBox);
-        LayoutState* layoutState = view()->layoutState();
-        bool isPaginated = layoutState->isPaginated();
         if (isPaginated && !childBox->needsLayout())
             childBox->markForPaginationRelayoutIfNeeded(layoutScope);
 
@@ -2409,7 +3106,6 @@ bool LayoutBlockFlow::positionNewFloats(LineWidth* width)
                 strut = adjustForUnsplittableChild(*childBox, floatLogicalLocation.y()) - floatLogicalLocation.y();
             }
 
-            floatingObject.setPaginationStrut(strut);
             childBox->setPaginationStrut(strut);
             if (strut) {
                 floatLogicalLocation = computeLogicalLocationForFloat(floatingObject, floatLogicalLocation.y() + strut);
@@ -2570,6 +3266,32 @@ LayoutUnit LayoutBlockFlow::nextFloatLogicalBottomBelowForBlock(LayoutUnit logic
     return m_floatingObjects->findNextFloatLogicalBottomBelowForBlock(logicalHeight);
 }
 
+Node* LayoutBlockFlow::nodeForHitTest() const
+{
+    // If we are in the margins of block elements that are part of a
+    // continuation we're actually still inside the enclosing element
+    // that was split. Use the appropriate inner node.
+    return isAnonymousBlockContinuation() ? continuation()->node() : node();
+}
+
+bool LayoutBlockFlow::hitTestChildren(HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
+{
+    LayoutPoint scrolledOffset(hasOverflowClip() ? accumulatedOffset - scrolledContentOffset() : accumulatedOffset);
+    if (childrenInline()) {
+        if (m_lineBoxes.hitTest(LineLayoutBoxModel(this), result, locationInContainer, scrolledOffset, hitTestAction)) {
+            updateHitTestResult(result, flipForWritingMode(toLayoutPoint(locationInContainer.point() - accumulatedOffset)));
+            return true;
+        }
+    } else if (LayoutBlock::hitTestChildren(result, locationInContainer, accumulatedOffset, hitTestAction)) {
+        return true;
+    }
+
+    if (hitTestAction == HitTestFloat && hitTestFloats(result, locationInContainer, scrolledOffset))
+        return true;
+
+    return false;
+}
+
 bool LayoutBlockFlow::hitTestFloats(HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset)
 {
     if (!m_floatingObjects)
@@ -2586,7 +3308,7 @@ bool LayoutBlockFlow::hitTestFloats(HitTestResult& result, const HitTestLocation
     for (FloatingObjectSetIterator it = floatingObjectSet.end(); it != begin;) {
         --it;
         const FloatingObject& floatingObject = *it->get();
-        if (floatingObject.shouldPaint() && !floatingObject.layoutObject()->hasSelfPaintingLayer()) {
+        if (floatingObject.shouldPaint()) {
             LayoutUnit xOffset = xPositionForFloatIncludingMargin(floatingObject) - floatingObject.layoutObject()->location().x();
             LayoutUnit yOffset = yPositionForFloatIncludingMargin(floatingObject) - floatingObject.layoutObject()->location().y();
             LayoutPoint childPoint = flipFloatForWritingModeForChild(floatingObject, adjustedLocation + LayoutSize(xOffset, yOffset));
@@ -2598,6 +3320,18 @@ bool LayoutBlockFlow::hitTestFloats(HitTestResult& result, const HitTestLocation
     }
 
     return false;
+}
+
+LayoutSize LayoutBlockFlow::accumulateInFlowPositionOffsets() const
+{
+    if (!isAnonymousBlock() || !isInFlowPositioned())
+        return LayoutSize();
+    LayoutSize offset;
+    for (const LayoutObject* p = inlineElementContinuation(); p && p->isLayoutInline(); p = p->parent()) {
+        if (p->isInFlowPositioned())
+            offset += toLayoutInline(p)->offsetForInFlowPosition();
+    }
+    return offset;
 }
 
 LayoutUnit LayoutBlockFlow::logicalLeftFloatOffsetForLine(LayoutUnit logicalTop, LayoutUnit fixedOffset, LayoutUnit logicalHeight) const
@@ -2649,14 +3383,6 @@ void LayoutBlockFlow::setAncestorShouldPaintFloatingObject(const LayoutBox& floa
     ASSERT_NOT_REACHED();
 }
 
-IntRect alignSelectionRectToDevicePixels(LayoutRect& rect)
-{
-    LayoutUnit roundedX = LayoutUnit(rect.x().round());
-    return IntRect(roundedX, rect.y().round(),
-        (rect.maxX() - roundedX).round(),
-        snapSizeToPixel(rect.height(), rect.y()));
-}
-
 bool LayoutBlockFlow::allowsPaginationStrut() const
 {
     // The block needs to be contained by a LayoutBlockFlow (and not by e.g. a flexbox, grid, or a
@@ -2686,7 +3412,7 @@ void LayoutBlockFlow::setPaginationStrutPropagatedFromChild(LayoutUnit strut)
     if (!m_rareData) {
         if (!strut)
             return;
-        m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+        m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
     }
     m_rareData->m_paginationStrutPropagatedFromChild = strut;
 }
@@ -2760,7 +3486,7 @@ LayoutUnit LayoutBlockFlow::logicalRightSelectionOffset(const LayoutBlock* rootB
 
 RootInlineBox* LayoutBlockFlow::createRootInlineBox()
 {
-    return new RootInlineBox(*this);
+    return new RootInlineBox(LineLayoutItem(this));
 }
 
 bool LayoutBlockFlow::isPagedOverflow(const ComputedStyle& style)
@@ -2768,7 +3494,7 @@ bool LayoutBlockFlow::isPagedOverflow(const ComputedStyle& style)
     return style.isOverflowPaged() && node() != document().viewportDefiningElement();
 }
 
-LayoutBlockFlow::FlowThreadType LayoutBlockFlow::flowThreadType(const ComputedStyle& style)
+LayoutBlockFlow::FlowThreadType LayoutBlockFlow::getFlowThreadType(const ComputedStyle& style)
 {
     if (isPagedOverflow(style))
         return PagedFlowThread;
@@ -2797,11 +3523,11 @@ void LayoutBlockFlow::createOrDestroyMultiColumnFlowThreadIfNeeded(const Compute
     // both paged overflow and multicol on the same element, but then we need two flow
     // threads. Anyway, this is nothing to worry about until we can actually nest multicol properly
     // inside other fragmentation contexts.
-    FlowThreadType type = flowThreadType(styleRef());
+    FlowThreadType type = getFlowThreadType(styleRef());
 
     if (multiColumnFlowThread()) {
         ASSERT(oldStyle);
-        if (type != flowThreadType(*oldStyle)) {
+        if (type != getFlowThreadType(*oldStyle)) {
             // If we're no longer to be multicol/paged, destroy the flow thread. Also destroy it
             // when switching between multicol and paged, since that affects the column set
             // structure (multicol containers may have spanners, paged containers may not).
@@ -2844,7 +3570,7 @@ LayoutBlockFlow::LayoutBlockFlowRareData& LayoutBlockFlow::ensureRareData()
     if (m_rareData)
         return *m_rareData;
 
-    m_rareData = adoptPtr(new LayoutBlockFlowRareData(this));
+    m_rareData = wrapUnique(new LayoutBlockFlowRareData(this));
     return *m_rareData;
 }
 
@@ -2876,6 +3602,204 @@ void LayoutBlockFlow::positionDialog()
         top += (visibleHeight - size().height()) / 2;
     setY(top);
     dialog->setCentered(top);
+}
+
+void LayoutBlockFlow::simplifiedNormalFlowInlineLayout()
+{
+    ASSERT(childrenInline());
+    ListHashSet<RootInlineBox*> lineBoxes;
+    for (InlineWalker walker(LineLayoutBlockFlow(this)); !walker.atEnd(); walker.advance()) {
+        LayoutObject* o = walker.current().layoutObject();
+        if (!o->isOutOfFlowPositioned() && (o->isAtomicInlineLevel() || o->isFloating())) {
+            o->layoutIfNeeded();
+            if (toLayoutBox(o)->inlineBoxWrapper()) {
+                RootInlineBox& box = toLayoutBox(o)->inlineBoxWrapper()->root();
+                lineBoxes.add(&box);
+            }
+        } else if (o->isText() || (o->isLayoutInline() && !walker.atEndOfInline())) {
+            o->clearNeedsLayout();
+        }
+    }
+
+    // FIXME: Glyph overflow will get lost in this case, but not really a big deal.
+    GlyphOverflowAndFallbackFontsMap textBoxDataMap;
+    for (ListHashSet<RootInlineBox*>::const_iterator it = lineBoxes.begin(); it != lineBoxes.end(); ++it) {
+        RootInlineBox* box = *it;
+        box->computeOverflow(box->lineTop(), box->lineBottom(), textBoxDataMap);
+    }
+}
+
+bool LayoutBlockFlow::recalcInlineChildrenOverflowAfterStyleChange()
+{
+    ASSERT(childrenInline());
+    bool childrenOverflowChanged = false;
+    ListHashSet<RootInlineBox*> lineBoxes;
+    for (InlineWalker walker(LineLayoutBlockFlow(this)); !walker.atEnd(); walker.advance()) {
+        LayoutObject* layoutObject = walker.current().layoutObject();
+        if (recalcNormalFlowChildOverflowIfNeeded(layoutObject)) {
+            childrenOverflowChanged = true;
+            if (InlineBox* inlineBoxWrapper = toLayoutBlock(layoutObject)->inlineBoxWrapper())
+                lineBoxes.add(&inlineBoxWrapper->root());
+        }
+    }
+
+    // FIXME: Glyph overflow will get lost in this case, but not really a big deal.
+    GlyphOverflowAndFallbackFontsMap textBoxDataMap;
+    for (ListHashSet<RootInlineBox*>::const_iterator it = lineBoxes.begin(); it != lineBoxes.end(); ++it) {
+        RootInlineBox* box = *it;
+        box->clearKnownToHaveNoOverflow();
+        box->computeOverflow(box->lineTop(), box->lineBottom(), textBoxDataMap);
+    }
+    return childrenOverflowChanged;
+}
+
+PositionWithAffinity LayoutBlockFlow::positionForPoint(const LayoutPoint& point)
+{
+    if (isAtomicInlineLevel()) {
+        PositionWithAffinity position = positionForPointIfOutsideAtomicInlineLevel(point);
+        if (!position.isNull())
+            return position;
+    }
+    if (!childrenInline())
+        return LayoutBlock::positionForPoint(point);
+
+    LayoutPoint pointInContents = point;
+    offsetForContents(pointInContents);
+    LayoutPoint pointInLogicalContents(pointInContents);
+    if (!isHorizontalWritingMode())
+        pointInLogicalContents = pointInLogicalContents.transposedPoint();
+
+    if (!firstRootBox())
+        return createPositionWithAffinity(0);
+
+    bool linesAreFlipped = style()->isFlippedLinesWritingMode();
+    bool blocksAreFlipped = style()->isFlippedBlocksWritingMode();
+
+    // look for the closest line box in the root box which is at the passed-in y coordinate
+    InlineBox* closestBox = nullptr;
+    RootInlineBox* firstRootBoxWithChildren = nullptr;
+    RootInlineBox* lastRootBoxWithChildren = nullptr;
+    for (RootInlineBox* root = firstRootBox(); root; root = root->nextRootBox()) {
+        if (!root->firstLeafChild())
+            continue;
+        if (!firstRootBoxWithChildren)
+            firstRootBoxWithChildren = root;
+
+        if (!linesAreFlipped && root->isFirstAfterPageBreak() && (pointInLogicalContents.y() < root->lineTopWithLeading()
+            || (blocksAreFlipped && pointInLogicalContents.y() == root->lineTopWithLeading())))
+            break;
+
+        lastRootBoxWithChildren = root;
+
+        // check if this root line box is located at this y coordinate
+        if (pointInLogicalContents.y() < root->selectionBottom() || (blocksAreFlipped && pointInLogicalContents.y() == root->selectionBottom())) {
+            if (linesAreFlipped) {
+                RootInlineBox* nextRootBoxWithChildren = root->nextRootBox();
+                while (nextRootBoxWithChildren && !nextRootBoxWithChildren->firstLeafChild())
+                    nextRootBoxWithChildren = nextRootBoxWithChildren->nextRootBox();
+
+                if (nextRootBoxWithChildren && nextRootBoxWithChildren->isFirstAfterPageBreak() && (pointInLogicalContents.y() > nextRootBoxWithChildren->lineTopWithLeading()
+                    || (!blocksAreFlipped && pointInLogicalContents.y() == nextRootBoxWithChildren->lineTopWithLeading())))
+                    continue;
+            }
+            closestBox = root->closestLeafChildForLogicalLeftPosition(pointInLogicalContents.x());
+            if (closestBox)
+                break;
+        }
+    }
+
+    bool moveCaretToBoundary = document().frame()->editor().behavior().shouldMoveCaretToHorizontalBoundaryWhenPastTopOrBottom();
+
+    if (!moveCaretToBoundary && !closestBox && lastRootBoxWithChildren) {
+        // y coordinate is below last root line box, pretend we hit it
+        closestBox = lastRootBoxWithChildren->closestLeafChildForLogicalLeftPosition(pointInLogicalContents.x());
+    }
+
+    if (closestBox) {
+        if (moveCaretToBoundary) {
+            LayoutUnit firstRootBoxWithChildrenTop = std::min<LayoutUnit>(firstRootBoxWithChildren->selectionTop(), firstRootBoxWithChildren->logicalTop());
+            if (pointInLogicalContents.y() < firstRootBoxWithChildrenTop
+                || (blocksAreFlipped && pointInLogicalContents.y() == firstRootBoxWithChildrenTop)) {
+                InlineBox* box = firstRootBoxWithChildren->firstLeafChild();
+                if (box->isLineBreak()) {
+                    if (InlineBox* newBox = box->nextLeafChildIgnoringLineBreak())
+                        box = newBox;
+                }
+                // y coordinate is above first root line box, so return the start of the first
+                return PositionWithAffinity(positionForBox(box, true));
+            }
+        }
+
+        // pass the box a top position that is inside it
+        LayoutPoint point(pointInLogicalContents.x(), closestBox->root().blockDirectionPointInLine());
+        if (!isHorizontalWritingMode())
+            point = point.transposedPoint();
+        if (closestBox->getLineLayoutItem().isAtomicInlineLevel())
+            return positionForPointRespectingEditingBoundaries(LineLayoutBox(closestBox->getLineLayoutItem()), point);
+        return closestBox->getLineLayoutItem().positionForPoint(point);
+    }
+
+    if (lastRootBoxWithChildren) {
+        // We hit this case for Mac behavior when the Y coordinate is below the last box.
+        ASSERT(moveCaretToBoundary);
+        InlineBox* logicallyLastBox;
+        if (lastRootBoxWithChildren->getLogicalEndBoxWithNode(logicallyLastBox))
+            return PositionWithAffinity(positionForBox(logicallyLastBox, false));
+    }
+
+    // Can't reach this. We have a root line box, but it has no kids.
+    // FIXME: This should ASSERT_NOT_REACHED(), but clicking on placeholder text
+    // seems to hit this code path.
+    return createPositionWithAffinity(0);
+}
+
+#ifndef NDEBUG
+
+void LayoutBlockFlow::showLineTreeAndMark(const InlineBox* markedBox1, const char* markedLabel1, const InlineBox* markedBox2, const char* markedLabel2, const LayoutObject* obj) const
+{
+    showLayoutObject();
+    for (const RootInlineBox* root = firstRootBox(); root; root = root->nextRootBox())
+        root->showLineTreeAndMark(markedBox1, markedLabel1, markedBox2, markedLabel2, obj, 1);
+}
+
+#endif
+
+void LayoutBlockFlow::addOutlineRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, IncludeBlockVisualOverflowOrNot includeBlockOverflows) const
+{
+    // For blocks inside inlines, we go ahead and include margins so that we run right up to the
+    // inline boxes above and below us (thus getting merged with them to form a single irregular
+    // shape).
+    const LayoutInline* inlineElementContinuation = this->inlineElementContinuation();
+    if (inlineElementContinuation) {
+        // FIXME: This check really isn't accurate.
+        bool nextInlineHasLineBox = inlineElementContinuation->firstLineBox();
+        // FIXME: This is wrong. The principal layoutObject may not be the continuation preceding this block.
+        // FIXME: This is wrong for vertical writing-modes.
+        // https://bugs.webkit.org/show_bug.cgi?id=46781
+        bool prevInlineHasLineBox = toLayoutInline(inlineElementContinuation->node()->layoutObject())->firstLineBox();
+        LayoutUnit topMargin = prevInlineHasLineBox ? collapsedMarginBefore() : LayoutUnit();
+        LayoutUnit bottomMargin = nextInlineHasLineBox ? collapsedMarginAfter() : LayoutUnit();
+        if (topMargin || bottomMargin) {
+            LayoutRect rect(additionalOffset, size());
+            rect.expandEdges(topMargin, LayoutUnit(), bottomMargin, LayoutUnit());
+            rects.append(rect);
+        }
+    }
+
+    LayoutBlock::addOutlineRects(rects, additionalOffset, includeBlockOverflows);
+
+    if (includeBlockOverflows == IncludeBlockVisualOverflow && !hasOverflowClip() && !hasControlClip()) {
+        for (RootInlineBox* curr = firstRootBox(); curr; curr = curr->nextRootBox()) {
+            LayoutUnit top = std::max<LayoutUnit>(curr->lineTop(), curr->top());
+            LayoutUnit bottom = std::min<LayoutUnit>(curr->lineBottom(), curr->top() + curr->height());
+            LayoutRect rect(additionalOffset.x() + curr->x(), additionalOffset.y() + top, curr->width(), bottom - top);
+            if (!rect.isEmpty())
+                rects.append(rect);
+        }
+    }
+
+    if (inlineElementContinuation)
+        inlineElementContinuation->addOutlineRects(rects, additionalOffset + (inlineElementContinuation->containingBlock()->location() - location()), includeBlockOverflows);
 }
 
 } // namespace blink

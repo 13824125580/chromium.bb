@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/shared_memory_handle.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
@@ -18,8 +19,10 @@
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_message_filter.h"
+#include "content/browser/loader_delegate_impl.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/resource_messages.h"
+#include "content/common/resource_request.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/common/appcache_info.h"
 #include "content/public/common/process_type.h"
@@ -216,7 +219,7 @@ class BlackholeFilter : public ResourceMessageFilter {
   }
 
   bool Send(IPC::Message* msg) override {
-    scoped_ptr<IPC::Message> take_ownership(msg);
+    std::unique_ptr<IPC::Message> take_ownership(msg);
     ReleaseHandlesInMessage(*msg);
     return true;
   }
@@ -239,10 +242,10 @@ class BlackholeFilter : public ResourceMessageFilter {
   DISALLOW_COPY_AND_ASSIGN(BlackholeFilter);
 };
 
-ResourceHostMsg_Request CreateResourceRequest(const char* method,
-                                              ResourceType type,
-                                              const GURL& url) {
-  ResourceHostMsg_Request request;
+ResourceRequest CreateResourceRequest(const char* method,
+                                      ResourceType type,
+                                      const GURL& url) {
+  ResourceRequest request;
   request.method = std::string(method);
   request.url = url;
   request.first_party_for_cookies = url;  // Bypass third-party cookie blocking.
@@ -265,9 +268,10 @@ ResourceHostMsg_Request CreateResourceRequest(const char* method,
 class AsyncRevalidationManagerTest : public ::testing::Test {
  protected:
   AsyncRevalidationManagerTest(
-      scoped_ptr<net::TestNetworkDelegate> network_delegate)
+      std::unique_ptr<net::TestNetworkDelegate> network_delegate)
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
         network_delegate_(std::move(network_delegate)) {
+    host_.SetLoaderDelegate(&loader_delegate_);
     browser_context_.reset(new TestBrowserContext());
     BrowserContext::EnsureResourceContextInitialized(browser_context_.get());
     base::RunLoop().RunUntilIdle();
@@ -283,7 +287,7 @@ class AsyncRevalidationManagerTest : public ::testing::Test {
 
   AsyncRevalidationManagerTest()
       : AsyncRevalidationManagerTest(
-            make_scoped_ptr(new net::TestNetworkDelegate)) {}
+            base::WrapUnique(new net::TestNetworkDelegate)) {}
 
   void TearDown() override {
     host_.CancelRequestsForProcess(filter_->child_id());
@@ -300,7 +304,7 @@ class AsyncRevalidationManagerTest : public ::testing::Test {
   // Creates a request using the current test object as the filter and
   // SubResource as the resource type.
   void MakeTestRequest(int render_view_id, int request_id, const GURL& url) {
-    ResourceHostMsg_Request request =
+    ResourceRequest request =
         CreateResourceRequest("GET", RESOURCE_TYPE_SUB_RESOURCE, url);
     ResourceHostMsg_RequestResource msg(render_view_id, request_id, request);
     host_.OnMessageReceived(msg, filter_.get());
@@ -315,10 +319,11 @@ class AsyncRevalidationManagerTest : public ::testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<TestURLRequestJobFactory> job_factory_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestURLRequestJobFactory> job_factory_;
   scoped_refptr<BlackholeFilter> filter_;
-  scoped_ptr<net::TestNetworkDelegate> network_delegate_;
+  std::unique_ptr<net::TestNetworkDelegate> network_delegate_;
+  LoaderDelegateImpl loader_delegate_;
   ResourceDispatcherHostImpl host_;
 };
 
@@ -336,7 +341,7 @@ TEST_F(AsyncRevalidationManagerTest, SupportsAsyncRevalidation) {
 TEST_F(AsyncRevalidationManagerTest, AsyncRevalidationNotSupportedForPOST) {
   SetResponse(net::URLRequestTestJob::test_headers(), "delay complete");
   // Create POST request.
-  ResourceHostMsg_Request request = CreateResourceRequest(
+  ResourceRequest request = CreateResourceRequest(
       "POST", RESOURCE_TYPE_SUB_RESOURCE, GURL("http://example.com/baz.php"));
   ResourceHostMsg_RequestResource msg(0, 1, request);
   host_.OnMessageReceived(msg, filter_.get());
@@ -417,7 +422,7 @@ class AsyncRevalidationManagerRecordingTest
  public:
   AsyncRevalidationManagerRecordingTest()
       : AsyncRevalidationManagerTest(
-            make_scoped_ptr(new URLRequestRecordingNetworkDelegate)) {}
+            base::WrapUnique(new URLRequestRecordingNetworkDelegate)) {}
 
   void TearDown() override {
     EXPECT_TRUE(IsEmpty());

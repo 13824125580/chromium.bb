@@ -11,51 +11,11 @@
 
 namespace blink {
 
-PassRefPtr<SerializedScriptValue> SerializedScriptValueForModulesFactory::create(v8::Isolate* isolate, v8::Local<v8::Value> value, MessagePortArray* messagePorts, ArrayBufferArray* arrayBuffers, ImageBitmapArray* imageBitmaps, WebBlobInfoArray* blobInfo, ExceptionState& exceptionState)
-{
-    RefPtr<SerializedScriptValue> serializedValue = SerializedScriptValueFactory::create();
-    SerializedScriptValueWriterForModules writer;
-    ScriptValueSerializer::Status status;
-    String errorMessage;
-    {
-        v8::TryCatch tryCatch(isolate);
-        status = SerializedScriptValueFactory::doSerialize(value, writer, messagePorts, arrayBuffers, imageBitmaps, blobInfo, serializedValue.get(), tryCatch, errorMessage, isolate);
-        if (status == ScriptValueSerializer::JSException) {
-            // If there was a JS exception thrown, re-throw it.
-            exceptionState.rethrowV8Exception(tryCatch.Exception());
-            return serializedValue.release();
-        }
-    }
-    switch (status) {
-    case ScriptValueSerializer::InputError:
-    case ScriptValueSerializer::DataCloneError:
-        exceptionState.throwDOMException(DataCloneError, errorMessage);
-        return serializedValue.release();
-    case ScriptValueSerializer::Success:
-        transferData(serializedValue.get(), writer, arrayBuffers, imageBitmaps, exceptionState, isolate);
-        return serializedValue.release();
-    case ScriptValueSerializer::JSException:
-        ASSERT_NOT_REACHED();
-        break;
-    }
-    ASSERT_NOT_REACHED();
-    return serializedValue.release();
-}
-
-PassRefPtr<SerializedScriptValue> SerializedScriptValueForModulesFactory::create(v8::Isolate* isolate, const String& data)
+PassRefPtr<SerializedScriptValue> SerializedScriptValueForModulesFactory::create(v8::Isolate* isolate, v8::Local<v8::Value> value, Transferables* transferables, WebBlobInfoArray* blobInfo, ExceptionState& exceptionState)
 {
     SerializedScriptValueWriterForModules writer;
-    writer.writeWebCoreString(data);
-    String wireData = writer.takeWireString();
-    return createFromWire(wireData);
-}
-
-ScriptValueSerializer::Status SerializedScriptValueForModulesFactory::doSerialize(v8::Local<v8::Value> value, SerializedScriptValueWriter& writer, MessagePortArray* messagePorts, ArrayBufferArray* arrayBuffers, ImageBitmapArray* imageBitmaps, WebBlobInfoArray* blobInfo, BlobDataHandleMap& blobDataHandles, v8::TryCatch& tryCatch, String& errorMessage, v8::Isolate* isolate)
-{
-    ScriptValueSerializerForModules serializer(writer, messagePorts, arrayBuffers, imageBitmaps, blobInfo, blobDataHandles, tryCatch, ScriptState::current(isolate));
-    ScriptValueSerializer::Status status = serializer.serialize(value);
-    errorMessage = serializer.errorMessage();
-    return status;
+    ScriptValueSerializerForModules serializer(writer, blobInfo, ScriptState::current(isolate));
+    return serializer.serialize(value, transferables, exceptionState);
 }
 
 v8::Local<v8::Value> SerializedScriptValueForModulesFactory::deserialize(String& data, BlobDataHandleMap& blobDataHandles, ArrayBufferContentsArray* arrayBufferContentsArray, ImageBitmapContentsArray* imageBitmapContentsArray, v8::Isolate* isolate, MessagePortArray* messagePorts, const WebBlobInfoArray* blobInfo)
@@ -74,4 +34,3 @@ v8::Local<v8::Value> SerializedScriptValueForModulesFactory::deserialize(String&
 }
 
 } // namespace blink
-

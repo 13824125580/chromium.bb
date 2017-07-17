@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/default_tick_clock.h"
@@ -32,7 +33,9 @@ WebThreadImplForWorkerScheduler::WebThreadImplForWorkerScheduler(
 }
 
 void WebThreadImplForWorkerScheduler::Init() {
-  base::WaitableEvent completion(false, false);
+  base::WaitableEvent completion(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   thread_task_runner_->PostTask(
       FROM_HERE, base::Bind(&WebThreadImplForWorkerScheduler::InitOnThread,
                             base::Unretained(this), &completion));
@@ -41,7 +44,9 @@ void WebThreadImplForWorkerScheduler::Init() {
 
 WebThreadImplForWorkerScheduler::~WebThreadImplForWorkerScheduler() {
   if (task_runner_delegate_) {
-    base::WaitableEvent completion(false, false);
+    base::WaitableEvent completion(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     // Restore the original task runner so that the thread can tear itself down.
     thread_task_runner_->PostTask(
         FROM_HERE,
@@ -65,7 +70,7 @@ void WebThreadImplForWorkerScheduler::InitOnThread(
       worker_scheduler_->DefaultTaskRunner(),
       worker_scheduler_->DefaultTaskRunner()));
   base::MessageLoop::current()->AddDestructionObserver(this);
-  web_task_runner_ = make_scoped_ptr(new WebTaskRunnerImpl(task_runner_));
+  web_task_runner_ = base::WrapUnique(new WebTaskRunnerImpl(task_runner_));
   completion->Signal();
 }
 
@@ -82,10 +87,10 @@ void WebThreadImplForWorkerScheduler::WillDestroyCurrentMessageLoop() {
   worker_scheduler_.reset();
 }
 
-scoped_ptr<scheduler::WorkerScheduler>
+std::unique_ptr<scheduler::WorkerScheduler>
 WebThreadImplForWorkerScheduler::CreateWorkerScheduler() {
   task_runner_delegate_ = SchedulerTqmDelegateImpl::Create(
-      thread_->message_loop(), make_scoped_ptr(new base::DefaultTickClock()));
+      thread_->message_loop(), base::WrapUnique(new base::DefaultTickClock()));
   return WorkerScheduler::Create(task_runner_delegate_);
 }
 
@@ -97,17 +102,17 @@ blink::WebScheduler* WebThreadImplForWorkerScheduler::scheduler() const {
   return web_scheduler_.get();
 }
 
-base::SingleThreadTaskRunner* WebThreadImplForWorkerScheduler::TaskRunner()
+base::SingleThreadTaskRunner* WebThreadImplForWorkerScheduler::GetTaskRunner()
     const {
   return task_runner_.get();
 }
 
-SingleThreadIdleTaskRunner* WebThreadImplForWorkerScheduler::IdleTaskRunner()
+SingleThreadIdleTaskRunner* WebThreadImplForWorkerScheduler::GetIdleTaskRunner()
     const {
   return idle_task_runner_.get();
 }
 
-blink::WebTaskRunner* WebThreadImplForWorkerScheduler::taskRunner() {
+blink::WebTaskRunner* WebThreadImplForWorkerScheduler::getWebTaskRunner() {
   return web_task_runner_.get();
 }
 

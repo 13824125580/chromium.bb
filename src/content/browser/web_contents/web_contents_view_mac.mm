@@ -69,6 +69,7 @@ STATIC_ASSERT_ENUM(NSDragOperationEvery, blink::WebDragOperationEvery);
 - (void)cancelDeferredClose;
 - (void)clearWebContentsView;
 - (void)closeTabAfterEvent;
+- (void)updateWebContentsVisibility;
 - (void)viewDidBecomeFirstResponder:(NSNotification*)notification;
 - (content::WebContentsImpl*)webContents;
 @end
@@ -117,13 +118,15 @@ gfx::NativeWindow WebContentsViewMac::GetTopLevelNativeWindow() const {
 }
 
 void WebContentsViewMac::GetContainerBounds(gfx::Rect* out) const {
-  // Convert bounds to window coordinate space.
-  NSRect bounds =
-      [cocoa_view_.get() convertRect:[cocoa_view_.get() bounds] toView:nil];
-
-  // Convert bounds to screen coordinate space.
   NSWindow* window = [cocoa_view_.get() window];
-  bounds.origin = [window convertBaseToScreen:bounds.origin];
+  NSRect bounds = [cocoa_view_.get() bounds];
+  if (window)  {
+    // Convert bounds to window coordinate space.
+    bounds = [cocoa_view_.get() convertRect:bounds toView:nil];
+
+    // Convert bounds to screen coordinate space.
+    bounds = [window convertRectToScreen:bounds];
+  }
 
   // Flip y to account for screen flip.
   NSScreen* screen = [[NSScreen screens] firstObject];
@@ -223,8 +226,7 @@ void WebContentsViewMac::UpdateDragCursor(WebDragOperation operation) {
 }
 
 void WebContentsViewMac::GotFocus() {
-  // This is only used in the views FocusManager stuff but it bleeds through
-  // all subclasses. http://crbug.com/21875
+  web_contents_->NotifyWebContentsFocused();
 }
 
 // This is called when the renderer asks us to take focus back (i.e., it has
@@ -522,8 +524,6 @@ void WebContentsViewMac::CloseTab() {
 
 // NSDraggingSource methods
 
-// Returns what kind of drag operations are available. This is a required
-// method for NSDraggingSource.
 - (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal {
   if (dragSource_)
     return [dragSource_ draggingSourceOperationMaskForLocal:isLocal];
@@ -613,6 +613,15 @@ void WebContentsViewMac::CloseTab() {
       FocusThroughTabTraversal(direction == NSSelectingPrevious);
 }
 
+- (void)updateWebContentsVisibility {
+  WebContentsImpl* webContents = [self webContents];
+  if (!webContents || webContents->IsBeingDestroyed())
+    return;
+
+  const bool viewVisible = [self window] && ![self isHiddenOrHasHiddenAncestor];
+  webContents->UpdateWebContentsVisibility(viewVisible);
+}
+
 // When the subviews require a layout, their size should be reset to the size
 // of this view. (It is possible for the size to get out of sync as an
 // optimization in preparation for an upcoming WebContentsView resize.
@@ -661,6 +670,18 @@ void WebContentsViewMac::CloseTab() {
       webContents->WasOccluded();
     }
   }
+}
+
+- (void)viewDidMoveToWindow {
+  [self updateWebContentsVisibility];
+}
+
+- (void)viewDidHide {
+  [self updateWebContentsVisibility];
+}
+
+- (void)viewDidUnhide {
+  [self updateWebContentsVisibility];
 }
 
 @end

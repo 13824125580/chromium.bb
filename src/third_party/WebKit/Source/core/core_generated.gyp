@@ -153,6 +153,7 @@
         'generated_testing_idls',
         'core_event_interfaces',
         '../config.gyp:config',
+        'inspector/inspector.gyp:protocol_sources',
       ],
       'sources': [
         # bison rule
@@ -363,6 +364,26 @@
           'action': [
             'python',
             '../build/scripts/make_style_builder.py',
+            'css/CSSProperties.in',
+            '--output_dir',
+            '<(blink_core_output_dir)',
+          ],
+        },
+        {
+          'action_name': 'CSSOMTypes',
+          'inputs': [
+            '<@(css_properties_files)',
+            '../build/scripts/make_cssom_types.py',
+            '../build/scripts/templates/CSSOMKeywords.cpp.tmpl',
+            '../build/scripts/templates/CSSOMTypes.cpp.tmpl',
+          ],
+          'outputs': [
+            '<(blink_core_output_dir)/CSSOMKeywords.cpp',
+            '<(blink_core_output_dir)/CSSOMTypes.cpp',
+          ],
+          'action': [
+            'python',
+            '../build/scripts/make_cssom_types.py',
             'css/CSSProperties.in',
             '--output_dir',
             '<(blink_core_output_dir)',
@@ -710,9 +731,28 @@
           ],
         },
         {
+          'action_name': 'CSSPrimitiveValueUnitTrie',
+          'inputs': [
+            '<@(make_trie_helpers_files)',
+            '../build/scripts/make_css_primitive_value_unit_trie.py',
+            '../build/scripts/templates/CSSPrimitiveValueUnitTrie.cpp.tmpl',
+            'css/CSSPrimitiveValueUnits.in',
+          ],
+          'outputs': [
+            '<(blink_core_output_dir)/CSSPrimitiveValueUnitTrie.cpp',
+          ],
+          'action': [
+            'python',
+            '../build/scripts/make_css_primitive_value_unit_trie.py',
+            'css/CSSPrimitiveValueUnits.in',
+            '--output_dir',
+            '<(blink_core_output_dir)',
+          ],
+        },
+        {
           'action_name': 'HTMLElementLookupTrie',
           'inputs': [
-            '<@(scripts_for_in_files)',
+            '<@(make_trie_helpers_files)',
             '../build/scripts/make_element_lookup_trie.py',
             '../build/scripts/templates/ElementLookupTrie.cpp.tmpl',
             '../build/scripts/templates/ElementLookupTrie.h.tmpl',

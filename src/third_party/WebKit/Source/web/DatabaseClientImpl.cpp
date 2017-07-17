@@ -37,9 +37,9 @@
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<DatabaseClientImpl> DatabaseClientImpl::create()
+DatabaseClientImpl* DatabaseClientImpl::create()
 {
-    return adoptPtrWillBeNoop(new DatabaseClientImpl());
+    return new DatabaseClientImpl();
 }
 
 DatabaseClientImpl::~DatabaseClientImpl()
@@ -51,9 +51,9 @@ DEFINE_TRACE(DatabaseClientImpl)
     DatabaseClient::trace(visitor);
 }
 
-bool DatabaseClientImpl::allowDatabase(ExecutionContext* executionContext, const String& name, const String& displayName, unsigned long estimatedSize)
+bool DatabaseClientImpl::allowDatabase(ExecutionContext* executionContext, const String& name, const String& displayName, unsigned estimatedSize)
 {
-    ASSERT(executionContext->isContextThread());
+    DCHECK(executionContext->isContextThread());
     Document* document = toDocument(executionContext);
     WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(document->frame());
     if (!webFrame)

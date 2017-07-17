@@ -103,7 +103,6 @@ struct HistoryURLProviderParams {
   HistoryURLProviderParams(const AutocompleteInput& input,
                            bool trim_http,
                            const AutocompleteMatch& what_you_typed_match,
-                           const std::string& languages,
                            TemplateURL* default_search_provider,
                            const SearchTermsData& search_terms_data);
   ~HistoryURLProviderParams();
@@ -166,18 +165,15 @@ struct HistoryURLProviderParams {
   // |matches_| even when |promote_type| is not WHAT_YOU_TYPED_MATCH.
   bool have_what_you_typed_match;
 
-  // Languages we should pass to gfx::GetCleanStringFromUrl.
-  std::string languages;
-
   // The default search provider and search terms data necessary to cull results
   // that correspond to searches (on the default engine).  These can only be
   // obtained on the UI thread, so we have to copy them into here to pass them
-  // to the history thread.  We use a scoped_ptr<TemplateURL> for the DSP since
-  // TemplateURLs can't be copied by value. We use a scoped_ptr<SearchTermsData>
-  // so that we can store a snapshot of the SearchTermsData accessible from the
-  // history thread.
-  scoped_ptr<TemplateURL> default_search_provider;
-  scoped_ptr<SearchTermsData> search_terms_data;
+  // to the history thread.  We use a std::unique_ptr<TemplateURL> for the DSP
+  // since TemplateURLs can't be copied by value.
+  std::unique_ptr<TemplateURL> default_search_provider;
+  // Similarly, we use a std::unique_ptr<SearchTermsData> so that we can store a
+  // snapshot of the SearchTermsData accessible from the history thread.
+  std::unique_ptr<SearchTermsData> search_terms_data;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HistoryURLProviderParams);
@@ -325,7 +321,6 @@ class HistoryURLProvider : public HistoryProvider {
   AutocompleteMatch HistoryMatchToACMatch(
       const HistoryURLProviderParams& params,
       size_t match_number,
-      MatchType match_type,
       int relevance);
 
   AutocompleteProviderListener* listener_;

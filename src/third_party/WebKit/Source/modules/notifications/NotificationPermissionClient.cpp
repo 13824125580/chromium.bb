@@ -21,13 +21,13 @@ NotificationPermissionClient* NotificationPermissionClient::from(ExecutionContex
         return nullptr;
 
     const Document* document = toDocument(context);
-    if (!document->frame() || !document->frame()->isLocalFrame())
+    if (!document->frame())
         return nullptr;
 
-    return static_cast<NotificationPermissionClient*>(WillBeHeapSupplement<LocalFrame>::from(document->frame(), supplementName()));
+    return static_cast<NotificationPermissionClient*>(Supplement<LocalFrame>::from(document->frame(), supplementName()));
 }
 
-void provideNotificationPermissionClientTo(LocalFrame& frame, PassOwnPtrWillBeRawPtr<NotificationPermissionClient> client)
+void provideNotificationPermissionClientTo(LocalFrame& frame, NotificationPermissionClient* client)
 {
     frame.provideSupplement(NotificationPermissionClient::supplementName(), client);
 }

@@ -24,11 +24,11 @@
  */
 
 [
-    GarbageCollected,
-    NoInterfaceObject,
-    DependentLifetime,
+    ActiveScriptWrappable,
     Constructor,
     ConstructorCallWith=ExecutionContext,
+    DependentLifetime,
+    NoInterfaceObject,
 ] interface SpeechRecognition : EventTarget {
     [LegacyInterfaceTypeChecking] attribute SpeechGrammarList grammars;
     attribute DOMString lang;

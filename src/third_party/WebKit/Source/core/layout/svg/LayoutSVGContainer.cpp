@@ -36,6 +36,7 @@ LayoutSVGContainer::LayoutSVGContainer(SVGElement* node)
     : LayoutSVGModelObject(node)
     , m_objectBoundingBoxValid(false)
     , m_needsBoundariesUpdate(true)
+    , m_didScreenScaleFactorChange(false)
     , m_hasNonIsolatedBlendingDescendants(false)
     , m_hasNonIsolatedBlendingDescendantsDirty(false)
 {
@@ -54,18 +55,25 @@ void LayoutSVGContainer::layout()
     calcViewport();
 
     // Allow LayoutSVGTransformableContainer to update its transform.
-    bool updatedTransform = calculateLocalTransform();
+    SVGTransformChange transformChange = calculateLocalTransform();
+    m_didScreenScaleFactorChange =
+        transformChange == SVGTransformChange::Full || SVGLayoutSupport::screenScaleFactorChanged(parent());
 
     // LayoutSVGViewportContainer needs to set the 'layout size changed' flag.
     determineIfLayoutSizeChanged();
 
-    SVGLayoutSupport::layoutChildren(this, selfNeedsLayout() || SVGLayoutSupport::filtersForceContainerLayout(this));
+    // When hasRelativeLengths() is false, no descendants have relative lengths
+    // (hence no one is interested in viewport size changes).
+    bool layoutSizeChanged = element()->hasRelativeLengths()
+        && SVGLayoutSupport::layoutSizeOfNearestViewportChanged(this);
+
+    SVGLayoutSupport::layoutChildren(firstChild(), false, m_didScreenScaleFactorChange, layoutSizeChanged);
 
     // Invalidate all resources of this client if our layout changed.
     if (everHadLayout() && needsLayout())
         SVGResourcesCache::clientLayoutChanged(this);
 
-    if (m_needsBoundariesUpdate || updatedTransform) {
+    if (m_needsBoundariesUpdate || transformChange != SVGTransformChange::None) {
         updateCachedBoundaries();
         m_needsBoundariesUpdate = false;
 
@@ -73,6 +81,7 @@ void LayoutSVGContainer::layout()
         LayoutSVGModelObject::setNeedsBoundariesUpdate();
     }
 
+    ASSERT(!m_needsBoundariesUpdate);
     clearNeedsLayout();
 }
 
@@ -98,8 +107,7 @@ void LayoutSVGContainer::removeChild(LayoutObject* child)
 
 bool LayoutSVGContainer::selfWillPaint() const
 {
-    SVGResources* resources = SVGResourcesCache::cachedResourcesForLayoutObject(this);
-    return resources && resources->filter();
+    return SVGLayoutSupport::hasFilterResource(*this);
 }
 
 void LayoutSVGContainer::styleDidChange(StyleDifference diff, const ComputedStyle* oldStyle)
@@ -151,7 +159,7 @@ void LayoutSVGContainer::paint(const PaintInfo& paintInfo, const LayoutPoint&) c
 
 void LayoutSVGContainer::addOutlineRects(Vector<LayoutRect>& rects, const LayoutPoint&, IncludeBlockVisualOverflowOrNot) const
 {
-    rects.append(LayoutRect(paintInvalidationRectInLocalCoordinates()));
+    rects.append(LayoutRect(paintInvalidationRectInLocalSVGCoordinates()));
 }
 
 void LayoutSVGContainer::updateCachedBoundaries()
@@ -167,7 +175,7 @@ bool LayoutSVGContainer::nodeAtFloatPoint(HitTestResult& result, const FloatPoin
         return false;
 
     FloatPoint localPoint;
-    if (!SVGLayoutSupport::transformToUserSpaceAndCheckClipping(this, localToParentTransform(), pointInParent, localPoint))
+    if (!SVGLayoutSupport::transformToUserSpaceAndCheckClipping(this, localToSVGParentTransform(), pointInParent, localPoint))
         return false;
 
     for (LayoutObject* child = lastChild(); child; child = child->previousSibling()) {
@@ -191,6 +199,11 @@ bool LayoutSVGContainer::nodeAtFloatPoint(HitTestResult& result, const FloatPoin
     }
     // 16.4: "If there are no graphics elements whose relevant graphics content is under the pointer (i.e., there is no target element), the event is not dispatched."
     return false;
+}
+
+SVGTransformChange LayoutSVGContainer::calculateLocalTransform()
+{
+    return SVGTransformChange::None;
 }
 
 } // namespace blink

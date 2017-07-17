@@ -33,11 +33,9 @@
 
 namespace blink {
 
-class ContextLifecycleNotifier;
-
-class CORE_EXPORT ContextLifecycleObserver : public LifecycleObserver<ExecutionContext, ContextLifecycleObserver, ContextLifecycleNotifier> {
+class CORE_EXPORT ContextLifecycleObserver : public LifecycleObserver<ExecutionContext, ContextLifecycleObserver> {
 public:
-    ExecutionContext* executionContext() const { return lifecycleContext(); }
+    ExecutionContext* getExecutionContext() const { return lifecycleContext(); }
 
     enum Type {
         GenericType,

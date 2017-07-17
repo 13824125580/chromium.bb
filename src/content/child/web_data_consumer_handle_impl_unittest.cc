@@ -6,18 +6,20 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -68,7 +70,11 @@ class ReadDataOperation : public ReadDataOperationBase {
 
   const std::string& result() const { return result_; }
 
-  void ReadMore() override { ReadData(); }
+  void ReadMore() override {
+    // We may have drained the pipe while this task was waiting to run.
+    if (reader_)
+      ReadData();
+  }
 
   void ReadData() {
     if (!client_) {
@@ -78,7 +84,6 @@ class ReadDataOperation : public ReadDataOperationBase {
 
     Result rv = kOk;
     size_t readSize = 0;
-
     while (true) {
       char buffer[16];
       rv = reader_->read(&buffer, sizeof(buffer), kNone, &readSize);
@@ -103,9 +108,9 @@ class ReadDataOperation : public ReadDataOperationBase {
   }
 
  private:
-  scoped_ptr<WebDataConsumerHandleImpl> handle_;
-  scoped_ptr<WebDataConsumerHandle::Reader> reader_;
-  scoped_ptr<WebDataConsumerHandle::Client> client_;
+  std::unique_ptr<WebDataConsumerHandleImpl> handle_;
+  std::unique_ptr<WebDataConsumerHandle::Reader> reader_;
+  std::unique_ptr<WebDataConsumerHandle::Client> client_;
   base::MessageLoop* main_message_loop_;
   base::Closure on_done_;
   std::string result_;
@@ -124,7 +129,9 @@ class TwoPhaseReadDataOperation : public ReadDataOperationBase {
   const std::string& result() const { return result_; }
 
   void ReadMore() override {
-    ReadData();
+    // We may have drained the pipe while this task was waiting to run.
+    if (reader_)
+      ReadData();
   }
 
   void ReadData() {
@@ -169,9 +176,9 @@ class TwoPhaseReadDataOperation : public ReadDataOperationBase {
   }
 
  private:
-  scoped_ptr<WebDataConsumerHandleImpl> handle_;
-  scoped_ptr<WebDataConsumerHandle::Reader> reader_;
-  scoped_ptr<WebDataConsumerHandle::Client> client_;
+  std::unique_ptr<WebDataConsumerHandleImpl> handle_;
+  std::unique_ptr<WebDataConsumerHandle::Reader> reader_;
+  std::unique_ptr<WebDataConsumerHandle::Client> client_;
   base::MessageLoop* main_message_loop_;
   base::Closure on_done_;
   std::string result_;
@@ -229,7 +236,7 @@ class WebDataConsumerHandleImplTest : public ::testing::Test {
 
 TEST_F(WebDataConsumerHandleImplTest, ReadData) {
   base::RunLoop run_loop;
-  auto operation = make_scoped_ptr(new ReadDataOperation(
+  auto operation = base::WrapUnique(new ReadDataOperation(
       std::move(consumer_), &message_loop_, run_loop.QuitClosure()));
 
   base::Thread t("DataConsumerHandle test thread");
@@ -250,7 +257,7 @@ TEST_F(WebDataConsumerHandleImplTest, ReadData) {
 
 TEST_F(WebDataConsumerHandleImplTest, TwoPhaseReadData) {
   base::RunLoop run_loop;
-  auto operation = make_scoped_ptr(new TwoPhaseReadDataOperation(
+  auto operation = base::WrapUnique(new TwoPhaseReadDataOperation(
       std::move(consumer_), &message_loop_, run_loop.QuitClosure()));
 
   base::Thread t("DataConsumerHandle test thread");

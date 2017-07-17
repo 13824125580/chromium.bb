@@ -40,10 +40,10 @@ const size_t kPayloadSize = 1062882;  // 2*3^12
 const size_t kPayloadSize = 28697814;  // 2*3^15
 #endif
 
-scoped_ptr<net::test_server::HttpResponse> HandlePostAndRedirectURLs(
-  const std::string& request_path,
-  const net::test_server::HttpRequest& request) {
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+std::unique_ptr<net::test_server::HttpResponse> HandlePostAndRedirectURLs(
+    const std::string& request_path,
+    const net::test_server::HttpRequest& request) {
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse());
   if (base::StartsWith(request.relative_url, kRedirectPostPath,
                        base::CompareCase::SENSITIVE)) {
@@ -58,7 +58,7 @@ scoped_ptr<net::test_server::HttpResponse> HandlePostAndRedirectURLs(
     EXPECT_EQ(request.content.length(), kPayloadSize);
     return std::move(http_response);
   } else {
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
   }
 }
 
@@ -78,10 +78,8 @@ IN_PROC_BROWSER_TEST_F(AsyncResourceHandlerBrowserTest, UploadProgress) {
 
   std::string js_result;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell()->web_contents(),
-      base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
-                         kPostPath,
-                         kPayloadSize),
+      shell(), base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
+                                  kPostPath, kPayloadSize),
       &js_result));
   EXPECT_EQ(js_result, "success");
 }
@@ -98,10 +96,8 @@ IN_PROC_BROWSER_TEST_F(AsyncResourceHandlerBrowserTest,
 
   std::string js_result;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell()->web_contents(),
-      base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
-                         kRedirectPostPath,
-                         kPayloadSize),
+      shell(), base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
+                                  kRedirectPostPath, kPayloadSize),
       &js_result));
   EXPECT_EQ(js_result, "success");
 }

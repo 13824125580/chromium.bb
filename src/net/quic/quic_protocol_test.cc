@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "base/stl_util.h"
+#include "net/quic/quic_flags.h"
 #include "net/quic/quic_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,25 +40,32 @@ TEST(QuicProtocolTest, MakeQuicTag) {
 TEST(QuicProtocolTest, IsAawaitingPacket) {
   QuicAckFrame ack_frame;
   ack_frame.largest_observed = 10u;
-  EXPECT_TRUE(IsAwaitingPacket(ack_frame, 11u));
-  EXPECT_FALSE(IsAwaitingPacket(ack_frame, 1u));
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame, 11u, 0u));
+  EXPECT_FALSE(IsAwaitingPacket(ack_frame, 1u, 0u));
 
-  ack_frame.missing_packets.Add(10);
-  EXPECT_TRUE(IsAwaitingPacket(ack_frame, 10u));
-}
+  ack_frame.packets.Add(10);
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame, 10u, 0u));
 
-TEST(QuicProtocolTest, QuicDeprecatedErrorCodeCount) {
-  // If you deprecated any QuicErrorCode, you will need to update the
-  // deprecated QuicErrorCode count. Otherwise this test will fail.
-  int num_deprecated_errors = 0;
-  std::string invalid_error_code = "INVALID_ERROR_CODE";
-  for (int i = 0; i < QUIC_LAST_ERROR; ++i) {
-    if (QuicUtils::ErrorToString(static_cast<QuicErrorCode>(i)) ==
-        invalid_error_code) {
-      ++num_deprecated_errors;
-    }
-  }
-  EXPECT_EQ(kDeprecatedQuicErrorCount, num_deprecated_errors);
+  QuicAckFrame ack_frame1;
+  ack_frame1.missing = false;
+  ack_frame1.largest_observed = 10u;
+  ack_frame1.packets.Add(1, 11);
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame1, 11u, 0u));
+  EXPECT_FALSE(IsAwaitingPacket(ack_frame1, 1u, 0u));
+
+  ack_frame1.packets.Remove(10);
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame1, 10u, 0u));
+
+  QuicAckFrame ack_frame2;
+  ack_frame2.missing = false;
+  ack_frame2.largest_observed = 100u;
+  ack_frame2.packets.Add(21, 100);
+  EXPECT_FALSE(IsAwaitingPacket(ack_frame2, 11u, 20u));
+  EXPECT_FALSE(IsAwaitingPacket(ack_frame2, 80u, 20u));
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame2, 101u, 20u));
+
+  ack_frame2.packets.Remove(50);
+  EXPECT_TRUE(IsAwaitingPacket(ack_frame2, 50u, 20u));
 }
 
 TEST(QuicProtocolTest, QuicVersionToQuicTag) {
@@ -173,6 +181,119 @@ TEST(QuicProtocolTest, QuicVersionToString) {
   }
 }
 
+TEST(QuicProtocolTest, AckFrameToString) {
+  QuicAckFrame frame;
+  frame.entropy_hash = 1;
+  frame.largest_observed = 2;
+  frame.ack_delay_time = QuicTime::Delta::FromMicroseconds(3);
+  frame.packets.Add(4);
+  frame.packets.Add(5);
+  frame.received_packet_times = {
+      {6, QuicTime::Zero().Add(QuicTime::Delta::FromMicroseconds(7))}};
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ(
+      "{ entropy_hash: 1, largest_observed: 2, ack_delay_time: 3, "
+      "packets: [ 4 5  ], is_truncated: 0, received_packets: [ 6 at 7  ] }\n",
+      stream.str());
+}
+
+TEST(QuicProtocolTest, PaddingFrameToString) {
+  QuicPaddingFrame frame;
+  frame.num_padding_bytes = 1;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ num_padding_bytes: 1 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, RstStreamFrameToString) {
+  QuicRstStreamFrame frame;
+  frame.stream_id = 1;
+  frame.error_code = QUIC_STREAM_CANCELLED;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ stream_id: 1, error_code: 6 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, ConnectionCloseFrameToString) {
+  QuicConnectionCloseFrame frame;
+  frame.error_code = QUIC_NETWORK_IDLE_TIMEOUT;
+  frame.error_details = "No recent network activity.";
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ(
+      "{ error_code: 25, error_details: 'No recent network activity.' }\n",
+      stream.str());
+}
+
+TEST(QuicProtocolTest, GoAwayFrameToString) {
+  QuicGoAwayFrame frame;
+  frame.error_code = QUIC_NETWORK_IDLE_TIMEOUT;
+  frame.last_good_stream_id = 2;
+  frame.reason_phrase = "Reason";
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ(
+      "{ error_code: 25, last_good_stream_id: 2, reason_phrase: 'Reason' }\n",
+      stream.str());
+}
+
+TEST(QuicProtocolTest, WindowUpdateFrameToString) {
+  QuicWindowUpdateFrame frame;
+  std::ostringstream stream;
+  frame.stream_id = 1;
+  frame.byte_offset = 2;
+  stream << frame;
+  EXPECT_EQ("{ stream_id: 1, byte_offset: 2 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, BlockedFrameToString) {
+  QuicBlockedFrame frame;
+  frame.stream_id = 1;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ stream_id: 1 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, StreamFrameToString) {
+  QuicStreamFrame frame;
+  frame.stream_id = 1;
+  frame.fin = false;
+  frame.offset = 2;
+  frame.data_length = 3;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ stream_id: 1, fin: 0, offset: 2, length: 3 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, StopWaitingFrameToString) {
+  QuicStopWaitingFrame frame;
+  frame.entropy_hash = 1;
+  frame.least_unacked = 2;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ entropy_hash: 1, least_unacked: 2 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, PathCloseFrameToString) {
+  QuicPathCloseFrame frame;
+  frame.path_id = 1;
+  std::ostringstream stream;
+  stream << frame;
+  EXPECT_EQ("{ path_id: 1 }\n", stream.str());
+}
+
+TEST(QuicProtocolTest, FilterSupportedVersions) {
+  QuicVersionVector all_versions = {QUIC_VERSION_25, QUIC_VERSION_26,
+                                    QUIC_VERSION_27, QUIC_VERSION_29,
+                                    QUIC_VERSION_30};
+
+  FLAGS_quic_disable_pre_30 = true;
+  QuicVersionVector filtered_versions = FilterSupportedVersions(all_versions);
+  ASSERT_EQ(1u, filtered_versions.size());
+  EXPECT_EQ(QUIC_VERSION_30, filtered_versions[0]);
+}
+
 // Tests that a queue contains the expected data after calls to Add().
 TEST(PacketNumberQueueTest, AddRange) {
   PacketNumberQueue queue;
@@ -264,6 +385,19 @@ TEST(PacketNumberQueueTest, Iterators) {
 
   it_low = queue.lower_bound(101);
   EXPECT_TRUE(queue.end() == it_low);
+}
+
+TEST(PacketNumberQueueTest, IntervalLengthAndRemoveInterval) {
+  PacketNumberQueue queue;
+  queue.Add(1, 10);
+  queue.Add(20, 30);
+  queue.Add(40, 50);
+  EXPECT_EQ(3u, queue.NumIntervals());
+  EXPECT_EQ(10u, queue.LastIntervalLength());
+  queue.Remove(9, 21);
+  EXPECT_EQ(3u, queue.NumIntervals());
+  EXPECT_FALSE(queue.Contains(9));
+  EXPECT_FALSE(queue.Contains(20));
 }
 
 }  // namespace

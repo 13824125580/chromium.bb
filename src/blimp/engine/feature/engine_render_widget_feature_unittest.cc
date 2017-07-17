@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "blimp/engine/feature/engine_render_widget_feature.h"
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "blimp/common/create_blimp_message.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/common/proto/compositor.pb.h"
 #include "blimp/common/proto/render_widget.pb.h"
-#include "blimp/engine/feature/engine_render_widget_feature.h"
 #include "blimp/net/input_message_generator.h"
 #include "blimp/net/test_common.h"
 #include "content/public/browser/render_widget_host.h"
@@ -18,12 +22,14 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "ui/base/ime/dummy_text_input_client.h"
 
 using testing::_;
 using testing::InSequence;
 using testing::Sequence;
 
 namespace blimp {
+namespace engine {
 
 namespace {
 
@@ -33,7 +39,7 @@ class MockHostRenderWidgetMessageDelegate
   // EngineRenderWidgetFeature implementation.
   void OnWebGestureEvent(
       content::RenderWidgetHost* render_widget_host,
-      scoped_ptr<blink::WebGestureEvent> event) override {
+      std::unique_ptr<blink::WebGestureEvent> event) override {
     MockableOnWebGestureEvent(render_widget_host);
   }
 
@@ -81,6 +87,7 @@ class MockRenderWidgetHost
   bool IsLoading() const override { return false; }
   void ResizeRectChanged(const gfx::Rect& new_rect) override {}
   void RestartHangMonitorTimeout() override {}
+  void DisableHangMonitorForTesting() override {}
   void SetIgnoreInputEvents(bool ignore_input_events) override {}
   void WasResized() override {}
   void AddKeyPressEventCallback(
@@ -89,12 +96,23 @@ class MockRenderWidgetHost
       const KeyPressEventCallback& callback) override {}
   void AddMouseEventCallback(const MouseEventCallback& callback) override {}
   void RemoveMouseEventCallback(const MouseEventCallback& callback) override {}
+  void AddInputEventObserver(InputEventObserver* observer) override {}
+  void RemoveInputEventObserver(InputEventObserver* observer) override {}
   void GetWebScreenInfo(blink::WebScreenInfo* result) override {}
-  bool GetScreenColorProfile(std::vector<char>* color_profile) override {
-    return false; }
   void HandleCompositorProto(const std::vector<uint8_t>& proto) override {}
 
   bool Send(IPC::Message* msg) override { return false; }
+};
+
+class MockTextInputClient : public ui::DummyTextInputClient {
+ public:
+  MockTextInputClient() : DummyTextInputClient(ui::TEXT_INPUT_TYPE_TEXT) {}
+
+  bool GetTextFromRange(const gfx::Range& range,
+                        base::string16* text) const override {
+    *text = base::string16(base::ASCIIToUTF16("green apple"));
+    return false;
+  }
 };
 
 MATCHER_P(CompMsgEquals, contents, "") {
@@ -124,6 +142,24 @@ MATCHER_P3(BlimpRWMsgEquals, tab_id, rw_id, message_type, "") {
       arg.render_widget().type() == message_type;
 }
 
+MATCHER_P2(BlimpImeMsgEquals, tab_id, message_type, "") {
+  return arg.target_tab_id() == tab_id && arg.ime().type() == message_type;
+}
+
+MATCHER_P5(BlimpImeMsgEquals,
+           tab_id,
+           rwid,
+           message_type,
+           text,
+           text_input_type,
+           "") {
+  return arg.target_tab_id() == tab_id &&
+         arg.ime().render_widget_id() == rwid &&
+         arg.ime().type() == message_type &&
+         arg.ime().ime_text().compare(text) == 0 &&
+         arg.ime().text_input_type() == text_input_type;
+}
+
 void SendInputMessage(BlimpMessageProcessor* processor,
                       int tab_id,
                       int rw_id) {
@@ -131,8 +167,8 @@ void SendInputMessage(BlimpMessageProcessor* processor,
   input_event.type = blink::WebGestureEvent::Type::GestureTap;
 
   InputMessageGenerator generator;
-  scoped_ptr<BlimpMessage> message = generator.GenerateMessage(input_event);
-  message->set_type(BlimpMessage::INPUT);
+  std::unique_ptr<BlimpMessage> message =
+      generator.GenerateMessage(input_event);
   message->set_target_tab_id(tab_id);
   message->mutable_input()->set_render_widget_id(rw_id);
 
@@ -146,7 +182,7 @@ void SendCompositorMessage(BlimpMessageProcessor* processor,
                            int rw_id,
                            const std::vector<uint8_t>& payload) {
   CompositorMessage* details;
-  scoped_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
+  std::unique_ptr<BlimpMessage> message = CreateBlimpMessage(&details, tab_id);
   details->set_render_widget_id(rw_id);
   details->set_payload(payload.data(), base::checked_cast<int>(payload.size()));
   net::TestCompletionCallback cb;
@@ -158,15 +194,17 @@ void SendCompositorMessage(BlimpMessageProcessor* processor,
 
 class EngineRenderWidgetFeatureTest : public testing::Test {
  public:
-  EngineRenderWidgetFeatureTest() {}
+  EngineRenderWidgetFeatureTest() : feature_(&settings_) {}
 
   void SetUp() override {
     render_widget_message_sender_ = new MockBlimpMessageProcessor;
     feature_.set_render_widget_message_sender(
-        make_scoped_ptr(render_widget_message_sender_));
+        base::WrapUnique(render_widget_message_sender_));
     compositor_message_sender_ = new MockBlimpMessageProcessor;
     feature_.set_compositor_message_sender(
-        make_scoped_ptr(compositor_message_sender_));
+        base::WrapUnique(compositor_message_sender_));
+    ime_message_sender_ = new MockBlimpMessageProcessor;
+    feature_.set_ime_message_sender(base::WrapUnique(ime_message_sender_));
     feature_.SetDelegate(1, &delegate1_);
     feature_.SetDelegate(2, &delegate2_);
   }
@@ -174,10 +212,13 @@ class EngineRenderWidgetFeatureTest : public testing::Test {
  protected:
   MockBlimpMessageProcessor* render_widget_message_sender_;
   MockBlimpMessageProcessor* compositor_message_sender_;
+  MockBlimpMessageProcessor* ime_message_sender_;
   MockRenderWidgetHost render_widget_host1_;
   MockRenderWidgetHost render_widget_host2_;
   MockHostRenderWidgetMessageDelegate delegate1_;
   MockHostRenderWidgetMessageDelegate delegate2_;
+  MockTextInputClient text_input_client_;
+  SettingsManager settings_;
   EngineRenderWidgetFeature feature_;
 };
 
@@ -211,6 +252,22 @@ TEST_F(EngineRenderWidgetFeatureTest, DelegateCallsOK) {
   SendCompositorMessage(&feature_, 1, 1, payload);
   SendInputMessage(&feature_, 1, 1);
   SendCompositorMessage(&feature_, 2, 2, payload);
+}
+
+TEST_F(EngineRenderWidgetFeatureTest, ImeRequestSentCorrectly) {
+  EXPECT_CALL(
+      *ime_message_sender_,
+      MockableProcessMessage(BlimpImeMsgEquals(2, 1, ImeMessage::SHOW_IME,
+                                               std::string("green apple"), 1),
+                             _));
+
+  EXPECT_CALL(
+      *ime_message_sender_,
+      MockableProcessMessage(BlimpImeMsgEquals(2, ImeMessage::HIDE_IME), _));
+
+  feature_.OnRenderWidgetCreated(2, &render_widget_host1_);
+  feature_.SendShowImeRequest(2, &render_widget_host1_, &text_input_client_);
+  feature_.SendHideImeRequest(2, &render_widget_host1_);
 }
 
 TEST_F(EngineRenderWidgetFeatureTest, DropsStaleMessages) {
@@ -283,5 +340,5 @@ TEST_F(EngineRenderWidgetFeatureTest, RepliesHaveCorrectRenderWidgetId) {
   feature_.SendCompositorMessage(1, &render_widget_host1_, payload);
 }
 
-
+}  // namespace engine
 }  // namespace blimp

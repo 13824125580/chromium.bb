@@ -32,11 +32,12 @@
 #define ScrollAnimator_h
 
 #include "platform/Timer.h"
+#include "platform/animation/CompositorAnimationDelegate.h"
 #include "platform/animation/CompositorAnimationPlayerClient.h"
 #include "platform/animation/CompositorScrollOffsetAnimationCurve.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/scroll/ScrollAnimatorBase.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
+#include <memory>
 
 namespace blink {
 
@@ -49,16 +50,17 @@ public:
     ~ScrollAnimator() override;
 
     bool hasRunningAnimation() const override;
-    float computeDeltaToConsume(ScrollbarOrientation, float pixelDelta) const override;
+    FloatSize computeDeltaToConsume(const FloatSize& delta) const override;
 
-    ScrollResultOneDimensional userScroll(ScrollbarOrientation, ScrollGranularity, float step, float delta) override;
+    ScrollResult userScroll(ScrollGranularity, const FloatSize& delta) override;
     void scrollToOffsetWithoutAnimation(const FloatPoint&) override;
     FloatPoint desiredTargetPosition() const override;
 
     // ScrollAnimatorCompositorCoordinator implementation.
     void tickAnimation(double monotonicTime) override;
     void cancelAnimation() override;
-    void takeoverCompositorAnimation() override;
+    void adjustAnimationAndSetScrollPosition(IntSize adjustment, ScrollType) override;
+    void takeOverCompositorAnimation() override;
     void resetAnimationState() override;
     void updateCompositorAnimations() override;
     void notifyCompositorAnimationFinished(int groupId) override;
@@ -74,9 +76,9 @@ protected:
     void notifyAnimationTakeover(
         double monotonicTime,
         double animationStartTime,
-        scoped_ptr<cc::AnimationCurve>) override;
+        std::unique_ptr<cc::AnimationCurve>) override;
 
-    OwnPtr<CompositorScrollOffsetAnimationCurve> m_animationCurve;
+    std::unique_ptr<CompositorScrollOffsetAnimationCurve> m_animationCurve;
     double m_startTime;
     WTF::TimeFunction m_timeFunction;
 
@@ -86,6 +88,7 @@ private:
     // immediately to the target and returns false.
     bool registerAndScheduleAnimation();
 
+    void createAnimationCurve();
     void postAnimationCleanupAndReset();
 
     void addMainThreadScrollingReason();

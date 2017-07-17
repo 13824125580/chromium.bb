@@ -22,6 +22,7 @@
         'language_usage_metrics',
         'pref_registry',
         'translate_core_common',
+        'variations',
       ],
       'include_dirs': [
         '..',
@@ -111,6 +112,7 @@
         'translate_core_common',
         '../base/base.gyp:base',
         '../url/url.gyp:url_lib',
+        '../third_party/cld_2/cld_2.gyp:cld_2',
       ],
       'include_dirs': [
         '..',
@@ -119,18 +121,6 @@
         # Note: sources list duplicated in GN build.
         'translate/core/language_detection/language_detection_util.cc',
         'translate/core/language_detection/language_detection_util.h',
-      ],
-      'conditions': [
-        ['cld_version==1', {
-          'dependencies': [
-            '<(DEPTH)/third_party/cld/cld.gyp:cld',
-          ],
-        }],
-        ['cld_version==2', {
-          'dependencies': [
-            '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld_2',
-          ],
-        }],
       ],
     },
   ],
@@ -152,16 +142,8 @@
           ],
           'sources': [
             # Note: sources list duplicated in GN build.
-            'translate/content/browser/browser_cld_data_provider.cc',
-            'translate/content/browser/browser_cld_data_provider.h',
-            'translate/content/browser/browser_cld_data_provider_factory.cc',
-            'translate/content/browser/browser_cld_data_provider_factory.h',
-            'translate/content/browser/browser_cld_utils.cc',
-            'translate/content/browser/browser_cld_utils.h',
             'translate/content/browser/content_translate_driver.cc',
             'translate/content/browser/content_translate_driver.h',
-            'translate/content/browser/data_file_browser_cld_data_provider.cc',
-            'translate/content/browser/data_file_browser_cld_data_provider.h',
           ],
         },
         {
@@ -172,18 +154,14 @@
             'translate_core_common',
             'translate_core_language_detection',
             '../base/base.gyp:base',
-            '../content/content.gyp:content_common',
             '../ipc/ipc.gyp:ipc',
+            '../url/ipc/url_ipc.gyp:url_ipc',
           ],
           'include_dirs': [
             '..',
           ],
           'sources': [
             # Note: sources list duplicated in GN build.
-            'translate/content/common/cld_data_source.cc',
-            'translate/content/common/cld_data_source.h',
-            'translate/content/common/data_file_cld_data_provider_messages.cc',
-            'translate/content/common/data_file_cld_data_provider_messages.h',
             'translate/content/common/translate_messages.cc',
             'translate/content/common/translate_messages.h',
            ],
@@ -201,34 +179,18 @@
             '../content/content.gyp:content_renderer',
             '../ipc/ipc.gyp:ipc',
             '../third_party/WebKit/public/blink.gyp:blink',
+            '../third_party/cld_2/cld_2.gyp:cld_2',
             '../url/url.gyp:url_lib',
-            '../v8/tools/gyp/v8.gyp:v8',
+            '../v8/src/v8.gyp:v8',
           ],
           'include_dirs': [
             '..',
           ],
           'sources': [
             # Note: sources list duplicated in GN build.
-            'translate/content/renderer/renderer_cld_data_provider.cc',
-            'translate/content/renderer/renderer_cld_data_provider.h',
-            'translate/content/renderer/renderer_cld_data_provider_factory.cc',
-            'translate/content/renderer/renderer_cld_data_provider_factory.h',
-            'translate/content/renderer/renderer_cld_utils.cc',
-            'translate/content/renderer/renderer_cld_utils.h',
             'translate/content/renderer/translate_helper.cc',
             'translate/content/renderer/translate_helper.h',
            ],
-          'conditions': [
-            ['cld_version==2', {
-              'dependencies': [
-                '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld_2',
-              ],
-              'sources': [
-                'translate/content/renderer/data_file_renderer_cld_data_provider.cc',
-                'translate/content/renderer/data_file_renderer_cld_data_provider.h',
-              ],
-            }],
-          ],
         },
       ],
     }],

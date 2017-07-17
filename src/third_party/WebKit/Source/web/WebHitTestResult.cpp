@@ -29,7 +29,6 @@
 #include "core/dom/Node.h"
 #include "core/editing/VisiblePosition.h"
 #include "core/layout/HitTestResult.h"
-#include "core/layout/LayoutObject.h"
 #include "platform/weborigin/KURL.h"
 #include "public/platform/WebPoint.h"
 #include "public/platform/WebURL.h"
@@ -38,10 +37,10 @@
 
 namespace blink {
 
-class WebHitTestResultPrivate : public RefCountedWillBeGarbageCollectedFinalized<WebHitTestResultPrivate> {
+class WebHitTestResultPrivate : public GarbageCollectedFinalized<WebHitTestResultPrivate> {
 public:
-    static PassRefPtrWillBeRawPtr<WebHitTestResultPrivate> create(const HitTestResult&);
-    static PassRefPtrWillBeRawPtr<WebHitTestResultPrivate> create(const WebHitTestResultPrivate&);
+    static WebHitTestResultPrivate* create(const HitTestResult&);
+    static WebHitTestResultPrivate* create(const WebHitTestResultPrivate&);
     DEFINE_INLINE_TRACE() { visitor->trace(m_result); }
     const HitTestResult& result() const { return m_result; }
 
@@ -62,14 +61,14 @@ inline WebHitTestResultPrivate::WebHitTestResultPrivate(const WebHitTestResultPr
 {
 }
 
-PassRefPtrWillBeRawPtr<WebHitTestResultPrivate> WebHitTestResultPrivate::create(const HitTestResult& result)
+WebHitTestResultPrivate* WebHitTestResultPrivate::create(const HitTestResult& result)
 {
-    return adoptRefWillBeNoop(new WebHitTestResultPrivate(result));
+    return new WebHitTestResultPrivate(result);
 }
 
-PassRefPtrWillBeRawPtr<WebHitTestResultPrivate> WebHitTestResultPrivate::create(const WebHitTestResultPrivate& result)
+WebHitTestResultPrivate* WebHitTestResultPrivate::create(const WebHitTestResultPrivate& result)
 {
-    return adoptRefWillBeNoop(new WebHitTestResultPrivate(result));
+    return new WebHitTestResultPrivate(result);
 }
 
 WebNode WebHitTestResult::node() const

@@ -4,7 +4,9 @@
 
 #include "extensions/browser/api/sockets_tcp/sockets_tcp_api.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/socket_permission_request.h"
 #include "extensions/browser/api/socket/tcp_socket.h"
 #include "extensions/browser/api/socket/tls_socket.h"
@@ -26,28 +28,27 @@ const char kInvalidSocketStateError[] =
     "Socket must be a connected client TCP socket.";
 const char kSocketNotConnectedError[] = "Socket not connected";
 
-linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
-                                        ResumableTCPSocket* socket) {
-  linked_ptr<SocketInfo> socket_info(new SocketInfo());
+SocketInfo CreateSocketInfo(int socket_id, ResumableTCPSocket* socket) {
+  SocketInfo socket_info;
   // This represents what we know about the socket, and does not call through
   // to the system.
-  socket_info->socket_id = socket_id;
+  socket_info.socket_id = socket_id;
   if (!socket->name().empty()) {
-    socket_info->name.reset(new std::string(socket->name()));
+    socket_info.name.reset(new std::string(socket->name()));
   }
-  socket_info->persistent = socket->persistent();
+  socket_info.persistent = socket->persistent();
   if (socket->buffer_size() > 0) {
-    socket_info->buffer_size.reset(new int(socket->buffer_size()));
+    socket_info.buffer_size.reset(new int(socket->buffer_size()));
   }
-  socket_info->paused = socket->paused();
-  socket_info->connected = socket->IsConnected();
+  socket_info.paused = socket->paused();
+  socket_info.connected = socket->IsConnected();
 
   // Grab the local address as known by the OS.
   net::IPEndPoint localAddress;
   if (socket->GetLocalAddress(&localAddress)) {
-    socket_info->local_address.reset(
+    socket_info.local_address.reset(
         new std::string(localAddress.ToStringWithoutPort()));
-    socket_info->local_port.reset(new int(localAddress.port()));
+    socket_info.local_port.reset(new int(localAddress.port()));
   }
 
   // Grab the peer address as known by the OS. This and the call below will
@@ -56,9 +57,9 @@ linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
   // that it should be closed locally.
   net::IPEndPoint peerAddress;
   if (socket->GetPeerAddress(&peerAddress)) {
-    socket_info->peer_address.reset(
+    socket_info.peer_address.reset(
         new std::string(peerAddress.ToStringWithoutPort()));
-    socket_info->peer_port.reset(new int(peerAddress.port()));
+    socket_info.peer_port.reset(new int(peerAddress.port()));
   }
 
   return socket_info;
@@ -88,9 +89,9 @@ using content::SocketPermissionRequest;
 
 TCPSocketAsyncApiFunction::~TCPSocketAsyncApiFunction() {}
 
-scoped_ptr<SocketResourceManagerInterface>
+std::unique_ptr<SocketResourceManagerInterface>
 TCPSocketAsyncApiFunction::CreateSocketResourceManager() {
-  return scoped_ptr<SocketResourceManagerInterface>(
+  return std::unique_ptr<SocketResourceManagerInterface>(
       new SocketResourceManager<ResumableTCPSocket>());
 }
 
@@ -101,9 +102,9 @@ ResumableTCPSocket* TCPSocketAsyncApiFunction::GetTcpSocket(int socket_id) {
 TCPSocketExtensionWithDnsLookupFunction::
     ~TCPSocketExtensionWithDnsLookupFunction() {}
 
-scoped_ptr<SocketResourceManagerInterface>
+std::unique_ptr<SocketResourceManagerInterface>
 TCPSocketExtensionWithDnsLookupFunction::CreateSocketResourceManager() {
-  return scoped_ptr<SocketResourceManagerInterface>(
+  return std::unique_ptr<SocketResourceManagerInterface>(
       new SocketResourceManager<ResumableTCPSocket>());
 }
 
@@ -421,9 +422,9 @@ void SocketsTcpGetInfoFunction::Work() {
     return;
   }
 
-  linked_ptr<sockets_tcp::SocketInfo> socket_info =
+  sockets_tcp::SocketInfo socket_info =
       CreateSocketInfo(params_->socket_id, socket);
-  results_ = sockets_tcp::GetInfo::Results::Create(*socket_info);
+  results_ = sockets_tcp::GetInfo::Results::Create(socket_info);
 }
 
 SocketsTcpGetSocketsFunction::SocketsTcpGetSocketsFunction() {}
@@ -433,13 +434,10 @@ SocketsTcpGetSocketsFunction::~SocketsTcpGetSocketsFunction() {}
 bool SocketsTcpGetSocketsFunction::Prepare() { return true; }
 
 void SocketsTcpGetSocketsFunction::Work() {
-  std::vector<linked_ptr<sockets_tcp::SocketInfo> > socket_infos;
+  std::vector<sockets_tcp::SocketInfo> socket_infos;
   base::hash_set<int>* resource_ids = GetSocketIds();
   if (resource_ids != NULL) {
-    for (base::hash_set<int>::iterator it = resource_ids->begin();
-         it != resource_ids->end();
-         ++it) {
-      int socket_id = *it;
+    for (int socket_id : *resource_ids) {
       ResumableTCPSocket* socket = GetTcpSocket(socket_id);
       if (socket) {
         socket_infos.push_back(CreateSocketInfo(socket_id, socket));
@@ -459,7 +457,8 @@ bool SocketsTcpSecureFunction::Prepare() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   params_ = api::sockets_tcp::Secure::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params_.get());
-  url_request_getter_ = browser_context()->GetRequestContext();
+  url_request_getter_ = content::BrowserContext::GetDefaultStoragePartition(
+      browser_context())->GetURLRequestContext();
   return true;
 }
 
@@ -470,7 +469,8 @@ void SocketsTcpSecureFunction::AsyncWorkStart() {
 
   ResumableTCPSocket* socket = GetTcpSocket(params_->socket_id);
   if (!socket) {
-    SetResult(new base::FundamentalValue(net::ERR_INVALID_ARGUMENT));
+    SetResult(
+        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
     error_ = kSocketNotFoundError;
     AsyncWorkCompleted();
     return;
@@ -483,14 +483,16 @@ void SocketsTcpSecureFunction::AsyncWorkStart() {
   // secure()'d.
   if (socket->GetSocketType() != Socket::TYPE_TCP ||
       socket->ClientStream() == NULL) {
-    SetResult(new base::FundamentalValue(net::ERR_INVALID_ARGUMENT));
+    SetResult(
+        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
     error_ = kInvalidSocketStateError;
     AsyncWorkCompleted();
     return;
   }
 
   if (!socket->IsConnected()) {
-    SetResult(new base::FundamentalValue(net::ERR_INVALID_ARGUMENT));
+    SetResult(
+        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
     error_ = kSocketNotConnectedError;
     AsyncWorkCompleted();
     return;
@@ -515,16 +517,15 @@ void SocketsTcpSecureFunction::AsyncWorkStart() {
   }
 
   TLSSocket::UpgradeSocketToTLS(
-      socket,
-      url_request_context->ssl_config_service(),
+      socket, url_request_context->ssl_config_service(),
       url_request_context->cert_verifier(),
       url_request_context->transport_security_state(),
-      extension_id(),
-      &legacy_params,
+      url_request_context->cert_transparency_verifier(),
+      url_request_context->ct_policy_enforcer(), extension_id(), &legacy_params,
       base::Bind(&SocketsTcpSecureFunction::TlsConnectDone, this));
 }
 
-void SocketsTcpSecureFunction::TlsConnectDone(scoped_ptr<TLSSocket> socket,
+void SocketsTcpSecureFunction::TlsConnectDone(std::unique_ptr<TLSSocket> socket,
                                               int result) {
   // If an error occurred, socket MUST be NULL
   DCHECK(result == net::OK || socket == NULL);

@@ -3,6 +3,9 @@
 # found in the LICENSE file.
 
 {
+  'includes': [
+    '../media/cdm_paths.gypi',
+  ],
   'variables': {
     'lastchange_path': '../build/util/LASTCHANGE',
     'branding_dir': 'app/theme/<(branding_path_component)',
@@ -17,6 +20,8 @@
           'type': 'loadable_module',
           'dependencies': [
             'gcapi_lib',
+            '../chrome/chrome.gyp:install_static_util',
+            '../chrome/common_constants.gyp:version_header',
           ],
           'include_dirs': [
             '..',
@@ -24,6 +29,42 @@
           'sources': [
             'installer/gcapi/gcapi.def',
             'installer/gcapi/gcapi_dll.cc',
+            'installer/gcapi/gcapi_dll_version.rc.version',
+          ],
+          'copies': [{
+            'destination': '<(PRODUCT_DIR)',
+            'files': [
+              'installer/gcapi/gcapi.h',
+            ],
+          }],
+          'rules': [
+            {
+              'rule_name': 'gcapi_version',
+              'extension': 'version',
+              'variables': {
+                'version_py_path': '<(DEPTH)/build/util/version.py',
+                'template_input_path': 'installer/gcapi/gcapi_dll_version.rc.version',
+              },
+              'inputs': [
+                '<(template_input_path)',
+                '<(version_path)',
+                '<(lastchange_path)',
+                '<(branding_dir)/BRANDING',
+              ],
+              'outputs': [
+                '<(SHARED_INTERMEDIATE_DIR)/gcapi/gcapi_dll_version.rc',
+              ],
+              'action': [
+                'python', '<(version_py_path)',
+                '-f', '<(version_path)',
+                '-f', '<(lastchange_path)',
+                '-f', '<(branding_dir)/BRANDING',
+                '<(template_input_path)',
+                '<@(_outputs)',
+              ],
+              'process_outputs_as_sources': 1,
+              'message': 'Generating version information'
+            },
           ],
         },
         {
@@ -60,6 +101,7 @@
             'installer_util',
             '../base/base.gyp:base',
             '../base/base.gyp:test_support_base',
+            '../chrome/chrome.gyp:install_static_util',
             '../components/components.gyp:variations',
             '../testing/gtest.gyp:gtest',
           ],
@@ -89,6 +131,7 @@
             '../base/base.gyp:base_i18n',
             '../base/base.gyp:test_support_base',
             '../chrome/chrome.gyp:chrome_version_resources',
+            '../chrome/chrome.gyp:install_static_util',
             '../components/components.gyp:variations',
             '../content/content.gyp:content_common',
             '../testing/gmock.gyp:gmock',
@@ -107,6 +150,7 @@
             'installer/util/beacons_unittest.cc',
             'installer/util/callback_work_item_unittest.cc',
             'installer/util/channel_info_unittest.cc',
+            'installer/util/conditional_work_item_list_unittest.cc',
             'installer/util/copy_tree_work_item_unittest.cc',
             'installer/util/create_dir_work_item_unittest.cc',
             'installer/util/create_reg_key_work_item_unittest.cc',
@@ -147,6 +191,9 @@
             'installer/util/uninstall_metrics_unittest.cc',
             'installer/util/wmi_unittest.cc',
             'installer/util/work_item_list_unittest.cc',
+            'installer/util/work_item_mocks.cc',
+            'installer/util/work_item_mocks.h',
+            'installer/util/work_item_unittest.cc',
           ],
           'msvs_settings': {
             'VCManifestTool': {
@@ -247,6 +294,8 @@
             'installer/setup/setup_util.h',
             'installer/setup/update_active_setup_version_work_item.cc',
             'installer/setup/update_active_setup_version_work_item.h',
+            'installer/setup/user_hive_visitor.cc',
+            'installer/setup/user_hive_visitor.h',
           ],
         },
         {
@@ -255,9 +304,11 @@
           'type': 'executable',
           'dependencies': [
             'setup_lib',
+            '../chrome/chrome.gyp:install_static_util',
             '../chrome/common_constants.gyp:common_constants',
             '../chrome/common_constants.gyp:version_header',
             '../chrome_elf/chrome_elf.gyp:chrome_elf_constants',
+            '../components/components.gyp:base32',
             '../components/components.gyp:crash_component',
             '../rlz/rlz.gyp:rlz_lib',
             '../third_party/zlib/zlib.gyp:zlib',
@@ -339,6 +390,7 @@
             'setup_lib',
             '../base/base.gyp:base_i18n',
             '../base/base.gyp:test_support_base',
+            '../chrome/chrome.gyp:install_static_util',
             '../testing/gmock.gyp:gmock',
             '../testing/gtest.gyp:gtest',
           ],
@@ -371,6 +423,7 @@
             'installer/setup/setup_util_unittest.cc',
             'installer/setup/setup_util_unittest.h',
             'installer/setup/update_active_setup_version_work_item_unittest.cc',
+            'installer/setup/user_hive_visitor_unittest.cc',
           ],
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [ 4267, ],
@@ -479,8 +532,8 @@
             'rpm_arch': 'i386',
             'packaging_files_binaries': [
               '<(PRODUCT_DIR)/nacl_irt_x86_32.nexe',
-              '<(PRODUCT_DIR)/libwidevinecdmadapter.so',
-              '<(PRODUCT_DIR)/libwidevinecdm.so',
+              '<(PRODUCT_DIR)/<(widevine_cdm_path)/libwidevinecdmadapter.so',
+              '<(PRODUCT_DIR)/<(widevine_cdm_path)/libwidevinecdm.so',
             ],
             'packaging_files_common': [
               '<(DEPTH)/build/linux/bin/eu-strip',
@@ -491,8 +544,8 @@
             'rpm_arch': 'x86_64',
             'packaging_files_binaries': [
               '<(PRODUCT_DIR)/nacl_irt_x86_64.nexe',
-              '<(PRODUCT_DIR)/libwidevinecdmadapter.so',
-              '<(PRODUCT_DIR)/libwidevinecdm.so',
+              '<(PRODUCT_DIR)/<(widevine_cdm_path)/libwidevinecdmadapter.so',
+              '<(PRODUCT_DIR)/<(widevine_cdm_path)/libwidevinecdm.so',
             ],
             'packaging_files_common': [
               '<!(which eu-strip)',

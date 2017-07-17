@@ -32,6 +32,7 @@
 #define WebPrivatePtr_h
 
 #include "WebCommon.h"
+#include "base/logging.h"
 
 #if INSIDE_BLINK
 #include "platform/heap/Handle.h"
@@ -65,17 +66,14 @@ enum class WebPrivatePtrStrength {
 enum LifetimeManagementType {
     RefCountedLifetime,
     GarbageCollectedLifetime,
-    RefCountedGarbageCollectedLifetime
 };
 
 template<typename T>
-class LifetimeOf {
+struct LifetimeOf {
+private:
     static const bool isGarbageCollected = WTF::IsSubclassOfTemplate<T, GarbageCollected>::value || IsGarbageCollectedMixin<T>::value;
-    static const bool isRefCountedGarbageCollected = WTF::IsSubclassOfTemplate<T, RefCountedGarbageCollected>::value;
 public:
-    static const LifetimeManagementType value =
-        !isGarbageCollected ? RefCountedLifetime :
-        isRefCountedGarbageCollected ? RefCountedGarbageCollectedLifetime : GarbageCollectedLifetime;
+    static const LifetimeManagementType value = !isGarbageCollected ? RefCountedLifetime : GarbageCollectedLifetime;
 };
 
 template<typename T, WebPrivatePtrDestruction crossThreadDestruction, WebPrivatePtrStrength strongOrWeak, LifetimeManagementType lifetime>
@@ -96,8 +94,10 @@ public:
 
     void assign(const PtrStorageImpl& other)
     {
-        release();
         T* val = other.get();
+        if (m_ptr == val)
+            return;
+        release();
         WTF::refIfNotNull(val);
         m_ptr = val;
     }
@@ -141,7 +141,7 @@ public:
 template<typename T, WebPrivatePtrDestruction crossThreadDestruction, WebPrivatePtrStrength strongOrWeak>
 class PtrStorageImpl<T, crossThreadDestruction, strongOrWeak, GarbageCollectedLifetime> {
 public:
-    void assign(const RawPtr<T>& val)
+    void assign(T* val)
     {
         if (!val) {
             release();
@@ -154,8 +154,7 @@ public:
         (*m_handle) = val;
     }
 
-    void assign(T* ptr) { assign(RawPtr<T>(ptr)); }
-    template<typename U> void assign(const RawPtr<U>& val) { assign(RawPtr<T>(val)); }
+    template<typename U> void assign(U* val) { assign(static_cast<T*>(val)); }
 
     void assign(const PtrStorageImpl& other) { assign(other.get()); }
 
@@ -169,14 +168,6 @@ public:
 
 private:
     typename WebPrivatePtrPersistentStorageType<T, crossThreadDestruction, strongOrWeak>::Type* m_handle;
-};
-
-template<typename T, WebPrivatePtrDestruction crossThreadDestruction, WebPrivatePtrStrength strongOrWeak>
-class PtrStorageImpl<T, crossThreadDestruction, strongOrWeak, RefCountedGarbageCollectedLifetime> : public PtrStorageImpl<T, crossThreadDestruction, strongOrWeak, GarbageCollectedLifetime> {
-public:
-    void assign(const PassRefPtrWillBeRawPtr<T>& val) { PtrStorageImpl<T, crossThreadDestruction, strongOrWeak, GarbageCollectedLifetime>::assign(val.get()); }
-
-    void assign(const PtrStorageImpl& other) { PtrStorageImpl<T, crossThreadDestruction, strongOrWeak, GarbageCollectedLifetime>::assign(other.get()); }
 };
 
 template<typename T, WebPrivatePtrDestruction crossThreadDestruction, WebPrivatePtrStrength strongOrWeak>
@@ -247,7 +238,7 @@ public:
         // want to expose destructors of core classes to embedders. We should
         // call reset() manually in destructors of classes with WebPrivatePtr
         // members.
-        BLINK_ASSERT(!m_storage);
+        DCHECK(!m_storage);
     }
 
     bool isNull() const { return !m_storage; }

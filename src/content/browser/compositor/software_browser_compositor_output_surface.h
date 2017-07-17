@@ -25,20 +25,26 @@ class CONTENT_EXPORT SoftwareBrowserCompositorOutputSurface
     : public BrowserCompositorOutputSurface {
  public:
   SoftwareBrowserCompositorOutputSurface(
-      scoped_ptr<cc::SoftwareOutputDevice> software_device,
-      const scoped_refptr<ui::CompositorVSyncManager>& vsync_manager);
+      std::unique_ptr<cc::SoftwareOutputDevice> software_device,
+      const scoped_refptr<ui::CompositorVSyncManager>& vsync_manager,
+      cc::SyntheticBeginFrameSource* begin_frame_source);
 
   ~SoftwareBrowserCompositorOutputSurface() override;
 
+  // OutputSurface implementation.
+  void SwapBuffers(cc::CompositorFrame frame) override;
+  void BindFramebuffer() override;
+  uint32_t GetFramebufferCopyTextureFormat() override;
+
  private:
-  void SwapBuffers(cc::CompositorFrame* frame) override;
+  // BrowserCompositorOutputSurface implementation.
   void OnGpuSwapBuffersCompleted(
       const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result) override;
+      gfx::SwapResult result,
+      const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac) override;
 
 #if defined(OS_MACOSX)
   void SetSurfaceSuspendedForRecycle(bool suspended) override;
-  bool SurfaceShouldNotShowFramesAfterSuspendForRecycle() const override;
 #endif
 
   base::WeakPtrFactory<SoftwareBrowserCompositorOutputSurface> weak_factory_;

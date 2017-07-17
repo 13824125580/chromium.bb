@@ -4,7 +4,14 @@
 
 #include "chrome/browser/task_management/sampling/task_manager_impl.h"
 
+#include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
 #include "base/command_line.h"
+#include "base/containers/adapters.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/task_management/providers/browser_process_task_provider.h"
@@ -15,21 +22,18 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/task_management/providers/arc/arc_process_task_provider.h"
+#include "components/arc/arc_bridge_service.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace task_management {
 
 namespace {
 
-inline scoped_refptr<base::SequencedTaskRunner> GetBlockingPoolRunner() {
+scoped_refptr<base::SequencedTaskRunner> GetBlockingPoolRunner() {
   base::SequencedWorkerPool* blocking_pool =
       content::BrowserThread::GetBlockingPool();
-  base::SequencedWorkerPool::SequenceToken token =
-      blocking_pool->GetSequenceToken();
-
-  DCHECK(token.IsValid());
-
-  return blocking_pool->GetSequencedTaskRunner(token);
+  return blocking_pool->GetSequencedTaskRunner(
+      blocking_pool->GetSequenceToken());
 }
 
 base::LazyInstance<TaskManagerImpl> lazy_task_manager_instance =
@@ -38,7 +42,10 @@ base::LazyInstance<TaskManagerImpl> lazy_task_manager_instance =
 }  // namespace
 
 TaskManagerImpl::TaskManagerImpl()
-    : blocking_pool_runner_(GetBlockingPoolRunner()),
+    : on_background_data_ready_callback_(base::Bind(
+          &TaskManagerImpl::OnTaskGroupBackgroundCalculationsDone,
+          base::Unretained(this))),
+      blocking_pool_runner_(GetBlockingPoolRunner()),
       is_running_(false) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
@@ -72,6 +79,10 @@ void TaskManagerImpl::ActivateTask(TaskId task_id) {
   GetTaskByTaskId(task_id)->Activate();
 }
 
+bool TaskManagerImpl::IsTaskKillable(TaskId task_id) {
+  return GetTaskByTaskId(task_id)->IsKillable();
+}
+
 void TaskManagerImpl::KillTask(TaskId task_id) {
   GetTaskByTaskId(task_id)->Kill();
 }
@@ -90,6 +101,14 @@ int64_t TaskManagerImpl::GetPrivateMemoryUsage(TaskId task_id) const {
 
 int64_t TaskManagerImpl::GetSharedMemoryUsage(TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->shared_bytes();
+}
+
+int64_t TaskManagerImpl::GetSwappedMemoryUsage(TaskId task_id) const {
+#if defined(OS_CHROMEOS)
+  return GetTaskGroupByTaskId(task_id)->swapped_bytes();
+#else
+  return -1;
+#endif
 }
 
 int64_t TaskManagerImpl::GetGpuMemoryUsage(TaskId task_id,
@@ -179,6 +198,20 @@ Task::Type TaskManagerImpl::GetType(TaskId task_id) const {
   return GetTaskByTaskId(task_id)->GetType();
 }
 
+int TaskManagerImpl::GetTabId(TaskId task_id) const {
+  return GetTaskByTaskId(task_id)->GetTabId();
+}
+
+int TaskManagerImpl::GetChildProcessUniqueId(TaskId task_id) const {
+  return GetTaskByTaskId(task_id)->GetChildProcessUniqueID();
+}
+
+void TaskManagerImpl::GetTerminationStatus(TaskId task_id,
+                                           base::TerminationStatus* out_status,
+                                           int* out_error_code) const {
+  GetTaskByTaskId(task_id)->GetTerminationStatus(out_status, out_error_code);
+}
+
 int64_t TaskManagerImpl::GetNetworkUsage(TaskId task_id) const {
   return GetTaskByTaskId(task_id)->network_usage();
 }
@@ -221,23 +254,108 @@ const TaskIdList& TaskManagerImpl::GetTaskIdsList() const {
       "task manager for it to start running";
 
   if (sorted_task_ids_.empty()) {
-    sorted_task_ids_.reserve(task_groups_by_task_id_.size());
+    // |comparator| groups and sorts by subtask-ness (to push all subtasks to be
+    // last), then by process type (e.g. the browser process should be first;
+    // renderer processes should be together), then tab id (processes used by
+    // the same tab should be kept together, and a tab should have a stable
+    // position in the list as it cycles through processes, and tab creation
+    // order is meaningful), and finally by task id (when all else is equal, put
+    // the oldest tasks first).
+    auto comparator = [](const Task* a, const Task* b) -> bool {
+      return std::make_tuple(a->HasParentTask(), a->GetType(), a->GetTabId(),
+                             a->task_id()) <
+             std::make_tuple(b->HasParentTask(), b->GetType(), b->GetTabId(),
+                             b->task_id());
+    };
 
-    // Ensure browser process group of task IDs are at the beginning of the
-    // list.
-    const TaskGroup* browser_group =
-        task_groups_by_proc_id_.at(base::GetCurrentProcId());
-    browser_group->AppendSortedTaskIds(&sorted_task_ids_);
+    const size_t num_groups = task_groups_by_proc_id_.size();
+    const size_t num_tasks = task_groups_by_task_id_.size();
 
+    // Populate |tasks_to_visit| with one task from each group.
+    std::vector<const Task*> tasks_to_visit;
+    tasks_to_visit.reserve(num_groups);
+    std::unordered_map<const Task*, std::vector<const Task*>> children;
     for (const auto& groups_pair : task_groups_by_proc_id_) {
-      if (groups_pair.second == browser_group)
+      // The first task in the group (per |comparator|) is the one used for
+      // sorting the group relative to other groups.
+      const std::vector<Task*>& tasks = groups_pair.second->tasks();
+      Task* group_task =
+          *std::min_element(tasks.begin(), tasks.end(), comparator);
+      tasks_to_visit.push_back(group_task);
+
+      // Build the parent-to-child map, for use later.
+      for (const Task* task : tasks) {
+        if (task->HasParentTask())
+          children[task->GetParentTask()].push_back(task);
+        else
+          DCHECK(!group_task->HasParentTask());
+      }
+    }
+
+    // Now sort |tasks_to_visit| in reverse order (putting the browser process
+    // at back()). We will treat it as a stack from now on.
+    std::sort(tasks_to_visit.rbegin(), tasks_to_visit.rend(), comparator);
+    DCHECK_EQ(Task::BROWSER, tasks_to_visit.back()->GetType());
+
+    // Using |tasks_to_visit| as a stack, and |visited_groups| to track which
+    // groups we've already added, add groups to |sorted_task_ids_| until all
+    // groups have been added.
+    sorted_task_ids_.reserve(num_tasks);
+    std::unordered_set<TaskGroup*> visited_groups;
+    visited_groups.reserve(num_groups);
+    std::vector<Task*> current_group_tasks;  // Outside loop for fewer mallocs.
+    while (visited_groups.size() < num_groups) {
+      DCHECK(!tasks_to_visit.empty());
+      TaskGroup* current_group =
+          GetTaskGroupByTaskId(tasks_to_visit.back()->task_id());
+      tasks_to_visit.pop_back();
+
+      // Mark |current_group| as visited. If this fails, we've already added
+      // the group, and should skip over it.
+      if (!visited_groups.insert(current_group).second)
         continue;
 
-      groups_pair.second->AppendSortedTaskIds(&sorted_task_ids_);
+      // Make a copy of |current_group->tasks()|, sort it, and append the ids.
+      current_group_tasks = current_group->tasks();
+      std::sort(current_group_tasks.begin(), current_group_tasks.end(),
+                comparator);
+      for (Task* task : current_group_tasks)
+        sorted_task_ids_.push_back(task->task_id());
+
+      // Find the children of the tasks we just added, and push them into
+      // |tasks_to_visit|, so that we visit them soon. Work in reverse order,
+      // so that we visit them in forward order.
+      for (Task* parent : base::Reversed(current_group_tasks)) {
+        auto children_of_parent = children.find(parent);
+        if (children_of_parent != children.end()) {
+          // Sort children[parent], and then append in reversed order.
+          std::sort(children_of_parent->second.begin(),
+                    children_of_parent->second.end(), comparator);
+          tasks_to_visit.insert(tasks_to_visit.end(),
+                                children_of_parent->second.rbegin(),
+                                children_of_parent->second.rend());
+        }
+      }
     }
+    DCHECK_EQ(num_tasks, sorted_task_ids_.size());
   }
 
   return sorted_task_ids_;
+}
+
+TaskIdList TaskManagerImpl::GetIdsOfTasksSharingSameProcess(
+    TaskId task_id) const {
+  DCHECK(is_running_) << "Task manager is not running. You must observe the "
+      "task manager for it to start running";
+
+  TaskIdList result;
+  TaskGroup* group = GetTaskGroupByTaskId(task_id);
+  if (group) {
+    result.reserve(group->tasks().size());
+    for (Task* task : group->tasks())
+      result.push_back(task->task_id());
+  }
+  return result;
 }
 
 size_t TaskManagerImpl::GetNumberOfTasksOnSameProcess(TaskId task_id) const {
@@ -255,6 +373,7 @@ void TaskManagerImpl::TaskAdded(Task* task) {
   if (itr == task_groups_by_proc_id_.end()) {
     task_group = new TaskGroup(task->process_handle(),
                                proc_id,
+                               on_background_data_ready_callback_,
                                blocking_pool_runner_);
     task_groups_by_proc_id_[proc_id] = task_group;
   } else {
@@ -282,7 +401,7 @@ void TaskManagerImpl::TaskRemoved(Task* task) {
 
   NotifyObserversOnTaskToBeRemoved(task_id);
 
-  TaskGroup* task_group = task_groups_by_proc_id_.at(proc_id);
+  TaskGroup* task_group = task_groups_by_proc_id_[proc_id];
   task_group->RemoveTask(task);
 
   task_groups_by_task_id_.erase(task_id);
@@ -296,8 +415,13 @@ void TaskManagerImpl::TaskRemoved(Task* task) {
   }
 }
 
+void TaskManagerImpl::TaskUnresponsive(Task* task) {
+  DCHECK(task);
+  NotifyObserversOnTaskUnresponsive(task->task_id());
+}
+
 void TaskManagerImpl::OnVideoMemoryUsageStatsUpdate(
-    const content::GPUVideoMemoryUsageStats& gpu_memory_stats) {
+    const gpu::VideoMemoryUsageStats& gpu_memory_stats) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   gpu_memory_stats_ = gpu_memory_stats;
@@ -371,7 +495,7 @@ void TaskManagerImpl::StopUpdating() {
 bool TaskManagerImpl::UpdateTasksWithBytesRead(const BytesReadParam& param) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  for (auto& task_provider : task_providers_) {
+  for (const auto& task_provider : task_providers_) {
     Task* task = task_provider->GetTaskOfUrlRequest(param.origin_pid,
                                                     param.child_id,
                                                     param.route_id);
@@ -386,13 +510,27 @@ bool TaskManagerImpl::UpdateTasksWithBytesRead(const BytesReadParam& param) {
 }
 
 TaskGroup* TaskManagerImpl::GetTaskGroupByTaskId(TaskId task_id) const {
-  DCHECK(ContainsKey(task_groups_by_task_id_, task_id));
-
-  return task_groups_by_task_id_.at(task_id);
+  auto it = task_groups_by_task_id_.find(task_id);
+  DCHECK(it != task_groups_by_task_id_.end());
+  return it->second;
 }
 
 Task* TaskManagerImpl::GetTaskByTaskId(TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->GetTaskById(task_id);
+}
+
+void TaskManagerImpl::OnTaskGroupBackgroundCalculationsDone() {
+  // TODO(afakhry): There should be a better way for doing this!
+  bool are_all_processes_data_ready = true;
+  for (const auto& groups_itr : task_groups_by_proc_id_) {
+    are_all_processes_data_ready &=
+        groups_itr.second->AreBackgroundCalculationsDone();
+  }
+  if (are_all_processes_data_ready) {
+    NotifyObserversOnRefreshWithBackgroundCalculations(GetTaskIdsList());
+    for (const auto& groups_itr : task_groups_by_proc_id_)
+      groups_itr.second->ClearCurrentBackgroundCalculationsFlags();
+  }
 }
 
 }  // namespace task_management

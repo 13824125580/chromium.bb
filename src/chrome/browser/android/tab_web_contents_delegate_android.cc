@@ -9,6 +9,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/android/feature_utilities.h"
 #include "chrome/browser/android/hung_renderer_infobar_delegate.h"
 #include "chrome/browser/android/media/media_throttle_infobar_delegate.h"
@@ -18,7 +19,6 @@
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/media_stream_capture_indicator.h"
 #include "chrome/browser/media/protected_media_identifier_permission_context.h"
-#include "chrome/browser/media/protected_media_identifier_permission_context_factory.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -117,15 +117,16 @@ void TabWebContentsDelegateAndroid::LoadingStateChanged(
 }
 
 void TabWebContentsDelegateAndroid::RunFileChooser(
-    WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const FileChooserParams& params) {
-  FileSelectHelper::RunFileChooser(web_contents, params);
+  FileSelectHelper::RunFileChooser(render_frame_host, params);
 }
 
-scoped_ptr<BluetoothChooser> TabWebContentsDelegateAndroid::RunBluetoothChooser(
+std::unique_ptr<BluetoothChooser>
+TabWebContentsDelegateAndroid::RunBluetoothChooser(
     content::RenderFrameHost* frame,
     const BluetoothChooser::EventHandler& event_handler) {
-  return make_scoped_ptr(new BluetoothChooserAndroid(frame, event_handler));
+  return base::WrapUnique(new BluetoothChooserAndroid(frame, event_handler));
 }
 
 void TabWebContentsDelegateAndroid::CloseContents(
@@ -164,16 +165,10 @@ void TabWebContentsDelegateAndroid::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_FIND_RESULT_AVAILABLE:
-      OnFindResultAvailable(
-          content::Source<WebContents>(source).ptr(),
-          content::Details<FindNotificationDetails>(details).ptr());
-      break;
-    default:
-      NOTREACHED() << "Unexpected notification: " << type;
-      break;
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_FIND_RESULT_AVAILABLE, type);
+  OnFindResultAvailable(
+      content::Source<WebContents>(source).ptr(),
+      content::Details<FindNotificationDetails>(details).ptr());
 }
 
 blink::WebDisplayMode TabWebContentsDelegateAndroid::GetDisplayMode(
@@ -420,13 +415,13 @@ void TabWebContentsDelegateAndroid::AddNewContents(
     delete new_contents;
 }
 
-bool TabWebContentsDelegateAndroid::RequestAppBanner(
+void TabWebContentsDelegateAndroid::RequestAppBannerFromDevTools(
     content::WebContents* web_contents) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
   if (obj.is_null())
-    return false;
-  return Java_TabWebContentsDelegateAndroid_requestAppBanner(env, obj.obj());
+    return;
+  Java_TabWebContentsDelegateAndroid_requestAppBanner(env, obj.obj());
 }
 
 }  // namespace android

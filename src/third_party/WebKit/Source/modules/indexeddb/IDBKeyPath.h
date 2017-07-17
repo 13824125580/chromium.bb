@@ -26,7 +26,7 @@
 #ifndef IDBKeyPath_h
 #define IDBKeyPath_h
 
-#include "bindings/modules/v8/UnionTypesModules.h"
+#include "bindings/modules/v8/StringOrStringSequence.h"
 #include "modules/ModulesExport.h"
 #include "public/platform/modules/indexeddb/WebIDBKeyPath.h"
 #include "wtf/Allocator.h"
@@ -59,7 +59,7 @@ public:
         ArrayType
     };
 
-    Type type() const { return m_type; }
+    Type getType() const { return m_type; }
 
     const Vector<String>& array() const
     {

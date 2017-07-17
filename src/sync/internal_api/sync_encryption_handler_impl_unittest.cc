@@ -6,11 +6,11 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/base64.h"
 #include "base/json/json_string_value_serializer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/tracked_objects.h"
 #include "sync/internal_api/public/base/model_type_test_util.h"
@@ -99,8 +99,7 @@ class SyncEncryptionHandlerImplTest : public ::testing::Test {
       const std::string& key_for_bootstrapping) {
     encryption_handler_.reset(new SyncEncryptionHandlerImpl(
         user_share(), &encryptor_, key_for_bootstrapping,
-        std::string() /* keystore key for bootstrapping */,
-        PASSPHRASE_TRANSITION_DO_NOT_CLEAR_DATA));
+        std::string() /* keystore key for bootstrapping */));
     encryption_handler_->AddObserver(&observer_);
   }
 
@@ -368,7 +367,7 @@ class SyncEncryptionHandlerImplTest : public ::testing::Test {
  protected:
   TestUserShare test_user_share_;
   FakeEncryptor encryptor_;
-  scoped_ptr<SyncEncryptionHandlerImpl> encryption_handler_;
+  std::unique_ptr<SyncEncryptionHandlerImpl> encryption_handler_;
   StrictMock<SyncEncryptionHandlerObserverMock> observer_;
   TestIdFactory ids_;
   base::MessageLoop message_loop_;
@@ -381,8 +380,7 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
 
   StrictMock<SyncEncryptionHandlerObserverMock> observer2;
   SyncEncryptionHandlerImpl handler2(user_share(), &encryptor_, std::string(),
-                                     std::string() /* bootstrap tokens */,
-                                     PASSPHRASE_TRANSITION_DO_NOT_CLEAR_DATA);
+                                     std::string() /* bootstrap tokens */);
   handler2.AddObserver(&observer2);
 
   // Just set the sensitive types (shouldn't trigger any notifications).
@@ -397,10 +395,8 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
         trans.GetWrappedTrans());
     handler2.UpdateEncryptedTypesFromNigori(nigori, trans.GetWrappedTrans());
   }
-  EXPECT_TRUE(encrypted_types.Equals(
-      encryption_handler()->GetEncryptedTypesUnsafe()));
-  EXPECT_TRUE(encrypted_types.Equals(
-      handler2.GetEncryptedTypesUnsafe()));
+  EXPECT_EQ(encrypted_types, encryption_handler()->GetEncryptedTypesUnsafe());
+  EXPECT_EQ(encrypted_types, handler2.GetEncryptedTypesUnsafe());
 
   Mock::VerifyAndClearExpectations(observer());
   Mock::VerifyAndClearExpectations(&observer2);
@@ -426,9 +422,8 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
         trans.GetWrappedTrans());
     handler2.UpdateEncryptedTypesFromNigori(nigori, trans.GetWrappedTrans());
   }
-  EXPECT_TRUE(encrypted_types.Equals(
-      encryption_handler()->GetEncryptedTypesUnsafe()));
-  EXPECT_TRUE(encrypted_types.Equals(handler2.GetEncryptedTypesUnsafe()));
+  EXPECT_EQ(encrypted_types, encryption_handler()->GetEncryptedTypesUnsafe());
+  EXPECT_EQ(encrypted_types, handler2.GetEncryptedTypesUnsafe());
 
   // Receiving an empty nigori should not reset any encrypted types or trigger
   // an observer notification.
@@ -439,8 +434,7 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
     WriteTransaction trans(FROM_HERE, user_share());
     handler2.UpdateEncryptedTypesFromNigori(nigori, trans.GetWrappedTrans());
   }
-  EXPECT_TRUE(encrypted_types.Equals(
-      encryption_handler()->GetEncryptedTypesUnsafe()));
+  EXPECT_EQ(encrypted_types, encryption_handler()->GetEncryptedTypesUnsafe());
 }
 
 // Verify the encryption handler processes the encrypt everything field
@@ -456,8 +450,7 @@ TEST_F(SyncEncryptionHandlerImplTest, EncryptEverythingExplicit) {
   EXPECT_FALSE(encryption_handler()->IsEncryptEverythingEnabled());
   ModelTypeSet encrypted_types =
       encryption_handler()->GetEncryptedTypesUnsafe();
-  EXPECT_TRUE(encrypted_types.Equals(
-      ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS)));
+  EXPECT_EQ(ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS), encrypted_types);
 
   {
     WriteTransaction trans(FROM_HERE, user_share());
@@ -493,8 +486,7 @@ TEST_F(SyncEncryptionHandlerImplTest, EncryptEverythingImplicit) {
   EXPECT_FALSE(encryption_handler()->IsEncryptEverythingEnabled());
   ModelTypeSet encrypted_types =
       encryption_handler()->GetEncryptedTypesUnsafe();
-  EXPECT_TRUE(encrypted_types.Equals(
-      ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS)));
+  EXPECT_EQ(ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS), encrypted_types);
 
   {
     WriteTransaction trans(FROM_HERE, user_share());
@@ -538,8 +530,7 @@ TEST_F(SyncEncryptionHandlerImplTest, UnknownSensitiveTypes) {
   EXPECT_FALSE(encryption_handler()->IsEncryptEverythingEnabled());
   ModelTypeSet encrypted_types =
       encryption_handler()->GetEncryptedTypesUnsafe();
-  EXPECT_TRUE(encrypted_types.Equals(
-      ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS)));
+  EXPECT_EQ(ModelTypeSet(PASSWORDS, WIFI_CREDENTIALS), encrypted_types);
 
   {
     WriteTransaction trans(FROM_HERE, user_share());
@@ -550,8 +541,8 @@ TEST_F(SyncEncryptionHandlerImplTest, UnknownSensitiveTypes) {
 
   EXPECT_FALSE(encryption_handler()->IsEncryptEverythingEnabled());
   encrypted_types = encryption_handler()->GetEncryptedTypesUnsafe();
-  EXPECT_TRUE(encrypted_types.Equals(
-      ModelTypeSet(BOOKMARKS, PASSWORDS, WIFI_CREDENTIALS)));
+  EXPECT_EQ(ModelTypeSet(BOOKMARKS, PASSWORDS, WIFI_CREDENTIALS),
+            encrypted_types);
 }
 
 // Receive an old nigori with old encryption keys and encrypted types. We should
@@ -699,7 +690,7 @@ TEST_F(SyncEncryptionHandlerImplTest, SetKeystoreMigratesAndUpdatesBootstrap) {
       GetCryptographer()->encryptor()->DecryptString(decoded_bootstrap,
                                                      &decrypted_bootstrap));
   JSONStringValueDeserializer json(decrypted_bootstrap);
-  scoped_ptr<base::Value> deserialized_keystore_keys(
+  std::unique_ptr<base::Value> deserialized_keystore_keys(
       json.Deserialize(NULL, NULL));
   ASSERT_TRUE(deserialized_keystore_keys.get());
   base::ListValue* keystore_list = NULL;
@@ -717,8 +708,7 @@ TEST_F(SyncEncryptionHandlerImplTest, SetKeystoreMigratesAndUpdatesBootstrap) {
   // token.
   SyncEncryptionHandlerImpl handler2(user_share(), &encryptor_,
                                      std::string(),  // Cryptographer bootstrap.
-                                     keystore_bootstrap,
-                                     PASSPHRASE_TRANSITION_DO_NOT_CLEAR_DATA);
+                                     keystore_bootstrap);
 
   {
     WriteTransaction trans(FROM_HERE, user_share());

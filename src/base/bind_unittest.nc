@@ -68,7 +68,7 @@ template <typename T>
 void VoidPolymorphic1(T t) {
 }
 
-#if defined(NCTEST_METHOD_ON_CONST_OBJECT)  // [r"error: no matching member function for call to 'Run'"]
+#if defined(NCTEST_METHOD_ON_CONST_OBJECT)  // [r"fatal error: binding value of type 'const base::HasRef' to reference to type 'base::NoRef' drops 'const' qualifier"]
 
 // Method bound to const-object.
 //
@@ -146,7 +146,7 @@ void WontCompile() {
   ref_arg_cb.Run(p);
 }
 
-#elif defined(NCTEST_DISALLOW_BIND_TO_NON_CONST_REF_PARAM)  // [r"fatal error: static_assert failed \"do not bind functions with nonconst ref\""]
+#elif defined(NCTEST_DISALLOW_BIND_TO_NON_CONST_REF_PARAM)  // [r"fatal error: binding value of type 'const base::Parent' to reference to type 'base::Parent' drops 'const' qualifier"]
 
 // Binding functions with reference parameters, unsupported.
 //

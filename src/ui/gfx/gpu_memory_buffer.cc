@@ -20,10 +20,9 @@ GpuMemoryBufferHandle::GpuMemoryBufferHandle()
     : type(EMPTY_BUFFER), id(0), handle(base::SharedMemory::NULLHandle()) {
 }
 
-GpuMemoryBufferHandle::~GpuMemoryBufferHandle() {}
+GpuMemoryBufferHandle::GpuMemoryBufferHandle(
+    const GpuMemoryBufferHandle& other) = default;
 
-bool GpuMemoryBuffer::IsInUseByMacOSWindowServer() const {
-  return false;
-}
+GpuMemoryBufferHandle::~GpuMemoryBufferHandle() {}
 
 }  // namespace gfx

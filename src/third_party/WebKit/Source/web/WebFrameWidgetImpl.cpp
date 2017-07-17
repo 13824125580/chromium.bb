@@ -35,19 +35,25 @@
 #include "core/editing/FrameSelection.h"
 #include "core/editing/InputMethodController.h"
 #include "core/editing/PlainTextRange.h"
+#include "core/frame/FrameHost.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/Settings.h"
+#include "core/frame/VisualViewport.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/page/ContextMenuController.h"
 #include "core/page/FocusController.h"
 #include "core/page/Page.h"
+#include "core/page/PointerLockController.h"
 #include "platform/KeyboardCodes.h"
-#include "platform/NotImplemented.h"
+#include "platform/graphics/CompositorMutatorClient.h"
 #include "public/platform/WebFrameScheduler.h"
 #include "public/web/WebWidgetClient.h"
+#include "web/CompositorMutatorImpl.h"
+#include "web/CompositorProxyClientImpl.h"
 #include "web/ContextMenuAllowedScope.h"
 #include "web/WebDevToolsAgentImpl.h"
 #include "web/WebInputEventConversion.h"
@@ -55,6 +61,8 @@
 #include "web/WebPluginContainerImpl.h"
 #include "web/WebRemoteFrameImpl.h"
 #include "web/WebViewFrameWidget.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -74,11 +82,7 @@ WebFrameWidget* WebFrameWidget::create(WebWidgetClient* client, WebView* webView
 WebFrameWidgetImpl* WebFrameWidgetImpl::create(WebWidgetClient* client, WebLocalFrame* localRoot)
 {
     // Pass the WebFrameWidgetImpl's self-reference to the caller.
-#if ENABLE(OILPAN)
     return new WebFrameWidgetImpl(client, localRoot); // SelfKeepAlive is set in constructor.
-#else
-    return adoptRef(new WebFrameWidgetImpl(client, localRoot)).leakRef();
-#endif
 }
 
 // static
@@ -91,6 +95,7 @@ WebFrameWidgetsSet& WebFrameWidgetImpl::allInstances()
 WebFrameWidgetImpl::WebFrameWidgetImpl(WebWidgetClient* client, WebLocalFrame* localRoot)
     : m_client(client)
     , m_localRoot(toWebLocalFrameImpl(localRoot))
+    , m_mutator(nullptr)
     , m_layerTreeView(nullptr)
     , m_rootLayer(nullptr)
     , m_rootGraphicsLayer(nullptr)
@@ -99,11 +104,9 @@ WebFrameWidgetImpl::WebFrameWidgetImpl(WebWidgetClient* client, WebLocalFrame* l
     , m_suppressNextKeypressEvent(false)
     , m_ignoreInputEvents(false)
     , m_isTransparent(false)
-#if ENABLE(OILPAN)
     , m_selfKeepAlive(this)
-#endif
 {
-    ASSERT(m_localRoot->frame()->isLocalRoot());
+    DCHECK(m_localRoot->frame()->isLocalRoot());
     initializeLayerTreeView();
     m_localRoot->setFrameWidget(this);
     allInstances().add(this);
@@ -120,6 +123,7 @@ DEFINE_TRACE(WebFrameWidgetImpl)
 {
     visitor->trace(m_localRoot);
     visitor->trace(m_mouseCaptureNode);
+    visitor->trace(m_mutator);
 }
 
 // WebWidget ------------------------------------------------------------------
@@ -127,7 +131,7 @@ DEFINE_TRACE(WebFrameWidgetImpl)
 void WebFrameWidgetImpl::close()
 {
     WebDevToolsAgentImpl::webFrameWidgetImplClosed(this);
-    ASSERT(allInstances().contains(this));
+    DCHECK(allInstances().contains(this));
     allInstances().remove(this);
 
     m_localRoot->setFrameWidget(nullptr);
@@ -136,26 +140,17 @@ void WebFrameWidgetImpl::close()
     // deleted.
     m_client = nullptr;
 
+    m_mutator = nullptr;
     m_layerTreeView = nullptr;
     m_rootLayer = nullptr;
     m_rootGraphicsLayer = nullptr;
 
-#if ENABLE(OILPAN)
     m_selfKeepAlive.clear();
-#else
-    deref(); // Balances ref() acquired in WebFrameWidget::create
-#endif
 }
 
 WebSize WebFrameWidgetImpl::size()
 {
     return m_size;
-}
-
-void WebFrameWidgetImpl::willStartLiveResize()
-{
-    if (m_localRoot->frameView())
-        m_localRoot->frameView()->willStartLiveResize();
 }
 
 void WebFrameWidgetImpl::resize(const WebSize& newSize)
@@ -205,7 +200,12 @@ void WebFrameWidgetImpl::sendResizeEventAndRepaint()
 
 void WebFrameWidgetImpl::resizeVisualViewport(const WebSize& newSize)
 {
-    // FIXME: Implement visual viewport for out-of-process iframes.
+    // TODO(alexmos, kenrb): resizing behavior such as this should be changed
+    // to use Page messages.  https://crbug.com/599688.
+    page()->frameHost().visualViewport().setSize(newSize);
+    page()->frameHost().visualViewport().clampToBoundaries();
+
+    view()->didUpdateFullScreenSize();
 }
 
 void WebFrameWidgetImpl::updateMainFrameLayoutSize()
@@ -213,7 +213,7 @@ void WebFrameWidgetImpl::updateMainFrameLayoutSize()
     if (!m_localRoot)
         return;
 
-    RefPtrWillBeRawPtr<FrameView> view = m_localRoot->frameView();
+    FrameView* view = m_localRoot->frameView();
     if (!view)
         return;
 
@@ -224,30 +224,24 @@ void WebFrameWidgetImpl::updateMainFrameLayoutSize()
 
 void WebFrameWidgetImpl::setIgnoreInputEvents(bool newValue)
 {
-    ASSERT(m_ignoreInputEvents != newValue);
+    DCHECK_NE(m_ignoreInputEvents, newValue);
     m_ignoreInputEvents = newValue;
-}
-
-void WebFrameWidgetImpl::willEndLiveResize()
-{
-    if (m_localRoot->frameView())
-        m_localRoot->frameView()->willEndLiveResize();
 }
 
 void WebFrameWidgetImpl::didEnterFullScreen()
 {
-    // FIXME: Implement full screen for out-of-process iframes.
+    view()->didEnterFullScreen();
 }
 
 void WebFrameWidgetImpl::didExitFullScreen()
 {
-    // FIXME: Implement full screen for out-of-process iframes.
+    view()->didExitFullScreen();
 }
 
 void WebFrameWidgetImpl::beginFrame(double lastFrameTimeMonotonic)
 {
     TRACE_EVENT1("blink", "WebFrameWidgetImpl::beginFrame", "frameTime", lastFrameTimeMonotonic);
-    ASSERT(lastFrameTimeMonotonic);
+    DCHECK(lastFrameTimeMonotonic);
     PageWidgetDelegate::animate(*page(), lastFrameTimeMonotonic);
 }
 
@@ -264,7 +258,7 @@ void WebFrameWidgetImpl::updateAllLifecyclePhases()
 void WebFrameWidgetImpl::paint(WebCanvas* canvas, const WebRect& rect)
 {
     // Out-of-process iframes require compositing.
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
 }
 
 
@@ -287,8 +281,8 @@ void WebFrameWidgetImpl::updateLayerTreeBackgroundColor()
 
 void WebFrameWidgetImpl::updateLayerTreeDeviceScaleFactor()
 {
-    ASSERT(page());
-    ASSERT(m_layerTreeView);
+    DCHECK(page());
+    DCHECK(m_layerTreeView);
 
     float deviceScaleFactor = page()->deviceScaleFactor();
     m_layerTreeView->setDeviceScaleFactor(deviceScaleFactor);
@@ -329,8 +323,11 @@ const WebInputEvent* WebFrameWidgetImpl::m_currentInputEvent = nullptr;
 
 WebInputEventResult WebFrameWidgetImpl::handleInputEvent(const WebInputEvent& inputEvent)
 {
-
     TRACE_EVENT1("input", "WebFrameWidgetImpl::handleInputEvent", "type", inputTypeToName(inputEvent.type));
+
+    // Don't handle events once we've started shutting down.
+    if (!page())
+        return WebInputEventResult::NotHandled;
 
     // Report the event to be NOT processed by WebKit, so that the browser can handle it appropriately.
     if (m_ignoreInputEvents)
@@ -343,13 +340,13 @@ WebInputEventResult WebFrameWidgetImpl::handleInputEvent(const WebInputEvent& in
     if (m_mouseCaptureNode && WebInputEvent::isMouseEventType(inputEvent.type)) {
         TRACE_EVENT1("input", "captured mouse event", "type", inputEvent.type);
         // Save m_mouseCaptureNode since mouseCaptureLost() will clear it.
-        RefPtrWillBeRawPtr<Node> node = m_mouseCaptureNode;
+        Node* node = m_mouseCaptureNode;
 
         // Not all platforms call mouseCaptureLost() directly.
         if (inputEvent.type == WebInputEvent::MouseUp)
             mouseCaptureLost();
 
-        OwnPtr<UserGestureIndicator> gestureIndicator;
+        std::unique_ptr<UserGestureIndicator> gestureIndicator;
 
         AtomicString eventType;
         switch (inputEvent.type) {
@@ -361,15 +358,15 @@ WebInputEventResult WebFrameWidgetImpl::handleInputEvent(const WebInputEvent& in
             break;
         case WebInputEvent::MouseDown:
             eventType = EventTypeNames::mousedown;
-            gestureIndicator = adoptPtr(new UserGestureIndicator(DefinitelyProcessingNewUserGesture));
+            gestureIndicator = wrapUnique(new UserGestureIndicator(DefinitelyProcessingNewUserGesture));
             m_mouseCaptureGestureToken = gestureIndicator->currentToken();
             break;
         case WebInputEvent::MouseUp:
             eventType = EventTypeNames::mouseup;
-            gestureIndicator = adoptPtr(new UserGestureIndicator(m_mouseCaptureGestureToken.release()));
+            gestureIndicator = wrapUnique(new UserGestureIndicator(m_mouseCaptureGestureToken.release()));
             break;
         default:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
         }
 
         node->dispatchMouseEvent(
@@ -414,6 +411,16 @@ void WebFrameWidgetImpl::scheduleAnimation()
         m_client->scheduleAnimation();
 }
 
+CompositorProxyClient* WebFrameWidgetImpl::createCompositorProxyClient()
+{
+    if (!m_mutator) {
+        std::unique_ptr<CompositorMutatorClient> mutatorClient = CompositorMutatorImpl::createClient();
+        m_mutator = static_cast<CompositorMutatorImpl*>(mutatorClient->mutator());
+        m_layerTreeView->setMutatorClient(std::move(mutatorClient));
+    }
+    return new CompositorProxyClientImpl(m_mutator);
+}
+
 void WebFrameWidgetImpl::applyViewportDeltas(
     const WebFloatSize& visualViewportDelta,
     const WebFloatSize& mainFrameDelta,
@@ -435,7 +442,7 @@ void WebFrameWidgetImpl::setFocus(bool enable)
     page()->focusController().setFocused(enable);
     if (enable) {
         page()->focusController().setActive(true);
-        RefPtrWillBeRawPtr<LocalFrame> focusedFrame = page()->focusController().focusedFrame();
+        LocalFrame* focusedFrame = page()->focusController().focusedFrame();
         if (focusedFrame) {
             Element* element = focusedFrame->document()->focusedElement();
             if (element && focusedFrame->selection().selection().isNone()) {
@@ -615,7 +622,7 @@ void WebFrameWidgetImpl::setTextDirection(WebTextDirection direction)
         break;
 
     default:
-        notImplemented();
+        NOTIMPLEMENTED();
         break;
     }
 }
@@ -631,6 +638,7 @@ void WebFrameWidgetImpl::willCloseLayerTreeView()
         page()->willCloseLayerTreeView(*m_layerTreeView);
 
     setIsAcceleratedCompositingActive(false);
+    m_mutator = nullptr;
     m_layerTreeView = nullptr;
     m_layerTreeViewClosed = true;
 }
@@ -639,6 +647,21 @@ void WebFrameWidgetImpl::didChangeWindowResizerRect()
 {
     if (m_localRoot->frameView())
         m_localRoot->frameView()->windowResizerRectChanged();
+}
+
+void WebFrameWidgetImpl::didAcquirePointerLock()
+{
+    page()->pointerLockController().didAcquirePointerLock();
+}
+
+void WebFrameWidgetImpl::didNotAcquirePointerLock()
+{
+    page()->pointerLockController().didNotAcquirePointerLock();
+}
+
+void WebFrameWidgetImpl::didLosePointerLock()
+{
+    page()->pointerLockController().didLosePointerLock();
 }
 
 void WebFrameWidgetImpl::handleMouseLeave(LocalFrame& mainFrame, const WebMouseEvent& event)
@@ -758,7 +781,7 @@ WebInputEventResult WebFrameWidgetImpl::handleGestureEvent(const WebGestureEvent
         m_client->didHandleGestureEvent(event, eventCancelled);
         return WebInputEventResult::NotHandled;
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
     }
     LocalFrame* frame = m_localRoot->frame();
     eventResult = frame->eventHandler().handleGestureEvent(PlatformGestureEventBuilder(frame->view(), event));
@@ -768,7 +791,7 @@ WebInputEventResult WebFrameWidgetImpl::handleGestureEvent(const WebGestureEvent
 
 WebInputEventResult WebFrameWidgetImpl::handleKeyEvent(const WebKeyboardEvent& event)
 {
-    ASSERT((event.type == WebInputEvent::RawKeyDown)
+    DCHECK((event.type == WebInputEvent::RawKeyDown)
         || (event.type == WebInputEvent::KeyDown)
         || (event.type == WebInputEvent::KeyUp));
 
@@ -780,9 +803,9 @@ WebInputEventResult WebFrameWidgetImpl::handleKeyEvent(const WebKeyboardEvent& e
     // event.
     m_suppressNextKeypressEvent = false;
 
-    RefPtrWillBeRawPtr<Frame> focusedFrame = focusedCoreFrame();
+    Frame* focusedFrame = focusedCoreFrame();
     if (focusedFrame && focusedFrame->isRemoteFrame()) {
-        WebRemoteFrameImpl* webFrame = WebRemoteFrameImpl::fromFrame(*toRemoteFrame(focusedFrame.get()));
+        WebRemoteFrameImpl* webFrame = WebRemoteFrameImpl::fromFrame(*toRemoteFrame(focusedFrame));
         webFrame->client()->forwardInputEvent(&event);
         return WebInputEventResult::HandledSystem;
     }
@@ -790,7 +813,7 @@ WebInputEventResult WebFrameWidgetImpl::handleKeyEvent(const WebKeyboardEvent& e
     if (!focusedFrame || !focusedFrame->isLocalFrame())
         return WebInputEventResult::NotHandled;
 
-    RefPtrWillBeRawPtr<LocalFrame> frame = toLocalFrame(focusedFrame.get());
+    LocalFrame* frame = toLocalFrame(focusedFrame);
 
     PlatformKeyboardEventBuilder evt(event);
 
@@ -827,7 +850,7 @@ WebInputEventResult WebFrameWidgetImpl::handleKeyEvent(const WebKeyboardEvent& e
 
 WebInputEventResult WebFrameWidgetImpl::handleCharEvent(const WebKeyboardEvent& event)
 {
-    ASSERT(event.type == WebInputEvent::Char);
+    DCHECK_EQ(event.type, WebInputEvent::Char);
 
     // Please refer to the comments explaining the m_suppressNextKeypressEvent
     // member.  The m_suppressNextKeypressEvent is set if the KeyDown is
@@ -1003,6 +1026,7 @@ Element* WebFrameWidgetImpl::focusedElement() const
 void WebFrameWidgetImpl::initializeLayerTreeView()
 {
     if (m_client) {
+        DCHECK(!m_mutator);
         m_client->initializeLayerTreeView();
         m_layerTreeView = m_client->layerTreeView();
     }
@@ -1016,7 +1040,7 @@ void WebFrameWidgetImpl::initializeLayerTreeView()
 
     // FIXME: only unittests, click to play, Android priting, and printing (for headers and footers)
     // make this assert necessary. We should make them not hit this code and then delete allowsBrokenNullLayerTreeView.
-    ASSERT(m_layerTreeView || !m_client || m_client->allowsBrokenNullLayerTreeView());
+    DCHECK(m_layerTreeView || !m_client || m_client->allowsBrokenNullLayerTreeView());
 }
 
 void WebFrameWidgetImpl::setIsAcceleratedCompositingActive(bool active)
@@ -1027,7 +1051,7 @@ void WebFrameWidgetImpl::setIsAcceleratedCompositingActive(bool active)
     if (m_layerTreeViewClosed)
         return;
 
-    ASSERT(!active || m_layerTreeView);
+    DCHECK(!active || m_layerTreeView);
 
     if (m_isAcceleratedCompositingActive == active)
         return;
@@ -1051,10 +1075,10 @@ void WebFrameWidgetImpl::setIsAcceleratedCompositingActive(bool active)
 PaintLayerCompositor* WebFrameWidgetImpl::compositor() const
 {
     LocalFrame* frame = m_localRoot->frame();
-    if (!frame || !frame->document() || !frame->document()->layoutView())
+    if (!frame || !frame->document() || frame->document()->layoutViewItem().isNull())
         return nullptr;
 
-    return frame->document()->layoutView()->compositor();
+    return frame->document()->layoutViewItem().compositor();
 }
 
 void WebFrameWidgetImpl::setRootGraphicsLayer(GraphicsLayer* layer)
@@ -1086,21 +1110,10 @@ void WebFrameWidgetImpl::detachCompositorAnimationTimeline(CompositorAnimationTi
         m_layerTreeView->detachCompositorAnimationTimeline(compositorTimeline->animationTimeline());
 }
 
-void WebFrameWidgetImpl::setVisibilityState(WebPageVisibilityState visibilityState, bool isInitialState)
+void WebFrameWidgetImpl::setVisibilityState(WebPageVisibilityState visibilityState)
 {
-    if (!page())
-        return;
-
-    // FIXME: This is not correct, since Show and Hide messages for a frame's Widget do not necessarily
-    // correspond to Page visibility, but is necessary until we properly sort out OOPIF visibility.
-    page()->setVisibilityState(static_cast<PageVisibilityState>(visibilityState), isInitialState);
-
-    m_localRoot->frame()->frameScheduler()->setPageVisible(visibilityState == WebPageVisibilityStateVisible);
-
-    if (m_layerTreeView) {
-        bool visible = visibilityState == WebPageVisibilityStateVisible;
-        m_layerTreeView->setVisible(visible);
-    }
+    if (m_layerTreeView)
+        m_layerTreeView->setVisible(visibilityState == WebPageVisibilityStateVisible);
 }
 
 HitTestResult WebFrameWidgetImpl::hitTestResultForRootFramePos(const IntPoint& posInRootFrame)

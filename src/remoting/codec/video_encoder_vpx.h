@@ -27,8 +27,8 @@ namespace remoting {
 class VideoEncoderVpx : public VideoEncoder {
  public:
   // Create encoder for the specified protocol.
-  static scoped_ptr<VideoEncoderVpx> CreateForVP8();
-  static scoped_ptr<VideoEncoderVpx> CreateForVP9();
+  static std::unique_ptr<VideoEncoderVpx> CreateForVP8();
+  static std::unique_ptr<VideoEncoderVpx> CreateForVP9();
 
   ~VideoEncoderVpx() override;
 
@@ -37,7 +37,8 @@ class VideoEncoderVpx : public VideoEncoder {
   // VideoEncoder interface.
   void SetLosslessEncode(bool want_lossless) override;
   void SetLosslessColor(bool want_lossless) override;
-  scoped_ptr<VideoPacket> Encode(const webrtc::DesktopFrame& frame) override;
+  std::unique_ptr<VideoPacket> Encode(const webrtc::DesktopFrame& frame,
+                                      uint32_t flags) override;
 
  private:
   explicit VideoEncoderVpx(bool use_vp9);
@@ -74,11 +75,11 @@ class VideoEncoderVpx : public VideoEncoder {
   base::TimeTicks timestamp_base_;
 
   // VPX image and buffer to hold the actual YUV planes.
-  scoped_ptr<vpx_image_t> image_;
-  scoped_ptr<uint8_t[]> image_buffer_;
+  std::unique_ptr<vpx_image_t> image_;
+  std::unique_ptr<uint8_t[]> image_buffer_;
 
   // Active map used to optimize out processing of un-changed macroblocks.
-  scoped_ptr<uint8_t[]> active_map_;
+  std::unique_ptr<uint8_t[]> active_map_;
   webrtc::DesktopSize active_map_size_;
 
   // True if the codec wants unchanged frames to finish topping-off with.
@@ -95,4 +96,4 @@ class VideoEncoderVpx : public VideoEncoder {
 
 }  // namespace remoting
 
-#endif  // REMOTING_CODEC_VIDEO_ENCODER_VP8_H_
+#endif  // REMOTING_CODEC_VIDEO_ENCODER_VPX_H_

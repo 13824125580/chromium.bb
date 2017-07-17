@@ -4,16 +4,19 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/fake_audio_render_callback.h"
 #include "media/base/mock_audio_renderer_sink.h"
 #include "media/blink/webaudiosourceprovider_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebAudioSourceProviderClient.h"
+
+using ::testing::_;
 
 namespace media {
 
@@ -85,6 +88,19 @@ class WebAudioSourceProviderImplTest
   // blink::WebAudioSourceProviderClient implementation.
   MOCK_METHOD2(setFormat, void(size_t numberOfChannels, float sampleRate));
 
+  // CopyAudioCB. Added forwarder method due to GMock troubles with scoped_ptr.
+  MOCK_METHOD3(DoCopyAudioCB,
+               void(AudioBus*, uint32_t frames_delayed, int sample_rate));
+  void OnAudioBus(std::unique_ptr<AudioBus> bus,
+                  uint32_t frames_delayed,
+                  int sample_rate) {
+    DoCopyAudioCB(bus.get(), frames_delayed, sample_rate);
+  }
+
+  int Render(AudioBus* audio_bus) {
+    return wasp_impl_->RenderForTesting(audio_bus);
+  }
+
  protected:
   AudioParameters params_;
   FakeAudioRenderCallback fake_callback_;
@@ -117,7 +133,6 @@ TEST_F(WebAudioSourceProviderImplTest, SetClientBeforeInitialize) {
 // Verify AudioRendererSink functionality w/ and w/o a client.
 TEST_F(WebAudioSourceProviderImplTest, SinkMethods) {
   wasp_impl_->Initialize(params_, &fake_callback_);
-  ASSERT_EQ(mock_sink_->callback(), &fake_callback_);
 
   // Without a client all WASP calls should fall through to the underlying sink.
   CallAllSinkMethodsAndVerify(true);
@@ -159,8 +174,8 @@ TEST_F(WebAudioSourceProviderImplTest, SinkStateRestored) {
 
 // Test the AudioRendererSink state machine and its effects on provideInput().
 TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
-  scoped_ptr<AudioBus> bus1 = AudioBus::Create(params_);
-  scoped_ptr<AudioBus> bus2 = AudioBus::Create(params_);
+  std::unique_ptr<AudioBus> bus1 = AudioBus::Create(params_);
+  std::unique_ptr<AudioBus> bus2 = AudioBus::Create(params_);
 
   // Point the WebVector into memory owned by |bus1|.
   blink::WebVector<float*> audio_data(static_cast<size_t>(bus1->channels()));
@@ -182,7 +197,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
   bus2->Zero();
   wasp_impl_->provideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
-  ASSERT_EQ(fake_callback_.last_audio_delay_milliseconds(), -1);
+  ASSERT_EQ(fake_callback_.last_frames_delayed(), -1);
 
   wasp_impl_->Start();
 
@@ -190,7 +205,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
   bus1->channel(0)[0] = 1;
   wasp_impl_->provideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
-  ASSERT_EQ(fake_callback_.last_audio_delay_milliseconds(), -1);
+  ASSERT_EQ(fake_callback_.last_frames_delayed(), -1);
 
   wasp_impl_->Play();
 
@@ -238,6 +253,24 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
   bus2->Zero();
   wasp_impl_->provideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
+}
+
+// Verify CopyAudioCB is called if registered.
+TEST_F(WebAudioSourceProviderImplTest, CopyAudioCB) {
+  testing::InSequence s;
+  wasp_impl_->Initialize(params_, &fake_callback_);
+  wasp_impl_->SetCopyAudioCallback(base::Bind(
+      &WebAudioSourceProviderImplTest::OnAudioBus, base::Unretained(this)));
+
+  const std::unique_ptr<AudioBus> bus1 = AudioBus::Create(params_);
+  EXPECT_CALL(*this, DoCopyAudioCB(_, 0, params_.sample_rate())).Times(1);
+  Render(bus1.get());
+
+  wasp_impl_->ClearCopyAudioCallback();
+  EXPECT_CALL(*this, DoCopyAudioCB(_, _, _)).Times(0);
+  Render(bus1.get());
+
+  testing::Mock::VerifyAndClear(mock_sink_.get());
 }
 
 }  // namespace media

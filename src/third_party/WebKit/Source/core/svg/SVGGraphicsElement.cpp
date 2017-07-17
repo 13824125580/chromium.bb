@@ -60,7 +60,7 @@ AffineTransform SVGGraphicsElement::computeCTM(SVGElement::CTMScope mode,
     SVGGraphicsElement::StyleUpdateStrategy styleUpdateStrategy, const SVGGraphicsElement* ancestor) const
 {
     if (styleUpdateStrategy == AllowStyleUpdate)
-        document().updateLayoutIgnorePendingStylesheets();
+        document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     AffineTransform ctm;
     bool done = false;
@@ -100,12 +100,12 @@ AffineTransform SVGGraphicsElement::getScreenCTM(StyleUpdateStrategy styleUpdate
     return computeCTM(ScreenScope, styleUpdateStrategy);
 }
 
-PassRefPtrWillBeRawPtr<SVGMatrixTearOff> SVGGraphicsElement::getCTMFromJavascript()
+SVGMatrixTearOff* SVGGraphicsElement::getCTMFromJavascript()
 {
     return SVGMatrixTearOff::create(getCTM());
 }
 
-PassRefPtrWillBeRawPtr<SVGMatrixTearOff> SVGGraphicsElement::getScreenCTMFromJavascript()
+SVGMatrixTearOff* SVGGraphicsElement::getScreenCTMFromJavascript()
 {
     return SVGMatrixTearOff::create(getScreenCTM());
 }
@@ -213,7 +213,7 @@ SVGElement* SVGGraphicsElement::farthestViewportElement() const
 
 FloatRect SVGGraphicsElement::getBBox()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     // FIXME: Eventually we should support getBBox for detached elements.
     if (!layoutObject())
@@ -222,7 +222,7 @@ FloatRect SVGGraphicsElement::getBBox()
     return layoutObject()->objectBoundingBox();
 }
 
-PassRefPtrWillBeRawPtr<SVGRectTearOff> SVGGraphicsElement::getBBoxFromJavascript()
+SVGRectTearOff* SVGGraphicsElement::getBBoxFromJavascript()
 {
     return SVGRectTearOff::create(SVGRect::create(getBBox()), 0, PropertyIsNotAnimVal);
 }

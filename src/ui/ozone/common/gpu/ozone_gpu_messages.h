@@ -16,8 +16,9 @@
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
-#include "ui/gfx/ipc/gfx_param_traits_macros.h"
+#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 
@@ -47,6 +48,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::DisplaySnapshot_Params)
   IPC_STRUCT_TRAITS_MEMBER(type)
   IPC_STRUCT_TRAITS_MEMBER(is_aspect_preserving_scaling)
   IPC_STRUCT_TRAITS_MEMBER(has_overscan)
+  IPC_STRUCT_TRAITS_MEMBER(has_color_correction_matrix)
   IPC_STRUCT_TRAITS_MEMBER(display_name)
   IPC_STRUCT_TRAITS_MEMBER(sys_path)
   IPC_STRUCT_TRAITS_MEMBER(modes)
@@ -57,6 +59,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::DisplaySnapshot_Params)
   IPC_STRUCT_TRAITS_MEMBER(native_mode)
   IPC_STRUCT_TRAITS_MEMBER(product_id)
   IPC_STRUCT_TRAITS_MEMBER(string_representation)
+  IPC_STRUCT_TRAITS_MEMBER(maximum_cursor_size)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ui::GammaRampRGBEntry)
@@ -140,10 +143,11 @@ IPC_MESSAGE_CONTROL2(OzoneGpuMsg_SetHDCPState,
                      int64_t /* display_id */,
                      ui::HDCPState /* state */)
 
-// Provides the gamma ramp for display adjustment.
-IPC_MESSAGE_CONTROL2(OzoneGpuMsg_SetGammaRamp,
+IPC_MESSAGE_CONTROL4(OzoneGpuMsg_SetColorCorrection,
                      int64_t,                             // display ID,
-                     std::vector<ui::GammaRampRGBEntry>)  // lut
+                     std::vector<ui::GammaRampRGBEntry>,  // degamma lut
+                     std::vector<ui::GammaRampRGBEntry>,  // gamma lut
+                     std::vector<float>)                  // transform matrix
 
 IPC_MESSAGE_CONTROL2(OzoneGpuMsg_CheckOverlayCapabilities,
                      gfx::AcceleratedWidget /* widget */,

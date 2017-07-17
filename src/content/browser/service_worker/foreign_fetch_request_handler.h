@@ -31,7 +31,7 @@ class BlobStorageContext;
 namespace content {
 
 class ResourceContext;
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerContextCore;
 class ServiceWorkerContextWrapper;
 class ServiceWorkerProviderHost;
@@ -54,21 +54,22 @@ class CONTENT_EXPORT ForeignFetchRequestHandler
       storage::BlobStorageContext* blob_storage_context,
       int process_id,
       int provider_id,
-      bool skip_service_worker,
+      SkipServiceWorker skip_service_worker,
       FetchRequestMode request_mode,
       FetchCredentialsMode credentials_mode,
       FetchRedirectMode redirect_mode,
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body,
+      bool initiated_in_secure_context);
 
   // Returns the handler attached to |request|. This may return null
   // if no handler is attached.
   static ForeignFetchRequestHandler* GetHandler(net::URLRequest* request);
 
   // Creates a protocol interceptor for foreign fetch.
-  static scoped_ptr<net::URLRequestInterceptor> CreateInterceptor(
+  static std::unique_ptr<net::URLRequestInterceptor> CreateInterceptor(
       ResourceContext* resource_context);
 
   ~ForeignFetchRequestHandler() override;
@@ -88,7 +89,7 @@ class CONTENT_EXPORT ForeignFetchRequestHandler
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body);
 
   // Called when a ServiceWorkerRegistration has (or hasn't) been found for the
   // request being handled.
@@ -98,15 +99,7 @@ class CONTENT_EXPORT ForeignFetchRequestHandler
       const scoped_refptr<ServiceWorkerRegistration>& registration);
 
   // ServiceWorkerURLRequestJob::Delegate implementation:
-  void OnPrepareToRestart(base::TimeTicks service_worker_start_time,
-                          base::TimeTicks service_worker_ready_time) override;
-  void OnStartCompleted(
-      bool was_fetched_via_service_worker,
-      bool was_fallback_required,
-      const GURL& original_url_via_service_worker,
-      blink::WebServiceWorkerResponseType response_type_via_service_worker,
-      base::TimeTicks worker_start_time,
-      base::TimeTicks service_worker_ready_time) override;
+  void OnPrepareToRestart() override;
   ServiceWorkerVersion* GetServiceWorkerVersion(
       ServiceWorkerMetrics::URLRequestJobResult* result) override;
 
@@ -122,7 +115,7 @@ class CONTENT_EXPORT ForeignFetchRequestHandler
   FetchRedirectMode redirect_mode_;
   RequestContextType request_context_type_;
   RequestContextFrameType frame_type_;
-  scoped_refptr<ResourceRequestBody> body_;
+  scoped_refptr<ResourceRequestBodyImpl> body_;
 
   base::WeakPtr<ServiceWorkerURLRequestJob> job_;
   scoped_refptr<ServiceWorkerVersion> target_worker_;

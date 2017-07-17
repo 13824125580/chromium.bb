@@ -29,6 +29,7 @@
 #include "net/base/filename_util.h"
 #include "net/base/net_module.h"
 #include "net/grit/net_resources.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/wm/core/wm_state.h"
 #include "url/gurl.h"
@@ -150,14 +151,15 @@ void ShellBrowserMainParts::InitializeBrowserContexts() {
 }
 
 void ShellBrowserMainParts::InitializeMessageLoopContext() {
+  ui::MaterialDesignController::Initialize();
   Shell::CreateNewWindow(browser_context_.get(),
                          GetStartupURL(),
                          NULL,
                          gfx::Size());
 }
 
-void ShellBrowserMainParts::PreMainMessageLoopRun() {
 #if defined(OS_ANDROID)
+int ShellBrowserMainParts::PreCreateThreads() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableCrashReporter)) {
     base::FilePath crash_dumps_dir =
@@ -165,8 +167,12 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
             switches::kCrashDumpsDir);
     crash_dump_manager_.reset(new breakpad::CrashDumpManager(crash_dumps_dir));
   }
+
+  return 0;
+}
 #endif
 
+void ShellBrowserMainParts::PreMainMessageLoopRun() {
   net_log_.reset(new ShellNetLog("content_shell"));
   InitializeBrowserContexts();
   Shell::Initialize();

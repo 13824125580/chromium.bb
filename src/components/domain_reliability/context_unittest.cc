@@ -5,13 +5,14 @@
 #include "components/domain_reliability/context.h"
 
 #include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/domain_reliability/beacon.h"
 #include "components/domain_reliability/dispatcher.h"
 #include "components/domain_reliability/scheduler.h"
@@ -30,11 +31,13 @@ using base::Value;
 
 typedef std::vector<const DomainReliabilityBeacon*> BeaconVector;
 
-scoped_ptr<DomainReliabilityBeacon> MakeCustomizedBeacon(
+std::unique_ptr<DomainReliabilityBeacon> MakeCustomizedBeacon(
     MockableTime* time,
     std::string status,
-    std::string quic_error) {
-  scoped_ptr<DomainReliabilityBeacon> beacon(new DomainReliabilityBeacon());
+    std::string quic_error,
+    bool quic_port_migration_detected) {
+  std::unique_ptr<DomainReliabilityBeacon> beacon(
+      new DomainReliabilityBeacon());
   beacon->url = GURL("https://localhost/");
   beacon->status = status;
   beacon->quic_error = quic_error;
@@ -43,6 +46,7 @@ scoped_ptr<DomainReliabilityBeacon> MakeCustomizedBeacon(
   beacon->was_proxied = false;
   beacon->protocol = "HTTP";
   beacon->details.quic_broken = true;
+  beacon->details.quic_port_migration_detected = quic_port_migration_detected;
   beacon->http_response_code = -1;
   beacon->elapsed = base::TimeDelta::FromMilliseconds(250);
   beacon->start_time = time->NowTicks() - beacon->elapsed;
@@ -51,8 +55,8 @@ scoped_ptr<DomainReliabilityBeacon> MakeCustomizedBeacon(
   return beacon;
 }
 
-scoped_ptr<DomainReliabilityBeacon> MakeBeacon(MockableTime* time) {
-  return MakeCustomizedBeacon(time, "tcp.connection_reset", "");
+std::unique_ptr<DomainReliabilityBeacon> MakeBeacon(MockableTime* time) {
+  return MakeCustomizedBeacon(time, "tcp.connection_reset", "", false);
 }
 
 template <typename ValueType,
@@ -103,7 +107,7 @@ class DomainReliabilityContextTest : public testing::Test {
     time_.Advance(base::TimeDelta::FromSeconds(1));
   }
 
-  void InitContext(scoped_ptr<const DomainReliabilityConfig> config) {
+  void InitContext(std::unique_ptr<const DomainReliabilityConfig> config) {
     context_.reset(new DomainReliabilityContext(
         &time_, params_, upload_reporter_string_, &last_network_change_time_,
         &dispatcher_, &uploader_, std::move(config)));
@@ -149,7 +153,7 @@ class DomainReliabilityContextTest : public testing::Test {
   DomainReliabilityScheduler::Params params_;
   MockUploader uploader_;
   std::string upload_reporter_string_;
-  scoped_ptr<DomainReliabilityContext> context_;
+  std::unique_ptr<DomainReliabilityContext> context_;
 
  private:
   void OnUploadRequest(
@@ -189,7 +193,7 @@ TEST_F(DomainReliabilityContextTest, Report) {
 TEST_F(DomainReliabilityContextTest, MaxNestedBeaconSchedules) {
   InitContext(MakeTestConfig());
   GURL url("http://example/always_report");
-  scoped_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
+  std::unique_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
   beacon->upload_depth = DomainReliabilityContext::kMaxUploadDepthToSchedule;
   context_->OnBeacon(std::move(beacon));
 
@@ -204,7 +208,7 @@ TEST_F(DomainReliabilityContextTest, MaxNestedBeaconSchedules) {
 TEST_F(DomainReliabilityContextTest, OverlyNestedBeaconDoesNotSchedule) {
   InitContext(MakeTestConfig());
   GURL url("http://example/always_report");
-  scoped_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
+  std::unique_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
   beacon->upload_depth =
       DomainReliabilityContext::kMaxUploadDepthToSchedule + 1;
   context_->OnBeacon(std::move(beacon));
@@ -221,7 +225,7 @@ TEST_F(DomainReliabilityContextTest,
     MaxNestedBeaconAfterOverlyNestedBeaconSchedules) {
   InitContext(MakeTestConfig());
   // Add a beacon for a report that's too nested to schedule a beacon.
-  scoped_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
+  std::unique_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
   beacon->upload_depth =
       DomainReliabilityContext::kMaxUploadDepthToSchedule + 1;
   context_->OnBeacon(std::move(beacon));
@@ -255,7 +259,8 @@ TEST_F(DomainReliabilityContextTest,
 
 TEST_F(DomainReliabilityContextTest, ReportUpload) {
   InitContext(MakeTestConfig());
-  context_->OnBeacon(MakeBeacon(&time_));
+  context_->OnBeacon(
+      MakeCustomizedBeacon(&time_, "tcp.connection_reset", "", true));
 
   BeaconVector beacons;
   context_->GetQueuedBeaconsForTesting(&beacons);
@@ -266,7 +271,7 @@ TEST_F(DomainReliabilityContextTest, ReportUpload) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasStringValue(*entry, "failure_data.custom_error",
@@ -274,6 +279,7 @@ TEST_F(DomainReliabilityContextTest, ReportUpload) {
   EXPECT_TRUE(HasBooleanValue(*entry, "network_changed", false));
   EXPECT_TRUE(HasStringValue(*entry, "protocol", "HTTP"));
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
+  EXPECT_TRUE(HasBooleanValue(*entry, "quic_port_migration_detected", true));
   // N.B.: Assumes max_delay is 5 minutes.
   EXPECT_TRUE(HasIntegerValue(*entry, "request_age_ms", 300250));
   EXPECT_TRUE(HasIntegerValue(*entry, "request_elapsed_ms", 250));
@@ -305,7 +311,7 @@ TEST_F(DomainReliabilityContextTest, NetworkChanged) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "network_changed", true));
@@ -322,7 +328,7 @@ TEST_F(DomainReliabilityContextTest,
        ReportUploadWithQuicProtocolErrorAndQuicError) {
   InitContext(MakeTestConfig());
   context_->OnBeacon(MakeCustomizedBeacon(&time_, "quic.protocol",
-                                          "quic.invalid.stream_data"));
+                                          "quic.invalid.stream_data", true));
 
   BeaconVector beacons;
   context_->GetQueuedBeaconsForTesting(&beacons);
@@ -333,11 +339,12 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
+  EXPECT_TRUE(HasBooleanValue(*entry, "quic_port_migration_detected", true));
   EXPECT_TRUE(HasStringValue(*entry, "status", "quic.protocol"));
   EXPECT_TRUE(HasStringValue(*entry, "quic_error", "quic.invalid.stream_data"));
 
@@ -363,7 +370,7 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
@@ -384,7 +391,7 @@ TEST_F(DomainReliabilityContextTest,
        ReportUploadWithNonQuicProtocolErrorAndQuicError) {
   InitContext(MakeTestConfig());
   context_->OnBeacon(MakeCustomizedBeacon(&time_, "tcp.connection_reset",
-                                          "quic.invalid.stream_data"));
+                                          "quic.invalid.stream_data", false));
 
   BeaconVector beacons;
   context_->GetQueuedBeaconsForTesting(&beacons);
@@ -395,7 +402,7 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
@@ -410,7 +417,7 @@ TEST_F(DomainReliabilityContextTest,
 }
 
 TEST_F(DomainReliabilityContextTest, ZeroSampleRate) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->failure_sample_rate = 0.0;
   InitContext(std::move(config));
 
@@ -422,7 +429,7 @@ TEST_F(DomainReliabilityContextTest, ZeroSampleRate) {
 }
 
 TEST_F(DomainReliabilityContextTest, FractionalSampleRate) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->failure_sample_rate = 0.5;
   InitContext(std::move(config));
 
@@ -438,7 +445,7 @@ TEST_F(DomainReliabilityContextTest, FractionalSampleRate) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  scoped_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasDoubleValue(*entry, "sample_rate", 0.5));
@@ -451,7 +458,7 @@ TEST_F(DomainReliabilityContextTest, FractionalSampleRate) {
 }
 
 TEST_F(DomainReliabilityContextTest, FailureSampleOnly) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->success_sample_rate = 0.0;
   config->failure_sample_rate = 1.0;
   InitContext(std::move(config));
@@ -462,7 +469,7 @@ TEST_F(DomainReliabilityContextTest, FailureSampleOnly) {
   context_->GetQueuedBeaconsForTesting(&beacons);
   EXPECT_EQ(1u, beacons.size());
 
-  scoped_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
+  std::unique_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
   beacon->status = "ok";
   beacon->chrome_error = net::OK;
   context_->OnBeacon(std::move(beacon));
@@ -471,7 +478,7 @@ TEST_F(DomainReliabilityContextTest, FailureSampleOnly) {
 }
 
 TEST_F(DomainReliabilityContextTest, SuccessSampleOnly) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->success_sample_rate = 1.0;
   config->failure_sample_rate = 0.0;
   InitContext(std::move(config));
@@ -482,7 +489,7 @@ TEST_F(DomainReliabilityContextTest, SuccessSampleOnly) {
   context_->GetQueuedBeaconsForTesting(&beacons);
   EXPECT_EQ(0u, beacons.size());
 
-  scoped_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
+  std::unique_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
   beacon->status = "ok";
   beacon->chrome_error = net::OK;
   context_->OnBeacon(std::move(beacon));
@@ -491,7 +498,7 @@ TEST_F(DomainReliabilityContextTest, SuccessSampleOnly) {
 }
 
 TEST_F(DomainReliabilityContextTest, SampleAllBeacons) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->success_sample_rate = 1.0;
   config->failure_sample_rate = 1.0;
   InitContext(std::move(config));
@@ -502,7 +509,7 @@ TEST_F(DomainReliabilityContextTest, SampleAllBeacons) {
   context_->GetQueuedBeaconsForTesting(&beacons);
   EXPECT_EQ(1u, beacons.size());
 
-  scoped_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
+  std::unique_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
   beacon->status = "ok";
   beacon->chrome_error = net::OK;
   context_->OnBeacon(std::move(beacon));
@@ -511,7 +518,7 @@ TEST_F(DomainReliabilityContextTest, SampleAllBeacons) {
 }
 
 TEST_F(DomainReliabilityContextTest, SampleNoBeacons) {
-  scoped_ptr<DomainReliabilityConfig> config(MakeTestConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(MakeTestConfig());
   config->success_sample_rate = 0.0;
   config->failure_sample_rate = 0.0;
   InitContext(std::move(config));
@@ -522,7 +529,7 @@ TEST_F(DomainReliabilityContextTest, SampleNoBeacons) {
   context_->GetQueuedBeaconsForTesting(&beacons);
   EXPECT_EQ(0u, beacons.size());
 
-  scoped_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
+  std::unique_ptr<DomainReliabilityBeacon> beacon(MakeBeacon(&time_));
   beacon->status = "ok";
   beacon->chrome_error = net::OK;
   context_->OnBeacon(std::move(beacon));
@@ -530,7 +537,7 @@ TEST_F(DomainReliabilityContextTest, SampleNoBeacons) {
   EXPECT_EQ(0u, beacons.size());
 }
 
-// TODO(ttuttle): Add beacon_unittest.cc to test serialization.
+// TODO(juliatuttle): Add beacon_unittest.cc to test serialization.
 
 }  // namespace
 }  // namespace domain_reliability

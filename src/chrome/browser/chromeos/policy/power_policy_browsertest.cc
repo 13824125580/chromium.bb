@@ -15,9 +15,10 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
@@ -185,7 +186,7 @@ void PowerPolicyBrowserTestBase::SetUpInProcessBrowserTestFixture() {
   DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
   power_manager_client_ = new chromeos::FakePowerManagerClient;
   dbus_setter()->SetPowerManagerClient(
-      scoped_ptr<chromeos::PowerManagerClient>(power_manager_client_));
+      std::unique_ptr<chromeos::PowerManagerClient>(power_manager_client_));
 
   // Initialize device policy.
   InstallOwnerKey();
@@ -206,7 +207,7 @@ void PowerPolicyBrowserTestBase::InstallUserKey() {
   ASSERT_TRUE(PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
   std::string sanitized_username =
       chromeos::CryptohomeClient::GetStubSanitizedUsername(
-          chromeos::login::StubAccountId().GetUserEmail());
+          cryptohome::Identification(chromeos::login::StubAccountId()));
   base::FilePath user_key_file =
       user_keys_dir.AppendASCII(sanitized_username)
                    .AppendASCII("policy.pub");
@@ -224,7 +225,8 @@ void PowerPolicyBrowserTestBase::StoreAndReloadUserPolicy() {
   // Install the new user policy blob in session manager client.
   user_policy_.Build();
   session_manager_client()->set_user_policy(
-      user_policy_.policy_data().username(),
+      cryptohome::Identification(
+          AccountId::FromUserEmail(user_policy_.policy_data().username())),
       user_policy_.GetBlob());
 
   // Reload user policy from session manager client and wait for the update to
@@ -298,8 +300,8 @@ void PowerPolicyLoginScreenBrowserTest::SetUpOnMainThread() {
 }
 
 void PowerPolicyLoginScreenBrowserTest::TearDownOnMainThread() {
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(&chrome::AttemptExit));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&chrome::AttemptExit));
   base::RunLoop().RunUntilIdle();
   PowerPolicyBrowserTestBase::TearDownOnMainThread();
 }

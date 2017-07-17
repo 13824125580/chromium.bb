@@ -5,11 +5,16 @@
 #include "core/animation/PropertyInterpolationTypesMapping.h"
 
 #include "core/HTMLNames.h"
+#include "core/animation/CSSBasicShapeInterpolationType.h"
+#include "core/animation/CSSBorderImageLengthBoxInterpolationType.h"
 #include "core/animation/CSSClipInterpolationType.h"
 #include "core/animation/CSSColorInterpolationType.h"
+#include "core/animation/CSSFilterListInterpolationType.h"
+#include "core/animation/CSSFontSizeInterpolationType.h"
 #include "core/animation/CSSFontWeightInterpolationType.h"
 #include "core/animation/CSSImageInterpolationType.h"
 #include "core/animation/CSSImageListInterpolationType.h"
+#include "core/animation/CSSImageSliceInterpolationType.h"
 #include "core/animation/CSSLengthInterpolationType.h"
 #include "core/animation/CSSLengthListInterpolationType.h"
 #include "core/animation/CSSLengthPairInterpolationType.h"
@@ -19,7 +24,12 @@
 #include "core/animation/CSSPathInterpolationType.h"
 #include "core/animation/CSSPositionAxisListInterpolationType.h"
 #include "core/animation/CSSPositionInterpolationType.h"
+#include "core/animation/CSSRotateInterpolationType.h"
+#include "core/animation/CSSScaleInterpolationType.h"
 #include "core/animation/CSSShadowListInterpolationType.h"
+#include "core/animation/CSSSizeListInterpolationType.h"
+#include "core/animation/CSSTextIndentInterpolationType.h"
+#include "core/animation/CSSTransformInterpolationType.h"
 #include "core/animation/CSSTransformOriginInterpolationType.h"
 #include "core/animation/CSSTranslateInterpolationType.h"
 #include "core/animation/CSSValueInterpolationType.h"
@@ -38,20 +48,20 @@
 #include "core/animation/SVGRectInterpolationType.h"
 #include "core/animation/SVGTransformListInterpolationType.h"
 #include "core/animation/SVGValueInterpolationType.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyHandle& property)
+const InterpolationTypes& PropertyInterpolationTypesMapping::get(const PropertyHandle& property)
 {
-    using ApplicableTypesMap = HashMap<PropertyHandle, OwnPtr<const InterpolationTypes>>;
+    using ApplicableTypesMap = HashMap<PropertyHandle, std::unique_ptr<const InterpolationTypes>>;
     DEFINE_STATIC_LOCAL(ApplicableTypesMap, applicableTypesMap, ());
     auto entry = applicableTypesMap.find(property);
     if (entry != applicableTypesMap.end())
-        return entry->value.get();
+        return *entry->value.get();
 
-    // TODO(alancutter): Remove legacy interpolation code and stop returning nullptr.
-    bool fallbackToLegacy = false;
-    OwnPtr<InterpolationTypes> applicableTypes = adoptPtr(new InterpolationTypes());
+    std::unique_ptr<InterpolationTypes> applicableTypes = wrapUnique(new InterpolationTypes());
 
     if (property.isCSSProperty() || property.isPresentationAttribute()) {
         CSSPropertyID cssProperty = property.isCSSProperty() ? property.cssProperty() : property.presentationAttribute();
@@ -107,7 +117,7 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
         case CSSPropertyWordSpacing:
         case CSSPropertyX:
         case CSSPropertyY:
-            applicableTypes->append(adoptPtr(new CSSLengthInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSLengthInterpolationType(cssProperty)));
             break;
         case CSSPropertyFlexGrow:
         case CSSPropertyFlexShrink:
@@ -123,11 +133,11 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
         case CSSPropertyColumnCount:
         case CSSPropertyWidows:
         case CSSPropertyZIndex:
-            applicableTypes->append(adoptPtr(new CSSNumberInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSNumberInterpolationType(cssProperty)));
             break;
         case CSSPropertyLineHeight:
-            applicableTypes->append(adoptPtr(new CSSLengthInterpolationType(cssProperty)));
-            applicableTypes->append(adoptPtr(new CSSNumberInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSLengthInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSNumberInterpolationType(cssProperty)));
             break;
         case CSSPropertyBackgroundColor:
         case CSSPropertyBorderBottomColor:
@@ -142,85 +152,118 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
         case CSSPropertyTextDecorationColor:
         case CSSPropertyColumnRuleColor:
         case CSSPropertyWebkitTextStrokeColor:
-            applicableTypes->append(adoptPtr(new CSSColorInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSColorInterpolationType(cssProperty)));
             break;
         case CSSPropertyFill:
         case CSSPropertyStroke:
-            applicableTypes->append(adoptPtr(new CSSPaintInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSPaintInterpolationType(cssProperty)));
             break;
         case CSSPropertyD:
-            applicableTypes->append(adoptPtr(new CSSPathInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSPathInterpolationType(cssProperty)));
             break;
         case CSSPropertyBoxShadow:
         case CSSPropertyTextShadow:
-            applicableTypes->append(adoptPtr(new CSSShadowListInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSShadowListInterpolationType(cssProperty)));
             break;
         case CSSPropertyBorderImageSource:
         case CSSPropertyListStyleImage:
         case CSSPropertyWebkitMaskBoxImageSource:
-            applicableTypes->append(adoptPtr(new CSSImageInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSImageInterpolationType(cssProperty)));
             break;
         case CSSPropertyBackgroundImage:
         case CSSPropertyWebkitMaskImage:
-            applicableTypes->append(adoptPtr(new CSSImageListInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSImageListInterpolationType(cssProperty)));
             break;
         case CSSPropertyStrokeDasharray:
-            applicableTypes->append(adoptPtr(new CSSLengthListInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSLengthListInterpolationType(cssProperty)));
             break;
         case CSSPropertyFontWeight:
-            applicableTypes->append(adoptPtr(new CSSFontWeightInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSFontWeightInterpolationType(cssProperty)));
             break;
         case CSSPropertyVisibility:
-            applicableTypes->append(adoptPtr(new CSSVisibilityInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSVisibilityInterpolationType(cssProperty)));
             break;
         case CSSPropertyClip:
-            applicableTypes->append(adoptPtr(new CSSClipInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSClipInterpolationType(cssProperty)));
             break;
         case CSSPropertyMotionRotation:
-            applicableTypes->append(adoptPtr(new CSSMotionRotationInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSMotionRotationInterpolationType(cssProperty)));
             break;
         case CSSPropertyBackgroundPositionX:
         case CSSPropertyBackgroundPositionY:
         case CSSPropertyWebkitMaskPositionX:
         case CSSPropertyWebkitMaskPositionY:
-            applicableTypes->append(adoptPtr(new CSSPositionAxisListInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSPositionAxisListInterpolationType(cssProperty)));
             break;
         case CSSPropertyPerspectiveOrigin:
         case CSSPropertyObjectPosition:
-            applicableTypes->append(adoptPtr(new CSSPositionInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSPositionInterpolationType(cssProperty)));
             break;
         case CSSPropertyBorderBottomLeftRadius:
         case CSSPropertyBorderBottomRightRadius:
         case CSSPropertyBorderTopLeftRadius:
         case CSSPropertyBorderTopRightRadius:
-            applicableTypes->append(adoptPtr(new CSSLengthPairInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSLengthPairInterpolationType(cssProperty)));
             break;
         case CSSPropertyTranslate:
-            applicableTypes->append(adoptPtr(new CSSTranslateInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSTranslateInterpolationType(cssProperty)));
             break;
         case CSSPropertyTransformOrigin:
-            applicableTypes->append(adoptPtr(new CSSTransformOriginInterpolationType(cssProperty)));
+            applicableTypes->append(wrapUnique(new CSSTransformOriginInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyBackgroundSize:
+        case CSSPropertyWebkitMaskSize:
+            applicableTypes->append(wrapUnique(new CSSSizeListInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyBorderImageOutset:
+        case CSSPropertyBorderImageWidth:
+        case CSSPropertyWebkitMaskBoxImageOutset:
+        case CSSPropertyWebkitMaskBoxImageWidth:
+            applicableTypes->append(wrapUnique(new CSSBorderImageLengthBoxInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyScale:
+            applicableTypes->append(wrapUnique(new CSSScaleInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyFontSize:
+            applicableTypes->append(wrapUnique(new CSSFontSizeInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyTextIndent:
+            applicableTypes->append(wrapUnique(new CSSTextIndentInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyBorderImageSlice:
+        case CSSPropertyWebkitMaskBoxImageSlice:
+            applicableTypes->append(wrapUnique(new CSSImageSliceInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyWebkitClipPath:
+        case CSSPropertyShapeOutside:
+            applicableTypes->append(wrapUnique(new CSSBasicShapeInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyRotate:
+            applicableTypes->append(wrapUnique(new CSSRotateInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyBackdropFilter:
+        case CSSPropertyFilter:
+            applicableTypes->append(wrapUnique(new CSSFilterListInterpolationType(cssProperty)));
+            break;
+        case CSSPropertyTransform:
+            applicableTypes->append(wrapUnique(new CSSTransformInterpolationType(cssProperty)));
             break;
         default:
-            // TODO(alancutter): Support all interpolable CSS properties here so we can stop falling back to the old StyleInterpolation implementation.
-            if (CSSPropertyMetadata::isInterpolableProperty(cssProperty))
-                fallbackToLegacy = true;
-            break;
+            ASSERT(!CSSPropertyMetadata::isInterpolableProperty(cssProperty));
         }
 
-        if (!fallbackToLegacy)
-            applicableTypes->append(adoptPtr(new CSSValueInterpolationType(cssProperty)));
+        applicableTypes->append(wrapUnique(new CSSValueInterpolationType(cssProperty)));
 
     } else {
         const QualifiedName& attribute = property.svgAttribute();
         if (attribute == SVGNames::orientAttr) {
-            applicableTypes->append(adoptPtr(new SVGAngleInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGAngleInterpolationType(attribute)));
         } else if (attribute == SVGNames::numOctavesAttr
             || attribute == SVGNames::targetXAttr
             || attribute == SVGNames::targetYAttr) {
-            applicableTypes->append(adoptPtr(new SVGIntegerInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGIntegerInterpolationType(attribute)));
         } else if (attribute == SVGNames::orderAttr) {
-            applicableTypes->append(adoptPtr(new SVGIntegerOptionalIntegerInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGIntegerOptionalIntegerInterpolationType(attribute)));
         } else if (attribute == SVGNames::cxAttr
             || attribute == SVGNames::cyAttr
             || attribute == SVGNames::fxAttr
@@ -240,15 +283,15 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
             || attribute == SVGNames::x2Attr
             || attribute == SVGNames::y1Attr
             || attribute == SVGNames::y2Attr) {
-            applicableTypes->append(adoptPtr(new SVGLengthInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGLengthInterpolationType(attribute)));
         } else if (attribute == SVGNames::dxAttr
             || attribute == SVGNames::dyAttr) {
-            applicableTypes->append(adoptPtr(new SVGNumberInterpolationType(attribute)));
-            applicableTypes->append(adoptPtr(new SVGLengthListInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGNumberInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGLengthListInterpolationType(attribute)));
         } else if (attribute == SVGNames::xAttr
             || attribute == SVGNames::yAttr) {
-            applicableTypes->append(adoptPtr(new SVGLengthInterpolationType(attribute)));
-            applicableTypes->append(adoptPtr(new SVGLengthListInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGLengthInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGLengthListInterpolationType(attribute)));
         } else if (attribute == SVGNames::amplitudeAttr
             || attribute == SVGNames::azimuthAttr
             || attribute == SVGNames::biasAttr
@@ -274,27 +317,27 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
             || attribute == SVGNames::specularExponentAttr
             || attribute == SVGNames::surfaceScaleAttr
             || attribute == SVGNames::zAttr) {
-            applicableTypes->append(adoptPtr(new SVGNumberInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGNumberInterpolationType(attribute)));
         } else if (attribute == SVGNames::kernelMatrixAttr
             || attribute == SVGNames::rotateAttr
             || attribute == SVGNames::tableValuesAttr
             || attribute == SVGNames::valuesAttr) {
-            applicableTypes->append(adoptPtr(new SVGNumberListInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGNumberListInterpolationType(attribute)));
         } else if (attribute == SVGNames::baseFrequencyAttr
             || attribute == SVGNames::kernelUnitLengthAttr
             || attribute == SVGNames::radiusAttr
             || attribute == SVGNames::stdDeviationAttr) {
-            applicableTypes->append(adoptPtr(new SVGNumberOptionalNumberInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGNumberOptionalNumberInterpolationType(attribute)));
         } else if (attribute == SVGNames::dAttr) {
-            applicableTypes->append(adoptPtr(new SVGPathInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGPathInterpolationType(attribute)));
         } else if (attribute == SVGNames::pointsAttr) {
-            applicableTypes->append(adoptPtr(new SVGPointListInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGPointListInterpolationType(attribute)));
         } else if (attribute == SVGNames::viewBoxAttr) {
-            applicableTypes->append(adoptPtr(new SVGRectInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGRectInterpolationType(attribute)));
         } else if (attribute == SVGNames::gradientTransformAttr
             || attribute == SVGNames::patternTransformAttr
             || attribute == SVGNames::transformAttr) {
-            applicableTypes->append(adoptPtr(new SVGTransformListInterpolationType(attribute)));
+            applicableTypes->append(wrapUnique(new SVGTransformListInterpolationType(attribute)));
         } else if (attribute == HTMLNames::classAttr
             || attribute == SVGNames::clipPathUnitsAttr
             || attribute == SVGNames::edgeModeAttr
@@ -325,15 +368,14 @@ const InterpolationTypes* PropertyInterpolationTypesMapping::get(const PropertyH
             || attribute == SVGNames::yChannelSelectorAttr) {
             // Use default SVGValueInterpolationType.
         } else {
-            fallbackToLegacy = true;
+            NOTREACHED();
         }
 
-        if (!fallbackToLegacy)
-            applicableTypes->append(adoptPtr(new SVGValueInterpolationType(attribute)));
+        applicableTypes->append(wrapUnique(new SVGValueInterpolationType(attribute)));
     }
 
-    auto addResult = applicableTypesMap.add(property, fallbackToLegacy ? nullptr : applicableTypes.release());
-    return addResult.storedValue->value.get();
+    auto addResult = applicableTypesMap.add(property, std::move(applicableTypes));
+    return *addResult.storedValue->value.get();
 }
 
 } // namespace blink

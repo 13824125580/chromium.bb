@@ -63,9 +63,9 @@ public:
         , m_wheelTicksY(0)
         , m_granularity(ScrollByPixelWheelEvent)
         , m_hasPreciseScrollingDeltas(false)
-        , m_canScroll(true)
         , m_resendingPluginId(-1)
         , m_railsMode(RailsModeFree)
+        , m_dispatchType(Blocking)
 #if OS(MACOSX)
         , m_phase(PlatformWheelEventPhaseNone)
         , m_momentumPhase(PlatformWheelEventPhaseNone)
@@ -88,11 +88,10 @@ public:
 
     bool hasPreciseScrollingDeltas() const { return m_hasPreciseScrollingDeltas; }
     void setHasPreciseScrollingDeltas(bool b) { m_hasPreciseScrollingDeltas = b; }
-    bool canScroll() const { return m_canScroll; }
-    void setCanScroll(bool b) { m_canScroll = b; }
     int resendingPluginId() const { return m_resendingPluginId; }
     RailsMode getRailsMode() const { return m_railsMode; }
-
+    DispatchType dispatchType() const { return m_dispatchType; }
+    bool cancelable() const { return m_dispatchType == PlatformEvent::Blocking; }
 #if OS(MACOSX)
     PlatformWheelEventPhase phase() const { return m_phase; }
     PlatformWheelEventPhase momentumPhase() const { return m_momentumPhase; }
@@ -109,9 +108,9 @@ protected:
     float m_wheelTicksY;
     PlatformWheelEventGranularity m_granularity;
     bool m_hasPreciseScrollingDeltas;
-    bool m_canScroll;
     int m_resendingPluginId;
     RailsMode m_railsMode;
+    DispatchType m_dispatchType;
 #if OS(MACOSX)
     PlatformWheelEventPhase m_phase;
     PlatformWheelEventPhase m_momentumPhase;

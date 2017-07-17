@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -30,7 +31,6 @@
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/signed_certificate_timestamp_store.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/ssl_status.h"
@@ -60,7 +60,8 @@ enum SSLExpirationAndDecision {
 
 // Rappor prefix, which is used for both overridable and non-overridable
 // interstitials so we don't leak the "overridable" bit.
-const char kSSLRapporPrefix[] = "ssl2";
+const char kDeprecatedSSLRapporPrefix[] = "ssl2";
+const char kSSLRapporPrefix[] = "ssl3";
 
 std::string GetSamplingEventName(const bool overridable, const int cert_error) {
   std::string event_name(kEventNameBase);
@@ -106,14 +107,15 @@ InterstitialPageDelegate::TypeID SSLBlockingPage::kTypeForTesting =
 
 // Note that we always create a navigation entry with SSL errors.
 // No error happening loading a sub-resource triggers an interstitial so far.
-SSLBlockingPage::SSLBlockingPage(content::WebContents* web_contents,
-                                 int cert_error,
-                                 const net::SSLInfo& ssl_info,
-                                 const GURL& request_url,
-                                 int options_mask,
-                                 const base::Time& time_triggered,
-                                 scoped_ptr<SSLCertReporter> ssl_cert_reporter,
-                                 const base::Callback<void(bool)>& callback)
+SSLBlockingPage::SSLBlockingPage(
+    content::WebContents* web_contents,
+    int cert_error,
+    const net::SSLInfo& ssl_info,
+    const GURL& request_url,
+    int options_mask,
+    const base::Time& time_triggered,
+    std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+    const base::Callback<void(bool)>& callback)
     : SecurityInterstitialPage(web_contents, request_url),
       callback_(callback),
       ssl_info_(ssl_info),
@@ -123,15 +125,12 @@ SSLBlockingPage::SSLBlockingPage(content::WebContents* web_contents,
       expired_but_previously_allowed_(
           (options_mask & SSLErrorUI::EXPIRED_BUT_PREVIOUSLY_ALLOWED) != 0),
       controller_(new ChromeControllerClient(web_contents)) {
-  // Get the language and override prefs for the SSLErrorUI.
-  std::string languages;
+  // Override prefs for the SSLErrorUI.
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  if (profile) {
-    languages = profile->GetPrefs()->GetString(prefs::kAcceptLanguages);
-    if (!profile->GetPrefs()->GetBoolean(prefs::kSSLErrorOverrideAllowed)) {
-      options_mask |= SSLErrorUI::HARD_OVERRIDE_DISABLED;
-    }
+  if (profile &&
+      !profile->GetPrefs()->GetBoolean(prefs::kSSLErrorOverrideAllowed)) {
+    options_mask |= SSLErrorUI::HARD_OVERRIDE_DISABLED;
   }
   if (overridable_)
     options_mask |= SSLErrorUI::SOFT_OVERRIDE_ENABLED;
@@ -143,12 +142,14 @@ SSLBlockingPage::SSLBlockingPage(content::WebContents* web_contents,
   reporting_info.metric_prefix =
       overridable_ ? "ssl_overridable" : "ssl_nonoverridable";
   reporting_info.rappor_prefix = kSSLRapporPrefix;
-  reporting_info.rappor_report_type = rappor::UMA_RAPPOR_TYPE;
+  reporting_info.deprecated_rappor_prefix = kDeprecatedSSLRapporPrefix;
+  reporting_info.rappor_report_type = rappor::LOW_FREQUENCY_UMA_RAPPOR_TYPE;
+  reporting_info.deprecated_rappor_report_type = rappor::UMA_RAPPOR_TYPE;
   ChromeMetricsHelper* chrome_metrics_helper =
       new ChromeMetricsHelper(web_contents, request_url, reporting_info,
                               GetSamplingEventName(overridable_, cert_error));
   chrome_metrics_helper->StartRecordingCaptivePortalMetrics(overridable_);
-  controller_->set_metrics_helper(make_scoped_ptr(chrome_metrics_helper));
+  controller_->set_metrics_helper(base::WrapUnique(chrome_metrics_helper));
 
   cert_report_helper_.reset(new CertReportHelper(
       std::move(ssl_cert_reporter), web_contents, request_url, ssl_info,
@@ -156,7 +157,7 @@ SSLBlockingPage::SSLBlockingPage(content::WebContents* web_contents,
       controller_->metrics_helper()));
 
   ssl_error_ui_.reset(new SSLErrorUI(request_url, cert_error, ssl_info,
-                                     options_mask, time_triggered, languages,
+                                     options_mask, time_triggered,
                                      controller_.get()));
 
   // Creating an interstitial without showing (e.g. from chrome://interstitials)
@@ -197,23 +198,12 @@ void SSLBlockingPage::OverrideEntry(NavigationEntry* entry) {
       ssl_info_.cert.get(), process_id);
   DCHECK(cert_id);
 
-  content::SignedCertificateTimestampStore* sct_store(
-      content::SignedCertificateTimestampStore::GetInstance());
-  content::SignedCertificateTimestampIDStatusList sct_ids;
-  for (const auto& sct_and_status : ssl_info_.signed_certificate_timestamps) {
-    const int sct_id(sct_store->Store(sct_and_status.sct.get(), process_id));
-    DCHECK(sct_id);
-    sct_ids.push_back(content::SignedCertificateTimestampIDAndStatus(
-        sct_id, sct_and_status.status));
-  }
-
-  entry->GetSSL() =
-      content::SSLStatus(content::SECURITY_STYLE_AUTHENTICATION_BROKEN, cert_id,
-                         sct_ids, ssl_info_);
+  entry->GetSSL() = content::SSLStatus(
+      content::SECURITY_STYLE_AUTHENTICATION_BROKEN, cert_id, ssl_info_);
 }
 
 void SSLBlockingPage::SetSSLCertReporterForTesting(
-    scoped_ptr<SSLCertReporter> ssl_cert_reporter) {
+    std::unique_ptr<SSLCertReporter> ssl_cert_reporter) {
   cert_report_helper_->SetSSLCertReporterForTesting(
       std::move(ssl_cert_reporter));
 }

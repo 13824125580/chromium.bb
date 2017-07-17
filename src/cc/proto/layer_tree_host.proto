@@ -4,9 +4,9 @@
 
 syntax = "proto2";
 
+import "display_item.proto";
 import "layer.proto";
 import "layer_selection_bound.proto";
-import "layer_tree_settings.proto";
 import "layer_tree_debug_state.proto";
 import "property_tree.proto";
 import "size.proto";
@@ -15,6 +15,15 @@ import "vector2df.proto";
 package cc.proto;
 
 option optimize_for = LITE_RUNTIME;
+
+message SkPictureData {
+  optional SkPictureID id = 1;
+  optional bytes payload = 2; /* SkData */
+}
+
+message SkPictures {
+  repeated SkPictureData pictures = 1;
+}
 
 message LayerTreeHost {
   // Not all members of LayerTreeHost are serialized, as they are not helpful
@@ -55,5 +64,8 @@ message LayerTreeHost {
   optional uint32 next_surface_sequence = 33;
   optional uint32 wheel_event_listener_properties = 34;
   optional bool have_scroll_event_handlers = 35;
-  optional uint32 touch_event_listener_properties = 36;
+  optional uint32 touch_start_or_move_event_listener_properties = 36;
+  repeated int32 layers_that_should_push_properties = 37;
+  optional uint32 touch_end_or_cancel_event_listener_properties = 38;
+  optional SkPictures pictures = 39;
 }

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,11 +18,10 @@
 #include "base/gtest_prod_util.h"
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/break_list.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/font_render_params.h"
@@ -57,14 +57,13 @@ class GFX_EXPORT SkiaTextRenderer {
   explicit SkiaTextRenderer(Canvas* canvas);
   virtual ~SkiaTextRenderer();
 
-  void SetDrawLooper(SkDrawLooper* draw_looper);
+  void SetDrawLooper(sk_sp<SkDrawLooper> draw_looper);
   void SetFontRenderParams(const FontRenderParams& params,
                            bool subpixel_rendering_suppressed);
-  void SetTypeface(SkTypeface* typeface);
+  void SetTypeface(sk_sp<SkTypeface> typeface);
   void SetTextSize(SkScalar size);
-  void SetFontWithStyle(const Font& font, int font_style);
   void SetForegroundColor(SkColor foreground);
-  void SetShader(SkShader* shader);
+  void SetShader(sk_sp<SkShader> shader);
   // Sets underline metrics to use if the text will be drawn with an underline.
   // If not set, default values based on the size of the text will be used. The
   // two metrics must be set together.
@@ -113,7 +112,7 @@ class GFX_EXPORT SkiaTextRenderer {
   SkPaint paint_;
   SkScalar underline_thickness_;
   SkScalar underline_position_;
-  scoped_ptr<DiagonalStrike> diagonal_;
+  std::unique_ptr<DiagonalStrike> diagonal_;
 
   DISALLOW_COPY_AND_ASSIGN(SkiaTextRenderer);
 };
@@ -123,6 +122,7 @@ class StyleIterator {
  public:
   StyleIterator(const BreakList<SkColor>& colors,
                 const BreakList<BaselineStyle>& baselines,
+                const BreakList<Font::Weight>& weights,
                 const std::vector<BreakList<bool>>& styles);
   ~StyleIterator();
 
@@ -130,6 +130,7 @@ class StyleIterator {
   SkColor color() const { return color_->second; }
   BaselineStyle baseline() const { return baseline_->second; }
   bool style(TextStyle s) const { return style_[s]->second; }
+  Font::Weight weight() const { return weight_->second; }
 
   // Get the intersecting range of the current iterator set.
   Range GetRange() const;
@@ -140,10 +141,12 @@ class StyleIterator {
  private:
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 
   BreakList<SkColor>::const_iterator color_;
   BreakList<BaselineStyle>::const_iterator baseline_;
+  BreakList<Font::Weight>::const_iterator weight_;
   std::vector<BreakList<bool>::const_iterator> style_;
 
   DISALLOW_COPY_AND_ASSIGN(StyleIterator);
@@ -186,9 +189,11 @@ struct Line {
   int baseline;
 };
 
-// Creates an SkTypeface from a font and a |gfx::Font::FontStyle|.
-// May return NULL.
-skia::RefPtr<SkTypeface> CreateSkiaTypeface(const gfx::Font& font, int style);
+// Creates an SkTypeface from a font, |italic| and a desired |weight|.
+// May return null.
+sk_sp<SkTypeface> CreateSkiaTypeface(const Font& font,
+                                     bool italic,
+                                     Font::Weight weight);
 
 // Applies the given FontRenderParams to a Skia |paint|.
 void ApplyRenderParams(const FontRenderParams& params,
@@ -210,7 +215,11 @@ class GFX_EXPORT RenderText {
   static RenderText* CreateInstanceForEditing();
 
   // Creates another instance of the same concrete class.
-  virtual scoped_ptr<RenderText> CreateInstanceOfSameType() const = 0;
+  virtual std::unique_ptr<RenderText> CreateInstanceOfSameType() const = 0;
+
+  // Like above but copies all style settings too.
+  std::unique_ptr<RenderText> CreateInstanceOfSameStyle(
+      const base::string16& text) const;
 
   const base::string16& text() const { return text_; }
   void SetText(const base::string16& text);
@@ -229,9 +238,6 @@ class GFX_EXPORT RenderText {
 
   bool cursor_visible() const { return cursor_visible_; }
   void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
-
-  bool insert_mode() const { return insert_mode_; }
-  void ToggleInsertMode();
 
   SkColor cursor_color() const { return cursor_color_; }
   void set_cursor_color(SkColor color) { cursor_color_ = color; }
@@ -266,6 +272,14 @@ class GFX_EXPORT RenderText {
   // TODO(ckocagil): Multiline text rendering is not supported on Mac.
   bool multiline() const { return multiline_; }
   void SetMultiline(bool multiline);
+
+  // If multiline, a non-zero value will cap the number of lines rendered,
+  // and elide the rest (currently only ELIDE_TAIL supported.)
+  void SetMaxLines(size_t max_lines);
+  size_t max_lines() const { return max_lines_; }
+
+  // Returns the actual number of lines, broken by |lines_|.
+  size_t GetNumLines();
 
   // TODO(mukai): ELIDE_LONG_WORDS is not supported.
   WordWrapBehavior word_wrap_behavior() const { return word_wrap_behavior_; }
@@ -362,6 +376,9 @@ class GFX_EXPORT RenderText {
   // The |range| should be valid, non-reversed, and within [0, text().length()].
   void SetStyle(TextStyle style, bool value);
   void ApplyStyle(TextStyle style, bool value, const Range& range);
+
+  void SetWeight(Font::Weight weight);
+  void ApplyWeight(Font::Weight weight, const Range& range);
 
   // Returns whether this style is enabled consistently across the entire
   // RenderText.
@@ -479,13 +496,14 @@ class GFX_EXPORT RenderText {
   RenderText();
 
   // NOTE: The value of these accessors may be stale. Please make sure
-  // that these fields are up-to-date before accessing them.
+  // that these fields are up to date before accessing them.
   const base::string16& layout_text() const { return layout_text_; }
   const base::string16& display_text() const { return display_text_; }
   bool text_elided() const { return text_elided_; }
 
   const BreakList<SkColor>& colors() const { return colors_; }
   const BreakList<BaselineStyle>& baselines() const { return baselines_; }
+  const BreakList<Font::Weight>& weights() const { return weights_; }
   const std::vector<BreakList<bool> >& styles() const { return styles_; }
 
   const std::vector<internal::Line>& lines() const { return lines_; }
@@ -717,9 +735,8 @@ class GFX_EXPORT RenderText {
   // for the cursor when positioning text.
   bool cursor_enabled_;
 
-  // The cursor visibility and insert mode.
+  // The cursor visibility.
   bool cursor_visible_;
-  bool insert_mode_;
 
   // The color used for the cursor.
   SkColor cursor_color_;
@@ -741,6 +758,7 @@ class GFX_EXPORT RenderText {
   // TODO(msw): Expand to support cursor, selection, background, etc. colors.
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 
   // Breaks saved without temporary composition and selection styling.
@@ -778,6 +796,9 @@ class GFX_EXPORT RenderText {
   // Whether the text should be broken into multiple lines. Uses the width of
   // |display_rect_| as the width cap.
   bool multiline_;
+
+  // If multiple lines, the maximum number of lines to render, or 0.
+  size_t max_lines_;
 
   // The wrap behavior when the text is broken into lines. Do nothing unless
   // |multiline_| is set. The default value is IGNORE_LONG_WORDS.

@@ -6,8 +6,9 @@
 #define COMPONENTS_PLUGINS_RENDERER_WEBVIEW_PLUGIN_H_
 
 #include <list>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "third_party/WebKit/public/platform/WebCursorInfo.h"
@@ -83,6 +84,8 @@ class WebViewPlugin : public blink::WebPlugin,
 
   // WebPlugin methods:
   blink::WebPluginContainer* container() const override;
+  // The WebViewPlugin, by design, never fails to initialize. It's used to
+  // display placeholders and error messages, so it must never fail.
   bool initialize(blink::WebPluginContainer*) override;
   void destroy() override;
 
@@ -101,7 +104,6 @@ class WebViewPlugin : public blink::WebPlugin,
   void updateFocus(bool foucsed, blink::WebFocusType focus_type) override;
   void updateVisibility(bool) override {}
 
-  bool acceptsInputEvents() override;
   blink::WebInputEventResult handleInputEvent(
       const blink::WebInputEvent& event,
       blink::WebCursorInfo& cursor_info) override;
@@ -153,6 +155,9 @@ class WebViewPlugin : public blink::WebPlugin,
   void OnDestruct() override;
   void OnZoomLevelChanged() override;
 
+  void UpdatePluginForNewGeometry(const blink::WebRect& window_rect,
+                                  const blink::WebRect& unobscured_rect);
+
   // Manages its own lifetime.
   Delegate* delegate_;
 
@@ -173,11 +178,15 @@ class WebViewPlugin : public blink::WebPlugin,
 
   blink::WebURLResponse response_;
   std::list<std::string> data_;
-  scoped_ptr<blink::WebURLError> error_;
+  std::unique_ptr<blink::WebURLError> error_;
   blink::WebString old_title_;
   bool finished_loading_;
   bool focused_;
   bool is_painting_;
+  bool is_resizing_;
+
+  // Should be invalidated when destroy() is called.
+  base::WeakPtrFactory<WebViewPlugin> weak_factory_;
 };
 
 #endif  // COMPONENTS_PLUGINS_RENDERER_WEBVIEW_PLUGIN_H_

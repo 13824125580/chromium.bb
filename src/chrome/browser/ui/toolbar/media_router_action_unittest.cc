@@ -76,7 +76,7 @@ class MediaRouterActionUnitTest : public MediaRouterTest {
             "route_id",
             media_router::Issue::NOTIFICATION,
             false,
-            std::string())),
+            -1)),
         fake_issue_warning_(
             media_router::Issue("title warning",
                                 "message warning",
@@ -86,7 +86,7 @@ class MediaRouterActionUnitTest : public MediaRouterTest {
                                 "route_id",
                                 media_router::Issue::WARNING,
                                 false,
-                                "www.google.com")),
+                                12345)),
         fake_issue_fatal_(media_router::Issue(
             "title fatal",
             "message fatal",
@@ -95,7 +95,7 @@ class MediaRouterActionUnitTest : public MediaRouterTest {
             "route_id",
             media_router::Issue::FATAL,
             true,
-            std::string())),
+            -1)),
         fake_source1_("fakeSource1"),
         fake_source2_("fakeSource2"),
         active_icon_(ui::ResourceBundle::GetSharedInstance().GetImageNamed(
@@ -170,9 +170,9 @@ class MediaRouterActionUnitTest : public MediaRouterTest {
  private:
   // A BrowserActionTestUtil object constructed with the associated
   // ToolbarActionsBar.
-  scoped_ptr<BrowserActionTestUtil> browser_action_test_util_;
+  std::unique_ptr<BrowserActionTestUtil> browser_action_test_util_;
 
-  scoped_ptr<TestMediaRouterAction> action_;
+  std::unique_ptr<TestMediaRouterAction> action_;
 
   // The associated ToolbarActionsModel (owned by the keyed service setup).
   ToolbarActionsModel* toolbar_model_;
@@ -336,7 +336,7 @@ TEST_F(MediaRouterActionUnitTest, IconPressedState) {
   action()->SetMediaRouterDialogController(dialog_controller_);
 
   // Create a ToolbarActionViewDelegate to use for MediaRouterAction.
-  scoped_ptr<MockToolbarActionViewDelegate> mock_delegate(
+  std::unique_ptr<MockToolbarActionViewDelegate> mock_delegate(
       new MockToolbarActionViewDelegate());
 
   EXPECT_CALL(*mock_delegate, GetCurrentWebContents()).WillOnce(
@@ -347,8 +347,9 @@ TEST_F(MediaRouterActionUnitTest, IconPressedState) {
   EXPECT_CALL(*mock_delegate, OnPopupShown(true)).Times(1);
   action()->ExecuteAction(true);
 
+  // Pressing the icon while the popup is shown should close the popup
   EXPECT_CALL(*mock_delegate, OnPopupClosed()).Times(1);
-  dialog_controller_->HideMediaRouterDialog();
+  action()->ExecuteAction(true);
 
   EXPECT_CALL(*mock_delegate, OnPopupShown(true)).Times(1);
   dialog_controller_->CreateMediaRouterDialog();

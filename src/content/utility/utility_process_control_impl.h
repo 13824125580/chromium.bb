@@ -11,14 +11,15 @@
 namespace content {
 
 // Customization of ProcessControlImpl for the utility process. Exposed to the
-// browser via the utility process's ServiceRegistry.
+// browser via the utility process's InterfaceRegistry.
 class UtilityProcessControlImpl : public ProcessControlImpl {
  public:
   UtilityProcessControlImpl();
   ~UtilityProcessControlImpl() override;
 
   // ProcessControlImpl:
-  void RegisterApplicationLoaders(URLToLoaderMap* url_to_loader_map) override;
+  void RegisterApplications(ApplicationMap* apps) override;
+  void OnApplicationQuit() override;
 
  private:
   void OnLoadFailed() override;

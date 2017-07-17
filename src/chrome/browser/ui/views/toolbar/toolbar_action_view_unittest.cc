@@ -15,7 +15,6 @@
 #include "content/public/test/test_web_contents_factory.h"
 #include "ui/accessibility/ax_view_state.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/views/animation/test/test_ink_drop_delegate.h"
 #include "ui/views/test/views_test_base.h"
 
 namespace {
@@ -37,7 +36,6 @@ class TestToolbarActionViewDelegate : public ToolbarActionView::Delegate {
   views::MenuButton* GetOverflowReferenceView() override {
     return overflow_reference_view_;
   }
-  void OnMouseEnteredToolbarActionView() override {}
   void WriteDragDataForView(views::View* sender,
                             const gfx::Point& press_pt,
                             ui::OSExchangeData* data) override {}
@@ -139,24 +137,19 @@ class TestToolbarActionView : public ToolbarActionView {
 
   ~TestToolbarActionView() override {}
 
-  // Accessors to protected ToolbarActionView methods.
-  void set_ink_drop_delegate(views::InkDropDelegate* ink_drop_delegate) {
-    ToolbarActionView::set_ink_drop_delegate(ink_drop_delegate);
-  }
-
  private:
   DISALLOW_COPY_AND_ASSIGN(TestToolbarActionView);
 };
 
-// Verifies there is no crash when a ToolbarActionView with an InkDropDelegate
-// is destroyed while holding a |pressed_lock_|.
+// Verifies there is no crash when a ToolbarActionView with an InkDrop is
+// destroyed while holding a |pressed_lock_|.
 TEST_F(ToolbarActionViewUnitTest,
        NoCrashWhenDestroyingToolbarActionViewThatHasAPressedLock) {
   TestToolbarActionViewController controller("fake controller");
   TestToolbarActionViewDelegate action_view_delegate;
 
   // Create a new toolbar action view.
-  scoped_ptr<ToolbarActionView> view(
+  std::unique_ptr<ToolbarActionView> view(
       new ToolbarActionView(&controller, &action_view_delegate));
   view->set_owned_by_client();
   view->SetBoundsRect(gfx::Rect(0, 0, 200, 20));

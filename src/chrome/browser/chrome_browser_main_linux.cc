@@ -6,6 +6,8 @@
 
 #include <fontconfig/fontconfig.h>
 
+#include <string>
+
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/grit/chromium_strings.h"
@@ -17,8 +19,10 @@
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(OS_CHROMEOS)
+#include "base/command_line.h"
 #include "base/linux_util.h"
-#include "chrome/browser/sxs_linux.h"
+#include "chrome/common/chrome_switches.h"
+#include "components/os_crypt/os_crypt.h"
 #include "content/public/browser/browser_thread.h"
 #endif
 
@@ -47,14 +51,17 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
   content::BrowserThread::PostBlockingPoolTask(
       FROM_HERE,
       base::Bind(base::IgnoreResult(&base::GetLinuxDistro)));
-
-  content::BrowserThread::PostBlockingPoolTask(
-      FROM_HERE,
-      base::Bind(&sxs_linux::AddChannelMarkToUserDataDir));
 #endif
 
   media::AudioManager::SetGlobalAppName(
       l10n_util::GetStringUTF8(IDS_SHORT_PRODUCT_NAME));
+
+#if !defined(OS_CHROMEOS)
+  // Forward to os_crypt the flag to use a specific password store.
+  std::string password_store =
+      parsed_command_line().GetSwitchValueASCII(switches::kPasswordStore);
+  OSCrypt::SetStore(password_store);
+#endif
 
   ChromeBrowserMainPartsPosix::PreProfileInit();
 }

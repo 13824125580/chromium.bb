@@ -52,9 +52,8 @@ message LayerTreeSettings {
   optional Size minimum_occlusion_tracking_size = 29;
   optional uint32 tiling_interest_area_padding = 30;
   optional float skewport_target_time_in_seconds = 31;
-  optional int32 skewport_extrapolation_limit_in_content_pixels = 32;
+  optional int32 skewport_extrapolation_limit_in_screen_pixels = 32;
   optional uint32 max_memory_for_prepaint_percentage = 33;
-  optional bool strict_layer_property_change_checking = 34;
   optional bool use_zero_copy = 35;
   optional bool use_partial_raster = 36;
   optional bool enable_elastic_overscroll = 37;
@@ -68,5 +67,6 @@ message LayerTreeSettings {
   optional int32 max_staging_buffer_usage_in_bytes = 47;
   optional ManagedMemoryPolicy memory_policy = 48;
   optional LayerTreeDebugState initial_debug_state = 49;
-  optional bool use_mouse_wheel_gestures = 50;
+  optional bool use_cached_picture_raster = 51;
+  optional bool async_worker_context_enabled = 52;
 }

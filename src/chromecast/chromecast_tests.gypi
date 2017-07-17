@@ -21,6 +21,7 @@
       ],
       'sources': [
         'base/bind_to_task_runner_unittest.cc',
+        'base/chromecast_switches_unittest.cc',
         'base/component/component_unittest.cc',
         'base/device_capabilities_impl_unittest.cc',
         'base/error_codes_unittest.cc',
@@ -186,12 +187,13 @@
               # --enable-local-file-accesses => to load sample media files
               # --test-launcher-jobs=1 => so internal code can bind to port
               'cast_shell_browser_test --no-sandbox --enable-local-file-accesses --enable-cma-media-pipeline --ozone-platform=cast --test-launcher-jobs=1',
+              'cast_media_unittests --test-launcher-jobs=1',
             ],
           },
           'conditions': [
             ['use_alsa==1', {
               'dependencies': [
-                'media/media.gyp:alsa_cma_backend_unittests',
+                'media/media.gyp:cast_alsa_cma_backend_unittests',
               ],
             }],
           ],
@@ -242,6 +244,8 @@
           'type': 'none',
           'variables': {
             'filters': [
+              # ComponentDeathTest is unable to fork processes on Android
+              'cast_base_unittests_apk --gtest_filter=*:-ComponentDeathTest.*',
               # LayerTreeHost has dozens of separate crashing test cases on Fugu. (b/22512618)
               'cc_unittests_apk --gtest_filter=*:-LayerTreeHost*',
               # The following tests all crash on fugu.
@@ -324,6 +328,7 @@
           'sources': [
             'browser/test/chromecast_browser_test.cc',
             'browser/test/chromecast_browser_test.h',
+            'browser/test/chromecast_browser_test_helper.h',
             'browser/test/chromecast_browser_test_runner.cc',
           ],
         },  # end of target 'cast_shell_test_support'
@@ -348,6 +353,13 @@
                 # Link default libcast_media_1.0 statically to prevent
                 # linking dynamically against dummy implementation.
                 'media/media.gyp:libcast_media_1.0_default_core',
+              ],
+              'sources': [
+                'browser/test/chromecast_browser_test_helper_default.cc',
+              ],
+            },{
+              'dependencies': [
+                'internal/chromecast_internal.gyp:cast_shell_browser_test_helper_internal',
               ],
             }],
           ],

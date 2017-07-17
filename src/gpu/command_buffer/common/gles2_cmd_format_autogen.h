@@ -12282,6 +12282,33 @@ static_assert(offsetof(GetUniformsES3CHROMIUM, program) == 4,
 static_assert(offsetof(GetUniformsES3CHROMIUM, bucket_id) == 8,
               "offset of GetUniformsES3CHROMIUM bucket_id should be 8");
 
+struct DescheduleUntilFinishedCHROMIUM {
+  typedef DescheduleUntilFinishedCHROMIUM ValueType;
+  static const CommandId kCmdId = kDescheduleUntilFinishedCHROMIUM;
+  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
+  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(1);
+
+  static uint32_t ComputeSize() {
+    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
+  }
+
+  void SetHeader() { header.SetCmd<ValueType>(); }
+
+  void Init() { SetHeader(); }
+
+  void* Set(void* cmd) {
+    static_cast<ValueType*>(cmd)->Init();
+    return NextCmdAddress<ValueType>(cmd);
+  }
+
+  gpu::CommandHeader header;
+};
+
+static_assert(sizeof(DescheduleUntilFinishedCHROMIUM) == 4,
+              "size of DescheduleUntilFinishedCHROMIUM should be 4");
+static_assert(offsetof(DescheduleUntilFinishedCHROMIUM, header) == 0,
+              "offset of DescheduleUntilFinishedCHROMIUM header should be 0");
+
 struct GetTranslatedShaderSourceANGLE {
   typedef GetTranslatedShaderSourceANGLE ValueType;
   static const CommandId kCmdId = kGetTranslatedShaderSourceANGLE;
@@ -12363,65 +12390,6 @@ static_assert(offsetof(PostSubBufferCHROMIUM, width) == 12,
               "offset of PostSubBufferCHROMIUM width should be 12");
 static_assert(offsetof(PostSubBufferCHROMIUM, height) == 16,
               "offset of PostSubBufferCHROMIUM height should be 16");
-
-struct TexImageIOSurface2DCHROMIUM {
-  typedef TexImageIOSurface2DCHROMIUM ValueType;
-  static const CommandId kCmdId = kTexImageIOSurface2DCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(1);
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLenum _target,
-            GLsizei _width,
-            GLsizei _height,
-            GLuint _ioSurfaceId,
-            GLuint _plane) {
-    SetHeader();
-    target = _target;
-    width = _width;
-    height = _height;
-    ioSurfaceId = _ioSurfaceId;
-    plane = _plane;
-  }
-
-  void* Set(void* cmd,
-            GLenum _target,
-            GLsizei _width,
-            GLsizei _height,
-            GLuint _ioSurfaceId,
-            GLuint _plane) {
-    static_cast<ValueType*>(cmd)->Init(_target, _width, _height, _ioSurfaceId,
-                                       _plane);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  uint32_t target;
-  int32_t width;
-  int32_t height;
-  uint32_t ioSurfaceId;
-  uint32_t plane;
-};
-
-static_assert(sizeof(TexImageIOSurface2DCHROMIUM) == 24,
-              "size of TexImageIOSurface2DCHROMIUM should be 24");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, header) == 0,
-              "offset of TexImageIOSurface2DCHROMIUM header should be 0");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, target) == 4,
-              "offset of TexImageIOSurface2DCHROMIUM target should be 4");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, width) == 8,
-              "offset of TexImageIOSurface2DCHROMIUM width should be 8");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, height) == 12,
-              "offset of TexImageIOSurface2DCHROMIUM height should be 12");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, ioSurfaceId) == 16,
-              "offset of TexImageIOSurface2DCHROMIUM ioSurfaceId should be 16");
-static_assert(offsetof(TexImageIOSurface2DCHROMIUM, plane) == 20,
-              "offset of TexImageIOSurface2DCHROMIUM plane should be 20");
 
 struct CopyTextureCHROMIUM {
   typedef CopyTextureCHROMIUM ValueType;
@@ -12950,288 +12918,6 @@ static_assert(
 static_assert(
     offsetof(BindUniformLocationCHROMIUMBucket, name_bucket_id) == 12,
     "offset of BindUniformLocationCHROMIUMBucket name_bucket_id should be 12");
-
-struct GenValuebuffersCHROMIUMImmediate {
-  typedef GenValuebuffersCHROMIUMImmediate ValueType;
-  static const CommandId kCmdId = kGenValuebuffersCHROMIUMImmediate;
-  static const cmd::ArgFlags kArgFlags = cmd::kAtLeastN;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeDataSize(GLsizei n) {
-    return static_cast<uint32_t>(sizeof(GLuint) * n);  // NOLINT
-  }
-
-  static uint32_t ComputeSize(GLsizei n) {
-    return static_cast<uint32_t>(sizeof(ValueType) +
-                                 ComputeDataSize(n));  // NOLINT
-  }
-
-  void SetHeader(GLsizei n) {
-    header.SetCmdByTotalSize<ValueType>(ComputeSize(n));
-  }
-
-  void Init(GLsizei _n, GLuint* _buffers) {
-    SetHeader(_n);
-    n = _n;
-    memcpy(ImmediateDataAddress(this), _buffers, ComputeDataSize(_n));
-  }
-
-  void* Set(void* cmd, GLsizei _n, GLuint* _buffers) {
-    static_cast<ValueType*>(cmd)->Init(_n, _buffers);
-    const uint32_t size = ComputeSize(_n);
-    return NextImmediateCmdAddressTotalSize<ValueType>(cmd, size);
-  }
-
-  gpu::CommandHeader header;
-  int32_t n;
-};
-
-static_assert(sizeof(GenValuebuffersCHROMIUMImmediate) == 8,
-              "size of GenValuebuffersCHROMIUMImmediate should be 8");
-static_assert(offsetof(GenValuebuffersCHROMIUMImmediate, header) == 0,
-              "offset of GenValuebuffersCHROMIUMImmediate header should be 0");
-static_assert(offsetof(GenValuebuffersCHROMIUMImmediate, n) == 4,
-              "offset of GenValuebuffersCHROMIUMImmediate n should be 4");
-
-struct DeleteValuebuffersCHROMIUMImmediate {
-  typedef DeleteValuebuffersCHROMIUMImmediate ValueType;
-  static const CommandId kCmdId = kDeleteValuebuffersCHROMIUMImmediate;
-  static const cmd::ArgFlags kArgFlags = cmd::kAtLeastN;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeDataSize(GLsizei n) {
-    return static_cast<uint32_t>(sizeof(GLuint) * n);  // NOLINT
-  }
-
-  static uint32_t ComputeSize(GLsizei n) {
-    return static_cast<uint32_t>(sizeof(ValueType) +
-                                 ComputeDataSize(n));  // NOLINT
-  }
-
-  void SetHeader(GLsizei n) {
-    header.SetCmdByTotalSize<ValueType>(ComputeSize(n));
-  }
-
-  void Init(GLsizei _n, const GLuint* _valuebuffers) {
-    SetHeader(_n);
-    n = _n;
-    memcpy(ImmediateDataAddress(this), _valuebuffers, ComputeDataSize(_n));
-  }
-
-  void* Set(void* cmd, GLsizei _n, const GLuint* _valuebuffers) {
-    static_cast<ValueType*>(cmd)->Init(_n, _valuebuffers);
-    const uint32_t size = ComputeSize(_n);
-    return NextImmediateCmdAddressTotalSize<ValueType>(cmd, size);
-  }
-
-  gpu::CommandHeader header;
-  int32_t n;
-};
-
-static_assert(sizeof(DeleteValuebuffersCHROMIUMImmediate) == 8,
-              "size of DeleteValuebuffersCHROMIUMImmediate should be 8");
-static_assert(
-    offsetof(DeleteValuebuffersCHROMIUMImmediate, header) == 0,
-    "offset of DeleteValuebuffersCHROMIUMImmediate header should be 0");
-static_assert(offsetof(DeleteValuebuffersCHROMIUMImmediate, n) == 4,
-              "offset of DeleteValuebuffersCHROMIUMImmediate n should be 4");
-
-struct IsValuebufferCHROMIUM {
-  typedef IsValuebufferCHROMIUM ValueType;
-  static const CommandId kCmdId = kIsValuebufferCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  typedef uint32_t Result;
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLuint _valuebuffer,
-            uint32_t _result_shm_id,
-            uint32_t _result_shm_offset) {
-    SetHeader();
-    valuebuffer = _valuebuffer;
-    result_shm_id = _result_shm_id;
-    result_shm_offset = _result_shm_offset;
-  }
-
-  void* Set(void* cmd,
-            GLuint _valuebuffer,
-            uint32_t _result_shm_id,
-            uint32_t _result_shm_offset) {
-    static_cast<ValueType*>(cmd)->Init(_valuebuffer, _result_shm_id,
-                                       _result_shm_offset);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  uint32_t valuebuffer;
-  uint32_t result_shm_id;
-  uint32_t result_shm_offset;
-};
-
-static_assert(sizeof(IsValuebufferCHROMIUM) == 16,
-              "size of IsValuebufferCHROMIUM should be 16");
-static_assert(offsetof(IsValuebufferCHROMIUM, header) == 0,
-              "offset of IsValuebufferCHROMIUM header should be 0");
-static_assert(offsetof(IsValuebufferCHROMIUM, valuebuffer) == 4,
-              "offset of IsValuebufferCHROMIUM valuebuffer should be 4");
-static_assert(offsetof(IsValuebufferCHROMIUM, result_shm_id) == 8,
-              "offset of IsValuebufferCHROMIUM result_shm_id should be 8");
-static_assert(offsetof(IsValuebufferCHROMIUM, result_shm_offset) == 12,
-              "offset of IsValuebufferCHROMIUM result_shm_offset should be 12");
-
-struct BindValuebufferCHROMIUM {
-  typedef BindValuebufferCHROMIUM ValueType;
-  static const CommandId kCmdId = kBindValuebufferCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLenum _target, GLuint _valuebuffer) {
-    SetHeader();
-    target = _target;
-    valuebuffer = _valuebuffer;
-  }
-
-  void* Set(void* cmd, GLenum _target, GLuint _valuebuffer) {
-    static_cast<ValueType*>(cmd)->Init(_target, _valuebuffer);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  uint32_t target;
-  uint32_t valuebuffer;
-};
-
-static_assert(sizeof(BindValuebufferCHROMIUM) == 12,
-              "size of BindValuebufferCHROMIUM should be 12");
-static_assert(offsetof(BindValuebufferCHROMIUM, header) == 0,
-              "offset of BindValuebufferCHROMIUM header should be 0");
-static_assert(offsetof(BindValuebufferCHROMIUM, target) == 4,
-              "offset of BindValuebufferCHROMIUM target should be 4");
-static_assert(offsetof(BindValuebufferCHROMIUM, valuebuffer) == 8,
-              "offset of BindValuebufferCHROMIUM valuebuffer should be 8");
-
-struct SubscribeValueCHROMIUM {
-  typedef SubscribeValueCHROMIUM ValueType;
-  static const CommandId kCmdId = kSubscribeValueCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLenum _target, GLenum _subscription) {
-    SetHeader();
-    target = _target;
-    subscription = _subscription;
-  }
-
-  void* Set(void* cmd, GLenum _target, GLenum _subscription) {
-    static_cast<ValueType*>(cmd)->Init(_target, _subscription);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  uint32_t target;
-  uint32_t subscription;
-};
-
-static_assert(sizeof(SubscribeValueCHROMIUM) == 12,
-              "size of SubscribeValueCHROMIUM should be 12");
-static_assert(offsetof(SubscribeValueCHROMIUM, header) == 0,
-              "offset of SubscribeValueCHROMIUM header should be 0");
-static_assert(offsetof(SubscribeValueCHROMIUM, target) == 4,
-              "offset of SubscribeValueCHROMIUM target should be 4");
-static_assert(offsetof(SubscribeValueCHROMIUM, subscription) == 8,
-              "offset of SubscribeValueCHROMIUM subscription should be 8");
-
-struct PopulateSubscribedValuesCHROMIUM {
-  typedef PopulateSubscribedValuesCHROMIUM ValueType;
-  static const CommandId kCmdId = kPopulateSubscribedValuesCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLenum _target) {
-    SetHeader();
-    target = _target;
-  }
-
-  void* Set(void* cmd, GLenum _target) {
-    static_cast<ValueType*>(cmd)->Init(_target);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  uint32_t target;
-};
-
-static_assert(sizeof(PopulateSubscribedValuesCHROMIUM) == 8,
-              "size of PopulateSubscribedValuesCHROMIUM should be 8");
-static_assert(offsetof(PopulateSubscribedValuesCHROMIUM, header) == 0,
-              "offset of PopulateSubscribedValuesCHROMIUM header should be 0");
-static_assert(offsetof(PopulateSubscribedValuesCHROMIUM, target) == 4,
-              "offset of PopulateSubscribedValuesCHROMIUM target should be 4");
-
-struct UniformValuebufferCHROMIUM {
-  typedef UniformValuebufferCHROMIUM ValueType;
-  static const CommandId kCmdId = kUniformValuebufferCHROMIUM;
-  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
-  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
-
-  static uint32_t ComputeSize() {
-    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
-  }
-
-  void SetHeader() { header.SetCmd<ValueType>(); }
-
-  void Init(GLint _location, GLenum _target, GLenum _subscription) {
-    SetHeader();
-    location = _location;
-    target = _target;
-    subscription = _subscription;
-  }
-
-  void* Set(void* cmd, GLint _location, GLenum _target, GLenum _subscription) {
-    static_cast<ValueType*>(cmd)->Init(_location, _target, _subscription);
-    return NextCmdAddress<ValueType>(cmd);
-  }
-
-  gpu::CommandHeader header;
-  int32_t location;
-  uint32_t target;
-  uint32_t subscription;
-};
-
-static_assert(sizeof(UniformValuebufferCHROMIUM) == 16,
-              "size of UniformValuebufferCHROMIUM should be 16");
-static_assert(offsetof(UniformValuebufferCHROMIUM, header) == 0,
-              "offset of UniformValuebufferCHROMIUM header should be 0");
-static_assert(offsetof(UniformValuebufferCHROMIUM, location) == 4,
-              "offset of UniformValuebufferCHROMIUM location should be 4");
-static_assert(offsetof(UniformValuebufferCHROMIUM, target) == 8,
-              "offset of UniformValuebufferCHROMIUM target should be 8");
-static_assert(offsetof(UniformValuebufferCHROMIUM, subscription) == 12,
-              "offset of UniformValuebufferCHROMIUM subscription should be 12");
 
 struct BindTexImage2DCHROMIUM {
   typedef BindTexImage2DCHROMIUM ValueType;
@@ -13894,6 +13580,7 @@ struct ScheduleCALayerCHROMIUM {
             GLuint _edge_aa_mask,
             GLboolean _is_clipped,
             GLint _sorting_context_id,
+            GLuint _filter,
             GLuint _shm_id,
             GLuint _shm_offset) {
     SetHeader();
@@ -13903,6 +13590,7 @@ struct ScheduleCALayerCHROMIUM {
     edge_aa_mask = _edge_aa_mask;
     is_clipped = _is_clipped;
     sorting_context_id = _sorting_context_id;
+    filter = _filter;
     shm_id = _shm_id;
     shm_offset = _shm_offset;
   }
@@ -13914,11 +13602,12 @@ struct ScheduleCALayerCHROMIUM {
             GLuint _edge_aa_mask,
             GLboolean _is_clipped,
             GLint _sorting_context_id,
+            GLuint _filter,
             GLuint _shm_id,
             GLuint _shm_offset) {
     static_cast<ValueType*>(cmd)->Init(
         _contents_texture_id, _opacity, _background_color, _edge_aa_mask,
-        _is_clipped, _sorting_context_id, _shm_id, _shm_offset);
+        _is_clipped, _sorting_context_id, _filter, _shm_id, _shm_offset);
     return NextCmdAddress<ValueType>(cmd);
   }
 
@@ -13929,12 +13618,13 @@ struct ScheduleCALayerCHROMIUM {
   uint32_t edge_aa_mask;
   uint32_t is_clipped;
   int32_t sorting_context_id;
+  uint32_t filter;
   uint32_t shm_id;
   uint32_t shm_offset;
 };
 
-static_assert(sizeof(ScheduleCALayerCHROMIUM) == 36,
-              "size of ScheduleCALayerCHROMIUM should be 36");
+static_assert(sizeof(ScheduleCALayerCHROMIUM) == 40,
+              "size of ScheduleCALayerCHROMIUM should be 40");
 static_assert(offsetof(ScheduleCALayerCHROMIUM, header) == 0,
               "offset of ScheduleCALayerCHROMIUM header should be 0");
 static_assert(
@@ -13952,10 +13642,56 @@ static_assert(offsetof(ScheduleCALayerCHROMIUM, is_clipped) == 20,
 static_assert(
     offsetof(ScheduleCALayerCHROMIUM, sorting_context_id) == 24,
     "offset of ScheduleCALayerCHROMIUM sorting_context_id should be 24");
-static_assert(offsetof(ScheduleCALayerCHROMIUM, shm_id) == 28,
-              "offset of ScheduleCALayerCHROMIUM shm_id should be 28");
-static_assert(offsetof(ScheduleCALayerCHROMIUM, shm_offset) == 32,
-              "offset of ScheduleCALayerCHROMIUM shm_offset should be 32");
+static_assert(offsetof(ScheduleCALayerCHROMIUM, filter) == 28,
+              "offset of ScheduleCALayerCHROMIUM filter should be 28");
+static_assert(offsetof(ScheduleCALayerCHROMIUM, shm_id) == 32,
+              "offset of ScheduleCALayerCHROMIUM shm_id should be 32");
+static_assert(offsetof(ScheduleCALayerCHROMIUM, shm_offset) == 36,
+              "offset of ScheduleCALayerCHROMIUM shm_offset should be 36");
+
+struct ScheduleCALayerInUseQueryCHROMIUMImmediate {
+  typedef ScheduleCALayerInUseQueryCHROMIUMImmediate ValueType;
+  static const CommandId kCmdId = kScheduleCALayerInUseQueryCHROMIUMImmediate;
+  static const cmd::ArgFlags kArgFlags = cmd::kAtLeastN;
+  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
+
+  static uint32_t ComputeDataSize(GLsizei count) {
+    return static_cast<uint32_t>(sizeof(GLuint) * 1 * count);  // NOLINT
+  }
+
+  static uint32_t ComputeSize(GLsizei count) {
+    return static_cast<uint32_t>(sizeof(ValueType) +
+                                 ComputeDataSize(count));  // NOLINT
+  }
+
+  void SetHeader(GLsizei count) {
+    header.SetCmdByTotalSize<ValueType>(ComputeSize(count));
+  }
+
+  void Init(GLsizei _count, const GLuint* _textures) {
+    SetHeader(_count);
+    count = _count;
+    memcpy(ImmediateDataAddress(this), _textures, ComputeDataSize(_count));
+  }
+
+  void* Set(void* cmd, GLsizei _count, const GLuint* _textures) {
+    static_cast<ValueType*>(cmd)->Init(_count, _textures);
+    const uint32_t size = ComputeSize(_count);
+    return NextImmediateCmdAddressTotalSize<ValueType>(cmd, size);
+  }
+
+  gpu::CommandHeader header;
+  int32_t count;
+};
+
+static_assert(sizeof(ScheduleCALayerInUseQueryCHROMIUMImmediate) == 8,
+              "size of ScheduleCALayerInUseQueryCHROMIUMImmediate should be 8");
+static_assert(
+    offsetof(ScheduleCALayerInUseQueryCHROMIUMImmediate, header) == 0,
+    "offset of ScheduleCALayerInUseQueryCHROMIUMImmediate header should be 0");
+static_assert(
+    offsetof(ScheduleCALayerInUseQueryCHROMIUMImmediate, count) == 4,
+    "offset of ScheduleCALayerInUseQueryCHROMIUMImmediate count should be 4");
 
 struct CommitOverlayPlanesCHROMIUM {
   typedef CommitOverlayPlanesCHROMIUM ValueType;

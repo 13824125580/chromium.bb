@@ -16,7 +16,6 @@
 #include "cc/output/program_binding.h"
 #include "cc/output/renderer.h"
 #include "cc/quads/debug_border_draw_quad.h"
-#include "cc/quads/io_surface_draw_quad.h"
 #include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/tile_draw_quad.h"
@@ -49,7 +48,7 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
  public:
   class ScopedUseGrContext;
 
-  static scoped_ptr<GLRenderer> Create(
+  static std::unique_ptr<GLRenderer> Create(
       RendererClient* client,
       const RendererSettings* settings,
       OutputSurface* output_surface,
@@ -64,8 +63,11 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   // Waits for rendering to finish.
   void Finish() override;
 
-  void SwapBuffers(const CompositorFrameMetadata& metadata) override;
+  void SwapBuffers(CompositorFrameMetadata metadata) override;
   void SwapBuffersComplete() override;
+
+  void DidReceiveTextureInUseResponses(
+      const gpu::TextureInUseResponses& responses) override;
 
   virtual bool IsContextLost();
 
@@ -88,9 +90,8 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
 
   void GetFramebufferPixelsAsync(const DrawingFrame* frame,
                                  const gfx::Rect& rect,
-                                 scoped_ptr<CopyOutputRequest> request);
+                                 std::unique_ptr<CopyOutputRequest> request);
   void GetFramebufferTexture(unsigned texture_id,
-                             ResourceFormat texture_format,
                              const gfx::Rect& device_rect);
   void ReleaseRenderPassTextures();
   enum BoundGeometry { NO_BINDING, SHARED_BINDING, CLIPPED_BINDING };
@@ -118,7 +119,7 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   void EnsureScissorTestDisabled() override;
   void CopyCurrentRenderPassToBitmap(
       DrawingFrame* frame,
-      scoped_ptr<CopyOutputRequest> request) override;
+      std::unique_ptr<CopyOutputRequest> request) override;
   void FinishDrawingQuadList() override;
 
   // Returns true if quad requires antialiasing and false otherwise.
@@ -169,18 +170,25 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
       const gfx::Transform& contents_device_transform,
       const gfx::QuadF* clip_region,
       bool use_aa);
-  scoped_ptr<ScopedResource> GetBackdropTexture(const gfx::Rect& bounding_rect);
+  std::unique_ptr<ScopedResource> GetBackdropTexture(
+      const gfx::Rect& bounding_rect);
 
   static bool ShouldApplyBackgroundFilters(const RenderPassDrawQuad* quad);
-  skia::RefPtr<SkImage> ApplyBackgroundFilters(
-      DrawingFrame* frame,
-      const RenderPassDrawQuad* quad,
-      ScopedResource* background_texture,
-      const gfx::RectF& rect);
+  sk_sp<SkImage> ApplyBackgroundFilters(DrawingFrame* frame,
+                                        const RenderPassDrawQuad* quad,
+                                        ScopedResource* background_texture,
+                                        const gfx::RectF& rect);
+
+  const TileDrawQuad* CanPassBeDrawnDirectly(const RenderPass* pass) override;
 
   void DrawRenderPassQuad(DrawingFrame* frame,
                           const RenderPassDrawQuad* quadi,
                           const gfx::QuadF* clip_region);
+  void DrawRenderPassQuadInternal(DrawingFrame* frame,
+                                  const RenderPassDrawQuad* quad,
+                                  const gfx::QuadF* clip_region,
+                                  const Resource* contents_texture,
+                                  bool is_render_pass_input);
   void DrawSolidColorQuad(const DrawingFrame* frame,
                           const SolidColorDrawQuad* quad,
                           const gfx::QuadF* clip_region);
@@ -194,9 +202,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                           const TextureDrawQuad* quad,
                           const gfx::QuadF* clip_region);
   void FlushTextureQuadCache(BoundGeometry flush_binding);
-  void DrawIOSurfaceQuad(const DrawingFrame* frame,
-                         const IOSurfaceDrawQuad* quad,
-                         const gfx::QuadF* clip_region);
   void DrawTileQuad(const DrawingFrame* frame,
                     const TileDrawQuad* quad,
                     const gfx::QuadF* clip_region);
@@ -240,7 +245,7 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   void InitializeSharedObjects();
   void CleanupSharedObjects();
 
-  typedef base::Callback<void(scoped_ptr<CopyOutputRequest> copy_request,
+  typedef base::Callback<void(std::unique_ptr<CopyOutputRequest> copy_request,
                               bool success)>
       AsyncGetFramebufferPixelsCleanupCallback;
   void FinishedReadback(unsigned source_buffer,
@@ -258,17 +263,26 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   void ScheduleCALayers(DrawingFrame* frame);
   void ScheduleOverlays(DrawingFrame* frame);
 
-  using OverlayResourceLockList =
-      std::vector<scoped_ptr<ResourceProvider::ScopedReadLockGL>>;
+  using OverlayResourceLock =
+      std::unique_ptr<ResourceProvider::ScopedReadLockGL>;
+  using OverlayResourceLockList = std::vector<OverlayResourceLock>;
+
+  // Resources that have been sent to the GPU process, but not yet swapped.
   OverlayResourceLockList pending_overlay_resources_;
-  std::deque<OverlayResourceLockList> swapped_overlay_resources_;
+
+  // Resources that should be shortly swapped by the GPU process.
+  std::deque<OverlayResourceLockList> swapping_overlay_resources_;
+
+  // Resources that the GPU process has finished swapping. The key is the
+  // texture id of the resource.
+  std::map<unsigned, OverlayResourceLock> swapped_and_acked_overlay_resources_;
 
   RendererCapabilitiesImpl capabilities_;
 
   unsigned offscreen_framebuffer_id_;
 
-  scoped_ptr<StaticGeometryBinding> shared_geometry_;
-  scoped_ptr<DynamicGeometryBinding> clipped_geometry_;
+  std::unique_ptr<StaticGeometryBinding> shared_geometry_;
+  std::unique_ptr<DynamicGeometryBinding> clipped_geometry_;
   gfx::QuadF shared_geometry_quad_;
 
   // This block of bindings defines all of the programs used by the compositor
@@ -330,8 +344,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
       VideoStreamTextureProgram;
   typedef ProgramBinding<VertexShaderPosTexYUVStretchOffset,
                          FragmentShaderYUVVideo> VideoYUVProgram;
-  typedef ProgramBinding<VertexShaderPosTexYUVStretchOffset,
-                         FragmentShaderYUVAVideo> VideoYUVAProgram;
 
   // Special purpose / effects shaders.
   typedef ProgramBinding<VertexShaderPos, FragmentShaderColor>
@@ -396,13 +408,11 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   const NonPremultipliedTextureBackgroundProgram*
   GetNonPremultipliedTextureBackgroundProgram(TexCoordPrecision precision,
                                               SamplerType sampler);
-  const TextureProgram* GetTextureIOSurfaceProgram(
-      TexCoordPrecision precision);
 
   const VideoYUVProgram* GetVideoYUVProgram(TexCoordPrecision precision,
-                                            SamplerType sampler);
-  const VideoYUVAProgram* GetVideoYUVAProgram(TexCoordPrecision precision,
-                                              SamplerType sampler);
+                                            SamplerType sampler,
+                                            bool use_alpha_texture,
+                                            bool use_nv12);
   const VideoStreamTextureProgram* GetVideoStreamTextureProgram(
       TexCoordPrecision precision);
 
@@ -435,7 +445,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   NonPremultipliedTextureBackgroundProgram
       nonpremultiplied_texture_background_program_[LAST_TEX_COORD_PRECISION +
                                                    1][LAST_SAMPLER_TYPE + 1];
-  TextureProgram texture_io_surface_program_[LAST_TEX_COORD_PRECISION + 1];
 
   RenderPassProgram
       render_pass_program_[LAST_TEX_COORD_PRECISION + 1][LAST_BLEND_MODE + 1];
@@ -468,10 +477,8 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                                                [LAST_BLEND_MODE + 1]
                                                [LAST_MASK_VALUE + 1];
 
-  VideoYUVProgram
-      video_yuv_program_[LAST_TEX_COORD_PRECISION + 1][LAST_SAMPLER_TYPE + 1];
-  VideoYUVAProgram
-      video_yuva_program_[LAST_TEX_COORD_PRECISION + 1][LAST_SAMPLER_TYPE + 1];
+  VideoYUVProgram video_yuv_program_[LAST_TEX_COORD_PRECISION + 1]
+                                    [LAST_SAMPLER_TYPE + 1][2][2];
   VideoStreamTextureProgram
       video_stream_texture_program_[LAST_TEX_COORD_PRECISION + 1];
 
@@ -498,14 +505,18 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   int highp_threshold_cache_;
 
   struct PendingAsyncReadPixels;
-  std::vector<scoped_ptr<PendingAsyncReadPixels>> pending_async_read_pixels_;
+  std::vector<std::unique_ptr<PendingAsyncReadPixels>>
+      pending_async_read_pixels_;
 
-  scoped_ptr<ResourceProvider::ScopedWriteLockGL> current_framebuffer_lock_;
+  std::unique_ptr<ResourceProvider::ScopedWriteLockGL>
+      current_framebuffer_lock_;
+  // This is valid when current_framebuffer_lock_ is not null.
+  ResourceFormat current_framebuffer_format_;
 
   class SyncQuery;
-  std::deque<scoped_ptr<SyncQuery>> pending_sync_queries_;
-  std::deque<scoped_ptr<SyncQuery>> available_sync_queries_;
-  scoped_ptr<SyncQuery> current_sync_query_;
+  std::deque<std::unique_ptr<SyncQuery>> pending_sync_queries_;
+  std::deque<std::unique_ptr<SyncQuery>> available_sync_queries_;
+  std::unique_ptr<SyncQuery> current_sync_query_;
   bool use_sync_query_;
   bool use_blend_equation_advanced_;
   bool use_blend_equation_advanced_coherent_;

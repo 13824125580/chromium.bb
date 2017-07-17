@@ -41,17 +41,17 @@ namespace blink {
 
 using namespace HTMLNames;
 
-ReplaceNodeWithSpanCommand::ReplaceNodeWithSpanCommand(PassRefPtrWillBeRawPtr<HTMLElement> element)
+ReplaceNodeWithSpanCommand::ReplaceNodeWithSpanCommand(HTMLElement* element)
     : SimpleEditCommand(element->document())
     , m_elementToReplace(element)
 {
-    ASSERT(m_elementToReplace);
+    DCHECK(m_elementToReplace);
 }
 
 static void swapInNodePreservingAttributesAndChildren(HTMLElement* newElement, HTMLElement& elementToReplace)
 {
-    ASSERT(elementToReplace.inDocument());
-    RefPtrWillBeRawPtr<ContainerNode> parentNode = elementToReplace.parentNode();
+    DCHECK(elementToReplace.inShadowIncludingDocument()) << elementToReplace;
+    ContainerNode* parentNode = elementToReplace.parentNode();
     parentNode->insertBefore(newElement, &elementToReplace);
 
     NodeVector children;
@@ -67,7 +67,7 @@ static void swapInNodePreservingAttributesAndChildren(HTMLElement* newElement, H
 
 void ReplaceNodeWithSpanCommand::doApply(EditingState*)
 {
-    if (!m_elementToReplace->inDocument())
+    if (!m_elementToReplace->inShadowIncludingDocument())
         return;
     if (!m_spanElement)
         m_spanElement = HTMLSpanElement::create(m_elementToReplace->document());
@@ -76,7 +76,7 @@ void ReplaceNodeWithSpanCommand::doApply(EditingState*)
 
 void ReplaceNodeWithSpanCommand::doUnapply()
 {
-    if (!m_spanElement->inDocument())
+    if (!m_spanElement->inShadowIncludingDocument())
         return;
     swapInNodePreservingAttributesAndChildren(m_elementToReplace.get(), *m_spanElement);
 }

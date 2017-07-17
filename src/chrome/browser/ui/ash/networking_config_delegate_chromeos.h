@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "ash/networking_config_delegate.h"
+#include "ash/common/system/networking_config_delegate.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/public/browser/browser_context.h"
@@ -21,7 +21,7 @@ class NetworkingConfigDelegateChromeos : public ash::NetworkingConfigDelegate {
   NetworkingConfigDelegateChromeos();
   ~NetworkingConfigDelegateChromeos() override;
 
-  scoped_ptr<const ExtensionInfo> LookUpExtensionForNetwork(
+  std::unique_ptr<const ExtensionInfo> LookUpExtensionForNetwork(
       const std::string& service_path) override;
 
  private:

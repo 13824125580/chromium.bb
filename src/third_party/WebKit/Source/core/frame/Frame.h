@@ -34,7 +34,6 @@
 #include "core/page/FrameTree.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
@@ -63,14 +62,14 @@ enum class UserGestureStatus { Active, None };
 // Frame is the base class of LocalFrame and RemoteFrame and should only contain
 // functionality shared between both. In particular, any method related to
 // input, layout, or painting probably belongs on LocalFrame.
-class CORE_EXPORT Frame : public RefCountedWillBeGarbageCollectedFinalized<Frame> {
+class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
 public:
     virtual ~Frame();
 
     DECLARE_VIRTUAL_TRACE();
 
-    virtual bool isLocalFrame() const { return false; }
-    virtual bool isRemoteFrame() const { return false; }
+    virtual bool isLocalFrame() const = 0;
+    virtual bool isRemoteFrame() const = 0;
 
     virtual DOMWindow* domWindow() const = 0;
     virtual WindowProxy* windowProxy(DOMWrapperWorld&) = 0;
@@ -83,7 +82,7 @@ public:
 
     virtual void detach(FrameDetachType);
     void detachChildren();
-    virtual void disconnectOwnerElement();
+    void disconnectOwnerElement();
     virtual bool shouldClose() = 0;
 
     FrameClient* client() const;
@@ -120,9 +119,11 @@ public:
 
     LayoutPart* ownerLayoutObject() const; // LayoutObject for the element that contains this frame.
 
-    int64_t frameID() const { return m_frameID; }
-
     Settings* settings() const; // can be null
+
+    // Return true if and only if this frame is a cross-origin frame with
+    // respect to the top-level frame.
+    bool isCrossOrigin() const;
 
     // isLoading() is true when the embedder should think a load is in progress.
     // In the case of LocalFrames, it means that the frame has sent a didStartLoading()
@@ -131,20 +132,22 @@ public:
     void setIsLoading(bool isLoading) { m_isLoading = isLoading; }
     bool isLoading() const { return m_isLoading; }
 
-    virtual WindowProxyManager* windowProxyManager() const = 0;
+    virtual WindowProxyManager* getWindowProxyManager() const = 0;
+
+    virtual void didChangeVisibilityState();
 
 protected:
     Frame(FrameClient*, FrameHost*, FrameOwner*);
 
     mutable FrameTree m_treeNode;
 
-    RawPtrWillBeMember<FrameHost> m_host;
-    RawPtrWillBeMember<FrameOwner> m_owner;
+    Member<FrameHost> m_host;
+    Member<FrameOwner> m_owner;
 
 private:
-    RawPtrWillBeMember<FrameClient> m_client;
-    // Needed to identify Frame Timing requests.
-    int64_t m_frameID;
+    bool canNavigateWithoutFramebusting(const Frame&, String& errorReason);
+
+    Member<FrameClient> m_client;
     bool m_isLoading;
 };
 

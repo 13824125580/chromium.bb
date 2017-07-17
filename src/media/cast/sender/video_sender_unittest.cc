@@ -2,26 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/cast/sender/video_sender.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "media/base/fake_single_thread_task_runner.h"
 #include "media/base/video_frame.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/constants.h"
 #include "media/cast/logging/simple_event_subscriber.h"
 #include "media/cast/net/cast_transport_config.h"
-#include "media/cast/net/cast_transport_sender_impl.h"
+#include "media/cast/net/cast_transport_impl.h"
 #include "media/cast/net/pacing/paced_sender.h"
 #include "media/cast/sender/fake_video_encode_accelerator_factory.h"
 #include "media/cast/sender/video_frame_factory.h"
-#include "media/cast/sender/video_sender.h"
-#include "media/cast/test/fake_single_thread_task_runner.h"
 #include "media/cast/test/utility/default_config.h"
 #include "media/cast/test/utility/video_utility.h"
 #include "media/video/fake_video_encode_accelerator.h"
@@ -47,7 +49,7 @@ void SaveOperationalStatus(OperationalStatus* out_status,
   *out_status = in_status;
 }
 
-class TestPacketSender : public PacketSender {
+class TestPacketSender : public PacketTransport {
  public:
   TestPacketSender()
       : number_of_rtp_packets_(0),
@@ -115,7 +117,7 @@ class PeerVideoSender : public VideoSender {
       const StatusChangeCallback& status_change_cb,
       const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
       const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb,
-      CastTransportSender* const transport_sender)
+      CastTransport* const transport_sender)
       : VideoSender(cast_environment,
                     video_config,
                     status_change_cb,
@@ -124,9 +126,10 @@ class PeerVideoSender : public VideoSender {
                     transport_sender,
                     base::Bind(&IgnorePlayoutDelayChanges)) {}
   using VideoSender::OnReceivedCastFeedback;
+  using VideoSender::OnReceivedPli;
 };
 
-class TransportClient : public CastTransportSender::Client {
+class TransportClient : public CastTransport::Client {
  public:
   TransportClient() {}
 
@@ -134,9 +137,9 @@ class TransportClient : public CastTransportSender::Client {
     EXPECT_EQ(TRANSPORT_VIDEO_INITIALIZED, status);
   };
   void OnLoggingEventsReceived(
-      scoped_ptr<std::vector<FrameEvent>> frame_events,
-      scoped_ptr<std::vector<PacketEvent>> packet_events) final{};
-  void ProcessRtpPacket(scoped_ptr<Packet> packet) final{};
+      std::unique_ptr<std::vector<FrameEvent>> frame_events,
+      std::unique_ptr<std::vector<PacketEvent>> packet_events) final{};
+  void ProcessRtpPacket(std::unique_ptr<Packet> packet) final{};
 
   DISALLOW_COPY_AND_ASSIGN(TransportClient);
 };
@@ -147,12 +150,12 @@ class VideoSenderTest : public ::testing::Test {
  protected:
   VideoSenderTest()
       : testing_clock_(new base::SimpleTestTickClock()),
-        task_runner_(new test::FakeSingleThreadTaskRunner(testing_clock_)),
-        cast_environment_(
-            new CastEnvironment(scoped_ptr<base::TickClock>(testing_clock_),
-                                task_runner_,
-                                task_runner_,
-                                task_runner_)),
+        task_runner_(new FakeSingleThreadTaskRunner(testing_clock_)),
+        cast_environment_(new CastEnvironment(
+            std::unique_ptr<base::TickClock>(testing_clock_),
+            task_runner_,
+            task_runner_,
+            task_runner_)),
         operational_status_(STATUS_UNINITIALIZED),
         vea_factory_(task_runner_) {
     testing_clock_->Advance(base::TimeTicks::Now() - base::TimeTicks());
@@ -160,9 +163,9 @@ class VideoSenderTest : public ::testing::Test {
     last_pixel_value_ = kPixelValue;
     transport_ = new TestPacketSender();
     transport_sender_.reset(
-        new CastTransportSenderImpl(testing_clock_, base::TimeDelta(),
-                                    make_scoped_ptr(new TransportClient()),
-                                    make_scoped_ptr(transport_), task_runner_));
+        new CastTransportImpl(testing_clock_, base::TimeDelta(),
+                              base::WrapUnique(new TransportClient()),
+                              base::WrapUnique(transport_), task_runner_));
   }
 
   ~VideoSenderTest() override {}
@@ -183,8 +186,7 @@ class VideoSenderTest : public ::testing::Test {
     if (external) {
       vea_factory_.SetInitializationWillSucceed(expect_init_success);
       video_sender_.reset(new PeerVideoSender(
-          cast_environment_,
-          video_config,
+          cast_environment_, video_config,
           base::Bind(&SaveOperationalStatus, &operational_status_),
           base::Bind(
               &FakeVideoEncodeAcceleratorFactory::CreateVideoEncodeAccelerator,
@@ -194,12 +196,10 @@ class VideoSenderTest : public ::testing::Test {
           transport_sender_.get()));
     } else {
       video_sender_.reset(new PeerVideoSender(
-          cast_environment_,
-          video_config,
+          cast_environment_, video_config,
           base::Bind(&SaveOperationalStatus, &operational_status_),
           CreateDefaultVideoEncodeAcceleratorCallback(),
-          CreateDefaultVideoEncodeMemoryCallback(),
-          transport_sender_.get()));
+          CreateDefaultVideoEncodeMemoryCallback(), transport_sender_.get()));
     }
     task_runner_->RunTasks();
   }
@@ -233,13 +233,13 @@ class VideoSenderTest : public ::testing::Test {
   }
 
   base::SimpleTestTickClock* const testing_clock_;  // Owned by CastEnvironment.
-  const scoped_refptr<test::FakeSingleThreadTaskRunner> task_runner_;
+  const scoped_refptr<FakeSingleThreadTaskRunner> task_runner_;
   const scoped_refptr<CastEnvironment> cast_environment_;
   OperationalStatus operational_status_;
   FakeVideoEncodeAcceleratorFactory vea_factory_;
-  TestPacketSender* transport_;  // Owned by CastTransportSender.
-  scoped_ptr<CastTransportSenderImpl> transport_sender_;
-  scoped_ptr<PeerVideoSender> video_sender_;
+  TestPacketSender* transport_;  // Owned by CastTransport.
+  std::unique_ptr<CastTransportImpl> transport_sender_;
+  std::unique_ptr<PeerVideoSender> video_sender_;
   int last_pixel_value_;
   base::TimeTicks first_frame_timestamp_;
 
@@ -336,8 +336,8 @@ TEST_F(VideoSenderTest, RtcpTimer) {
   EXPECT_LE(1, transport_->number_of_rtcp_packets());
   // Build Cast msg and expect RTCP packet.
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
   video_sender_->OnReceivedCastFeedback(cast_feedback);
   RunTasks(max_rtcp_timeout.InMilliseconds());
   EXPECT_LE(1, transport_->number_of_rtcp_packets());
@@ -354,8 +354,8 @@ TEST_F(VideoSenderTest, ResendTimer) {
 
   // ACK the key frame.
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
   video_sender_->OnReceivedCastFeedback(cast_feedback);
 
   video_frame = GetNewVideoFrame();
@@ -390,7 +390,7 @@ TEST_F(VideoSenderTest, LogAckReceivedEvent) {
   task_runner_->RunTasks();
 
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.ack_frame_id = num_frames - 1;
+  cast_feedback.ack_frame_id = FrameId::first() + num_frames - 1;
 
   video_sender_->OnReceivedCastFeedback(cast_feedback);
 
@@ -400,7 +400,7 @@ TEST_F(VideoSenderTest, LogAckReceivedEvent) {
   ASSERT_TRUE(!frame_events.empty());
   EXPECT_EQ(FRAME_ACK_RECEIVED, frame_events.rbegin()->type);
   EXPECT_EQ(VIDEO_EVENT, frame_events.rbegin()->media_type);
-  EXPECT_EQ(num_frames - 1u, frame_events.rbegin()->frame_id);
+  EXPECT_EQ(FrameId::first() + num_frames - 1, frame_events.rbegin()->frame_id);
 
   cast_environment_->logger()->Unsubscribe(&event_subscriber);
 }
@@ -437,8 +437,8 @@ TEST_F(VideoSenderTest, StopSendingInTheAbsenceOfAck) {
 
   // Start acking and make sure we're back to steady-state.
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
   video_sender_->OnReceivedCastFeedback(cast_feedback);
   EXPECT_LE(4, transport_->number_of_rtp_packets() +
                    transport_->number_of_rtcp_packets());
@@ -458,8 +458,8 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmit) {
   video_sender_->InsertRawVideoFrame(video_frame, testing_clock_->NowTicks());
   RunTasks(33);
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
 
   // Send 3 more frames but don't ACK.
   for (int i = 0; i < 3; ++i) {
@@ -472,11 +472,12 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmit) {
   // Send duplicated ACKs and mix some invalid NACKs.
   for (int i = 0; i < 10; ++i) {
     RtcpCastMessage ack_feedback(1);
-    ack_feedback.media_ssrc = 2;
-    ack_feedback.ack_frame_id = 0;
+    ack_feedback.remote_ssrc = 2;
+    ack_feedback.ack_frame_id = FrameId::first();
     RtcpCastMessage nack_feedback(1);
-    nack_feedback.media_ssrc = 2;
-    nack_feedback.missing_frames_and_packets[255] = PacketIdSet();
+    nack_feedback.remote_ssrc = 2;
+    nack_feedback.missing_frames_and_packets[FrameId::first() + 255] =
+        PacketIdSet();
     video_sender_->OnReceivedCastFeedback(ack_feedback);
     video_sender_->OnReceivedCastFeedback(nack_feedback);
   }
@@ -485,8 +486,8 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmit) {
   // Re-transmit one packet because of duplicated ACKs.
   for (int i = 0; i < 3; ++i) {
     RtcpCastMessage ack_feedback(1);
-    ack_feedback.media_ssrc = 2;
-    ack_feedback.ack_frame_id = 0;
+    ack_feedback.remote_ssrc = 2;
+    ack_feedback.ack_frame_id = FrameId::first();
     video_sender_->OnReceivedCastFeedback(ack_feedback);
   }
   EXPECT_EQ(number_of_packets_sent + 1, transport_->number_of_rtp_packets());
@@ -500,8 +501,8 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmitDoesNotCancelRetransmits) {
   video_sender_->InsertRawVideoFrame(video_frame, testing_clock_->NowTicks());
   RunTasks(33);
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
 
   // Send 2 more frames but don't ACK.
   for (int i = 0; i < 2; ++i) {
@@ -522,11 +523,12 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmitDoesNotCancelRetransmits) {
   // Send duplicated ACKs and mix some invalid NACKs.
   for (int i = 0; i < 10; ++i) {
     RtcpCastMessage ack_feedback(1);
-    ack_feedback.media_ssrc = 2;
-    ack_feedback.ack_frame_id = 0;
+    ack_feedback.remote_ssrc = 2;
+    ack_feedback.ack_frame_id = FrameId::first();
     RtcpCastMessage nack_feedback(1);
-    nack_feedback.media_ssrc = 2;
-    nack_feedback.missing_frames_and_packets[255] = PacketIdSet();
+    nack_feedback.remote_ssrc = 2;
+    nack_feedback.missing_frames_and_packets[FrameId::first() + 255] =
+        PacketIdSet();
     video_sender_->OnReceivedCastFeedback(ack_feedback);
     video_sender_->OnReceivedCastFeedback(nack_feedback);
   }
@@ -535,8 +537,8 @@ TEST_F(VideoSenderTest, DuplicateAckRetransmitDoesNotCancelRetransmits) {
   // Re-transmit one packet because of duplicated ACKs.
   for (int i = 0; i < 3; ++i) {
     RtcpCastMessage ack_feedback(1);
-    ack_feedback.media_ssrc = 2;
-    ack_feedback.ack_frame_id = 0;
+    ack_feedback.remote_ssrc = 2;
+    ack_feedback.ack_frame_id = FrameId::first();
     video_sender_->OnReceivedCastFeedback(ack_feedback);
   }
 
@@ -556,8 +558,8 @@ TEST_F(VideoSenderTest, AcksCancelRetransmits) {
 
   // Frame should be in buffer, waiting. Now let's ack it.
   RtcpCastMessage cast_feedback(1);
-  cast_feedback.media_ssrc = 2;
-  cast_feedback.ack_frame_id = 0;
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
   video_sender_->OnReceivedCastFeedback(cast_feedback);
 
   transport_->SetPause(false);
@@ -600,6 +602,42 @@ TEST_F(VideoSenderTest, PopulatesResourceUtilizationInFrameMetadata) {
       EXPECT_GE(1.0, utilization);  // Key frames never exceed 1.0.
     DVLOG(1) << "Utilization computed by VideoSender is: " << utilization;
   }
+}
+
+TEST_F(VideoSenderTest, CancelSendingOnReceivingPli) {
+  InitEncoder(false, true);
+  ASSERT_EQ(STATUS_INITIALIZED, operational_status_);
+
+  // Send a frame and ACK it.
+  scoped_refptr<media::VideoFrame> video_frame = GetNewVideoFrame();
+  video_sender_->InsertRawVideoFrame(video_frame, testing_clock_->NowTicks());
+  RunTasks(33);
+
+  RtcpCastMessage cast_feedback(1);
+  cast_feedback.remote_ssrc = 2;
+  cast_feedback.ack_frame_id = FrameId::first();
+  video_sender_->OnReceivedCastFeedback(cast_feedback);
+
+  transport_->SetPause(true);
+  // Send three more frames.
+  for (int i = 0; i < 3; i++) {
+    video_frame = GetNewVideoFrame();
+    video_sender_->InsertRawVideoFrame(video_frame, testing_clock_->NowTicks());
+    RunTasks(33);
+  }
+  EXPECT_EQ(1, transport_->number_of_rtp_packets());
+
+  // Frames should be in buffer, waiting.
+  // Received PLI from receiver.
+  video_sender_->OnReceivedPli();
+  video_frame = GetNewVideoFrame();
+  video_sender_->InsertRawVideoFrame(
+      video_frame,
+      testing_clock_->NowTicks() + base::TimeDelta::FromMilliseconds(1000));
+  RunTasks(33);
+  transport_->SetPause(false);
+  RunTasks(33);
+  EXPECT_EQ(2, transport_->number_of_rtp_packets());
 }
 
 }  // namespace cast

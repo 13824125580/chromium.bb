@@ -33,7 +33,6 @@
 
 namespace blink {
 
-class ForceHorriblySlowRectMapping;
 class LayoutBox;
 class LayoutFlowThread;
 class LayoutObject;
@@ -81,6 +80,9 @@ public:
     // direction (so an x-offset in vertical text and a y-offset for horizontal text).
     LayoutUnit pageLogicalOffset(const LayoutBox&, const LayoutUnit& childLogicalOffset) const;
 
+    LayoutUnit heightOffsetForTableHeaders() const { return m_heightOffsetForTableHeaders; };
+    void setHeightOffsetForTableHeaders(LayoutUnit offset) { m_heightOffsetForTableHeaders = offset; };
+
     const LayoutSize& layoutOffset() const { return m_layoutOffset; }
     const LayoutSize& pageOffset() const { return m_pageOffset; }
     LayoutUnit pageLogicalHeight() const { return m_pageLogicalHeight; }
@@ -94,8 +96,6 @@ public:
     LayoutObject& layoutObject() const { return m_layoutObject; }
 
 private:
-    friend class ForceHorriblySlowRectMapping;
-
     // Do not add anything apart from bitfields until after m_flowThread. See https://bugs.webkit.org/show_bug.cgi?id=100173
     bool m_isPaginated : 1;
     // If our page height has changed, this will force all blocks to relayout.
@@ -111,6 +111,10 @@ private:
 
     // The current page height for the pagination model that encloses us.
     LayoutUnit m_pageLogicalHeight;
+
+    // The height we need to make available for repeating table headers in paginated layout.
+    LayoutUnit m_heightOffsetForTableHeaders;
+
     // The offset of the start of the first page in the nearest enclosing pagination model.
     LayoutSize m_pageOffset;
 

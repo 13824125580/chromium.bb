@@ -6,8 +6,12 @@
 
 #include <algorithm>
 
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "blimp/common/logging.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "net/base/net_errors.h"
 
@@ -57,17 +61,20 @@ int BlimpMessageOutputBuffer::GetUnacknowledgedMessageCountForTest() const {
 }
 
 void BlimpMessageOutputBuffer::ProcessMessage(
-    scoped_ptr<BlimpMessage> message,
+    std::unique_ptr<BlimpMessage> message,
     const net::CompletionCallback& callback) {
-  DVLOG(2) << "OutputBuffer::ProcessMessage " << message.get();
+  DVLOG(2) << "OutputBuffer::ProcessMessage " << *message;
 
   message->set_message_id(++prev_message_id_);
 
   current_buffer_size_bytes_ += message->ByteSize();
-  DCHECK_GE(max_buffer_size_bytes_, current_buffer_size_bytes_);
+  if (max_buffer_size_bytes_ < current_buffer_size_bytes_)
+    DLOG(WARNING) << "Output Buffer Size exceeds " << max_buffer_size_bytes_
+                  << "bytes. Current size: " << current_buffer_size_bytes_
+                  << " bytes.";
 
   write_buffer_.push_back(
-      make_scoped_ptr(new BufferEntry(std::move(message), callback)));
+      base::WrapUnique(new BufferEntry(std::move(message), callback)));
 
   // Write the message
   if (write_buffer_.size() == 1 && output_processor_) {
@@ -99,7 +106,7 @@ void BlimpMessageOutputBuffer::OnMessageCheckpoint(int64_t message_id) {
             << " (max=" << current_buffer_size_bytes_ << ")";
 
     if (!ack_entry.callback.is_null()) {
-      base::MessageLoop::current()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE, base::Bind(ack_entry.callback, net::OK));
     }
 
@@ -114,7 +121,7 @@ void BlimpMessageOutputBuffer::OnMessageCheckpoint(int64_t message_id) {
 }
 
 BlimpMessageOutputBuffer::BufferEntry::BufferEntry(
-    scoped_ptr<BlimpMessage> message,
+    std::unique_ptr<BlimpMessage> message,
     net::CompletionCallback callback)
     : message(std::move(message)), callback(callback) {}
 
@@ -127,11 +134,11 @@ void BlimpMessageOutputBuffer::WriteNextMessageIfReady() {
     return;
   }
 
-  scoped_ptr<BlimpMessage> message_to_write(
+  std::unique_ptr<BlimpMessage> message_to_write(
       new BlimpMessage(*write_buffer_.front()->message));
   DVLOG(3) << "Writing message (id="
-           << write_buffer_.front()->message->message_id()
-           << ", type=" << message_to_write->type() << ")";
+           << write_buffer_.front()->message->message_id() << ", "
+           << *message_to_write << ")";
 
   output_processor_->ProcessMessage(std::move(message_to_write),
                                     write_complete_cb_.callback());
@@ -139,17 +146,13 @@ void BlimpMessageOutputBuffer::WriteNextMessageIfReady() {
 }
 
 void BlimpMessageOutputBuffer::OnWriteComplete(int result) {
-  DCHECK_LE(result, net::OK);
-  VLOG(2) << "Write complete, result=" << result;
+  DCHECK_LE(result, 0);
 
+  VLOG(2) << "Write result=" << net::ErrorToString(result);
   if (result == net::OK) {
     ack_buffer_.push_back(std::move(write_buffer_.front()));
     write_buffer_.pop_front();
     WriteNextMessageIfReady();
-  } else {
-    // An error occurred while writing to the network connection.
-    // Stop writing more messages until a new connection is established.
-    DLOG(WARNING) << "Write error (result=" << result << ")";
   }
 }
 

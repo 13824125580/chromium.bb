@@ -25,7 +25,7 @@ class NetworkHandler {
   virtual ~NetworkHandler();
 
   void SetRenderFrameHost(RenderFrameHostImpl* host);
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
 
   Response ClearBrowserCache();
   Response ClearBrowserCookies();
@@ -38,7 +38,8 @@ class NetworkHandler {
   Response EmulateNetworkConditions(bool offline,
                                     double latency,
                                     double download_throughput,
-                                    double upload_throughput);
+                                    double upload_throughput,
+                                    const std::string* connection_type);
   Response GetCertificateDetails(int certificate_id,
                                  scoped_refptr<CertificateDetails>* result);
   Response ShowCertificateViewer(int certificate_id);
@@ -50,7 +51,7 @@ class NetworkHandler {
   void SendDeleteCookieResponse(DevToolsCommandId command_id);
 
   RenderFrameHostImpl* host_;
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   base::WeakPtrFactory<NetworkHandler> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkHandler);

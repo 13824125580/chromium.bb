@@ -37,6 +37,8 @@ v8::Local<v8::Value> V8HiddenValue::getHiddenValue(ScriptState* scriptState, v8:
 
 bool V8HiddenValue::setHiddenValue(ScriptState* scriptState, v8::Local<v8::Object> object, v8::Local<v8::String> key, v8::Local<v8::Value> value)
 {
+    if (UNLIKELY(value.IsEmpty()))
+        return false;
     return v8CallBoolean(object->SetPrivate(scriptState->context(), v8::Private::ForApi(scriptState->isolate(), key), value));
 }
 
@@ -48,7 +50,7 @@ bool V8HiddenValue::deleteHiddenValue(ScriptState* scriptState, v8::Local<v8::Ob
 
 v8::Local<v8::Value> V8HiddenValue::getHiddenValueFromMainWorldWrapper(ScriptState* scriptState, ScriptWrappable* wrappable, v8::Local<v8::String> key)
 {
-    v8::Local<v8::Object> wrapper = wrappable->newLocalWrapper(scriptState->isolate());
+    v8::Local<v8::Object> wrapper = wrappable->mainWorldWrapper(scriptState->isolate());
     return wrapper.IsEmpty() ? v8::Local<v8::Value>() : getHiddenValue(scriptState, wrapper, key);
 }
 

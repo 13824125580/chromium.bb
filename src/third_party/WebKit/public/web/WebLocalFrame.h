@@ -10,9 +10,6 @@
 
 namespace blink {
 
-enum class WebAppBannerPromptReply;
-enum class WebSandboxFlags;
-enum class WebTreeScopeType;
 class WebAutofillClient;
 class WebContentSettingsClient;
 class WebDevToolsAgent;
@@ -21,7 +18,11 @@ class WebFrameClient;
 class WebNode;
 class WebScriptExecutionCallback;
 class WebSuspendableTask;
-class WebTestInterfaceFactory;
+class WebWidget;
+enum class WebAppBannerPromptReply;
+enum class WebCachePolicy;
+enum class WebSandboxFlags;
+enum class WebTreeScopeType;
 struct WebPrintPresetOptions;
 
 // Interface for interacting with in process frames. This contains methods that
@@ -31,14 +32,14 @@ class WebLocalFrame : public WebFrame {
 public:
     // Creates a WebFrame. Delete this WebFrame by calling WebFrame::close().
     // It is valid to pass a null client pointer.
-    BLINK_EXPORT static WebLocalFrame* create(WebTreeScopeType, WebFrameClient*);
+    BLINK_EXPORT static WebLocalFrame* create(WebTreeScopeType, WebFrameClient*, WebFrame* opener = nullptr);
 
     // Used to create a provisional local frame in prepration for replacing a
     // remote frame if the load commits. The returned frame is only partially
     // attached to the frame tree: it has the same parent as its potential
     // replacee but is invisible to the rest of the frames in the frame tree.
     // If the load commits, call swap() to fully attach this frame.
-    BLINK_EXPORT static WebLocalFrame* createProvisional(WebFrameClient*, WebRemoteFrame*, WebSandboxFlags, const WebFrameOwnerProperties&);
+    BLINK_EXPORT static WebLocalFrame* createProvisional(WebFrameClient*, WebRemoteFrame*, WebSandboxFlags);
 
     // Returns the WebFrame associated with the current V8 context. This
     // function can return 0 if the context is associated with a Document that
@@ -61,15 +62,6 @@ public:
     virtual void setDevToolsAgentClient(WebDevToolsAgentClient*) = 0;
     virtual WebDevToolsAgent* devToolsAgent() = 0;
 
-    // Basic properties ---------------------------------------------------
-
-    // Updates the scrolling and margin properties in the frame's FrameOwner.
-    // This is used when this frame's parent is in another process and it
-    // dynamically updates these properties.
-    // TODO(dcheng): Currently, the update only takes effect on next frame
-    // navigation.  This matches the in-process frame behavior.
-    virtual void setFrameOwnerProperties(const WebFrameOwnerProperties&) = 0;
-
     // Hierarchy ----------------------------------------------------------
 
     // Get the highest-level LocalFrame in this frame's in-process subtree.
@@ -82,13 +74,17 @@ public:
 
     // Navigation Ping --------------------------------------------------------
 
-    virtual void sendPings(const WebNode& contextNode, const WebURL& destinationURL) = 0;
+    virtual void sendPings(const WebURL& destinationURL) = 0;
 
     // Navigation ----------------------------------------------------------
 
+    // Runs beforeunload handlers for this frame and returns the value returned
+    // by handlers.
+    // Note: this may lead to the destruction of the frame.
+    virtual bool dispatchBeforeUnloadEvent(bool isReload) = 0;
+
     // Returns a WebURLRequest corresponding to the load of the WebHistoryItem.
-    virtual WebURLRequest requestFromHistoryItem(const WebHistoryItem&, WebURLRequest::CachePolicy)
-        const = 0;
+    virtual WebURLRequest requestFromHistoryItem(const WebHistoryItem&, WebCachePolicy) const = 0;
 
     // Returns a WebURLRequest corresponding to the reload of the current
     // HistoryItem.
@@ -97,8 +93,6 @@ public:
 
     // Load the given URL. For history navigations, a valid WebHistoryItem
     // should be given, as well as a WebHistoryLoadType.
-    // TODO(clamy): Remove the reload, reloadWithOverrideURL, loadHistoryItem
-    // loadRequest functions in WebFrame once RenderFrame only calls loadRequest.
     virtual void load(const WebURLRequest&, WebFrameLoadType = WebFrameLoadType::Standard,
         const WebHistoryItem& = WebHistoryItem(),
         WebHistoryLoadType = WebHistoryDifferentDocumentLoad,
@@ -128,13 +122,8 @@ public:
     // Returns true if the current frame's load event has not completed.
     virtual bool isLoading() const = 0;
 
-    // Returns true if any resource load is currently in progress. Exposed
-    // primarily for use in layout tests. You probably want isLoading()
-    // instead.
-    virtual bool isResourceLoadInProgress() const = 0;
-
-    // Returns true if there is a pending redirect or location change.
-    // This could be caused by:
+    // Returns true if there is a pending redirect or location change
+    // within specified interval (in seconds). This could be caused by:
     // * an HTTP Refresh header
     // * an X-Frame-Options header
     // * the respective http-equiv meta tags
@@ -142,7 +131,7 @@ public:
     // * CSP policy block
     // * reload
     // * form submission
-    virtual bool isNavigationScheduled() const = 0;
+    virtual bool isNavigationScheduledWithin(double intervalInSeconds) const = 0;
 
     // Override the normal rules for whether a load has successfully committed
     // in this frame. Used to propagate state when this frame has navigated
@@ -221,11 +210,6 @@ public:
     virtual void didCallAddSearchProvider() = 0;
     virtual void didCallIsSearchProviderInstalled() = 0;
 
-    // Testing ----------------------------------------------------------------
-
-    // Registers a test interface factory. Takes ownership of the factory.
-    virtual void registerTestInterface(const WebString& name, WebTestInterfaceFactory*) = 0;
-
     // Iframe sandbox ---------------------------------------------------------
 
     // Returns the effective sandbox flags which are inherited from their parent frame.
@@ -238,6 +222,18 @@ public:
     virtual void forceSandboxFlags(WebSandboxFlags) = 0;
 
     // Find-in-page -----------------------------------------------------------
+
+    // Specifies the action to be taken at the end of a find-in-page session.
+    enum StopFindAction {
+        // No selection will be left.
+        StopFindActionClearSelection,
+
+        // The active match will remain selected.
+        StopFindActionKeepSelection,
+
+        // The active match selection will be activated.
+        StopFindActionActivateSelection
+    };
 
     // Searches a frame for a given string.
     //
@@ -259,11 +255,9 @@ public:
     // Notifies the frame that we are no longer interested in searching.
     // This will abort any asynchronous scoping effort already under way
     // (see the function scopeStringMatches for details) and erase all
-    // tick-marks and highlighting from the previous search.  If
-    // clearSelection is true, it will also make sure the end state for the
-    // find operation does not leave a selection.  This can occur when the
-    // user clears the search string but does not close the find box.
-    virtual void stopFinding(bool clearSelection) = 0;
+    // tick-marks and highlighting from the previous search.  It will also
+    // follow the specified StopFindAction.
+    virtual void stopFinding(StopFindAction) = 0;
 
     // Counts how many times a particular string occurs within the frame.
     // It also retrieves the location of the string and updates a vector in
@@ -306,23 +300,48 @@ public:
     virtual WebFloatRect activeFindMatchRect() = 0;
 
     // Swaps the contents of the provided vector with the bounding boxes of the
-    // find-in-page match markers from all frames. The bounding boxes are returned
-    // in find-in-page coordinates. This method should be called only on the main frame.
+    // find-in-page match markers from all frames. The bounding boxes are
+    // returned in find-in-page coordinates. This method should be called only
+    // on the main frame.
     virtual void findMatchRects(WebVector<WebFloatRect>&) = 0;
 
-    // Selects the find-in-page match in the appropriate frame closest to the
-    // provided point in find-in-page coordinates. Returns the ordinal of such
-    // match or -1 if none could be found. If not null, selectionRect is set to
-    // the bounding box of the selected match in window coordinates.
-    // This method should be called only on the main frame.
+    // Selects the find-in-page match closest to the provided point in
+    // find-in-page coordinates. Returns the ordinal of such match or -1 if none
+    // could be found. If not null, selectionRect is set to the bounding box of
+    // the selected match in window coordinates.  This method should be called
+    // only on the main frame.
     virtual int selectNearestFindMatch(const WebFloatPoint&,
         WebRect* selectionRect)
         = 0;
+
+    // Returns the distance (squared) to the closest find-in-page match from the
+    // provided point, in find-in-page coordinates.
+    virtual float distanceToNearestFindMatch(const WebFloatPoint&) = 0;
 
     // Set the tickmarks for the frame. This will override the default tickmarks
     // generated by find results. If this is called with an empty array, the
     // default behavior will be restored.
     virtual void setTickmarks(const WebVector<WebRect>&) = 0;
+
+    // Clears the active find match in the frame, if one exists.
+    virtual void clearActiveFindMatch() = 0;
+
+    // Context menu -----------------------------------------------------------
+
+    // Returns the node that the context menu opened over.
+    virtual WebNode contextMenuNode() const = 0;
+
+    // Returns the WebFrameWidget associated with this frame if there is one or
+    // nullptr otherwise.
+    virtual WebWidget* frameWidget() const = 0;
+
+    // Copy to the clipboard the image located at a particular point in visual
+    // viewport coordinates.
+    virtual void copyImageAt(const WebPoint&) = 0;
+
+    // Save as the image located at a particular point in visual viewport
+    // coordinates.
+    virtual void saveImageAt(const WebPoint&) = 0;
 
 protected:
     explicit WebLocalFrame(WebTreeScopeType scope) : WebFrame(scope) { }

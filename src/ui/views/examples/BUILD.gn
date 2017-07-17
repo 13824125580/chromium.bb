@@ -104,20 +104,24 @@ executable("views_examples_exe") {
     ":views_examples_lib",
     "//base",
     "//base:i18n",
+    "//base/test:test_support",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//ui/base",
     "//ui/compositor",
     "//ui/compositor:test_support",
     "//ui/gfx",
-    "//ui/gl",
+    "//ui/gl/init",
     "//ui/resources:ui_test_pak",
     "//ui/views",
     "//ui/views:test_support",
-    "//ui/wm",
   ]
 
   if (use_aura) {
-    deps += [ "//ui/aura" ]
+    deps += [
+      "//ui/aura",
+      "//ui/wm",
+    ]
   }
   if (use_x11) {
     deps += [ "//ui/gfx/x" ]
@@ -158,9 +162,11 @@ executable("views_examples_with_content_exe") {
   defines = [ "VIEWS_EXAMPLES_WITH_CONTENT_IMPLEMENTATION" ]
 
   deps = [
+    ":copy_content_resources",
     ":views_examples_with_content_lib",
     "//base",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//content",
     "//content:sandbox_helper_win",
     "//sandbox",
@@ -171,4 +177,16 @@ executable("views_examples_with_content_exe") {
     configs += [ "//build/config/win:windowed" ]
     configs -= [ "//build/config/win:console" ]
   }
+}
+
+copy("copy_content_resources") {
+  deps = [
+    "//content:resources",
+  ]
+  sources = [
+    "$root_gen_dir/content/content_resources.pak",
+  ]
+  outputs = [
+    "$root_out_dir/content_resources.pak",
+  ]
 }

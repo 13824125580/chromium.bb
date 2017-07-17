@@ -13,6 +13,7 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/common/frame_navigate_params.h"
+#include "content/public/common/media_metadata.h"
 #include "content/public/common/security_style.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
@@ -27,6 +28,7 @@ class NavigationEntry;
 class NavigationHandle;
 class RenderFrameHost;
 class RenderViewHost;
+class RenderWidgetHost;
 class WebContents;
 class WebContentsImpl;
 struct AXEventNotificationDetails;
@@ -55,6 +57,8 @@ struct SecurityStyleExplanations;
 class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
                                            public IPC::Sender {
  public:
+  // Frames and Views ----------------------------------------------------------
+
   // Called when a RenderFrame for |render_frame_host| is created in the
   // renderer process. Use |RenderFrameDeleted| to listen for when this
   // RenderFrame goes away.
@@ -121,7 +125,11 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void RenderViewHostChanged(RenderViewHost* old_host,
                                      RenderViewHost* new_host) {}
 
-  // Navigation related events ------------------------------------------------
+  // This method is invoked when the process for the current main
+  // RenderFrameHost becomes unresponsive.
+  virtual void OnRendererUnresponsive(RenderWidgetHost* render_widget_host) {}
+
+  // Navigation ----------------------------------------------------------------
 
   // Called when a navigation started in the WebContents. |navigation_handle|
   // is unique to a specific navigation. The same |navigation_handle| will be
@@ -158,7 +166,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // Called when a navigation finished in the WebContents. This happens when a
   // navigation is committed, aborted or replaced by a new one. To know if the
-  // navigation has committed, use NavigationHandle::HasCommited; use
+  // navigation has committed, use NavigationHandle::HasCommitted; use
   // NavigationHandle::IsErrorPage to know if the navigation resulted in an
   // error page.
   //
@@ -171,6 +179,79 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // Note that |navigation_handle| will be destroyed at the end of this call,
   // so do not keep a reference to it afterward.
   virtual void DidFinishNavigation(NavigationHandle* navigation_handle) {}
+
+  // Navigation (obsolete and deprecated) --------------------------------------
+
+  // This method is invoked after the browser process starts a navigation to a
+  // pending NavigationEntry. It is not called for renderer-initiated
+  // navigations unless they are sent to the browser process via OpenURL. It may
+  // be called multiple times for a given navigation, such as a typed URL
+  // followed by a cross-process client or server redirect.
+  //
+  // SOON TO BE DEPRECATED. Use DidStartNavigation instead in PlzNavigate. In
+  // default mode, it is still necessary to override this function to be
+  // notified about a navigation earlier than DidStartProvisionalLoad. This
+  // function will be removed when PlzNavigate is enabled.
+  virtual void DidStartNavigationToPendingEntry(
+      const GURL& url,
+      NavigationController::ReloadType reload_type) {}
+
+  // |render_frame_host| is the RenderFrameHost for which the provisional load
+  // is happening.
+  //
+  // Since the URL validation will strip error URLs, or srcdoc URLs, the boolean
+  // flags |is_error_page| and |is_iframe_srcdoc| will indicate that the not
+  // validated URL was either an error page or an iframe srcdoc.
+  //
+  // Note that during a cross-process navigation, several provisional loads
+  // can be on-going in parallel.
+  //
+  // DEPRECATED. Use DidStartNavigation instead in all cases.
+  virtual void DidStartProvisionalLoadForFrame(
+      RenderFrameHost* render_frame_host,
+      const GURL& validated_url,
+      bool is_error_page,
+      bool is_iframe_srcdoc) {}
+
+  // This method is invoked when the provisional load was successfully
+  // committed.
+  //
+  // If the navigation only changed the reference fragment, or was triggered
+  // using the history API (e.g. window.history.replaceState), we will receive
+  // this signal without a prior DidStartProvisionalLoadForFrame signal.
+  //
+  // DEPRECATED. Use DidFinishNavigation instead in all cases.
+  virtual void DidCommitProvisionalLoadForFrame(
+      RenderFrameHost* render_frame_host,
+      const GURL& url,
+      ui::PageTransition transition_type) {}
+
+  // This method is invoked when the provisional load failed.
+  //
+  // DEPRECATED. Use DidFinishNavigation instead in all cases.
+  virtual void DidFailProvisionalLoad(
+      RenderFrameHost* render_frame_host,
+      const GURL& validated_url,
+      int error_code,
+      const base::string16& error_description,
+      bool was_ignored_by_handler) {}
+
+  // If the provisional load corresponded to the main frame, this method is
+  // invoked in addition to DidCommitProvisionalLoadForFrame.
+  //
+  // DEPRECATED. Use DidFinishNavigation instead in all cases.
+  virtual void DidNavigateMainFrame(
+      const LoadCommittedDetails& details,
+      const FrameNavigateParams& params) {}
+
+  // And regardless of what frame navigated, this method is invoked after
+  // DidCommitProvisionalLoadForFrame was invoked.
+  //
+  // DEPRECATED. Use DidFinishNavigation instead in all cases.
+  virtual void DidNavigateAnyFrame(
+      RenderFrameHost* render_frame_host,
+      const LoadCommittedDetails& details,
+      const FrameNavigateParams& params) {}
 
   // Document load events ------------------------------------------------------
 
@@ -192,8 +273,8 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // content scripts marked "document_end" get injected into the frame.
   virtual void DocumentLoadedInFrame(RenderFrameHost* render_frame_host) {}
 
-  // This method is invoked when the navigation is done, i.e. the spinner of
-  // the tab will stop spinning, and the onload event was dispatched.
+  // This method is invoked when the load is done, i.e. the spinner of the tab
+  // will stop spinning, and the onload event was dispatched.
   //
   // If the WebContents is displaying replacement content, e.g. network error
   // pages, DidFinishLoad is invoked for frames that were not sending
@@ -208,64 +289,6 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
                            int error_code,
                            const base::string16& error_description,
                            bool was_ignored_by_handler) {}
-
-  // ---------------------------------------------------------------------------
-
-  // This method is invoked after the browser process starts a navigation to a
-  // pending NavigationEntry. It is not called for renderer-initiated
-  // navigations unless they are sent to the browser process via OpenURL. It may
-  // be called multiple times for a given navigation, such as a typed URL
-  // followed by a cross-process client or server redirect.
-  virtual void DidStartNavigationToPendingEntry(
-      const GURL& url,
-      NavigationController::ReloadType reload_type) {}
-
-  // |render_frame_host| is the RenderFrameHost for which the provisional load
-  // is happening.
-  //
-  // Since the URL validation will strip error URLs, or srcdoc URLs, the boolean
-  // flags |is_error_page| and |is_iframe_srcdoc| will indicate that the not
-  // validated URL was either an error page or an iframe srcdoc.
-  //
-  // Note that during a cross-process navigation, several provisional loads
-  // can be on-going in parallel.
-  virtual void DidStartProvisionalLoadForFrame(
-      RenderFrameHost* render_frame_host,
-      const GURL& validated_url,
-      bool is_error_page,
-      bool is_iframe_srcdoc) {}
-
-  // This method is invoked when the provisional load was successfully
-  // committed.
-  //
-  // If the navigation only changed the reference fragment, or was triggered
-  // using the history API (e.g. window.history.replaceState), we will receive
-  // this signal without a prior DidStartProvisionalLoadForFrame signal.
-  virtual void DidCommitProvisionalLoadForFrame(
-      RenderFrameHost* render_frame_host,
-      const GURL& url,
-      ui::PageTransition transition_type) {}
-
-  // This method is invoked when the provisional load failed.
-  virtual void DidFailProvisionalLoad(
-      RenderFrameHost* render_frame_host,
-      const GURL& validated_url,
-      int error_code,
-      const base::string16& error_description,
-      bool was_ignored_by_handler) {}
-
-  // If the provisional load corresponded to the main frame, this method is
-  // invoked in addition to DidCommitProvisionalLoadForFrame.
-  virtual void DidNavigateMainFrame(
-      const LoadCommittedDetails& details,
-      const FrameNavigateParams& params) {}
-
-  // And regardless of what frame navigated, this method is invoked after
-  // DidCommitProvisionalLoadForFrame was invoked.
-  virtual void DidNavigateAnyFrame(
-      RenderFrameHost* render_frame_host,
-      const LoadCommittedDetails& details,
-      const FrameNavigateParams& params) {}
 
   // This method is invoked when the SecurityStyle of the WebContents changes.
   // |security_style| is the new SecurityStyle. |security_style_explanations|
@@ -284,8 +307,8 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void DidGetResourceResponseStart(
       const ResourceRequestDetails& details) {}
 
-  // This method is invoked when a redirect was received while requesting a
-  // resource.
+  // This method is invoked when a redirect has been received for a resource
+  // request.
   virtual void DidGetRedirectForResourceRequest(
       RenderFrameHost* render_frame_host,
       const ResourceRedirectDetails& details) {}
@@ -312,6 +335,10 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // paint after a non-empty layout.
   virtual void DidFirstVisuallyNonEmptyPaint() {}
 
+  // This method is invoked when the main frame in the renderer process performs
+  // the first paint after a navigation.
+  virtual void DidFirstPaintAfterLoad(RenderWidgetHost* render_widget_host) {}
+
   // When WebContents::Stop() is called, the WebContents stops loading and then
   // invokes this method. If there are ongoing navigations, their respective
   // failure methods will also be invoked.
@@ -321,15 +348,10 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // The type argument specifies the kind of interaction. Direct user input
   // signalled through this callback includes:
   // 1) any mouse down event (blink::WebInputEvent::MouseDown);
-  // 2) the start of a mouse wheel scroll (blink::WebInputEvent::MouseWheel);
+  // 2) the start of a scroll (blink::WebInputEvent::GestureScrollBegin);
   // 3) any raw key down event (blink::WebInputEvent::RawKeyDown);
   // 4) any gesture tap event (blink::WebInputEvent::GestureTapDown); and
   // 5) a browser navigation or reload (blink::WebInputEvent::Undefined).
-  // The start of a mouse wheel scroll is heuristically detected: a mouse
-  // wheel event fired at least 0.1 seconds after any other wheel event is
-  // regarded as the beginning of a scroll. This matches the interval used by
-  // the Blink EventHandler to detect the end of scrolls.
-  // TODO(dominickn): replace MouseWheel with GestureScrollBegin.
   virtual void DidGetUserInteraction(const blink::WebInputEvent::Type type) {}
 
   // This method is invoked when a RenderViewHost of this WebContents was
@@ -400,8 +422,8 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // Invoked when a pepper plugin creates and shows or destroys a fullscreen
   // RenderWidget.
-  virtual void DidShowFullscreenWidget(int routing_id) {}
-  virtual void DidDestroyFullscreenWidget(int routing_id) {}
+  virtual void DidShowFullscreenWidget() {}
+  virtual void DidDestroyFullscreenWidget() {}
 
   // Invoked when the renderer process has toggled the tab into/out of
   // fullscreen mode.
@@ -440,7 +462,8 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // Invoked when media session has changed its state.
   virtual void MediaSessionStateChanged(bool is_controllable,
-                                        bool is_suspended) {}
+                                        bool is_suspended,
+                                        const MediaMetadata& metadata) {}
 
   // Invoked when the renderer process changes the page scale factor.
   virtual void OnPageScaleFactorChanged(float page_scale_factor) {}

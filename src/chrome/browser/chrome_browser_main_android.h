@@ -22,15 +22,14 @@ class ChromeBrowserMainPartsAndroid : public ChromeBrowserMainParts {
   int PreCreateThreads() override;
   void PostProfileInit() override;
   void PreEarlyInitialization() override;
-  void PreMainMessageLoopRun() override;
 
   // ChromeBrowserMainParts overrides.
   void PostBrowserStart() override;
   void ShowMissingLocaleMessageBox() override;
 
  private:
-  scoped_ptr<base::MessageLoop> main_message_loop_;
-  scoped_ptr<breakpad::CrashDumpManager> crash_dump_manager_;
+  std::unique_ptr<base::MessageLoop> main_message_loop_;
+  std::unique_ptr<breakpad::CrashDumpManager> crash_dump_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsAndroid);
 };

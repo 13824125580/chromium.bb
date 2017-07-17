@@ -3,9 +3,6 @@
 # found in the LICENSE file.
 
 {
-  'variables': {
-    'enable_bidirectional_stream%': 0,
-  },
   'conditions': [
     ['OS=="android"', {
       'targets': [
@@ -43,10 +40,10 @@
           'includes': [ '../build/android/java_cpp_enum.gypi' ],
         },
         {
-          'target_name': 'network_quality_observations_java',
+          'target_name': 'network_quality_observation_source_java',
           'type': 'none',
           'variables': {
-            'source_file': '../net/base/network_quality_estimator.h',
+            'source_file': '../net/nqe/network_quality_observation_source.h',
           },
           'includes': [ '../build/android/java_cpp_enum.gypi' ],
         },
@@ -68,7 +65,7 @@
             # variable that contains at least one java file.
             'java_in_dir': 'cronet/android/api',
             'java_in_dir_suffix': '/src_dummy',
-            'run_findbugs': 1,
+            'never_lint': 1,
           },
           'dependencies': [
             'url_request_error_java',
@@ -177,18 +174,29 @@
           ],
         },
         {
-          # cronet_static_small target has reduced binary size through using
-          # ICU alternatives which requires file and ftp support be disabled.
-          'target_name': 'cronet_static_small',
+          # Protobuf compiler / generator for certificate verifcation protocol
+          # buffer.
+          # GN version: //cronet:cronet_android_cert_proto
+          'target_name': 'cronet_android_cert_proto',
           'type': 'static_library',
-          'defines': [
-            'USE_ICU_ALTERNATIVES_ON_ANDROID=1',
-            'DISABLE_FILE_SUPPORT=1',
-            'DISABLE_FTP_SUPPORT=1',
+          'sources': [
+            'cronet/android/cert/proto/cert_verification.proto',
           ],
+          'variables': {
+            'enable_wexit_time_destructors': 1,
+            'proto_in_dir': 'cronet/android/cert/proto',
+            'proto_out_dir': 'cronet/android/cert/proto',
+          },
+          'includes': [
+            '../build/protoc.gypi',
+          ],
+        },
+        {
+          'target_name': 'cronet_static',
+          'type': 'static_library',
           'dependencies': [
-            '../net/net.gyp:net_small',
-            '../url/url.gyp:url_lib_use_icu_alternatives_on_android',
+            '../net/net.gyp:net',
+            '../url/url.gyp:url_lib',
           ],
           'conditions': [
             ['enable_data_reduction_proxy_support==1',
@@ -198,39 +206,15 @@
                 ],
               },
             ],
-          ],
-          'includes': [ 'cronet/cronet_static.gypi' ],
-        },
-        {
-          # cronet_static target depends on ICU and includes file and ftp support.
-          'target_name': 'cronet_static',
-          'type': 'static_library',
-          'dependencies': [
-            '../base/base.gyp:base_i18n',
-            '../net/net.gyp:net',
-            '../url/url.gyp:url_lib',
-          ],
-          'conditions': [
-            ['enable_data_reduction_proxy_support==1',
+            ['use_platform_icu_alternatives!=1',
               {
                 'dependencies': [
-                  '../components/components.gyp:data_reduction_proxy_core_browser',
+                  '../base/base.gyp:base_i18n',
                 ],
               },
             ],
           ],
           'includes': [ 'cronet/cronet_static.gypi' ],
-        },
-        {
-          # GN version: //cronet:features
-          'target_name': 'cronet_features',
-          'includes': [ '../build/buildflag_header.gypi' ],
-          'variables': {
-             'buildflag_header_path': 'components/cronet/cronet_features.h',
-             'buildflag_flags': [
-               'ENABLE_BIDIRECTIONAL_STREAM=<(enable_bidirectional_stream)',
-            ],
-          },
         },
         {
           'target_name': 'libcronet',
@@ -239,10 +223,22 @@
             'cronet/android/cronet_jni.cc',
           ],
           'dependencies': [
-            'cronet_static_small',
+            'cronet_static',
             '../base/base.gyp:base',
-            '../net/net.gyp:net_small',
+            '../net/net.gyp:net',
           ],
+          'ldflags': [
+            '-Wl,--version-script=<!(cd <(DEPTH) && pwd -P)/components/cronet/android/only_jni_exports.lst',
+          ],
+          'variables': {
+            # libcronet doesn't really use native JNI exports, but it does use
+            # its own linker version script. The ARM64 linker appears to not
+            # work with multiple version scripts with anonymous version tags,
+            # so enable use_native_jni_exports which avoids adding another
+            # version sript (android_no_jni_exports.lst) so we don't run afoul
+            # of this ARM64 linker limitation.
+            'use_native_jni_exports': 1,
+          },
         },
         { # cronet_api.jar defines Cronet API and provides implementation of
           # legacy api using HttpUrlConnection (not the Chromium stack).
@@ -253,7 +249,7 @@
             'url_request_error_java',
             'cronet_version',
             'load_states_list',
-            'network_quality_observations_java',
+            'network_quality_observation_source_java',
             '../third_party/android_tools/android_tools.gyp:android_support_annotations_javalib',
           ],
           'variables': {
@@ -272,7 +268,7 @@
             'chromium_url_request_java',
             'libcronet',
             'net_request_priority_java',
-            'network_quality_observations_java',
+            'network_quality_observation_source_java',
             '../third_party/android_tools/android_tools.gyp:android_support_annotations_javalib',
           ],
           'variables': {
@@ -345,14 +341,23 @@
             'cronet_sample_apk_java',
             'cronet_api',
             '../base/base.gyp:base_java_test_support',
+            '../net/net.gyp:net_java_test_support',
+            '../net/net.gyp:require_net_test_support_apk',
           ],
           'variables': {
             'apk_name': 'CronetSampleTest',
             'java_in_dir': 'cronet/android/sample/javatests',
             'is_test_apk': 1,
             'run_findbugs': 1,
+            'test_type': 'instrumentation',
+            'additional_apks': [
+              '<(PRODUCT_DIR)/apks/ChromiumNetTestSupport.apk',
+            ],
           },
-          'includes': [ '../build/java_apk.gypi' ],
+          'includes': [
+            '../build/java_apk.gypi',
+            '../build/android/test_runner.gypi',
+          ],
         },
         {
           'target_name': 'cronet_tests_jni_headers',
@@ -408,11 +413,23 @@
             '../third_party/icu/icu.gyp:icui18n',
             '../third_party/icu/icu.gyp:icuuc',
           ],
+          'ldflags': [
+            '-Wl,--version-script=<!(cd <(DEPTH) && pwd -P)/components/cronet/android/only_jni_exports.lst',
+          ],
+          'variables': {
+            # libcronet doesn't really use native JNI exports, but it does use
+            # its own linker version script. The ARM64 linker appears to not
+            # work with multiple version scripts with anonymous version tags,
+            # so enable use_native_jni_exports which avoids adding another
+            # version sript (android_no_jni_exports.lst) so we don't run afoul
+            # of this ARM64 linker limitation.
+            'use_native_jni_exports': 1,
+          },
           'conditions': [
             ['enable_data_reduction_proxy_support==1',
               {
                 'dependencies': [
-                  '../components/components.gyp:data_reduction_proxy_core_browser',
+                  '../components/components.gyp:data_reduction_proxy_core_browser_small',
                 ],
               },
             ],
@@ -455,7 +472,7 @@
             'resource_dir': 'cronet/android/test/res',
             'asset_location': 'cronet/android/test/assets',
             'native_lib_target': 'libcronet_tests',
-            'run_findbugs': 1,
+            'never_lint': 1,
             'additional_bundled_libs': [
               '>(netty_tcnative_so_file_location)',
             ],
@@ -481,6 +498,8 @@
           'dependencies': [
             'cronet_test_apk_java',
             '../base/base.gyp:base_java_test_support',
+            '../net/net.gyp:net_java_test_support',
+            '../net/net.gyp:require_net_test_support_apk',
           ],
           'variables': {
             'apk_name': 'CronetTestInstrumentation',
@@ -488,18 +507,16 @@
             'resource_dir': 'cronet/android/test/res',
             'is_test_apk': 1,
             'run_findbugs': 1,
+            'test_type': 'instrumentation',
+            'isolate_file': 'cronet/android/cronet_test_instrumentation_apk.isolate',
+            'additional_apks': [
+              '<(PRODUCT_DIR)/apks/ChromiumNetTestSupport.apk',
+            ],
           },
-          'conditions': [
-            ['enable_bidirectional_stream==0', {
-              'variables' : {
-                'jar_excluded_classes': [
-                  '**/BidirectionalStreamTest*',
-                  '**/TestBidirectionalStreamCallback*',
-                ],
-              },
-            },],
+          'includes': [
+            '../build/java_apk.gypi',
+            '../build/android/test_runner.gypi',
           ],
-          'includes': [ '../build/java_apk.gypi' ],
         },
         {
           'target_name': 'cronet_perf_test_apk',
@@ -526,14 +543,17 @@
           'target_name': 'cronet_unittests',
           'type': '<(gtest_target_type)',
           'dependencies': [
+            'cronet_android_cert_proto',
             'cronet_static',
             'metrics',
             '../base/base.gyp:base',
             '../base/base.gyp:test_support_base',
+            '../net/net.gyp:net_test_support',
             '../testing/gtest.gyp:gtest',
             '../testing/android/native_test.gyp:native_test_native_code',
           ],
           'sources': [
+            'cronet/android/cert/cert_verifier_cache_serializer_unittest.cc',
             'cronet/run_all_unittests.cc',
             'cronet/url_request_context_config_unittest.cc',
             'cronet/histogram_manager_unittest.cc',
@@ -547,6 +567,7 @@
           ],
           'variables': {
             'test_suite_name': 'cronet_unittests',
+            'shard_timeout': 180,
           },
           'includes': [
             '../build/apk_test.gypi',
@@ -712,5 +733,230 @@
         'enable_data_reduction_proxy_support%': 0,
       },
     }],  # OS=="android"
+    ['OS=="ios"', {
+      'targets': [
+        { # TODO(mef): Dedup this with copy in OS=="android" section.
+          'target_name': 'cronet_version_header',
+          'type': 'none',
+          # Need to set hard_depency flag because cronet_version generates a
+          # header.
+          'hard_dependency': 1,
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '<(SHARED_INTERMEDIATE_DIR)/',
+            ],
+          },
+          'actions': [
+            {
+              'action_name': 'version_header',
+              'message': 'Generating version header file: <@(_outputs)',
+              'inputs': [
+                '<(version_path)',
+                'cronet/version.h.in',
+              ],
+              'outputs': [
+                '<(SHARED_INTERMEDIATE_DIR)/components/cronet/ios/version.h',
+              ],
+              'action': [
+                'python',
+                '<(version_py_path)',
+                '-e', 'VERSION_FULL="<(version_full)"',
+                'cronet/version.h.in',
+                '<@(_outputs)',
+              ],
+              'includes': [
+                '../build/util/version.gypi',
+              ],
+            },
+          ],
+        },
+        {
+          'target_name': 'cronet_static',
+          'type': 'static_library',
+          'sources': [
+            'cronet/ios/Cronet.h',
+            'cronet/ios/Cronet.mm',
+            'cronet/ios/cronet_bidirectional_stream.h',
+            'cronet/ios/cronet_bidirectional_stream.cc',
+            'cronet/ios/cronet_c_for_grpc.h',
+            'cronet/ios/cronet_c_for_grpc.cc',
+            'cronet/ios/cronet_environment.cc',
+            'cronet/ios/cronet_environment.h',
+            'cronet/url_request_context_config.cc',
+            'cronet/url_request_context_config.h',
+          ],
+          'dependencies': [
+            'cronet_version_header',
+            '../base/base.gyp:base',
+            '../net/net.gyp:net',
+          ],
+          'cflags': [
+            '-fdata-sections',
+            '-ffunction-sections',
+            '-fno-rtti',
+            '-fvisibility=hidden'
+            '-fvisibility-inlines-hidden',
+            '-Wno-sign-promo',
+            '-Wno-missing-field-initializers',
+          ],
+          'ldflags': [
+            '-llog',
+            '-Wl,--gc-sections',
+            '-Wl,--exclude-libs,ALL'
+          ],
+        },
+        {
+          'target_name': 'libcronet_shared',
+          'type': 'shared_library',
+          'sources': [
+            'cronet/ios/Cronet.h',
+            'cronet/ios/Cronet.mm',
+          ],
+          'dependencies': [
+            'cronet_static',
+            '../base/base.gyp:base',
+          ],
+        },
+        {
+          'target_name': 'cronet_framework',
+          'product_name': 'Cronet',
+          'type': 'shared_library',
+          'mac_bundle': 1,
+          'sources': [
+            'cronet/ios/Cronet.h',
+            'cronet/ios/cronet_c_for_grpc.h',
+            'cronet/ios/empty.cc',
+          ],
+          'mac_framework_headers': [
+            'cronet/ios/Cronet.h',
+            'cronet/ios/cronet_c_for_grpc.h',
+          ],
+          'link_settings': {
+            'libraries': [
+              'Foundation.framework',
+            ],
+          },
+          'xcode_settings': {
+            'DEBUGGING_SYMBOLS': 'YES',
+            'INFOPLIST_FILE': 'cronet/ios/Info.plist',
+            'LD_DYLIB_INSTALL_NAME': '@loader_path/Frameworks/Cronet.framework/Cronet',
+          },
+          'dependencies': [
+            'cronet_static',
+            '../base/base.gyp:base',
+          ],
+          'configurations': {
+            'Debug_Base': {
+              'xcode_settings': {
+                'DEPLOYMENT_POSTPROCESSING': 'NO',
+                'DEBUG_INFORMATION_FORMAT': 'dwarf',
+                'STRIP_INSTALLED_PRODUCT': 'NO',
+              }
+            },
+            'Release_Base': {
+              'xcode_settings': {
+                'DEPLOYMENT_POSTPROCESSING': 'YES',
+                'DEBUG_INFORMATION_FORMAT': 'dwarf-with-dsym',
+                'STRIP_INSTALLED_PRODUCT': 'YES',
+                'STRIP_STYLE': 'non-global',
+              }
+            },
+          },
+        },
+        {
+          'target_name': 'cronet_test',
+          'type': 'executable',
+          'dependencies': [
+            'cronet_static',
+            '../net/net.gyp:net_quic_proto',
+            '../net/net.gyp:net_test_support',
+            '../net/net.gyp:simple_quic_tools',
+            '../testing/gtest.gyp:gtest',
+          ],
+          'sources': [
+            'cronet/ios/test/cronet_bidirectional_stream_test.mm',
+            'cronet/ios/test/cronet_test_runner.mm',
+            'cronet/ios/test/quic_test_server.cc',
+            'cronet/ios/test/quic_test_server.h',
+          ],
+          'mac_bundle_resources': [
+            '../net/data/ssl/certificates/quic_test.example.com.crt',
+            '../net/data/ssl/certificates/quic_test.example.com.key',
+            '../net/data/ssl/certificates/quic_test.example.com.key.pkcs8',
+            '../net/data/ssl/certificates/quic_test.example.com.key.sct',
+          ],
+          'include_dirs': [
+            '..',
+          ],
+        },
+        {
+            # Build this target to package a standalone Cronet in a single
+            # .a file.
+            'target_name': 'cronet_package',
+            'type': 'none',
+            'variables' : {
+              'package_dir': '<(PRODUCT_DIR)/cronet',
+            },
+            'dependencies': [
+              # Depend on the dummy target so that all of CrNet's dependencies
+              # are built before packaging.
+              'libcronet_shared',
+            ],
+            'actions': [
+              {
+                'action_name': 'Package Cronet',
+                'variables': {
+                  'tool_path':
+                      'cronet/tools/link_dependencies.py',
+                },
+                # Actions need an inputs list, even if it's empty.
+                'inputs': [
+                  '<(tool_path)',
+                  '<(PRODUCT_DIR)/libcronet_shared.dylib',
+                ],
+                # Only specify one output, since this will be libtool's output.
+                'outputs': [ '<(package_dir)/libcronet_standalone_with_symbols.a' ],
+                'action': ['<(tool_path)',
+                           '<(PRODUCT_DIR)',
+                           'libcronet_shared.dylib',
+                           '<@(_outputs)',
+                ],
+              },
+              {
+                'action_name': 'Stripping standalone library',
+                # Actions need an inputs list, even if it's empty.
+                'inputs': [
+                  '<(package_dir)/libcronet_standalone_with_symbols.a',
+                ],
+                # Only specify one output, since this will be libtool's output.
+                'outputs': [ '<(package_dir)/libcronet_standalone.a' ],
+                'action': ['strip',
+                           '-S',
+                           '<@(_inputs)',
+                           '-o',
+                           '<@(_outputs)',
+                ],
+              },
+            ],
+            'copies': [
+              {
+                'destination': '<(package_dir)',
+                'files': [
+                  '../chrome/VERSION',
+                  'cronet/ios/Cronet.h',
+                  'cronet/ios/cronet_c_for_grpc.h',
+                ],
+              },
+              {
+                'destination': '<(package_dir)/test',
+                'files': [
+                  'cronet/ios/test/cronet_bidirectional_stream_test.mm',
+                  'cronet/ios/test/cronet_test_runner.mm',
+                ],
+              },
+            ],
+          },
+      ],
+    }],  # OS=="ios"
   ],
 }

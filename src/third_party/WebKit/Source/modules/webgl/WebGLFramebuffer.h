@@ -26,8 +26,15 @@
 #ifndef WebGLFramebuffer_h
 #define WebGLFramebuffer_h
 
+#include "bindings/core/v8/ScopedPersistent.h"
 #include "modules/webgl/WebGLContextObject.h"
 #include "modules/webgl/WebGLSharedObject.h"
+
+namespace gpu {
+namespace gles2 {
+class GLES2Interface;
+}
+}
 
 namespace blink {
 
@@ -44,9 +51,9 @@ public:
         virtual WebGLSharedObject* object() const = 0;
         virtual bool isSharedObject(WebGLSharedObject*) const = 0;
         virtual bool valid() const = 0;
-        virtual void onDetached(WebGraphicsContext3D*) = 0;
-        virtual void attach(WebGraphicsContext3D*, GLenum target, GLenum attachment) = 0;
-        virtual void unattach(WebGraphicsContext3D*, GLenum target, GLenum attachment) = 0;
+        virtual void onDetached(gpu::gles2::GLES2Interface*) = 0;
+        virtual void attach(gpu::gles2::GLES2Interface*, GLenum target, GLenum attachment) = 0;
+        virtual void unattach(gpu::gles2::GLES2Interface*, GLenum target, GLenum attachment) = 0;
 
         DEFINE_INLINE_VIRTUAL_TRACE() { }
 
@@ -58,7 +65,7 @@ public:
 
     static WebGLFramebuffer* create(WebGLRenderingContextBase*);
 
-    Platform3DObject object() const { return m_object; }
+    GLuint object() const { return m_object; }
 
     void setAttachmentForBoundFramebuffer(GLenum target, GLenum attachment, GLenum texTarget, WebGLTexture*, GLint level, GLint layer);
     void setAttachmentForBoundFramebuffer(GLenum target, GLenum attachment, WebGLRenderbuffer*);
@@ -88,13 +95,15 @@ public:
 
     GLenum getReadBuffer() const { return m_readBuffer; }
 
+    ScopedPersistent<v8::Array>* getPersistentCache();
+
     DECLARE_VIRTUAL_TRACE();
 
 protected:
     explicit WebGLFramebuffer(WebGLRenderingContextBase*);
 
     bool hasObject() const override { return m_object != 0; }
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+    void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
 private:
     WebGLAttachment* getAttachment(GLenum attachment) const;
@@ -108,7 +117,7 @@ private:
     // Check if a new drawBuffers call should be issued. This is called when we add or remove an attachment.
     void drawBuffersIfNecessary(bool force);
 
-    Platform3DObject m_object;
+    GLuint m_object;
 
     typedef HeapHashMap<GLenum, Member<WebGLAttachment>> AttachmentMap;
 
@@ -121,6 +130,8 @@ private:
     Vector<GLenum> m_filteredDrawBuffers;
 
     GLenum m_readBuffer;
+
+    ScopedPersistent<v8::Array> m_attachmentWrappers;
 };
 
 } // namespace blink

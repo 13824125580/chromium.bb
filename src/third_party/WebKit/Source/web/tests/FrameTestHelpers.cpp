@@ -32,13 +32,14 @@
 
 #include "platform/testing/URLTestHelpers.h"
 #include "platform/testing/UnitTestHelpers.h"
+#include "platform/testing/WebLayerTreeViewImplForTesting.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebData.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebThread.h"
+#include "public/platform/WebURLLoaderMockFactory.h"
 #include "public/platform/WebURLRequest.h"
 #include "public/platform/WebURLResponse.h"
-#include "public/platform/WebUnitTestSupport.h"
 #include "public/web/WebFrameWidget.h"
 #include "public/web/WebRemoteFrame.h"
 #include "public/web/WebSettings.h"
@@ -47,6 +48,7 @@
 #include "web/WebLocalFrameImpl.h"
 #include "web/WebRemoteFrameImpl.h"
 #include "wtf/Functional.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringBuilder.h"
 
@@ -77,17 +79,11 @@ TestWebFrameClient* testClientForFrame(WebFrame* frame)
 
 void runServeAsyncRequestsTask(TestWebFrameClient* client)
 {
-    Platform::current()->unitTestSupport()->serveAsynchronousMockedRequests();
+    Platform::current()->getURLLoaderMockFactory()->serveAsynchronousRequests();
     if (client->isLoading())
-        Platform::current()->currentThread()->taskRunner()->postTask(BLINK_FROM_HERE, bind(&runServeAsyncRequestsTask, client));
+        Platform::current()->currentThread()->getWebTaskRunner()->postTask(BLINK_FROM_HERE, WTF::bind(&runServeAsyncRequestsTask, WTF::unretained(client)));
     else
         testing::exitRunLoop();
-}
-
-void pumpPendingRequests(WebFrame* frame)
-{
-    Platform::current()->currentThread()->taskRunner()->postTask(BLINK_FROM_HERE, bind(&runServeAsyncRequestsTask, testClientForFrame(frame)));
-    testing::enterRunLoop();
 }
 
 TestWebFrameClient* defaultWebFrameClient()
@@ -102,6 +98,19 @@ TestWebViewClient* defaultWebViewClient()
     return &client;
 }
 
+// |uniqueName| is normally calculated in a somewhat complicated way by the
+// FrameTree class, but for test purposes the approximation below should be
+// close enough.
+String nameToUniqueName(const String& name)
+{
+    static int uniqueNameCounter = 0;
+    StringBuilder uniqueName;
+    uniqueName.append(name);
+    uniqueName.append(" ");
+    uniqueName.appendNumber(uniqueNameCounter++);
+    return uniqueName.toString();
+}
+
 } // namespace
 
 void loadFrame(WebFrame* frame, const std::string& url)
@@ -110,36 +119,50 @@ void loadFrame(WebFrame* frame, const std::string& url)
     urlRequest.initialize();
     urlRequest.setURL(URLTestHelpers::toKURL(url));
     frame->loadRequest(urlRequest);
-    pumpPendingRequests(frame);
+    pumpPendingRequestsForFrameToLoad(frame);
 }
 
 void loadHTMLString(WebFrame* frame, const std::string& html, const WebURL& baseURL)
 {
     frame->loadHTMLString(WebData(html.data(), html.size()), baseURL);
-    pumpPendingRequests(frame);
+    pumpPendingRequestsForFrameToLoad(frame);
 }
 
-void loadHistoryItem(WebFrame* frame, const WebHistoryItem& item, WebHistoryLoadType loadType, WebURLRequest::CachePolicy cachePolicy)
+void loadHistoryItem(WebFrame* frame, const WebHistoryItem& item, WebHistoryLoadType loadType, WebCachePolicy cachePolicy)
 {
-    frame->loadHistoryItem(item, loadType, cachePolicy);
-    pumpPendingRequests(frame);
+    WebURLRequest request = frame->toWebLocalFrame()->requestFromHistoryItem(item, cachePolicy);
+    frame->toWebLocalFrame()->load(request, WebFrameLoadType::BackForward, item);
+    pumpPendingRequestsForFrameToLoad(frame);
 }
 
 void reloadFrame(WebFrame* frame)
 {
-    frame->reload(false);
-    pumpPendingRequests(frame);
+    frame->reload(WebFrameLoadType::Reload);
+    pumpPendingRequestsForFrameToLoad(frame);
 }
 
 void reloadFrameIgnoringCache(WebFrame* frame)
 {
-    frame->reload(true);
-    pumpPendingRequests(frame);
+    frame->reload(WebFrameLoadType::ReloadBypassingCache);
+    pumpPendingRequestsForFrameToLoad(frame);
 }
 
-void pumpPendingRequestsDoNotUse(WebFrame* frame)
+void pumpPendingRequestsForFrameToLoad(WebFrame* frame)
 {
-    pumpPendingRequests(frame);
+    Platform::current()->currentThread()->getWebTaskRunner()->postTask(BLINK_FROM_HERE, WTF::bind(&runServeAsyncRequestsTask, WTF::unretained(testClientForFrame(frame))));
+    testing::enterRunLoop();
+}
+
+WebMouseEvent createMouseEvent(WebInputEvent::Type type, WebMouseEvent::Button button, const IntPoint& point, int modifiers)
+{
+    WebMouseEvent result;
+    result.type = type;
+    result.x = result.windowX = result.globalX = point.x();
+    result.y = result.windowX = result.globalX = point.y();
+    result.modifiers = modifiers;
+    result.button = button;
+    result.clickCount = 1;
+    return result;
 }
 
 WebLocalFrame* createLocalChild(WebRemoteFrame* parent, const WebString& name, WebFrameClient* client, WebFrame* previousSibling, const WebFrameOwnerProperties& properties)
@@ -147,15 +170,12 @@ WebLocalFrame* createLocalChild(WebRemoteFrame* parent, const WebString& name, W
     if (!client)
         client = defaultWebFrameClient();
 
-    // |uniqueName| is normally calculated in a somewhat complicated way by the
-    // FrameTree class, but for test purposes the approximation below should be
-    // close enough.
-    static int uniqueNameCounter = 0;
-    StringBuilder uniqueName;
-    uniqueName.append(name);
-    uniqueName.appendNumber(uniqueNameCounter++);
+    return parent->createLocalChild(WebTreeScopeType::Document, name, nameToUniqueName(name), WebSandboxFlags::None, client, previousSibling, properties, nullptr);
+}
 
-    return parent->createLocalChild(WebTreeScopeType::Document, name, uniqueName.toString(), WebSandboxFlags::None, client, previousSibling, properties);
+WebRemoteFrame* createRemoteChild(WebRemoteFrame* parent, WebRemoteFrameClient* client, const WebString& name)
+{
+    return parent->createRemoteChild(WebTreeScopeType::Document, name, nameToUniqueName(name), WebSandboxFlags::None, client, nullptr);
 }
 
 WebViewHelper::WebViewHelper(SettingOverrider* settingOverrider)
@@ -170,7 +190,7 @@ WebViewHelper::~WebViewHelper()
     reset();
 }
 
-WebViewImpl* WebViewHelper::initialize(bool enableJavascript, TestWebFrameClient* webFrameClient, TestWebViewClient* webViewClient, void (*updateSettingsFunc)(WebSettings*))
+WebViewImpl* WebViewHelper::initializeWithOpener(WebFrame* opener, bool enableJavascript, TestWebFrameClient* webFrameClient, TestWebViewClient* webViewClient, TestWebWidgetClient* webWidgetClient, void (*updateSettingsFunc)(WebSettings*))
 {
     reset();
 
@@ -178,7 +198,9 @@ WebViewImpl* WebViewHelper::initialize(bool enableJavascript, TestWebFrameClient
         webFrameClient = defaultWebFrameClient();
     if (!webViewClient)
         webViewClient = defaultWebViewClient();
-    m_webView = WebViewImpl::create(webViewClient);
+    if (!webWidgetClient)
+        webWidgetClient = webViewClient->widgetClient();
+    m_webView = WebViewImpl::create(webViewClient, WebPageVisibilityStateVisible);
     m_webView->settings()->setJavaScriptEnabled(enableJavascript);
     m_webView->settings()->setPluginsEnabled(true);
     // Enable (mocked) network loads of image URLs, as this simplifies
@@ -195,20 +217,25 @@ WebViewImpl* WebViewHelper::initialize(bool enableJavascript, TestWebFrameClient
         m_settingOverrider->overrideSettings(m_webView->settings());
     m_webView->setDeviceScaleFactor(webViewClient->screenInfo().deviceScaleFactor);
     m_webView->setDefaultPageScaleLimits(1, 4);
-    WebLocalFrame* frame = WebLocalFrameImpl::create(WebTreeScopeType::Document, webFrameClient);
+    WebLocalFrame* frame = WebLocalFrameImpl::create(WebTreeScopeType::Document, webFrameClient, opener);
     m_webView->setMainFrame(frame);
     // TODO(dcheng): The main frame widget currently has a special case.
     // Eliminate this once WebView is no longer a WebWidget.
-    m_webViewWidget = blink::WebFrameWidget::create(webViewClient, m_webView, frame);
+    m_webViewWidget = blink::WebFrameWidget::create(webWidgetClient, m_webView, frame);
 
     m_testWebViewClient = webViewClient;
 
     return m_webView;
 }
 
-WebViewImpl* WebViewHelper::initializeAndLoad(const std::string& url, bool enableJavascript, TestWebFrameClient* webFrameClient, TestWebViewClient* webViewClient, void (*updateSettingsFunc)(WebSettings*))
+WebViewImpl* WebViewHelper::initialize(bool enableJavascript, TestWebFrameClient* webFrameClient, TestWebViewClient* webViewClient, TestWebWidgetClient* webWidgetClient, void (*updateSettingsFunc)(WebSettings*))
 {
-    initialize(enableJavascript, webFrameClient, webViewClient, updateSettingsFunc);
+    return initializeWithOpener(nullptr, enableJavascript, webFrameClient, webViewClient, webWidgetClient, updateSettingsFunc);
+}
+
+WebViewImpl* WebViewHelper::initializeAndLoad(const std::string& url, bool enableJavascript, TestWebFrameClient* webFrameClient, TestWebViewClient* webViewClient, TestWebWidgetClient* webWidgetClient, void (*updateSettingsFunc)(WebSettings*))
+{
+    initialize(enableJavascript, webFrameClient, webViewClient, webWidgetClient, updateSettingsFunc);
 
     loadFrame(webView()->mainFrame(), url);
 
@@ -222,7 +249,7 @@ void WebViewHelper::reset()
         m_webViewWidget = nullptr;
     }
     if (m_webView) {
-        ASSERT(m_webView->mainFrame()->isWebRemoteFrame() || !testClientForFrame(m_webView->mainFrame())->isLoading());
+        DCHECK(m_webView->mainFrame()->isWebRemoteFrame() || !testClientForFrame(m_webView->mainFrame())->isLoading());
         m_webView->willCloseLayerTreeView();
         m_webView->close();
         m_webView = nullptr;
@@ -237,7 +264,7 @@ void WebViewHelper::resize(WebSize size)
     m_testWebViewClient->clearAnimationScheduled();
 }
 
-TestWebFrameClient::TestWebFrameClient() : m_loadsInProgress(0)
+TestWebFrameClient::TestWebFrameClient()
 {
 }
 
@@ -262,27 +289,12 @@ void TestWebFrameClient::didStartLoading(bool)
 
 void TestWebFrameClient::didStopLoading()
 {
-    ASSERT(m_loadsInProgress > 0);
+    DCHECK_GT(m_loadsInProgress, 0);
     --m_loadsInProgress;
 }
 
-void TestWebFrameClient::waitForLoadToComplete()
-{
-    for (;;) {
-        // We call runPendingTasks multiple times as single call of
-        // runPendingTasks may not be enough.
-        // runPendingTasks only ensures that main thread task queue is empty,
-        // and asynchronous parsing make use of off main thread HTML parser.
-        testing::runPendingTasks();
-        if (!isLoading())
-            break;
-
-        testing::yieldCurrentThread();
-    }
-}
-
 TestWebRemoteFrameClient::TestWebRemoteFrameClient()
-    : m_frame(WebRemoteFrameImpl::create(WebTreeScopeType::Document, this))
+    : m_frame(WebRemoteFrameImpl::create(WebTreeScopeType::Document, this, nullptr))
 {
 }
 
@@ -295,8 +307,7 @@ void TestWebRemoteFrameClient::frameDetached(DetachType type)
 
 void TestWebViewClient::initializeLayerTreeView()
 {
-    m_layerTreeView = adoptPtr(Platform::current()->unitTestSupport()->createLayerTreeViewForTesting());
-    ASSERT(m_layerTreeView);
+    m_layerTreeView = wrapUnique(new WebLayerTreeViewImplForTesting);
 }
 
 } // namespace FrameTestHelpers

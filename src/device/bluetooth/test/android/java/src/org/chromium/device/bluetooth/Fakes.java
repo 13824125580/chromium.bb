@@ -4,7 +4,6 @@
 
 package org.chromium.device.bluetooth;
 
-import android.Manifest;
 import android.annotation.TargetApi;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.le.ScanFilter;
@@ -17,15 +16,16 @@ import android.content.IntentFilter;
 import android.os.Build;
 import android.os.ParcelUuid;
 
+import android.test.mock.MockContext;
+
 import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.components.location.LocationUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,6 +40,32 @@ import java.util.UUID;
 @TargetApi(Build.VERSION_CODES.LOLLIPOP)
 class Fakes {
     private static final String TAG = "cr.Bluetooth";
+
+    /**
+     * Sets the factory for LocationUtils to return an instance whose
+     * hasAndroidLocationPermission and isSystemLocationSettingEnabled return
+     * values depend on |hasPermission| and |isEnabled| respectively.
+     */
+    @CalledByNative
+    public static void setLocationServicesState(
+            final boolean hasPermission, final boolean isEnabled) {
+        LocationUtils.setFactory(new LocationUtils.Factory() {
+            @Override
+            public LocationUtils create() {
+                return new LocationUtils() {
+                    @Override
+                    public boolean hasAndroidLocationPermission(Context context) {
+                        return hasPermission;
+                    }
+
+                    @Override
+                    public boolean isSystemLocationSettingEnabled(Context context) {
+                        return isEnabled;
+                    }
+                };
+            }
+        });
+    }
 
     /**
      * Fakes android.bluetooth.BluetoothAdapter.
@@ -66,16 +92,11 @@ class Fakes {
             mFakeScanner = new FakeBluetoothLeScanner();
         }
 
-        @CalledByNative("FakeBluetoothAdapter")
-        public void denyPermission() {
-            mFakeContext.mPermissions.clear();
-        }
-
         /**
          * Creates and discovers a new device.
          */
         @CalledByNative("FakeBluetoothAdapter")
-        public void discoverLowEnergyDevice(int deviceOrdinal) {
+        public void simulateLowEnergyDevice(int deviceOrdinal) {
             if (mFakeScanner == null) {
                 return;
             }
@@ -119,6 +140,14 @@ class Fakes {
                             new FakeScanResult(
                                     new FakeBluetoothDevice(this, "02:00:00:8B:74:63", ""), uuids));
 
+                    break;
+                }
+                case 5: {
+                    ArrayList<ParcelUuid> uuids = null;
+                    mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
+                            new FakeScanResult(new FakeBluetoothDevice(
+                                                       this, "01:00:00:90:1E:BE", null),
+                                                                    uuids));
                     break;
                 }
             }
@@ -183,19 +212,11 @@ class Fakes {
     }
 
     /**
-     * Fakes android.content.Context.
+     * Fakes android.content.Context by extending MockContext.
      */
-    static class FakeContext extends Wrappers.ContextWrapper {
-        public final Set<String> mPermissions = new HashSet<String>();
-
+    static class FakeContext extends MockContext {
         public FakeContext() {
-            super(null);
-            mPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        }
-
-        @Override
-        public boolean checkPermission(String permission) {
-            return mPermissions.contains(permission);
+            super();
         }
 
         @Override
@@ -368,6 +389,7 @@ class Fakes {
         boolean mReadCharacteristicWillFailSynchronouslyOnce = false;
         boolean mSetCharacteristicNotificationWillFailSynchronouslyOnce = false;
         boolean mWriteCharacteristicWillFailSynchronouslyOnce = false;
+        boolean mReadDescriptorWillFailSynchronouslyOnce = false;
         boolean mWriteDescriptorWillFailSynchronouslyOnce = false;
 
         public FakeBluetoothGatt(FakeBluetoothDevice device) {
@@ -427,6 +449,16 @@ class Fakes {
             }
             nativeOnFakeBluetoothGattWriteCharacteristic(
                     mDevice.mAdapter.mNativeBluetoothTestAndroid, characteristic.getValue());
+            return true;
+        }
+
+        @Override
+        boolean readDescriptor(Wrappers.BluetoothGattDescriptorWrapper descriptor) {
+            if (mReadDescriptorWillFailSynchronouslyOnce) {
+                mReadDescriptorWillFailSynchronouslyOnce = false;
+                return false;
+            }
+            nativeOnFakeBluetoothGattReadDescriptor(mDevice.mAdapter.mNativeBluetoothTestAndroid);
             return true;
         }
 
@@ -621,31 +653,12 @@ class Fakes {
                     (FakeBluetoothGattCharacteristic) chromeCharacteristic.mCharacteristic;
             UUID uuid = UUID.fromString(uuidString);
 
-            // Check for duplicates
-            for (Wrappers.BluetoothGattDescriptorWrapper descriptor :
-                    fakeCharacteristic.mDescriptors) {
-                if (descriptor.getUuid().equals(uuid)) {
-                    throw new IllegalArgumentException(
-                            "FakeBluetoothGattCharacteristic addDescriptor called with uuid '"
-                            + uuidString + "' that has already been added to this characteristic.");
-                }
-            }
             fakeCharacteristic.mDescriptors.add(
                     new FakeBluetoothGattDescriptor(fakeCharacteristic, uuid));
         }
 
         // -----------------------------------------------------------------------------------------
         // Wrappers.BluetoothGattCharacteristicWrapper overrides:
-
-        @Override
-        public Wrappers.BluetoothGattDescriptorWrapper getDescriptor(UUID uuid) {
-            for (Wrappers.BluetoothGattDescriptorWrapper descriptor : mDescriptors) {
-                if (descriptor.getUuid().equals(uuid)) {
-                    return descriptor;
-                }
-            }
-            return null;
-        }
 
         @Override
         public List<Wrappers.BluetoothGattDescriptorWrapper> getDescriptors() {
@@ -686,13 +699,63 @@ class Fakes {
         final FakeBluetoothGattCharacteristic mCharacteristic;
         final UUID mUuid;
         byte[] mValue;
+        static FakeBluetoothGattDescriptor sRememberedDescriptor;
 
         public FakeBluetoothGattDescriptor(
                 FakeBluetoothGattCharacteristic characteristic, UUID uuid) {
-            super(null);
+            super(null, null);
             mCharacteristic = characteristic;
             mUuid = uuid;
             mValue = new byte[0];
+        }
+
+        // Implements BluetoothTestAndroid::RememberDescriptorForSubsequentAction.
+        @CalledByNative("FakeBluetoothGattDescriptor")
+        private static void rememberDescriptorForSubsequentAction(
+                ChromeBluetoothRemoteGattDescriptor chromeDescriptor) {
+            sRememberedDescriptor = (FakeBluetoothGattDescriptor) chromeDescriptor.mDescriptor;
+        }
+
+        // Simulate a value being read from a descriptor.
+        @CalledByNative("FakeBluetoothGattDescriptor")
+        private static void valueRead(
+                ChromeBluetoothRemoteGattDescriptor chromeDescriptor, int status, byte[] value) {
+            if (chromeDescriptor == null && sRememberedDescriptor == null)
+                throw new IllegalArgumentException("rememberDescriptor wasn't called previously.");
+
+            FakeBluetoothGattDescriptor fakeDescriptor = (chromeDescriptor == null)
+                    ? sRememberedDescriptor
+                    : (FakeBluetoothGattDescriptor) chromeDescriptor.mDescriptor;
+
+            fakeDescriptor.mValue = value;
+            fakeDescriptor.mCharacteristic.mService.mDevice.mGattCallback.onDescriptorRead(
+                    fakeDescriptor, status);
+        }
+
+        // Simulate a value being written to a descriptor.
+        @CalledByNative("FakeBluetoothGattDescriptor")
+        private static void valueWrite(
+                ChromeBluetoothRemoteGattDescriptor chromeDescriptor, int status) {
+            if (chromeDescriptor == null && sRememberedDescriptor == null)
+                throw new IllegalArgumentException("rememberDescriptor wasn't called previously.");
+
+            FakeBluetoothGattDescriptor fakeDescriptor = (chromeDescriptor == null)
+                    ? sRememberedDescriptor
+                    : (FakeBluetoothGattDescriptor) chromeDescriptor.mDescriptor;
+
+            fakeDescriptor.mCharacteristic.mService.mDevice.mGattCallback.onDescriptorWrite(
+                    fakeDescriptor, status);
+        }
+
+        // Cause subsequent value read of a descriptor to fail synchronously.
+        @CalledByNative("FakeBluetoothGattDescriptor")
+        private static void setReadDescriptorWillFailSynchronouslyOnce(
+                ChromeBluetoothRemoteGattDescriptor chromeDescriptor) {
+            FakeBluetoothGattDescriptor fakeDescriptor =
+                    (FakeBluetoothGattDescriptor) chromeDescriptor.mDescriptor;
+
+            fakeDescriptor.mCharacteristic.mService.mDevice.mGatt
+                    .mReadDescriptorWillFailSynchronouslyOnce = true;
         }
 
         // Cause subsequent value write of a descriptor to fail synchronously.
@@ -708,6 +771,11 @@ class Fakes {
 
         // -----------------------------------------------------------------------------------------
         // Wrappers.BluetoothGattDescriptorWrapper overrides:
+
+        @Override
+        public Wrappers.BluetoothGattCharacteristicWrapper getCharacteristic() {
+            return mCharacteristic;
+        }
 
         @Override
         public UUID getUuid() {
@@ -758,6 +826,10 @@ class Fakes {
     // Binds to BluetoothTestAndroid::OnFakeBluetoothGattWriteCharacteristic.
     private static native void nativeOnFakeBluetoothGattWriteCharacteristic(
             long nativeBluetoothTestAndroid, byte[] value);
+
+    // Binds to BluetoothTestAndroid::OnFakeBluetoothGattReadDescriptor.
+    private static native void nativeOnFakeBluetoothGattReadDescriptor(
+            long nativeBluetoothTestAndroid);
 
     // Binds to BluetoothTestAndroid::OnFakeBluetoothGattWriteDescriptor.
     private static native void nativeOnFakeBluetoothGattWriteDescriptor(

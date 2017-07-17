@@ -35,13 +35,12 @@
 #include "core/events/KeyboardEvent.h"
 #include "core/html/HTMLInputElement.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> CheckboxInputType::create(HTMLInputElement& element)
+InputType* CheckboxInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new CheckboxInputType(element));
+    return new CheckboxInputType(element);
 }
 
 const AtomicString& CheckboxInputType::formControlType() const
@@ -61,18 +60,18 @@ String CheckboxInputType::valueMissingText() const
 
 void CheckboxInputType::handleKeyupEvent(KeyboardEvent* event)
 {
-    const String& key = event->keyIdentifier();
-    if (key != "U+0020")
+    const String& key = event->key();
+    if (key != " ")
         return;
     dispatchSimulatedClickIfActive(event);
 }
 
-PassOwnPtrWillBeRawPtr<ClickHandlingState> CheckboxInputType::willDispatchClick()
+ClickHandlingState* CheckboxInputType::willDispatchClick()
 {
     // An event handler can use preventDefault or "return false" to reverse the checking we do here.
     // The ClickHandlingState object contains what we need to undo what we did here in didDispatchClick.
 
-    OwnPtrWillBeRawPtr<ClickHandlingState> state = adoptPtrWillBeNoop(new ClickHandlingState);
+    ClickHandlingState* state = new ClickHandlingState;
 
     state->checked = element().checked();
     state->indeterminate = element().indeterminate();
@@ -82,7 +81,7 @@ PassOwnPtrWillBeRawPtr<ClickHandlingState> CheckboxInputType::willDispatchClick(
 
     element().setChecked(!state->checked, DispatchChangeEvent);
     m_isInClickHandler = true;
-    return state.release();
+    return state;
 }
 
 void CheckboxInputType::didDispatchClick(Event* event, const ClickHandlingState& state)

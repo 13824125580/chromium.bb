@@ -45,13 +45,13 @@ WebInspector.MediaQueryInspector.prototype = {
         // FIXME: adapt this to multiple targets.
         if (this._cssModel)
             return;
-        this._cssModel = WebInspector.CSSStyleModel.fromTarget(target);
+        this._cssModel = WebInspector.CSSModel.fromTarget(target);
         if (!this._cssModel)
             return;
-        this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.StyleSheetAdded, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.StyleSheetRemoved, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.StyleSheetChanged, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.MediaQueryResultChanged, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.addEventListener(WebInspector.CSSModel.Events.StyleSheetAdded, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.addEventListener(WebInspector.CSSModel.Events.StyleSheetRemoved, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.addEventListener(WebInspector.CSSModel.Events.StyleSheetChanged, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.addEventListener(WebInspector.CSSModel.Events.MediaQueryResultChanged, this._scheduleMediaQueriesUpdate, this);
     },
 
     /**
@@ -60,12 +60,12 @@ WebInspector.MediaQueryInspector.prototype = {
      */
     targetRemoved: function(target)
     {
-        if (WebInspector.CSSStyleModel.fromTarget(target) !== this._cssModel)
+        if (WebInspector.CSSModel.fromTarget(target) !== this._cssModel)
             return;
-        this._cssModel.removeEventListener(WebInspector.CSSStyleModel.Events.StyleSheetAdded, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.removeEventListener(WebInspector.CSSStyleModel.Events.StyleSheetRemoved, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.removeEventListener(WebInspector.CSSStyleModel.Events.StyleSheetChanged, this._scheduleMediaQueriesUpdate, this);
-        this._cssModel.removeEventListener(WebInspector.CSSStyleModel.Events.MediaQueryResultChanged, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.removeEventListener(WebInspector.CSSModel.Events.StyleSheetAdded, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.removeEventListener(WebInspector.CSSModel.Events.StyleSheetRemoved, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.removeEventListener(WebInspector.CSSModel.Events.StyleSheetChanged, this._scheduleMediaQueriesUpdate, this);
+        this._cssModel.removeEventListener(WebInspector.CSSModel.Events.MediaQueryResultChanged, this._scheduleMediaQueriesUpdate, this);
         delete this._cssModel;
     },
 
@@ -196,7 +196,7 @@ WebInspector.MediaQueryInspector.prototype = {
         queryModels.sort(compareModels);
         queryModels = this._squashAdjacentEqual(queryModels);
 
-        var allEqual = this._cachedQueryModels && this._cachedQueryModels.length == queryModels.length;
+        var allEqual = this._cachedQueryModels && this._cachedQueryModels.length === queryModels.length;
         for (var i = 0; allEqual && i < queryModels.length; ++i)
             allEqual = allEqual && this._cachedQueryModels[i].equals(queryModels[i]);
         if (allEqual)

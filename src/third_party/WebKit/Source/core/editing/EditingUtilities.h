@@ -33,6 +33,7 @@
 #include "core/editing/PositionWithAffinity.h"
 #include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleSelection.h"
+#include "core/events/InputEvent.h"
 #include "platform/text/TextDirection.h"
 #include "wtf/Forward.h"
 #include "wtf/text/CharacterNames.h"
@@ -40,9 +41,16 @@
 namespace blink {
 
 enum class PositionMoveType {
-    CodePoint, // Move by a single code point.
-    Character, // Move to the next Unicode character break.
-    BackwardDeletion // Subject to platform conventions.
+    // Move by a single code unit. |PositionMoveType::CodeUnit| is used for
+    // implementing other |PositionMoveType|. You should not use this.
+    CodeUnit,
+    // Move to the next Unicode code point. At most two code unit when we are
+    // at surrogate pair. Please consider using |GraphemeCluster|.
+    BackwardDeletion,
+    // Move by a grapheme cluster for user-perceived character in Unicode
+    // Standard Annex #29, Unicode text segmentation[1].
+    // [1] http://www.unicode.org/reports/tr29/
+    GraphemeCluster,
 };
 
 class Document;
@@ -56,6 +64,9 @@ class Node;
 class Range;
 
 // This file contains a set of helper functions used by the editing commands
+
+CORE_EXPORT bool needsLayoutTreeUpdate(const Node&);
+CORE_EXPORT bool needsLayoutTreeUpdate(const Position&);
 
 // -------------------------------------------------------------------------
 // Node
@@ -78,8 +89,7 @@ Node* highestNodeToRemoveInPruning(Node*, Node* excludeNode = nullptr);
 Element* enclosingBlock(Node*, EditingBoundaryCrossingRule = CannotCrossEditingBoundary);
 CORE_EXPORT Element* enclosingBlock(const Position&, EditingBoundaryCrossingRule);
 CORE_EXPORT Element* enclosingBlock(const PositionInFlatTree&, EditingBoundaryCrossingRule);
-Element* enclosingBlockFlowElement(Node&); // Deprecated, use enclosingBlock instead.
-bool inSameContainingBlockFlowElement(Node*, Node*);
+Element* enclosingBlockFlowElement(const Node&); // Deprecated, use enclosingBlock instead.
 Element* enclosingTableCell(const Position&);
 Element* associatedElementOf(const Position&);
 Node* enclosingEmptyListItem(const VisiblePosition&);
@@ -100,9 +110,9 @@ Node* blockExtentStart(Node* node, const Node* stayWithin = 0);
 Node* blockExtentEnd(Node* node, const Node* stayWithin = 0);
 
 HTMLSpanElement* tabSpanElement(const Node*);
-Element* isLastPositionBeforeTable(const VisiblePosition&);
-CORE_EXPORT Element* isFirstPositionAfterTable(const VisiblePosition&);
-CORE_EXPORT Element* isFirstPositionAfterTable(const VisiblePositionInFlatTree&);
+Element* tableElementJustAfter(const VisiblePosition&);
+CORE_EXPORT Element* tableElementJustBefore(const VisiblePosition&);
+CORE_EXPORT Element* tableElementJustBefore(const VisiblePositionInFlatTree&);
 
 // Returns the next leaf node or nullptr if there are no more.
 // Delivers leaf nodes as if the whole DOM tree were a linear chain of its leaf nodes.
@@ -148,6 +158,7 @@ bool isTabHTMLSpanElement(const Node*);
 bool isTabHTMLSpanElementTextNode(const Node*);
 bool isMailHTMLBlockquoteElement(const Node*);
 bool isDisplayInsideTable(const Node*);
+bool isInline(const Node*);
 bool isTableCell(const Node*);
 bool isEmptyTableCell(const Node*);
 bool isTableStructureNode(const Node*);
@@ -210,8 +221,8 @@ CORE_EXPORT Position nextPositionOf(const Position&, PositionMoveType);
 CORE_EXPORT PositionInFlatTree previousPositionOf(const PositionInFlatTree&, PositionMoveType);
 CORE_EXPORT PositionInFlatTree nextPositionOf(const PositionInFlatTree&, PositionMoveType);
 
-CORE_EXPORT int uncheckedPreviousOffset(const Node*, int current);
-CORE_EXPORT int uncheckedNextOffset(const Node*, int current);
+CORE_EXPORT int previousGraphemeBoundaryOf(const Node*, int current);
+CORE_EXPORT int nextGraphemeBoundaryOf(const Node*, int current);
 
 // comparision functions on Position
 
@@ -219,18 +230,18 @@ CORE_EXPORT int uncheckedNextOffset(const Node*, int current);
 // positions don't have common ancestor.
 int comparePositionsInDOMTree(Node* containerA, int offsetA, Node* containerB, int offsetB, bool* disconnected = nullptr);
 int comparePositionsInFlatTree(Node* containerA, int offsetA, Node* containerB, int offsetB, bool* disconnected = nullptr);
+// TODO(yosin): We replace |comparePositions()| by |Position::opeator<()| to
+// utilize |DCHECK_XX()|.
 int comparePositions(const Position&, const Position&);
 int comparePositions(const PositionWithAffinity&, const PositionWithAffinity&);
 
 // boolean functions on Position
 
-enum EUpdateStyle { UpdateStyle, DoNotUpdateStyle };
 // FIXME: Both isEditablePosition and isRichlyEditablePosition rely on up-to-date
 // style to give proper results. They shouldn't update style by default, but
 // should make it clear that that is the contract.
-// FIXME: isRichlyEditablePosition should also take EUpdateStyle.
-CORE_EXPORT bool isEditablePosition(const Position&, EditableType = ContentIsEditable, EUpdateStyle = UpdateStyle);
-bool isEditablePosition(const PositionInFlatTree&, EditableType = ContentIsEditable, EUpdateStyle = UpdateStyle);
+CORE_EXPORT bool isEditablePosition(const Position&, EditableType = ContentIsEditable);
+bool isEditablePosition(const PositionInFlatTree&, EditableType = ContentIsEditable);
 bool isRichlyEditablePosition(const Position&, EditableType = ContentIsEditable);
 bool lineBreakExistsAtPosition(const Position&);
 bool isAtUnsplittableElement(const Position&);
@@ -238,9 +249,18 @@ bool isAtUnsplittableElement(const Position&);
 // miscellaneous functions on Position
 
 enum WhitespacePositionOption { NotConsiderNonCollapsibleWhitespace, ConsiderNonCollapsibleWhitespace };
+
+// |leadingWhitespacePosition(position)| returns a previous position of
+// |position| if it is at collapsible whitespace, otherwise it returns null
+// position. When it is called with |NotConsiderNonCollapsibleWhitespace| and
+// a previous position in a element which has CSS property "white-space:pre",
+// or its variant, |leadingWhitespacePosition()| returns null position.
+// TODO(yosin) We should rename |leadingWhitespacePosition()| to
+// |leadingCollapsibleWhitespacePosition()| as this function really returns.
 Position leadingWhitespacePosition(const Position&, TextAffinity, WhitespacePositionOption = NotConsiderNonCollapsibleWhitespace);
 Position trailingWhitespacePosition(const Position&, TextAffinity, WhitespacePositionOption = NotConsiderNonCollapsibleWhitespace);
 unsigned numEnclosingMailBlockquotes(const Position&);
+PositionWithAffinity positionRespectingEditingBoundary(const Position&, const LayoutPoint& localPoint, Node* targetNode);
 void updatePositionForNodeRemoval(Position&, Node&);
 
 // -------------------------------------------------------------------------
@@ -268,11 +288,11 @@ bool lineBreakExistsAtVisiblePosition(const VisiblePosition&);
 
 int comparePositions(const VisiblePosition&, const VisiblePosition&);
 
-int indexForVisiblePosition(const VisiblePosition&, RefPtrWillBeRawPtr<ContainerNode>& scope);
+int indexForVisiblePosition(const VisiblePosition&, ContainerNode*& scope);
 EphemeralRange makeRange(const VisiblePosition&, const VisiblePosition&);
 EphemeralRange normalizeRange(const EphemeralRange&);
 EphemeralRangeInFlatTree normalizeRange(const EphemeralRangeInFlatTree&);
-VisiblePosition visiblePositionForIndex(int index, ContainerNode* scope);
+CORE_EXPORT VisiblePosition visiblePositionForIndex(int index, ContainerNode* scope);
 
 // -------------------------------------------------------------------------
 // HTMLElement
@@ -280,8 +300,8 @@ VisiblePosition visiblePositionForIndex(int index, ContainerNode* scope);
 
 // Functions returning HTMLElement
 
-PassRefPtrWillBeRawPtr<HTMLElement> createDefaultParagraphElement(Document&);
-PassRefPtrWillBeRawPtr<HTMLElement> createHTMLElement(Document&, const QualifiedName&);
+HTMLElement* createDefaultParagraphElement(Document&);
+HTMLElement* createHTMLElement(Document&, const QualifiedName&);
 
 HTMLElement* enclosingList(Node*);
 HTMLElement* outermostEnclosingList(Node*, HTMLElement* rootList = nullptr);
@@ -293,8 +313,8 @@ Node* enclosingListChild(Node*);
 
 // Functions returning Element
 
-PassRefPtrWillBeRawPtr<HTMLSpanElement> createTabSpanElement(Document&);
-PassRefPtrWillBeRawPtr<HTMLSpanElement> createTabSpanElement(Document&, const String& tabText);
+HTMLSpanElement* createTabSpanElement(Document&);
+HTMLSpanElement* createTabSpanElement(Document&, const String& tabText);
 
 Element* rootEditableElementOf(const Position&, EditableType = ContentIsEditable);
 Element* rootEditableElementOf(const PositionInFlatTree&, EditableType = ContentIsEditable);
@@ -337,6 +357,15 @@ inline bool isAmbiguousBoundaryCharacter(UChar character)
 
 String stringWithRebalancedWhitespace(const String&, bool startIsStartOfParagraph, bool endIsEndOfParagraph);
 const String& nonBreakingSpaceString();
+
+// -------------------------------------------------------------------------
+// Events
+// -------------------------------------------------------------------------
+
+// Functions dispatch InputEvent
+DispatchEventResult dispatchBeforeInputInsertText(EventTarget*, const String& data);
+DispatchEventResult dispatchBeforeInputFromComposition(EventTarget*, InputEvent::InputType, const String& data, InputEvent::EventCancelable);
+DispatchEventResult dispatchBeforeInputEditorCommand(EventTarget*, InputEvent::InputType, const String& data, const RangeVector*);
 
 } // namespace blink
 

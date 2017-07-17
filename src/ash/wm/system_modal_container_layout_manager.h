@@ -11,7 +11,6 @@
 #include "ash/snap_to_pixel_layout_manager.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/aura/window_observer.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 
@@ -51,12 +50,14 @@ class ASH_EXPORT SystemModalContainerLayoutManager
                                const void* key,
                                intptr_t old) override;
   void OnWindowDestroying(aura::Window* window) override;
+  void OnWindowVisibilityChanged(aura::Window* window, bool visible) override;
 
   // Overridden from keyboard::KeyboardControllerObserver:
   void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
 
-  // Can a given |window| receive and handle input events?
-  bool CanWindowReceiveEvents(aura::Window* window);
+  // True if the window is either contained by the top most modal window,
+  // or contained by its transient children.
+  bool IsPartOfActiveModalWindow(aura::Window* window);
 
   // Activates next modal window if any. Returns false if there
   // are no more modal windows in this layout manager.

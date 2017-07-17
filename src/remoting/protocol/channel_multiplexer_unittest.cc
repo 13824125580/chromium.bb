@@ -7,8 +7,11 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket.h"
 #include "net/socket/stream_socket.h"
@@ -36,7 +39,7 @@ const char kTestChannelName2[] = "test2";
 
 
 void QuitCurrentThread() {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
 }
 
@@ -48,7 +51,7 @@ class MockSocketCallback {
 class MockConnectCallback {
  public:
   MOCK_METHOD1(OnConnectedPtr, void(P2PStreamSocket* socket));
-  void OnConnected(scoped_ptr<P2PStreamSocket> socket) {
+  void OnConnected(std::unique_ptr<P2PStreamSocket> socket) {
     OnConnectedPtr(socket.release());
   }
 };
@@ -86,8 +89,8 @@ class ChannelMultiplexerTest : public testing::Test {
   }
 
   void CreateChannel(const std::string& name,
-                     scoped_ptr<P2PStreamSocket>* host_socket,
-                     scoped_ptr<P2PStreamSocket>* client_socket) {
+                     std::unique_ptr<P2PStreamSocket>* host_socket,
+                     std::unique_ptr<P2PStreamSocket>* client_socket) {
     int counter = 2;
     host_mux_->CreateChannel(name, base::Bind(
         &ChannelMultiplexerTest::OnChannelConnected, base::Unretained(this),
@@ -102,10 +105,9 @@ class ChannelMultiplexerTest : public testing::Test {
     EXPECT_TRUE(client_socket->get());
   }
 
-  void OnChannelConnected(
-      scoped_ptr<P2PStreamSocket>* storage,
-      int* counter,
-      scoped_ptr<P2PStreamSocket> socket) {
+  void OnChannelConnected(std::unique_ptr<P2PStreamSocket>* storage,
+                          int* counter,
+                          std::unique_ptr<P2PStreamSocket> socket) {
     *storage = std::move(socket);
     --(*counter);
     EXPECT_GE(*counter, 0);
@@ -127,19 +129,19 @@ class ChannelMultiplexerTest : public testing::Test {
   FakeStreamChannelFactory host_channel_factory_;
   FakeStreamChannelFactory client_channel_factory_;
 
-  scoped_ptr<ChannelMultiplexer> host_mux_;
-  scoped_ptr<ChannelMultiplexer> client_mux_;
+  std::unique_ptr<ChannelMultiplexer> host_mux_;
+  std::unique_ptr<ChannelMultiplexer> client_mux_;
 
-  scoped_ptr<P2PStreamSocket> host_socket1_;
-  scoped_ptr<P2PStreamSocket> client_socket1_;
-  scoped_ptr<P2PStreamSocket> host_socket2_;
-  scoped_ptr<P2PStreamSocket> client_socket2_;
+  std::unique_ptr<P2PStreamSocket> host_socket1_;
+  std::unique_ptr<P2PStreamSocket> client_socket1_;
+  std::unique_ptr<P2PStreamSocket> host_socket2_;
+  std::unique_ptr<P2PStreamSocket> client_socket2_;
 };
 
 
 TEST_F(ChannelMultiplexerTest, OneChannel) {
-  scoped_ptr<P2PStreamSocket> host_socket;
-  scoped_ptr<P2PStreamSocket> client_socket;
+  std::unique_ptr<P2PStreamSocket> host_socket;
+  std::unique_ptr<P2PStreamSocket> client_socket;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName, &host_socket, &client_socket));
 
@@ -151,13 +153,13 @@ TEST_F(ChannelMultiplexerTest, OneChannel) {
 }
 
 TEST_F(ChannelMultiplexerTest, TwoChannels) {
-  scoped_ptr<P2PStreamSocket> host_socket1_;
-  scoped_ptr<P2PStreamSocket> client_socket1_;
+  std::unique_ptr<P2PStreamSocket> host_socket1_;
+  std::unique_ptr<P2PStreamSocket> client_socket1_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName, &host_socket1_, &client_socket1_));
 
-  scoped_ptr<P2PStreamSocket> host_socket2_;
-  scoped_ptr<P2PStreamSocket> client_socket2_;
+  std::unique_ptr<P2PStreamSocket> host_socket2_;
+  std::unique_ptr<P2PStreamSocket> client_socket2_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName2, &host_socket2_, &client_socket2_));
 
@@ -176,23 +178,23 @@ TEST_F(ChannelMultiplexerTest, TwoChannels) {
 
 // Four channels, two in each direction
 TEST_F(ChannelMultiplexerTest, FourChannels) {
-  scoped_ptr<P2PStreamSocket> host_socket1_;
-  scoped_ptr<P2PStreamSocket> client_socket1_;
+  std::unique_ptr<P2PStreamSocket> host_socket1_;
+  std::unique_ptr<P2PStreamSocket> client_socket1_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName, &host_socket1_, &client_socket1_));
 
-  scoped_ptr<P2PStreamSocket> host_socket2_;
-  scoped_ptr<P2PStreamSocket> client_socket2_;
+  std::unique_ptr<P2PStreamSocket> host_socket2_;
+  std::unique_ptr<P2PStreamSocket> client_socket2_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName2, &host_socket2_, &client_socket2_));
 
-  scoped_ptr<P2PStreamSocket> host_socket3;
-  scoped_ptr<P2PStreamSocket> client_socket3;
+  std::unique_ptr<P2PStreamSocket> host_socket3;
+  std::unique_ptr<P2PStreamSocket> client_socket3;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel("test3", &host_socket3, &client_socket3));
 
-  scoped_ptr<P2PStreamSocket> host_socket4;
-  scoped_ptr<P2PStreamSocket> client_socket4;
+  std::unique_ptr<P2PStreamSocket> host_socket4;
+  std::unique_ptr<P2PStreamSocket> client_socket4;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel("ch4", &host_socket4, &client_socket4));
 
@@ -219,13 +221,13 @@ TEST_F(ChannelMultiplexerTest, FourChannels) {
 }
 
 TEST_F(ChannelMultiplexerTest, WriteFailSync) {
-  scoped_ptr<P2PStreamSocket> host_socket1_;
-  scoped_ptr<P2PStreamSocket> client_socket1_;
+  std::unique_ptr<P2PStreamSocket> host_socket1_;
+  std::unique_ptr<P2PStreamSocket> client_socket1_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName, &host_socket1_, &client_socket1_));
 
-  scoped_ptr<P2PStreamSocket> host_socket2_;
-  scoped_ptr<P2PStreamSocket> client_socket2_;
+  std::unique_ptr<P2PStreamSocket> host_socket2_;
+  std::unique_ptr<P2PStreamSocket> client_socket2_;
   ASSERT_NO_FATAL_FAILURE(
       CreateChannel(kTestChannelName2, &host_socket2_, &client_socket2_));
 

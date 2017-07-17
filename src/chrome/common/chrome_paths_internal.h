@@ -80,12 +80,6 @@ base::FilePath GetFrameworkBundlePath();
 // Get the local library directory.
 bool GetLocalLibraryDirectory(base::FilePath* result);
 
-// Get the user library directory.
-bool GetUserLibraryDirectory(base::FilePath* result);
-
-// Get the user applications directory.
-bool GetUserApplicationsDirectory(base::FilePath* result);
-
 // Get the global Application Support directory (under /Library/).
 bool GetGlobalApplicationSupportDirectory(base::FilePath* result);
 
@@ -105,12 +99,6 @@ bool GetUserDataDirectoryForBrowserBundle(NSBundle* bundle,
 #endif  // OS_MACOSX
 // Checks if the |process_type| has the rights to access the profile.
 bool ProcessNeedsProfileDir(const std::string& process_type);
-
-#if defined(OS_WIN)
-// Populates |crash_dir| with the default crash dump location regardless of
-// whether DIR_USER_DATA or DIR_CRASH_DUMPS has been overridden.
-bool GetDefaultCrashDumpLocation(base::FilePath* crash_dir);
-#endif
 
 }  // namespace chrome
 

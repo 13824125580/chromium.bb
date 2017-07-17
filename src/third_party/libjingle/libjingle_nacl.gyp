@@ -4,7 +4,6 @@
 
 {
   'variables': {
-    'libjingle_source': "source",
     'webrtc_base': "../webrtc/base",
     'webrtc_xmllite': "../webrtc/libjingle/xmllite",
     'webrtc_p2p': "../webrtc/p2p",
@@ -29,7 +28,6 @@
         '<(DEPTH)/native_client_sdk/native_client_sdk_untrusted.gyp:nacl_io_untrusted',
         '<(DEPTH)/third_party/expat/expat_nacl.gyp:expat_nacl',
         '<(DEPTH)/third_party/boringssl/boringssl_nacl.gyp:boringssl_nacl',
-        'libjingle_p2p_constants_nacl',
       ],
       'defines': [
         'EXPAT_RELATIVE_PATH',
@@ -45,7 +43,6 @@
         'timezone=_timezone',
       ],
       'include_dirs': [
-        './<(libjingle_source)',
         '../',
       ],
       'includes': ['libjingle_common.gypi', ],
@@ -53,8 +50,6 @@
       'sources': [
         '<(webrtc_base)/asyncfile.cc',
         '<(webrtc_base)/asyncfile.h',
-        '<(webrtc_base)/asynchttprequest.cc',
-        '<(webrtc_base)/asynchttprequest.h',
         '<(webrtc_base)/asyncinvoker.cc',
         '<(webrtc_base)/asyncinvoker.h',
         '<(webrtc_base)/asyncinvoker-inl.h',
@@ -74,6 +69,8 @@
         '<(webrtc_base)/base64.h',
         '<(webrtc_base)/buffer.cc',
         '<(webrtc_base)/buffer.h',
+        '<(webrtc_base)/copyonwritebuffer.cc',
+        '<(webrtc_base)/copyonwritebuffer.h',
         '<(webrtc_base)/bytebuffer.cc',
         '<(webrtc_base)/bytebuffer.h',
         '<(webrtc_base)/byteorder.h',
@@ -114,6 +111,8 @@
         '<(webrtc_base)/ipaddress.cc',
         '<(webrtc_base)/ipaddress.h',
         '<(webrtc_base)/linked_ptr.h',
+        '<(webrtc_base)/location.cc',
+        '<(webrtc_base)/location.h',
         '<(webrtc_base)/logging.cc',
         '<(webrtc_base)/logging.h',
         '<(webrtc_base)/maccocoathreadhelper.h',
@@ -137,6 +136,7 @@
         '<(webrtc_base)/network.h',
         '<(webrtc_base)/networkmonitor.cc',
         '<(webrtc_base)/networkmonitor.h',
+        '<(webrtc_base)/nullsocketserver.cc',
         '<(webrtc_base)/nullsocketserver.h',
         '<(webrtc_base)/openssladapter.cc',
         '<(webrtc_base)/openssldigest.cc',
@@ -158,7 +158,6 @@
         '<(webrtc_base)/ratetracker.h',
         '<(webrtc_base)/scoped_autorelease_pool.h',
         '<(webrtc_base)/scoped_autorelease_pool.mm',
-        '<(webrtc_base)/scoped_ptr.h',
         '<(webrtc_base)/sec_buffer.h',
         '<(webrtc_base)/sha1.cc',
         '<(webrtc_base)/sha1.h',
@@ -193,8 +192,6 @@
         '<(webrtc_base)/sslsocketfactory.h',
         '<(webrtc_base)/sslstreamadapter.cc',
         '<(webrtc_base)/sslstreamadapter.h',
-        '<(webrtc_base)/sslstreamadapterhelper.cc',
-        '<(webrtc_base)/sslstreamadapterhelper.h',
         '<(webrtc_base)/stream.cc',
         '<(webrtc_base)/stream.h',
         '<(webrtc_base)/stringencode.cc',
@@ -253,12 +250,9 @@
         '<(webrtc_system_wrappers)/source/field_trial_default.cc',
       ],
       'sources!': [
-        # Compiled as part of libjingle_p2p_constants_nacl.
-        '<(webrtc_p2p)/base/constants.cc',
-        '<(webrtc_p2p)/base/constants.h',
         # For NACL, we have the field_trial_default and don't need the
         # field_trail.cc.
-        'overrides/field_trial.cc',
+        '../webrtc_overrides/field_trial.cc',
       ],
       'sources/': [
         ['exclude', '/mac[a-z]+\\.(h|cc)$'],
@@ -273,8 +267,6 @@
       ],
       'direct_dependent_settings': {
         'include_dirs': [
-          './overrides',
-          './<(libjingle_source)',
           '../../third_party/webrtc_overrides',
           '../../third_party',
           '../../third_party/webrtc',
@@ -295,25 +287,5 @@
         '<(DEPTH)/native_client_sdk/native_client_sdk_untrusted.gyp:nacl_io_untrusted',
       ],
     },  # end of target 'libjingle_nacl'
-
-    {
-      'target_name': 'libjingle_p2p_constants_nacl',
-      'type': 'none',
-      'variables': {
-        'nlib_target': 'libjingle_p2p_constants_nacl.a',
-        'nacl_untrusted_build': 1,
-        'build_glibc': 0,
-        'build_newlib': 1,
-        'build_pnacl_newlib': 1,
-      },
-      'include_dirs': [
-        './<(libjingle_source)',
-        '../'
-      ],
-      'sources': [
-        '<(webrtc_p2p)/base/constants.cc',
-        '<(webrtc_p2p)/base/constants.h',
-      ],
-    },  # end of target 'libjingle_p2p_constants_nacl'
   ],
 }

@@ -31,13 +31,12 @@
 #include "core/html/forms/ButtonInputType.h"
 
 #include "core/InputTypeNames.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> ButtonInputType::create(HTMLInputElement& element)
+InputType* ButtonInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new ButtonInputType(element));
+    return new ButtonInputType(element);
 }
 
 const AtomicString& ButtonInputType::formControlType() const

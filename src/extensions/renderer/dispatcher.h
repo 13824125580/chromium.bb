@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -15,10 +16,9 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/timer/timer.h"
-#include "content/public/renderer/render_process_observer.h"
+#include "content/public/renderer/render_thread_observer.h"
 #include "extensions/common/event_filter.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extensions_client.h"
@@ -67,7 +67,7 @@ struct Message;
 
 // Dispatches extension control messages sent to the renderer and stores
 // renderer extension related state.
-class Dispatcher : public content::RenderProcessObserver,
+class Dispatcher : public content::RenderThreadObserver,
                    public UserScriptSetManager::Observer {
  public:
   explicit Dispatcher(DispatcherDelegate* delegate);
@@ -85,6 +85,8 @@ class Dispatcher : public content::RenderProcessObserver,
 
   const std::string& webview_partition_id() { return webview_partition_id_; }
 
+  bool activity_logging_enabled() const { return activity_logging_enabled_; }
+
   void OnRenderFrameCreated(content::RenderFrame* render_frame);
 
   bool IsExtensionActive(const std::string& extension_id) const;
@@ -94,9 +96,11 @@ class Dispatcher : public content::RenderProcessObserver,
                               int extension_group,
                               int world_id);
 
-  // Runs on a different thread and should not use any member variables.
-  static void DidInitializeServiceWorkerContextOnWorkerThread(
+  // Runs on a different thread and should only use thread safe member
+  // variables.
+  void DidInitializeServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> v8_context,
+      int embedded_worker_id,
       const GURL& url);
 
   void WillReleaseScriptContext(blink::WebLocalFrame* frame,
@@ -106,6 +110,7 @@ class Dispatcher : public content::RenderProcessObserver,
   // Runs on a different thread and should not use any member variables.
   static void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> v8_context,
+      int embedded_worker_id,
       const GURL& url);
 
   // This method is not allowed to run JavaScript code in the frame.
@@ -133,8 +138,6 @@ class Dispatcher : public content::RenderProcessObserver,
                                 const base::ListValue& args,
                                 bool user_gesture);
 
-  void ClearPortData(int port_id);
-
   // Returns a list of (module name, resource id) pairs for the JS modules to
   // add to the source map.
   static std::vector<std::pair<std::string, int> > GetJsResources();
@@ -153,15 +156,16 @@ class Dispatcher : public content::RenderProcessObserver,
   FRIEND_TEST_ALL_PREFIXES(RendererPermissionsPolicyDelegateTest,
                            CannotScriptWebstore);
 
-  // RenderProcessObserver implementation:
+  // RenderThreadObserver implementation:
   bool OnControlMessageReceived(const IPC::Message& message) override;
-  void WebKitInitialized() override;
   void IdleNotification() override;
   void OnRenderProcessShutdown() override;
 
   void OnActivateExtension(const std::string& extension_id);
   void OnCancelSuspend(const std::string& extension_id);
-  void OnDeliverMessage(int target_port_id, const Message& message);
+  void OnDeliverMessage(int target_port_id,
+                        int source_tab_id,
+                        const Message& message);
   void OnDispatchOnConnect(int target_port_id,
                            const std::string& channel_name,
                            const ExtensionMsg_TabConnectionInfo& source,
@@ -196,6 +200,7 @@ class Dispatcher : public content::RenderProcessObserver,
       bool update_origin_whitelist,
       int tab_id);
   void OnUsingWebRequestAPI(bool webrequest_used);
+  void OnSetActivityLoggingEnabled(bool enabled);
 
   // UserScriptSetManager::Observer implementation.
   void OnUserScriptsUpdated(const std::set<HostID>& changed_hosts,
@@ -224,7 +229,9 @@ class Dispatcher : public content::RenderProcessObserver,
   void RegisterBinding(const std::string& api_name, ScriptContext* context);
 
   void RegisterNativeHandlers(ModuleSystem* module_system,
-                              ScriptContext* context);
+                              ScriptContext* context,
+                              RequestSender* request_sender,
+                              V8SchemaRegistry* v8_schema_registry);
 
   // Determines if a ScriptContext can connect to any externally_connectable-
   // enabled extension.
@@ -242,11 +249,12 @@ class Dispatcher : public content::RenderProcessObserver,
 
   // Gets |field| from |object| or creates it as an empty object if it doesn't
   // exist.
-  v8::Local<v8::Object> GetOrCreateObject(const v8::Local<v8::Object>& object,
-                                          const std::string& field,
-                                          v8::Isolate* isolate);
+  static v8::Local<v8::Object> GetOrCreateObject(
+      const v8::Local<v8::Object>& object,
+      const std::string& field,
+      v8::Isolate* isolate);
 
-  v8::Local<v8::Object> GetOrCreateBindObjectIfAvailable(
+  static v8::Local<v8::Object> GetOrCreateBindObjectIfAvailable(
       const std::string& api_name,
       std::string* bind_name,
       ScriptContext* context);
@@ -268,17 +276,17 @@ class Dispatcher : public content::RenderProcessObserver,
 
   // All the bindings contexts that are currently loaded for this renderer.
   // There is zero or one for each v8 context.
-  scoped_ptr<ScriptContextSet> script_context_set_;
+  std::unique_ptr<ScriptContextSet> script_context_set_;
 
-  scoped_ptr<ContentWatcher> content_watcher_;
+  std::unique_ptr<ContentWatcher> content_watcher_;
 
-  scoped_ptr<UserScriptSetManager> user_script_set_manager_;
+  std::unique_ptr<UserScriptSetManager> user_script_set_manager_;
 
-  scoped_ptr<ScriptInjectionManager> script_injection_manager_;
+  std::unique_ptr<ScriptInjectionManager> script_injection_manager_;
 
   // Same as above, but on a longer timer and will run even if the process is
   // not idle, to ensure that IdleHandle gets called eventually.
-  scoped_ptr<base::RepeatingTimer> forced_idle_timer_;
+  std::unique_ptr<base::RepeatingTimer> forced_idle_timer_;
 
   // The extensions and apps that are active in this process.
   ExtensionIdSet active_extension_ids_;
@@ -286,20 +294,14 @@ class Dispatcher : public content::RenderProcessObserver,
   ResourceBundleSourceMap source_map_;
 
   // Cache for the v8 representation of extension API schemas.
-  scoped_ptr<V8SchemaRegistry> v8_schema_registry_;
+  std::unique_ptr<V8SchemaRegistry> v8_schema_registry_;
 
   // Sends API requests to the extension host.
-  scoped_ptr<RequestSender> request_sender_;
+  std::unique_ptr<RequestSender> request_sender_;
 
   // The platforms system font family and size;
   std::string system_font_family_;
   std::string system_font_size_;
-
-  // Mapping of port IDs to tabs. If there is no tab, the value would be -1.
-  std::map<int, int> port_to_tab_id_map_;
-
-  // True once WebKit has been initialized (and it is therefore safe to poke).
-  bool is_webkit_initialized_;
 
   // It is important for this to come after the ScriptInjectionManager, so that
   // the observer is destroyed before the UserScriptSet.
@@ -308,6 +310,9 @@ class Dispatcher : public content::RenderProcessObserver,
 
   // Status of webrequest usage.
   bool webrequest_used_;
+
+  // Whether or not extension activity is enabled.
+  bool activity_logging_enabled_;
 
   // The WebView partition ID associated with this process's storage partition,
   // if this renderer is a WebView guest render process. Otherwise, this will be

@@ -28,6 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* eslint-disable indent */
+
 function defineCommonExtensionSymbols(apiPrivate)
 {
     if (!apiPrivate.audits)
@@ -81,7 +83,6 @@ function defineCommonExtensionSymbols(apiPrivate)
         SetOpenResourceHandler: "setOpenResourceHandler",
         SetResourceContent: "setResourceContent",
         SetSidebarContent: "setSidebarContent",
-        SetSidebarHeight: "setSidebarHeight",
         SetSidebarPage: "setSidebarPage",
         ShowPanel: "showPanel",
         StopAuditCategoryRun: "stopAuditCategoryRun",
@@ -388,6 +389,20 @@ function defineDeprecatedProperty(object, className, oldName, newName)
     object.__defineGetter__(oldName, getter);
 }
 
+function defineDeprecatedMethod(object, className, oldName)
+{
+    var warningGiven = false;
+    function noop()
+    {
+        if (warningGiven)
+            return;
+
+        console.warn(className + "." + oldName + " is deprecated, please don't use it. It is a no-op.");
+        warningGiven = true;
+    }
+    object[oldName] = noop;
+}
+
 function extractCallbackArgument(args)
 {
     var lastArgument = args[args.length - 1];
@@ -481,14 +496,10 @@ ExtensionPanelImpl.prototype = {
 function ExtensionSidebarPaneImpl(id)
 {
     ExtensionViewImpl.call(this, id);
+    defineDeprecatedMethod(this, "ExtensionSidebarPane", "setHeight");
 }
 
 ExtensionSidebarPaneImpl.prototype = {
-    setHeight: function(height)
-    {
-        extensionServer.sendRequest({ command: commands.SetSidebarHeight, id: this._id, height: height });
-    },
-
     setExpression: function(expression, rootTitle, evaluateOptions)
     {
         var request = {
@@ -802,9 +813,8 @@ var forwardTimer = null;
 
 function forwardKeyboardEvent(event)
 {
-    const Esc = "U+001B";
     // We only care about global hotkeys, not about random text
-    if (!event.ctrlKey && !event.altKey && !event.metaKey && !/^F\d+$/.test(event.keyIdentifier) && event.keyIdentifier !== Esc)
+    if (!event.ctrlKey && !event.altKey && !event.metaKey && !/^F\d+$/.test(event.key) && event.key !== "Escape")
         return;
     var requestPayload = {
         eventType: event.type,
@@ -812,6 +822,8 @@ function forwardKeyboardEvent(event)
         altKey: event.altKey,
         metaKey: event.metaKey,
         keyIdentifier: event.keyIdentifier,
+        key: event.key,
+        code: event.code,
         location: event.location,
         keyCode: event.keyCode
     };
@@ -953,7 +965,7 @@ function platformExtensionAPI(coreAPI)
     {
         return tabId;
     }
-    chrome = window.chrome || {};
+    var chrome = window.chrome || {};
     // Override chrome.devtools as a workaround for a error-throwing getter being exposed
     // in extension pages loaded into a non-extension process (only happens for remote client
     // extensions)

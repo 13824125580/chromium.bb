@@ -31,8 +31,9 @@ TestWindow* CreateTestWindow(TestWindow* parent) {
   return window;
 }
 
-TestWindow* CreateTestWindow(Id id, TestWindow* parent) {
-  TestWindow* window = new TestWindow(id);
+TestWindow* CreateTestWindow(int id, TestWindow* parent) {
+  TestWindow* window = new TestWindow(0);
+  window->set_local_id(id);
   if (parent)
     parent->AddChild(window);
   return window;
@@ -43,7 +44,7 @@ std::string ChildWindowIDsAsString(TestWindow* parent) {
   for (Window* child : parent->children()) {
     if (!result.empty())
       result += " ";
-    result += base::IntToString(child->id());
+    result += base::IntToString(child->local_id());
   }
   return result;
 }
@@ -93,20 +94,28 @@ TEST_F(WindowTest, Contains) {
   w11.AddChild(&w111);
   EXPECT_TRUE(w1.Contains(&w111));
 }
-
-TEST_F(WindowTest, GetChildById) {
+TEST_F(WindowTest, GetChildByLocalId) {
   TestWindow w1;
-  WindowPrivate(&w1).set_id(1);
+  w1.set_local_id(0);
+  EXPECT_EQ(&w1, w1.GetChildByLocalId(0));
+
   TestWindow w11;
-  WindowPrivate(&w11).set_id(11);
+  w11.set_local_id(11);
   w1.AddChild(&w11);
+
+  TestWindow w12;
+  w12.set_local_id(w1.local_id());
+  w1.AddChild(&w12);
+
   TestWindow w111;
-  WindowPrivate(&w111).set_id(111);
+  w111.set_local_id(111);
   w11.AddChild(&w111);
 
   // Find direct & indirect descendents.
-  EXPECT_EQ(&w11, w1.GetChildById(w11.id()));
-  EXPECT_EQ(&w111, w1.GetChildById(w111.id()));
+  EXPECT_EQ(&w11, w1.GetChildByLocalId(w11.local_id()));
+  EXPECT_EQ(&w111, w1.GetChildByLocalId(w111.local_id()));
+  // Verifies parent returned by child with same id.
+  EXPECT_EQ(&w1, w1.GetChildByLocalId(w1.local_id()));
 }
 
 TEST_F(WindowTest, DrawnAndVisible) {
@@ -116,7 +125,7 @@ TEST_F(WindowTest, DrawnAndVisible) {
   EXPECT_TRUE(w1.visible());
   EXPECT_FALSE(w1.IsDrawn());
 
-  WindowPrivate(&w1).set_drawn(true);
+  WindowPrivate(&w1).set_parent_drawn(true);
 
   TestWindow w11;
   w11.SetVisible(true);
@@ -174,7 +183,7 @@ class TestProperty {
 
  private:
   static TestProperty* last_deleted_;
-  MOJO_DISALLOW_COPY_AND_ASSIGN(TestProperty);
+  DISALLOW_COPY_AND_ASSIGN(TestProperty);
 };
 
 TestProperty* TestProperty::last_deleted_ = NULL;
@@ -246,16 +255,18 @@ class TreeChangeObserver : public WindowObserver {
   Window* observee_;
   std::vector<TreeChangeParams> received_params_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(TreeChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(TreeChangeObserver);
 };
 
 // Adds/Removes w11 to w1.
 TEST_F(WindowObserverTest, TreeChange_SimpleAddRemove) {
   TestWindow w1;
+  w1.set_local_id(1);
   TreeChangeObserver o1(&w1);
   EXPECT_TRUE(o1.received_params().empty());
 
   TestWindow w11;
+  w11.set_local_id(11);
   TreeChangeObserver o11(&w11);
   EXPECT_TRUE(o11.received_params().empty());
 
@@ -487,7 +498,7 @@ class OrderChangeObserver : public WindowObserver {
   Window* observee_;
   Changes changes_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(OrderChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(OrderChangeObserver);
 };
 
 }  // namespace
@@ -588,11 +599,6 @@ namespace {
 
 typedef std::vector<std::string> Changes;
 
-std::string WindowIdToString(Id id) {
-  return (id == 0) ? "null"
-                   : base::StringPrintf("%d,%d", HiWord(id), LoWord(id));
-}
-
 std::string RectToString(const gfx::Rect& rect) {
   return base::StringPrintf("%d,%d %dx%d", rect.x(), rect.y(), rect.width(),
                             rect.height());
@@ -617,29 +623,30 @@ class BoundsChangeObserver : public WindowObserver {
                               const gfx::Rect& old_bounds,
                               const gfx::Rect& new_bounds) override {
     changes_.push_back(base::StringPrintf(
-        "window=%s old_bounds=%s new_bounds=%s phase=changing",
-        WindowIdToString(window->id()).c_str(),
-        RectToString(old_bounds).c_str(), RectToString(new_bounds).c_str()));
+        "window=%d old_bounds=%s new_bounds=%s phase=changing",
+        window->local_id(), RectToString(old_bounds).c_str(),
+        RectToString(new_bounds).c_str()));
   }
   void OnWindowBoundsChanged(Window* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds) override {
     changes_.push_back(base::StringPrintf(
-        "window=%s old_bounds=%s new_bounds=%s phase=changed",
-        WindowIdToString(window->id()).c_str(),
-        RectToString(old_bounds).c_str(), RectToString(new_bounds).c_str()));
+        "window=%d old_bounds=%s new_bounds=%s phase=changed",
+        window->local_id(), RectToString(old_bounds).c_str(),
+        RectToString(new_bounds).c_str()));
   }
 
   Window* window_;
   Changes changes_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(BoundsChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(BoundsChangeObserver);
 };
 
 }  // namespace
 
 TEST_F(WindowObserverTest, SetBounds) {
   TestWindow w1;
+  w1.set_local_id(1);
   {
     BoundsChangeObserver observer(&w1);
     w1.SetBounds(gfx::Rect(0, 0, 100, 100));
@@ -647,10 +654,10 @@ TEST_F(WindowObserverTest, SetBounds) {
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(2U, changes.size());
     EXPECT_EQ(
-        "window=0,1 old_bounds=0,0 0x0 new_bounds=0,0 100x100 phase=changing",
+        "window=1 old_bounds=0,0 0x0 new_bounds=0,0 100x100 phase=changing",
         changes[0]);
     EXPECT_EQ(
-        "window=0,1 old_bounds=0,0 0x0 new_bounds=0,0 100x100 phase=changed",
+        "window=1 old_bounds=0,0 0x0 new_bounds=0,0 100x100 phase=changed",
         changes[1]);
   }
 }
@@ -673,22 +680,20 @@ class VisibilityChangeObserver : public WindowObserver {
  private:
   // Overridden from WindowObserver:
   void OnWindowVisibilityChanging(Window* window) override {
-    changes_.push_back(
-        base::StringPrintf("window=%s phase=changing wisibility=%s",
-                           WindowIdToString(window->id()).c_str(),
-                           window->visible() ? "true" : "false"));
+    changes_.push_back(base::StringPrintf(
+        "window=%d phase=changing wisibility=%s", window->local_id(),
+        window->visible() ? "true" : "false"));
   }
   void OnWindowVisibilityChanged(Window* window) override {
-    changes_.push_back(
-        base::StringPrintf("window=%s phase=changed wisibility=%s",
-                           WindowIdToString(window->id()).c_str(),
-                           window->visible() ? "true" : "false"));
+    changes_.push_back(base::StringPrintf(
+        "window=%d phase=changed wisibility=%s", window->local_id(),
+        window->visible() ? "true" : "false"));
   }
 
   Window* window_;
   Changes changes_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(VisibilityChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(VisibilityChangeObserver);
 };
 
 }  // namespace
@@ -696,6 +701,7 @@ class VisibilityChangeObserver : public WindowObserver {
 TEST_F(WindowObserverTest, SetVisible) {
   TestWindow w1;
   EXPECT_FALSE(w1.visible());
+  w1.set_local_id(1);
   w1.SetVisible(true);
   EXPECT_TRUE(w1.visible());
   {
@@ -705,8 +711,8 @@ TEST_F(WindowObserverTest, SetVisible) {
 
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(2U, changes.size());
-    EXPECT_EQ("window=0,1 phase=changing wisibility=true", changes[0]);
-    EXPECT_EQ("window=0,1 phase=changed wisibility=false", changes[1]);
+    EXPECT_EQ("window=1 phase=changing wisibility=true", changes[0]);
+    EXPECT_EQ("window=1 phase=changed wisibility=false", changes[1]);
   }
   {
     // Set visible to existing walue and werify no notifications.
@@ -719,10 +725,10 @@ TEST_F(WindowObserverTest, SetVisible) {
 TEST_F(WindowObserverTest, SetVisibleParent) {
   TestWindow parent;
   parent.SetVisible(true);
-  WindowPrivate(&parent).set_id(1);
+  parent.set_local_id(1);
   TestWindow child;
   child.SetVisible(true);
-  WindowPrivate(&child).set_id(2);
+  child.set_local_id(2);
   parent.AddChild(&child);
   EXPECT_TRUE(parent.visible());
   EXPECT_TRUE(child.visible());
@@ -734,17 +740,17 @@ TEST_F(WindowObserverTest, SetVisibleParent) {
 
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(1U, changes.size());
-    EXPECT_EQ("window=0,2 phase=changed wisibility=false", changes[0]);
+    EXPECT_EQ("window=2 phase=changed wisibility=false", changes[0]);
   }
 }
 
 TEST_F(WindowObserverTest, SetVisibleChild) {
   TestWindow parent;
   parent.SetVisible(true);
-  WindowPrivate(&parent).set_id(1);
+  parent.set_local_id(1);
   TestWindow child;
   child.SetVisible(true);
-  WindowPrivate(&child).set_id(2);
+  child.set_local_id(2);
   parent.AddChild(&child);
   EXPECT_TRUE(parent.visible());
   EXPECT_TRUE(child.visible());
@@ -756,8 +762,69 @@ TEST_F(WindowObserverTest, SetVisibleChild) {
 
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(1U, changes.size());
-    EXPECT_EQ("window=0,1 phase=changed wisibility=false", changes[0]);
+    EXPECT_EQ("window=1 phase=changed wisibility=false", changes[0]);
   }
+}
+
+namespace {
+
+class OpacityChangeObserver : public WindowObserver {
+ public:
+  explicit OpacityChangeObserver(Window* window) : window_(window) {
+    window_->AddObserver(this);
+  }
+  ~OpacityChangeObserver() override { window_->RemoveObserver(this); }
+
+  Changes GetAndClearChanges() {
+    Changes changes;
+    changes.swap(changes_);
+    return changes;
+  }
+
+ private:
+  // WindowObserver:
+  void OnWindowOpacityChanged(Window* window,
+                              float old_opacity,
+                              float new_opacity) override {
+    changes_.push_back(
+        base::StringPrintf("window=%d old_opacity=%.2f new_opacity=%.2f",
+                           window->local_id(), old_opacity, new_opacity));
+  }
+
+  Window* window_;
+  Changes changes_;
+
+  DISALLOW_COPY_AND_ASSIGN(OpacityChangeObserver);
+};
+
+}  // namespace
+
+// Tests that WindowObserver is only notified when opacity changes.
+TEST_F(WindowObserverTest, SetOpacity) {
+  TestWindow w1;
+  w1.set_local_id(1);
+  EXPECT_FLOAT_EQ(1.0f, w1.opacity());
+
+  // Changing the opacity should trigger a notification.
+  OpacityChangeObserver observer(&w1);
+  w1.SetOpacity(0.5f);
+  EXPECT_FLOAT_EQ(0.5f, w1.opacity());
+  Changes changes = observer.GetAndClearChanges();
+  ASSERT_EQ(1u, changes.size());
+  EXPECT_EQ("window=1 old_opacity=1.00 new_opacity=0.50", changes[0]);
+
+  // Setting to the same opacity should be rejected, no notification.
+  w1.SetOpacity(0.5f);
+  EXPECT_FLOAT_EQ(0.5f, w1.opacity());
+  changes = observer.GetAndClearChanges();
+  EXPECT_TRUE(changes.empty());
+
+  // Alternate sources of opacity changes should trigger a notification.
+  WindowPrivate(&w1).LocalSetOpacity(1.0f);
+  EXPECT_FLOAT_EQ(1.0f, w1.opacity());
+  changes = observer.GetAndClearChanges();
+  ASSERT_EQ(1u, changes.size());
+  EXPECT_EQ("window=1 old_opacity=0.50 new_opacity=1.00", changes[0]);
 }
 
 namespace {
@@ -783,30 +850,29 @@ class SharedPropertyChangeObserver : public WindowObserver {
       const std::vector<uint8_t>* old_data,
       const std::vector<uint8_t>* new_data) override {
     changes_.push_back(base::StringPrintf(
-        "window=%s shared property changed key=%s old_value=%s new_value=%s",
-        WindowIdToString(window->id()).c_str(), name.c_str(),
-        VectorToString(old_data).c_str(), VectorToString(new_data).c_str()));
+        "window=%d shared property changed key=%s old_value=%s new_value=%s",
+        window->local_id(), name.c_str(), VectorToString(old_data).c_str(),
+        VectorToString(new_data).c_str()));
   }
 
   std::string VectorToString(const std::vector<uint8_t>* data) {
     if (!data)
       return "NULL";
-    gfx::Size size =
-        mojo::TypeConverter<gfx::Size, const std::vector<uint8_t>>::Convert(
-            *data);
+    gfx::Size size = mojo::ConvertTo<gfx::Size>(*data);
     return base::StringPrintf("%d,%d", size.width(), size.height());
   }
 
   Window* window_;
   Changes changes_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(SharedPropertyChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(SharedPropertyChangeObserver);
 };
 
 }  // namespace
 
 TEST_F(WindowObserverTest, SetSharedProperty) {
   TestWindow w1;
+  w1.set_local_id(1);
   gfx::Size size(100, 100);
 
   {
@@ -816,7 +882,7 @@ TEST_F(WindowObserverTest, SetSharedProperty) {
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(1U, changes.size());
     EXPECT_EQ(
-        "window=0,1 shared property changed key=size old_value=NULL "
+        "window=1 shared property changed key=size old_value=NULL "
         "new_value=100,100",
         changes[0]);
     EXPECT_EQ(1U, w1.shared_properties().size());
@@ -839,7 +905,7 @@ TEST_F(WindowObserverTest, SetSharedProperty) {
     Changes changes = observer.GetAndClearChanges();
     ASSERT_EQ(1U, changes.size());
     EXPECT_EQ(
-        "window=0,1 shared property changed key=size old_value=100,100 "
+        "window=1 shared property changed key=size old_value=100,100 "
         "new_value=NULL",
         changes[0]);
     EXPECT_EQ(0U, w1.shared_properties().size());
@@ -886,7 +952,7 @@ class LocalPropertyChangeObserver : public WindowObserver {
   const void* property_key_;
   intptr_t old_property_value_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(LocalPropertyChangeObserver);
+  DISALLOW_COPY_AND_ASSIGN(LocalPropertyChangeObserver);
 };
 
 }  // namespace
@@ -912,8 +978,8 @@ TEST_F(WindowObserverTest, LocalPropertyChanged) {
 }
 
 TEST_F(WindowTest, RemoveTransientWindow) {
-  scoped_ptr<TestWindow> w1(CreateTestWindow(nullptr));
-  scoped_ptr<TestWindow> w11(CreateTestWindow(w1.get()));
+  std::unique_ptr<TestWindow> w1(CreateTestWindow(nullptr));
+  std::unique_ptr<TestWindow> w11(CreateTestWindow(w1.get()));
   TestWindow* w12 = CreateTestWindow(w1.get());
   EXPECT_EQ(2u, w1->children().size());
   // w12's lifetime is now tied to w11.
@@ -923,9 +989,9 @@ TEST_F(WindowTest, RemoveTransientWindow) {
 }
 
 TEST_F(WindowTest, TransientWindow) {
-  scoped_ptr<TestWindow> parent(CreateTestWindow(nullptr));
-  scoped_ptr<TestWindow> w1(CreateTestWindow(parent.get()));
-  scoped_ptr<TestWindow> w3(CreateTestWindow(parent.get()));
+  std::unique_ptr<TestWindow> parent(CreateTestWindow(nullptr));
+  std::unique_ptr<TestWindow> w1(CreateTestWindow(parent.get()));
+  std::unique_ptr<TestWindow> w3(CreateTestWindow(parent.get()));
 
   Window* w2 = CreateTestWindow(parent.get());
   EXPECT_EQ(w2, parent->children().back());
@@ -946,11 +1012,11 @@ TEST_F(WindowTest, TransientWindow) {
 
 // Tests that transient windows are stacked as a unit when using order above.
 TEST_F(WindowTest, TransientWindowsGroupAbove) {
-  scoped_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
-  scoped_ptr<TestWindow> w1(CreateTestWindow(1, parent.get()));
+  std::unique_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
+  std::unique_ptr<TestWindow> w1(CreateTestWindow(1, parent.get()));
 
   TestWindow* w11 = CreateTestWindow(11, parent.get());
-  scoped_ptr<TestWindow> w2(CreateTestWindow(2, parent.get()));
+  std::unique_ptr<TestWindow> w2(CreateTestWindow(2, parent.get()));
 
   TestWindow* w21 = CreateTestWindow(21, parent.get());
   TestWindow* w211 = CreateTestWindow(211, parent.get());
@@ -1024,11 +1090,11 @@ TEST_F(WindowTest, TransientWindowsGroupAbove) {
 
 // Tests that transient children are stacked as a unit when using order below.
 TEST_F(WindowTest, TransientWindowsGroupBelow) {
-  scoped_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
-  scoped_ptr<TestWindow> w1(CreateTestWindow(1, parent.get()));
+  std::unique_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
+  std::unique_ptr<TestWindow> w1(CreateTestWindow(1, parent.get()));
 
   TestWindow* w11 = CreateTestWindow(11, parent.get());
-  scoped_ptr<TestWindow> w2(CreateTestWindow(2, parent.get()));
+  std::unique_ptr<TestWindow> w2(CreateTestWindow(2, parent.get()));
 
   TestWindow* w21 = CreateTestWindow(21, parent.get());
   TestWindow* w211 = CreateTestWindow(211, parent.get());
@@ -1100,8 +1166,8 @@ TEST_F(WindowTest, TransientWindowsGroupBelow) {
 // Tests that windows are restacked properly after a call to
 // AddTransientWindow() or RemoveTransientWindow).
 TEST_F(WindowTest, RestackUponAddOrRemoveTransientWindow) {
-  scoped_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
-  scoped_ptr<TestWindow> windows[4];
+  std::unique_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
+  std::unique_ptr<TestWindow> windows[4];
   for (int i = 0; i < 4; i++)
     windows[i].reset(CreateTestWindow(i, parent.get()));
 
@@ -1122,9 +1188,9 @@ TEST_F(WindowTest, RestackUponAddOrRemoveTransientWindow) {
 
 // Tests that transient windows are stacked properly when created.
 TEST_F(WindowTest, StackUponCreation) {
-  scoped_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
-  scoped_ptr<TestWindow> window0(CreateTestWindow(1, parent.get()));
-  scoped_ptr<TestWindow> window1(CreateTestWindow(2, parent.get()));
+  std::unique_ptr<TestWindow> parent(CreateTestWindow(0, nullptr));
+  std::unique_ptr<TestWindow> window0(CreateTestWindow(1, parent.get()));
+  std::unique_ptr<TestWindow> window1(CreateTestWindow(2, parent.get()));
 
   TestWindow* window2 = CreateTestWindow(3, parent.get());
 

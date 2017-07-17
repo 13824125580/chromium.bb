@@ -65,11 +65,14 @@ struct BASE_EXPORT LaunchOptions {
   // If true, wait for the process to complete.
   bool wait;
 
+  // If not empty, change to this directory before executing the new process.
+  base::FilePath current_directory;
+
 #if defined(OS_WIN)
   bool start_hidden;
 
   // If non-null, inherit exactly the list of handles in this vector (these
-  // handles must be inheritable). This is only supported on Vista and higher.
+  // handles must be inheritable).
   HandlesToInheritVector* handles_to_inherit;
 
   // If true, the new process inherits handles from the parent. In production
@@ -77,7 +80,7 @@ struct BASE_EXPORT LaunchOptions {
   // binaries, because open handles from other libraries and subsystems will
   // leak to the child process, causing errors such as open socket hangs.
   // Note: If |handles_to_inherit| is non-null, this flag is ignored and only
-  // those handles will be inherited (on Vista and higher).
+  // those handles will be inherited.
   bool inherit_handles;
 
   // If non-null, runs as if the user represented by the token had launched it.
@@ -151,9 +154,6 @@ struct BASE_EXPORT LaunchOptions {
 #endif  // defined(OS_LINUX)
 
 #if defined(OS_POSIX)
-  // If not empty, change to this directory before execing the new process.
-  base::FilePath current_directory;
-
   // If non-null, a delegate to be run immediately prior to executing the new
   // program in the child process.
   //

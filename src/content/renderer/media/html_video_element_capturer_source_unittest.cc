@@ -4,12 +4,13 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/renderer/media/html_video_element_capturer_source.h"
 #include "media/base/limits.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebMediaPlayer.h"
+#include "third_party/WebKit/public/platform/WebString.h"
 
 using ::testing::_;
 using ::testing::InSequence;
@@ -29,7 +30,7 @@ class MockWebMediaPlayer : public blink::WebMediaPlayer,
   MockWebMediaPlayer()  = default;
   ~MockWebMediaPlayer() override = default;
 
-  void load(LoadType, const blink::WebURL&, CORSMode) override {}
+  void load(LoadType, const blink::WebMediaPlayerSource&, CORSMode) override {}
   void play() override {}
   void pause() override {}
   bool supportsSave() const override { return true; }
@@ -60,6 +61,7 @@ class MockWebMediaPlayer : public blink::WebMediaPlayer,
   ReadyState getReadyState() const override {
     return ReadyStateHaveNothing;
   }
+  blink::WebString getErrorMessage() override { return blink::WebString(); }
   bool didLoadingProgress() override { return true; }
   bool hasSingleSecurityOrigin() const override { return true; }
   bool didPassCORSAccessCheck() const override { return true; }
@@ -67,8 +69,8 @@ class MockWebMediaPlayer : public blink::WebMediaPlayer,
   unsigned decodedFrameCount() const override { return 0; }
   unsigned droppedFrameCount() const override { return 0; }
   unsigned corruptedFrameCount() const override { return 0; }
-  unsigned audioDecodedByteCount() const override { return 0; }
-  unsigned videoDecodedByteCount() const override { return 0; }
+  size_t audioDecodedByteCount() const override { return 0; }
+  size_t videoDecodedByteCount() const override { return 0; }
 
   void paint(blink::WebCanvas* canvas,
              const blink::WebRect& paint_rectangle,
@@ -111,8 +113,8 @@ class HTMLVideoElementCapturerSourceTest : public testing::Test {
   // schedule capture events.
   const base::MessageLoopForUI message_loop_;
 
-  scoped_ptr<MockWebMediaPlayer> web_media_player_;
-  scoped_ptr<HtmlVideoElementCapturerSource> html_video_capturer_;
+  std::unique_ptr<MockWebMediaPlayer> web_media_player_;
+  std::unique_ptr<HtmlVideoElementCapturerSource> html_video_capturer_;
 };
 
 // Constructs and destructs all objects, in particular |html_video_capturer_|

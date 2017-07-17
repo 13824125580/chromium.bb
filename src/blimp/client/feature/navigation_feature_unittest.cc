@@ -4,8 +4,11 @@
 
 #include "blimp/client/feature/navigation_feature.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
+#include "blimp/client/feature/mock_navigation_feature_delegate.h"
 #include "blimp/common/create_blimp_message.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/net/test_common.h"
@@ -21,23 +24,13 @@ using testing::_;
 namespace blimp {
 namespace client {
 
-class MockNavigationFeatureDelegate
-    : public NavigationFeature::NavigationFeatureDelegate {
- public:
-  // NavigationFeatureDelegate implementation.
-  MOCK_METHOD2(OnUrlChanged, void(int tab_id, const GURL& url));
-  MOCK_METHOD2(OnFaviconChanged, void(int tab_id, const SkBitmap& favicon));
-  MOCK_METHOD2(OnTitleChanged, void(int tab_id, const std::string& title));
-  MOCK_METHOD2(OnLoadingChanged, void(int tab_id, bool loading));
-};
-
 void SendMockNavigationStateChangedMessage(BlimpMessageProcessor* processor,
                                            int tab_id,
                                            const GURL* url,
                                            const std::string* title,
                                            const bool* loading) {
   NavigationMessage* navigation_message;
-  scoped_ptr<BlimpMessage> message =
+  std::unique_ptr<BlimpMessage> message =
       CreateBlimpMessage(&navigation_message, tab_id);
   navigation_message->set_type(NavigationMessage::NAVIGATION_STATE_CHANGED);
   NavigationStateChangeMessage* state =
@@ -83,7 +76,7 @@ class NavigationFeatureTest : public testing::Test {
 
   void SetUp() override {
     out_processor_ = new MockBlimpMessageProcessor();
-    feature_.set_outgoing_message_processor(make_scoped_ptr(out_processor_));
+    feature_.set_outgoing_message_processor(base::WrapUnique(out_processor_));
 
     feature_.SetDelegate(1, &delegate1_);
     feature_.SetDelegate(2, &delegate2_);
@@ -131,7 +124,7 @@ TEST_F(NavigationFeatureTest, PartialDelegateFieldsCalled) {
 }
 
 TEST_F(NavigationFeatureTest, TestNavigateToUrlMessage) {
-  std::string text = "text";
+  std::string text = "http://google.com/";
 
   EXPECT_CALL(*out_processor_,
               MockableProcessMessage(EqualsNavigateToUrlText(1, text), _))

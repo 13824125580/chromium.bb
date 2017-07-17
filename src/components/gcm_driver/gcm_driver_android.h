@@ -51,7 +51,7 @@ class GCMDriverAndroid : public GCMDriver,
       const base::android::JavaParamRef<jobjectArray>& data_keys_and_values);
 
   // Register JNI methods.
-  static bool RegisterBindings(JNIEnv* env);
+  static bool RegisterJni(JNIEnv* env);
 
   // GCMDriver implementation:
   void OnSignedIn() override;
@@ -74,7 +74,7 @@ class GCMDriverAndroid : public GCMDriver,
   base::Time GetLastTokenFetchTime() override;
   void SetLastTokenFetchTime(const base::Time& time) override;
   void WakeFromSuspendForHeartbeat(bool wake) override;
-  InstanceIDHandler* GetInstanceIDHandler() override;
+  InstanceIDHandler* GetInstanceIDHandlerInternal() override;
   void AddHeartbeatInterval(const std::string& scope, int interval_ms) override;
   void RemoveHeartbeatInterval(const std::string& scope) override;
 

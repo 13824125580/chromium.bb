@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "components/test_runner/layout_dump_flags.h"
+#include "base/values.h"
 #include "content/public/common/common_param_traits.h"
 #include "content/public/common/page_state.h"
 #include "content/shell/common/leak_detection_result.h"
@@ -15,6 +15,7 @@
 #include "ipc/ipc_platform_file.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
+#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 
 #define IPC_MESSAGE_START ShellMsgStart
 
@@ -31,17 +32,6 @@ IPC_STRUCT_TRAITS_MEMBER(initial_size)
 IPC_STRUCT_TRAITS_END()
 #endif
 
-IPC_STRUCT_TRAITS_BEGIN(test_runner::LayoutDumpFlags)
-  IPC_STRUCT_TRAITS_MEMBER(dump_as_text)
-  IPC_STRUCT_TRAITS_MEMBER(dump_child_frames_as_text)
-  IPC_STRUCT_TRAITS_MEMBER(dump_as_markup)
-  IPC_STRUCT_TRAITS_MEMBER(dump_child_frames_as_markup)
-  IPC_STRUCT_TRAITS_MEMBER(dump_child_frame_scroll_positions)
-  IPC_STRUCT_TRAITS_MEMBER(is_printing)
-  IPC_STRUCT_TRAITS_MEMBER(dump_line_box_trees)
-  IPC_STRUCT_TRAITS_MEMBER(debug_render_tree)
-IPC_STRUCT_TRAITS_END()
-
 // Tells the renderer to reset all test runners.
 IPC_MESSAGE_ROUTED0(ShellViewMsg_Reset)
 
@@ -49,16 +39,18 @@ IPC_MESSAGE_ROUTED0(ShellViewMsg_Reset)
 IPC_MESSAGE_CONTROL1(ShellViewMsg_SetWebKitSourceDir,
                      base::FilePath /* webkit source dir */)
 
-// SHEZ: Remove test code.
-#if 0
-// Sets the initial configuration to use for layout tests.
-IPC_MESSAGE_ROUTED1(ShellViewMsg_SetTestConfiguration,
+// Replicates test config (for an already started test) to a new renderer
+// that hosts parts of the main test window.
+IPC_MESSAGE_ROUTED1(ShellViewMsg_ReplicateTestConfiguration,
                     content::ShellTestConfiguration)
-#endif
 
-// Tells the main window that a secondary window in a different process invoked
-// notifyDone().
-IPC_MESSAGE_ROUTED0(ShellViewMsg_NotifyDone)
+// Sets up a secondary renderer (renderer that doesn't [yet] host parts of the
+// main test window) for a layout test.
+IPC_MESSAGE_ROUTED0(ShellViewMsg_SetupSecondaryRenderer)
+
+// Tells the main window that a secondary renderer in a different process asked
+// to finish the test.
+IPC_MESSAGE_ROUTED0(ShellViewMsg_TestFinishedInSecondaryRenderer)
 
 // Pushes a snapshot of the current session history from the browser process.
 // This includes only information about those RenderViews that are in the
@@ -73,8 +65,7 @@ IPC_MESSAGE_ROUTED3(
 IPC_MESSAGE_ROUTED0(ShellViewMsg_TryLeakDetection)
 
 // Asks a frame to dump its contents into a string and send them back over IPC.
-IPC_MESSAGE_ROUTED1(ShellViewMsg_LayoutDumpRequest,
-                    test_runner::LayoutDumpFlags)
+IPC_MESSAGE_ROUTED0(ShellViewMsg_LayoutDumpRequest)
 
 // Notifies BlinkTestRunner that the layout dump has completed
 // (and that it can proceed with finishing up the test).
@@ -85,12 +76,11 @@ IPC_MESSAGE_ROUTED1(ShellViewMsg_LayoutDumpCompleted,
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_TextDump,
                     std::string /* dump */)
 
-// Asks the browser process to perform a layout dump (potentially spanning
-// multiple cross-process frames) using the given flags.  This triggers
-// multiple ShellViewMsg_LayoutDumpRequest / ShellViewHostMsg_LayoutDumpResponse
-// messages and ends with sending of ShellViewMsg_LayoutDumpCompleted.
-IPC_MESSAGE_ROUTED1(ShellViewHostMsg_InitiateLayoutDump,
-                    test_runner::LayoutDumpFlags)
+// Asks the browser process to perform a layout dump spanning all the
+// (potentially cross-process) frames.  This triggers multiple
+// ShellViewMsg_LayoutDumpRequest / ShellViewHostMsg_LayoutDumpResponse messages
+// and ends with sending of ShellViewMsg_LayoutDumpCompleted.
+IPC_MESSAGE_ROUTED0(ShellViewHostMsg_InitiateLayoutDump)
 
 // Sends a layout dump of a frame (response to ShellViewMsg_LayoutDumpRequest).
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_LayoutDumpResponse, std::string /* dump */)
@@ -108,8 +98,6 @@ IPC_MESSAGE_ROUTED0(ShellViewHostMsg_TestFinished)
 
 IPC_MESSAGE_ROUTED0(ShellViewHostMsg_ResetDone)
 
-IPC_MESSAGE_ROUTED0(ShellViewHostMsg_TestFinishedInSecondaryWindow)
-
 // WebTestDelegate related.
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_OverridePreferences,
                     content::WebPreferences /* preferences */)
@@ -119,6 +107,9 @@ IPC_MESSAGE_ROUTED0(ShellViewHostMsg_ClearDevToolsLocalStorage)
 IPC_MESSAGE_ROUTED2(ShellViewHostMsg_ShowDevTools,
                     std::string /* settings */,
                     std::string /* frontend_url */)
+IPC_MESSAGE_ROUTED2(ShellViewHostMsg_EvaluateInDevTools,
+                    int /* call_id */,
+                    std::string /* script */)
 IPC_MESSAGE_ROUTED0(ShellViewHostMsg_CloseDevTools)
 IPC_MESSAGE_ROUTED1(ShellViewHostMsg_GoToOffset,
                     int /* offset */)

@@ -37,6 +37,7 @@
 #include "public/platform/Platform.h"
 #include "wtf/Assertions.h"
 #include "wtf/text/StringUTF8Adaptor.h"
+#include <memory>
 #include <stdio.h>
 
 namespace blink {
@@ -72,11 +73,11 @@ TraceEvent::TraceEventHandle EventTracer::addTraceEvent(char phase, const unsign
     const char* name, const char* scope, unsigned long long id, unsigned long long bindId, double timestamp,
     int numArgs, const char* argNames[], const unsigned char argTypes[],
     const unsigned long long argValues[],
-    PassOwnPtr<TracedValue> tracedValue1,
-    PassOwnPtr<TracedValue> tracedValue2,
+    std::unique_ptr<TracedValue> tracedValue1,
+    std::unique_ptr<TracedValue> tracedValue2,
     unsigned flags)
 {
-    scoped_refptr<base::trace_event::ConvertableToTraceFormat> convertables[2];
+    std::unique_ptr<base::trace_event::ConvertableToTraceFormat> convertables[2];
     ASSERT(numArgs <= 2);
     // We move m_tracedValues from TracedValues for thread safety.
     // https://crbug.com/478149
@@ -98,7 +99,7 @@ TraceEvent::TraceEventHandle EventTracer::addTraceEvent(char phase, const unsign
 TraceEvent::TraceEventHandle EventTracer::addTraceEvent(char phase, const unsigned char* categoryEnabledFlag,
     const char* name, const char* scope, unsigned long long id, unsigned long long bindId, double timestamp,
     int numArgs, const char** argNames, const unsigned char* argTypes, const unsigned long long* argValues,
-    const scoped_refptr<base::trace_event::ConvertableToTraceFormat>* convertables, unsigned flags)
+    std::unique_ptr<base::trace_event::ConvertableToTraceFormat>* convertables, unsigned flags)
 {
     base::TimeTicks timestampTimeTicks = base::TimeTicks() + base::TimeDelta::FromSecondsD(timestamp);
     base::trace_event::TraceEventHandle handle = TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_THREAD_ID_AND_TIMESTAMP(phase, categoryEnabledFlag, name, scope, id, bindId, base::PlatformThread::CurrentId(), timestampTimeTicks, numArgs, argNames, argTypes, argValues, convertables, flags);

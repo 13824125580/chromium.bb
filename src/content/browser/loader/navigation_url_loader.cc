@@ -14,18 +14,18 @@ namespace content {
 
 static NavigationURLLoaderFactory* g_factory = nullptr;
 
-scoped_ptr<NavigationURLLoader> NavigationURLLoader::Create(
+std::unique_ptr<NavigationURLLoader> NavigationURLLoader::Create(
     BrowserContext* browser_context,
-    scoped_ptr<NavigationRequestInfo> request_info,
-    ServiceWorkerNavigationHandle* service_worker_handle,
+    std::unique_ptr<NavigationRequestInfo> request_info,
+    ServiceWorkerContextWrapper* service_worker_context_wrapper,
     NavigationURLLoaderDelegate* delegate) {
   if (g_factory) {
     return g_factory->CreateLoader(browser_context, std::move(request_info),
-                                   service_worker_handle, delegate);
+                                   service_worker_context_wrapper, delegate);
   }
-  return scoped_ptr<NavigationURLLoader>(
+  return std::unique_ptr<NavigationURLLoader>(
       new NavigationURLLoaderImpl(browser_context, std::move(request_info),
-                                  service_worker_handle, delegate));
+                                  service_worker_context_wrapper, delegate));
 }
 
 void NavigationURLLoader::SetFactoryForTesting(

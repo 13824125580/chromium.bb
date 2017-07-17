@@ -31,7 +31,7 @@
 /**
  * @constructor
  * @implements {WebInspector.CSSSourceMapping}
- * @param {!WebInspector.CSSStyleModel} cssModel
+ * @param {!WebInspector.CSSModel} cssModel
  * @param {!WebInspector.Workspace} workspace
  * @param {!WebInspector.NetworkMapping} networkMapping
  */
@@ -46,7 +46,7 @@ WebInspector.StylesSourceMapping = function(cssModel, workspace, networkMapping)
 
     cssModel.target().resourceTreeModel.addEventListener(WebInspector.ResourceTreeModel.EventTypes.MainFrameNavigated, this._unbindAllUISourceCodes, this);
 
-    this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.StyleSheetChanged, this._styleSheetChanged, this);
+    this._cssModel.addEventListener(WebInspector.CSSModel.Events.StyleSheetChanged, this._styleSheetChanged, this);
     /** @type {!Map<string, !Map<string, !Map<string, !WebInspector.CSSStyleSheetHeader>>>} */
     this._urlToHeadersByFrameId = new Map();
     /** @type {!Map.<!WebInspector.UISourceCode, !WebInspector.StyleFile>} */
@@ -182,7 +182,7 @@ WebInspector.StylesSourceMapping.prototype = {
 
     _unbindAllUISourceCodes: function()
     {
-        for (var styleFile of this._styleFiles.keys())
+        for (var styleFile of this._styleFiles.values())
             styleFile.dispose();
         this._styleFiles.clear();
         this._urlToHeadersByFrameId = new Map();
@@ -230,10 +230,6 @@ WebInspector.StylesSourceMapping.prototype = {
     {
         var uiSourceCode = /** @type {!WebInspector.UISourceCode} */ (event.data);
         this._unbindUISourceCode(uiSourceCode);
-    },
-
-    _initialize: function()
-    {
     },
 
     /**
@@ -335,10 +331,13 @@ WebInspector.StyleFile = function(uiSourceCode, mapping)
 {
     this._uiSourceCode = uiSourceCode;
     this._mapping = mapping;
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyChanged, this._workingCopyChanged, this);
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyCommitted, this._workingCopyCommitted, this);
+    this._eventListeners = [
+        this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyChanged, this._workingCopyChanged, this),
+        this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyCommitted, this._workingCopyCommitted, this)
+    ];
     this._uiSourceCode.forceLoadOnCheckContent();
     this._commitThrottler = new WebInspector.Throttler(WebInspector.StyleFile.updateTimeout);
+    this._terminated = false;
 }
 
 WebInspector.StyleFile.updateTimeout = 200;
@@ -369,6 +368,8 @@ WebInspector.StyleFile.prototype = {
 
     _commitIncrementalEdit: function()
     {
+        if (this._terminated)
+            return;
         var promise = this._mapping._setStyleContent(this._uiSourceCode, this._uiSourceCode.workingCopy(), this._isMajorChangePending)
             .then(this._styleContentSet.bind(this))
         this._isMajorChangePending = false;
@@ -381,7 +382,7 @@ WebInspector.StyleFile.prototype = {
     _styleContentSet: function(error)
     {
         if (error)
-            WebInspector.console.error(error);
+            console.error(error);
     },
 
     /**
@@ -396,7 +397,9 @@ WebInspector.StyleFile.prototype = {
 
     dispose: function()
     {
-        this._uiSourceCode.removeEventListener(WebInspector.UISourceCode.Events.WorkingCopyCommitted, this._workingCopyCommitted, this);
-        this._uiSourceCode.removeEventListener(WebInspector.UISourceCode.Events.WorkingCopyChanged, this._workingCopyChanged, this);
+        if (this._terminated)
+            return;
+        this._terminated = true;
+        WebInspector.EventTarget.removeEventListeners(this._eventListeners);
     }
 }

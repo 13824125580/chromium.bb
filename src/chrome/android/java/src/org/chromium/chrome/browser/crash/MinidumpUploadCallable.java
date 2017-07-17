@@ -6,9 +6,9 @@ package org.chromium.chrome.browser.crash;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.preference.PreferenceManager;
 import android.support.annotation.IntDef;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.VisibleForTesting;
@@ -71,8 +71,8 @@ public class MinidumpUploadCallable implements Callable<Integer> {
 
     public MinidumpUploadCallable(File fileToUpload, File logfile, Context context) {
         this(fileToUpload, logfile, new HttpURLConnectionFactoryImpl(),
-                PrivacyPreferencesManager.getInstance(context));
-        removeOutdatedPrefs(PreferenceManager.getDefaultSharedPreferences(context));
+                PrivacyPreferencesManager.getInstance());
+        removeOutdatedPrefs(ContextUtils.getAppSharedPreferences());
     }
 
     public MinidumpUploadCallable(File fileToUpload, File logfile,
@@ -92,17 +92,21 @@ public class MinidumpUploadCallable implements Callable<Integer> {
             return UPLOAD_COMMANDLINE_DISABLED;
         }
 
-        if (!mPermManager.isUploadUserPermitted()) {
-            Log.i(TAG, "Minidump upload is not permitted by user. Marking file as uploaded for "
-                    + "cleanup to prevent future uploads.");
-            cleanupMinidumpFile();
-            return UPLOAD_USER_DISABLED;
-        }
+        if (mPermManager.isUploadEnabledForTests()) {
+            Log.i(TAG, "Minidump upload enabled for tests, skipping other checks.");
+        } else {
+            if (!mPermManager.isUploadUserPermitted()) {
+                Log.i(TAG, "Minidump upload is not permitted by user. Marking file as uploaded for "
+                        + "cleanup to prevent future uploads.");
+                cleanupMinidumpFile();
+                return UPLOAD_USER_DISABLED;
+            }
 
-        boolean isLimited = mPermManager.isUploadLimited();
-        if (isLimited || !mPermManager.isUploadPermitted()) {
-            Log.i(TAG, "Minidump cannot currently be uploaded due to constraints.");
-            return UPLOAD_FAILURE;
+            boolean isLimited = mPermManager.isUploadLimited();
+            if (isLimited || !mPermManager.isUploadPermitted()) {
+                Log.i(TAG, "Minidump cannot currently be uploaded due to constraints.");
+                return UPLOAD_FAILURE;
+            }
         }
 
         HttpURLConnection connection =

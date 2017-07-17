@@ -10,7 +10,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/output/managed_memory_policy.h"
 #include "cc/output/output_surface_client.h"
@@ -69,12 +69,12 @@ class SkiaGpuTraceMemoryDump : public SkTraceMemoryDump {
     base::trace_event::MemoryAllocatorDumpGuid guid;
 
     if (strcmp(backing_type, kGLTextureBackingType) == 0) {
-      guid = gfx::GetGLTextureClientGUIDForTracing(share_group_tracing_guid_,
-                                                   gl_id);
+      guid = gl::GetGLTextureClientGUIDForTracing(share_group_tracing_guid_,
+                                                  gl_id);
     } else if (strcmp(backing_type, kGLBufferBackingType) == 0) {
-      guid = gfx::GetGLBufferGUIDForTracing(tracing_process_id, gl_id);
+      guid = gl::GetGLBufferGUIDForTracing(tracing_process_id, gl_id);
     } else if (strcmp(backing_type, kGLRenderbufferBackingType) == 0) {
-      guid = gfx::GetGLRenderbufferGUIDForTracing(tracing_process_id, gl_id);
+      guid = gl::GetGLRenderbufferGUIDForTracing(tracing_process_id, gl_id);
     }
 
     if (!guid.empty()) {
@@ -119,48 +119,21 @@ class SkiaGpuTraceMemoryDump : public SkTraceMemoryDump {
 }  // namespace
 
 OutputSurface::OutputSurface(
-    const scoped_refptr<ContextProvider>& context_provider,
-    const scoped_refptr<ContextProvider>& worker_context_provider,
-    scoped_ptr<SoftwareOutputDevice> software_device)
-    : client_(NULL),
-      context_provider_(context_provider),
-      worker_context_provider_(worker_context_provider),
+    scoped_refptr<ContextProvider> context_provider,
+    scoped_refptr<ContextProvider> worker_context_provider,
+    std::unique_ptr<SoftwareOutputDevice> software_device)
+    : context_provider_(std::move(context_provider)),
+      worker_context_provider_(std::move(worker_context_provider)),
       software_device_(std::move(software_device)),
-      device_scale_factor_(-1),
-      has_alpha_(true),
-      external_stencil_test_enabled_(false),
       weak_ptr_factory_(this) {
   client_thread_checker_.DetachFromThread();
 }
 
 OutputSurface::OutputSurface(
-    const scoped_refptr<ContextProvider>& context_provider)
-    : OutputSurface(context_provider, nullptr, nullptr) {
-}
-
-OutputSurface::OutputSurface(
-    const scoped_refptr<ContextProvider>& context_provider,
-    const scoped_refptr<ContextProvider>& worker_context_provider)
-    : OutputSurface(context_provider, worker_context_provider, nullptr) {
-}
-
-OutputSurface::OutputSurface(scoped_ptr<SoftwareOutputDevice> software_device)
-    : OutputSurface(nullptr, nullptr, std::move(software_device)) {}
-
-OutputSurface::OutputSurface(
-    const scoped_refptr<ContextProvider>& context_provider,
-    scoped_ptr<SoftwareOutputDevice> software_device)
-    : OutputSurface(context_provider, nullptr, std::move(software_device)) {}
-
-void OutputSurface::CommitVSyncParameters(base::TimeTicks timebase,
-                                          base::TimeDelta interval) {
-  TRACE_EVENT2("cc",
-               "OutputSurface::CommitVSyncParameters",
-               "timebase",
-               (timebase - base::TimeTicks()).InSecondsF(),
-               "interval",
-               interval.InSecondsF());
-  client_->CommitVSyncParameters(timebase, interval);
+    scoped_refptr<VulkanContextProvider> vulkan_context_provider)
+    : vulkan_context_provider_(vulkan_context_provider),
+      weak_ptr_factory_(this) {
+  client_thread_checker_.DetachFromThread();
 }
 
 // Forwarded to OutputSurfaceClient
@@ -208,13 +181,10 @@ bool OutputSurface::BindToClient(OutputSurfaceClient* client) {
     }
   }
 
-  if (!success)
-    client_ = NULL;
-
   // In certain cases, ThreadTaskRunnerHandle isn't set (Android Webview).
   // Don't register a dump provider in these cases.
   // TODO(ericrk): Get this working in Android Webview. crbug.com/517156
-  if (client_ && base::ThreadTaskRunnerHandle::IsSet()) {
+  if (base::ThreadTaskRunnerHandle::IsSet()) {
     // Now that we are on the context thread, register a dump provider with this
     // thread's task runner. This will overwrite any previous dump provider
     // registered.
@@ -222,6 +192,8 @@ bool OutputSurface::BindToClient(OutputSurfaceClient* client) {
         this, "OutputSurface", base::ThreadTaskRunnerHandle::Get());
   }
 
+  if (!success)
+    DetachFromClient();
   return success;
 }
 
@@ -243,6 +215,7 @@ void OutputSurface::DiscardBackbuffer() {
 
 void OutputSurface::Reshape(const gfx::Size& size,
                             float scale_factor,
+                            const gfx::ColorSpace& color_space,
                             bool has_alpha) {
   if (size == surface_size_ && scale_factor == device_scale_factor_ &&
       has_alpha == has_alpha_)
@@ -274,6 +247,11 @@ void OutputSurface::PostSwapBuffersComplete() {
 // after the OutputSurface has been destroyed.
 void OutputSurface::OnSwapBuffersComplete() {
   client_->DidSwapBuffersComplete();
+}
+
+void OutputSurface::DidReceiveTextureInUseResponses(
+    const gpu::TextureInUseResponses& responses) {
+  client_->DidReceiveTextureInUseResponses(responses);
 }
 
 void OutputSurface::SetMemoryPolicy(const ManagedMemoryPolicy& policy) {

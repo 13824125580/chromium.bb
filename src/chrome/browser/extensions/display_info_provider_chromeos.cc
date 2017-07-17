@@ -8,24 +8,35 @@
 
 #include "ash/display/display_configuration_controller.h"
 #include "ash/display/display_manager.h"
+#include "ash/display/resolution_notification_controller.h"
 #include "ash/shell.h"
 #include "base/strings/string_number_conversions.h"
+#include "chrome/browser/chromeos/display/display_preferences.h"
+#include "chrome/browser/chromeos/display/overscan_calibrator.h"
 #include "extensions/common/api/system_display.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/manager/display_layout.h"
+#include "ui/display/manager/display_layout_builder.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace extensions {
 
-using api::system_display::Bounds;
-using api::system_display::DisplayUnitInfo;
-using api::system_display::DisplayProperties;
-using api::system_display::Insets;
+namespace system_display = api::system_display;
 
 namespace {
 
 // Maximum allowed bounds origin absolute value.
 const int kMaxBoundsOrigin = 200 * 1000;
+
+// Gets the display with the provided string id.
+display::Display GetDisplay(const std::string& display_id_str) {
+  int64_t display_id;
+  if (!base::StringToInt64(display_id_str, &display_id))
+    return display::Display();
+  return ash::Shell::GetInstance()->display_manager()->GetDisplayForId(
+      display_id);
+}
 
 // Checks if the given integer value is valid display rotation in degrees.
 bool IsValidRotationValue(int rotation) {
@@ -33,20 +44,55 @@ bool IsValidRotationValue(int rotation) {
 }
 
 // Converts integer integer value in degrees to Rotation enum value.
-gfx::Display::Rotation DegreesToRotation(int degrees) {
+display::Display::Rotation DegreesToRotation(int degrees) {
   DCHECK(IsValidRotationValue(degrees));
   switch (degrees) {
     case 0:
-      return gfx::Display::ROTATE_0;
+      return display::Display::ROTATE_0;
     case 90:
-      return gfx::Display::ROTATE_90;
+      return display::Display::ROTATE_90;
     case 180:
-      return gfx::Display::ROTATE_180;
+      return display::Display::ROTATE_180;
     case 270:
-      return gfx::Display::ROTATE_270;
+      return display::Display::ROTATE_270;
     default:
-      return gfx::Display::ROTATE_0;
+      return display::Display::ROTATE_0;
   }
+}
+
+// Converts system_display::LayoutPosition to
+// display::DisplayPlacement::Position.
+display::DisplayPlacement::Position GetDisplayPlacementPosition(
+    system_display::LayoutPosition position) {
+  switch (position) {
+    case system_display::LAYOUT_POSITION_TOP:
+      return display::DisplayPlacement::TOP;
+    case system_display::LAYOUT_POSITION_BOTTOM:
+      return display::DisplayPlacement::BOTTOM;
+    case system_display::LAYOUT_POSITION_LEFT:
+      return display::DisplayPlacement::LEFT;
+    case system_display::LAYOUT_POSITION_RIGHT:
+    default:
+      // Default: layout to the right.
+      return display::DisplayPlacement::RIGHT;
+  }
+}
+
+// Converts display::DisplayPlacement::Position to
+// system_display::LayoutPosition.
+system_display::LayoutPosition GetLayoutPosition(
+    display::DisplayPlacement::Position position) {
+  switch (position) {
+    case display::DisplayPlacement::TOP:
+      return system_display::LayoutPosition::LAYOUT_POSITION_TOP;
+    case display::DisplayPlacement::RIGHT:
+      return system_display::LayoutPosition::LAYOUT_POSITION_RIGHT;
+    case display::DisplayPlacement::BOTTOM:
+      return system_display::LayoutPosition::LAYOUT_POSITION_BOTTOM;
+    case display::DisplayPlacement::LEFT:
+      return system_display::LayoutPosition::LAYOUT_POSITION_LEFT;
+  }
+  return system_display::LayoutPosition::LAYOUT_POSITION_NONE;
 }
 
 // Checks if the given point is over the radius vector described by it's end
@@ -66,7 +112,7 @@ bool PointIsOverRadiusVector(const gfx::Point& point,
          static_cast<int64_t>(point.y()) * static_cast<int64_t>(vector.x());
 }
 
-// Created ash::DisplayPlacement value for |rectangle| compared to the
+// Created display::DisplayPlacement value for |rectangle| compared to the
 // |reference|
 // rectangle.
 // The layout consists of two values:
@@ -97,7 +143,7 @@ bool PointIsOverRadiusVector(const gfx::Point& point,
 //
 // The rectangle shares an egde with the reference's bottom edge, but it's
 // center point is in the left area.
-scoped_ptr<ash::DisplayPlacement> CreatePlacementForRectangles(
+display::DisplayPlacement CreatePlacementForRectangles(
     const gfx::Rect& reference,
     const gfx::Rect& rectangle) {
   // Translate coordinate system so origin is in the reference's top left point
@@ -120,13 +166,13 @@ scoped_ptr<ash::DisplayPlacement> CreatePlacementForRectangles(
 
   bool is_bottom_right = PointIsOverRadiusVector(center, up_diag);
 
-  ash::DisplayPlacement::Position position;
+  display::DisplayPlacement::Position position;
   if (is_top_right) {
-    position = is_bottom_right ? ash::DisplayPlacement::RIGHT
-                               : ash::DisplayPlacement::TOP;
+    position = is_bottom_right ? display::DisplayPlacement::RIGHT
+                               : display::DisplayPlacement::TOP;
   } else {
-    position = is_bottom_right ? ash::DisplayPlacement::BOTTOM
-                               : ash::DisplayPlacement::LEFT;
+    position = is_bottom_right ? display::DisplayPlacement::BOTTOM
+                               : display::DisplayPlacement::LEFT;
   }
 
   // If the rectangle with the calculated position would not have common side
@@ -135,25 +181,25 @@ scoped_ptr<ash::DisplayPlacement> CreatePlacementForRectangles(
   if (is_top_right == is_bottom_right) {
     if (rectangle.y() > reference.y() + reference.height()) {
       // The rectangle is left or right, but completely under the reference.
-      position = ash::DisplayPlacement::BOTTOM;
+      position = display::DisplayPlacement::BOTTOM;
     } else if (rectangle.y() + rectangle.height() < reference.y()) {
       // The rectangle is left or right, but completely over the reference.
-      position = ash::DisplayPlacement::TOP;
+      position = display::DisplayPlacement::TOP;
     }
   } else {
     if (rectangle.x() > reference.x() + reference.width()) {
       // The rectangle is over or under, but completely right of the reference.
-      position = ash::DisplayPlacement::RIGHT;
+      position = display::DisplayPlacement::RIGHT;
     } else if (rectangle.x() + rectangle.width() < reference.x()) {
       // The rectangle is over or under, but completely left of the reference.
-      position = ash::DisplayPlacement::LEFT;
+      position = display::DisplayPlacement::LEFT;
     }
   }
-  int offset = (position == ash::DisplayPlacement::LEFT ||
-                position == ash::DisplayPlacement::RIGHT)
+  int offset = (position == display::DisplayPlacement::LEFT ||
+                position == display::DisplayPlacement::RIGHT)
                    ? rectangle.y()
                    : rectangle.x();
-  return make_scoped_ptr(new ash::DisplayPlacement(position, offset));
+  return display::DisplayPlacement(position, offset);
 }
 
 // Updates the display layout for the target display in reference to the primary
@@ -162,44 +208,43 @@ void UpdateDisplayLayout(const gfx::Rect& primary_display_bounds,
                          int64_t primary_display_id,
                          const gfx::Rect& target_display_bounds,
                          int64_t target_display_id) {
-  scoped_ptr<ash::DisplayPlacement> placement(CreatePlacementForRectangles(
+  display::DisplayPlacement placement(CreatePlacementForRectangles(
       primary_display_bounds, target_display_bounds));
-  placement->display_id = target_display_id;
-  placement->parent_display_id = primary_display_id;
+  placement.display_id = target_display_id;
+  placement.parent_display_id = primary_display_id;
 
-  scoped_ptr<ash::DisplayLayout> layout(new ash::DisplayLayout);
-  layout->placement_list.push_back(std::move(placement));
+  std::unique_ptr<display::DisplayLayout> layout(new display::DisplayLayout);
+  layout->placement_list.push_back(placement);
   layout->primary_id = primary_display_id;
 
   ash::Shell::GetInstance()
       ->display_configuration_controller()
-      ->SetDisplayLayout(std::move(layout), false /* user_action */);
+      ->SetDisplayLayout(std::move(layout), true /* user_action */);
 }
 
 // Validates that parameters passed to the SetInfo function are valid for the
 // desired display and the current display manager state.
 // Returns whether the parameters are valid. On failure |error| is set to the
 // error message.
-bool ValidateParamsForDisplay(const DisplayProperties& info,
-                              const gfx::Display& display,
+bool ValidateParamsForDisplay(const system_display::DisplayProperties& info,
+                              const display::Display& display,
                               ash::DisplayManager* display_manager,
                               int64_t primary_display_id,
                               std::string* error) {
-  bool is_primary = display.id() == primary_display_id ||
-                    (info.is_primary && *info.is_primary);
+  int64_t id = display.id();
+  bool is_primary =
+      id == primary_display_id || (info.is_primary && *info.is_primary);
 
   // If mirroring source id is set, a display with the given id should exist,
   // and if should not be the same as the target display's id.
   if (info.mirroring_source_id && !info.mirroring_source_id->empty()) {
-    int64_t mirroring_id;
-    if (!base::StringToInt64(*info.mirroring_source_id, &mirroring_id) ||
-        display_manager->GetDisplayForId(mirroring_id).id() ==
-            gfx::Display::kInvalidDisplayID) {
+    int64_t mirroring_id = GetDisplay(*info.mirroring_source_id).id();
+    if (mirroring_id == display::Display::kInvalidDisplayID) {
       *error = "Display " + *info.mirroring_source_id + " not found.";
       return false;
     }
 
-    if (*info.mirroring_source_id == base::Int64ToString(display.id())) {
+    if (*info.mirroring_source_id == base::Int64ToString(id)) {
       *error = "Not allowed to mirror self.";
       return false;
     }
@@ -255,8 +300,7 @@ bool ValidateParamsForDisplay(const DisplayProperties& info,
       return false;
     }
 
-    const gfx::Insets overscan =
-        display_manager->GetOverscanInsets(display.id());
+    const gfx::Insets overscan = display_manager->GetOverscanInsets(id);
     int screen_width = display.bounds().width() + overscan.width();
     int screen_height = display.bounds().height() + overscan.height();
 
@@ -270,78 +314,121 @@ bool ValidateParamsForDisplay(const DisplayProperties& info,
       return false;
     }
   }
+
+  // Set the display mode.
+  if (info.display_mode) {
+    ash::DisplayMode current_mode =
+        display_manager->GetActiveModeForDisplayId(id);
+    ash::DisplayMode new_mode;
+    // Copy properties not set in the UI from the current mode.
+    new_mode.refresh_rate = current_mode.refresh_rate;
+    new_mode.interlaced = current_mode.interlaced;
+    // Set properties from the UI properties.
+    new_mode.size.SetSize(info.display_mode->width_in_native_pixels,
+                          info.display_mode->height_in_native_pixels);
+    new_mode.ui_scale = info.display_mode->ui_scale;
+    new_mode.device_scale_factor = info.display_mode->device_scale_factor;
+    new_mode.native = info.display_mode->is_native;
+
+    if (new_mode.IsEquivalent(current_mode)) {
+      *error = "Display mode mataches crrent mode.";
+      return false;
+    }
+
+    if (!display_manager->SetDisplayMode(id, new_mode)) {
+      *error = "Unable to set the display mode.";
+      return false;
+    }
+
+    if (!display::Display::IsInternalDisplayId(id)) {
+      // For external displays, show a notification confirming the resolution
+      // change.
+      ash::Shell::GetInstance()
+          ->resolution_notification_controller()
+          ->PrepareNotification(id, current_mode, new_mode,
+                                base::Bind(&chromeos::StoreDisplayPrefs));
+    }
+  }
   return true;
 }
 
-// Gets the display with the provided string id.
-gfx::Display GetTargetDisplay(const std::string& display_id_str,
-                              ash::DisplayManager* manager) {
-  int64_t display_id;
-  if (!base::StringToInt64(display_id_str, &display_id)) {
-    // This should return invalid display.
-    return gfx::Display();
-  }
-  return manager->GetDisplayForId(display_id);
+system_display::DisplayMode GetDisplayMode(
+    ash::DisplayManager* display_manager,
+    const ash::DisplayInfo& display_info,
+    const ash::DisplayMode& display_mode) {
+  system_display::DisplayMode result;
+
+  bool is_internal = display::Display::HasInternalDisplay() &&
+                     display::Display::InternalDisplayId() == display_info.id();
+  gfx::Size size_dip = display_mode.GetSizeInDIP(is_internal);
+  result.width = size_dip.width();
+  result.height = size_dip.height();
+  result.width_in_native_pixels = display_mode.size.width();
+  result.height_in_native_pixels = display_mode.size.height();
+  result.ui_scale = display_mode.ui_scale;
+  result.device_scale_factor = display_mode.device_scale_factor;
+  result.is_native = display_mode.native;
+  result.is_selected = display_mode.IsEquivalent(
+      display_manager->GetActiveModeForDisplayId(display_info.id()));
+  return result;
 }
 
 }  // namespace
 
-DisplayInfoProviderChromeOS::DisplayInfoProviderChromeOS() {
-}
+DisplayInfoProviderChromeOS::DisplayInfoProviderChromeOS() {}
 
-DisplayInfoProviderChromeOS::~DisplayInfoProviderChromeOS() {
-}
+DisplayInfoProviderChromeOS::~DisplayInfoProviderChromeOS() {}
 
-bool DisplayInfoProviderChromeOS::SetInfo(const std::string& display_id_str,
-                                          const DisplayProperties& info,
-                                          std::string* error) {
+bool DisplayInfoProviderChromeOS::SetInfo(
+    const std::string& display_id_str,
+    const system_display::DisplayProperties& info,
+    std::string* error) {
   ash::DisplayManager* display_manager =
       ash::Shell::GetInstance()->display_manager();
   ash::DisplayConfigurationController* display_configuration_controller =
       ash::Shell::GetInstance()->display_configuration_controller();
 
-  const gfx::Display target = GetTargetDisplay(display_id_str, display_manager);
+  const display::Display target = GetDisplay(display_id_str);
 
-  if (target.id() == gfx::Display::kInvalidDisplayID) {
+  if (target.id() == display::Display::kInvalidDisplayID) {
     *error = "Display not found.";
     return false;
   }
 
   int64_t display_id = target.id();
-  const gfx::Display& primary = gfx::Screen::GetScreen()->GetPrimaryDisplay();
+  const display::Display& primary =
+      display::Screen::GetScreen()->GetPrimaryDisplay();
 
-  if (!ValidateParamsForDisplay(
-          info, target, display_manager, primary.id(), error)) {
+  if (!ValidateParamsForDisplay(info, target, display_manager, primary.id(),
+                                error)) {
     return false;
   }
 
   // Process 'isPrimary' parameter.
   if (info.is_primary && *info.is_primary && target.id() != primary.id()) {
     display_configuration_controller->SetPrimaryDisplayId(
-        display_id, false /* user_action */);
+        display_id, true /* user_action */);
   }
 
   // Process 'mirroringSourceId' parameter.
   if (info.mirroring_source_id) {
     bool mirror = !info.mirroring_source_id->empty();
     display_configuration_controller->SetMirrorMode(mirror,
-                                                    false /* user_action */);
+                                                    true /* user_action */);
   }
 
   // Process 'overscan' parameter.
   if (info.overscan) {
-    display_manager->SetOverscanInsets(display_id,
-                                       gfx::Insets(info.overscan->top,
-                                                   info.overscan->left,
-                                                   info.overscan->bottom,
-                                                   info.overscan->right));
+    display_manager->SetOverscanInsets(
+        display_id, gfx::Insets(info.overscan->top, info.overscan->left,
+                                info.overscan->bottom, info.overscan->right));
   }
 
   // Process 'rotation' parameter.
   if (info.rotation) {
     display_configuration_controller->SetDisplayRotation(
         display_id, DegreesToRotation(*info.rotation),
-        gfx::Display::ROTATION_SOURCE_ACTIVE, false /* user_action */);
+        display::Display::ROTATION_SOURCE_ACTIVE, true /* user_action */);
   }
 
   // Process new display origin parameters.
@@ -355,16 +442,57 @@ bool DisplayInfoProviderChromeOS::SetInfo(const std::string& display_id_str,
     gfx::Rect target_bounds = target.bounds();
     target_bounds.Offset(new_bounds_origin.x() - target.bounds().x(),
                          new_bounds_origin.y() - target.bounds().y());
-    UpdateDisplayLayout(
-        primary.bounds(), primary.id(), target_bounds, target.id());
+    UpdateDisplayLayout(primary.bounds(), primary.id(), target_bounds,
+                        target.id());
   }
 
   return true;
 }
 
+bool DisplayInfoProviderChromeOS::SetDisplayLayout(
+    const DisplayLayoutList& layouts) {
+  ash::DisplayManager* display_manager =
+      ash::Shell::GetInstance()->display_manager();
+  display::DisplayLayoutBuilder builder(
+      display_manager->GetCurrentDisplayLayout());
+
+  bool have_root = false;
+  builder.ClearPlacements();
+  for (const system_display::DisplayLayout& layout : layouts) {
+    display::Display display = GetDisplay(layout.id);
+    if (display.id() == display::Display::kInvalidDisplayID) {
+      LOG(ERROR) << "Invalid layout: display id not found: " << layout.id;
+      return false;
+    }
+    display::Display parent = GetDisplay(layout.parent_id);
+    if (parent.id() == display::Display::kInvalidDisplayID) {
+      if (have_root) {
+        LOG(ERROR) << "Invalid layout: multople roots.";
+        return false;
+      }
+      have_root = true;
+      continue;  // No placement for root (primary) display.
+    }
+    display::DisplayPlacement::Position position =
+        GetDisplayPlacementPosition(layout.position);
+    builder.AddDisplayPlacement(display.id(), parent.id(), position,
+                                layout.offset);
+  }
+  std::unique_ptr<display::DisplayLayout> layout = builder.Build();
+  if (!display::DisplayLayout::Validate(
+          display_manager->GetCurrentDisplayIdList(), *layout)) {
+    LOG(ERROR) << "Invalid layout: Validate failed.";
+    return false;
+  }
+  ash::Shell::GetInstance()
+      ->display_configuration_controller()
+      ->SetDisplayLayout(std::move(layout), true /* user_action */);
+  return true;
+}
+
 void DisplayInfoProviderChromeOS::UpdateDisplayUnitInfoForPlatform(
-    const gfx::Display& display,
-    extensions::api::system_display::DisplayUnitInfo* unit) {
+    const display::Display& display,
+    system_display::DisplayUnitInfo* unit) {
   ash::DisplayManager* display_manager =
       ash::Shell::GetInstance()->display_manager();
   unit->name = display_manager->GetDisplayNameForId(display.id());
@@ -387,6 +515,11 @@ void DisplayInfoProviderChromeOS::UpdateDisplayUnitInfoForPlatform(
   unit->overscan.top = overscan_insets.top();
   unit->overscan.right = overscan_insets.right();
   unit->overscan.bottom = overscan_insets.bottom();
+
+  for (const ash::DisplayMode& display_mode : display_info.display_modes()) {
+    unit->modes.push_back(
+        GetDisplayMode(display_manager, display_info, display_mode));
+  }
 }
 
 void DisplayInfoProviderChromeOS::EnableUnifiedDesktop(bool enable) {
@@ -394,26 +527,111 @@ void DisplayInfoProviderChromeOS::EnableUnifiedDesktop(bool enable) {
       enable);
 }
 
-DisplayInfo DisplayInfoProviderChromeOS::GetAllDisplaysInfo() {
+DisplayInfoProvider::DisplayUnitInfoList
+DisplayInfoProviderChromeOS::GetAllDisplaysInfo() {
   ash::DisplayManager* display_manager =
       ash::Shell::GetInstance()->display_manager();
   if (!display_manager->IsInUnifiedMode())
     return DisplayInfoProvider::GetAllDisplaysInfo();
 
-  std::vector<gfx::Display> displays =
+  std::vector<display::Display> displays =
       display_manager->software_mirroring_display_list();
   CHECK_GT(displays.size(), 0u);
 
   // Use first display as primary.
   int64_t primary_id = displays[0].id();
-  DisplayInfo all_displays;
-  for (const gfx::Display& display : displays) {
-    linked_ptr<api::system_display::DisplayUnitInfo> unit(
-        CreateDisplayUnitInfo(display, primary_id));
-    UpdateDisplayUnitInfoForPlatform(display, unit.get());
-    all_displays.push_back(unit);
+  DisplayUnitInfoList all_displays;
+  for (const display::Display& display : displays) {
+    system_display::DisplayUnitInfo unit =
+        CreateDisplayUnitInfo(display, primary_id);
+    UpdateDisplayUnitInfoForPlatform(display, &unit);
+    all_displays.push_back(std::move(unit));
   }
   return all_displays;
+}
+
+DisplayInfoProvider::DisplayLayoutList
+DisplayInfoProviderChromeOS::GetDisplayLayout() {
+  ash::DisplayManager* display_manager =
+      ash::Shell::GetInstance()->display_manager();
+
+  if (display_manager->num_connected_displays() < 2)
+    return DisplayInfoProvider::DisplayLayoutList();
+
+  display::Screen* screen = display::Screen::GetScreen();
+  std::vector<display::Display> displays = screen->GetAllDisplays();
+
+  DisplayLayoutList result;
+  for (const display::Display& display : displays) {
+    const display::DisplayPlacement placement =
+        display_manager->GetCurrentDisplayLayout().FindPlacementById(
+            display.id());
+    if (placement.display_id == display::Display::kInvalidDisplayID)
+      continue;
+    system_display::DisplayLayout display_layout;
+    display_layout.id = base::Int64ToString(placement.display_id);
+    display_layout.parent_id = base::Int64ToString(placement.parent_display_id);
+    display_layout.position = GetLayoutPosition(placement.position);
+    display_layout.offset = placement.offset;
+    result.push_back(std::move(display_layout));
+  }
+  return result;
+}
+
+bool DisplayInfoProviderChromeOS::OverscanCalibrationStart(
+    const std::string& id) {
+  VLOG(1) << "OverscanCalibrationStart: " << id;
+  const display::Display display = GetDisplay(id);
+  if (display.id() == display::Display::kInvalidDisplayID)
+    return false;
+  auto insets =
+      ash::Shell::GetInstance()->window_tree_host_manager()->GetOverscanInsets(
+          display.id());
+  overscan_calibrators_[id].reset(
+      new chromeos::OverscanCalibrator(display, insets));
+  return true;
+}
+
+bool DisplayInfoProviderChromeOS::OverscanCalibrationAdjust(
+    const std::string& id,
+    const system_display::Insets& delta) {
+  VLOG(1) << "OverscanCalibrationAdjust: " << id;
+  chromeos::OverscanCalibrator* calibrator = GetCalibrator(id);
+  if (!calibrator)
+    return false;
+  gfx::Insets insets = calibrator->insets();
+  insets += gfx::Insets(delta.top, delta.left, delta.bottom, delta.right);
+  calibrator->UpdateInsets(insets);
+  return true;
+}
+
+bool DisplayInfoProviderChromeOS::OverscanCalibrationReset(
+    const std::string& id) {
+  VLOG(1) << "OverscanCalibrationReset: " << id;
+  chromeos::OverscanCalibrator* calibrator = GetCalibrator(id);
+  if (!calibrator)
+    return false;
+  calibrator->Reset();
+  return true;
+}
+
+bool DisplayInfoProviderChromeOS::OverscanCalibrationComplete(
+    const std::string& id) {
+  VLOG(1) << "OverscanCalibrationComplete: " << id;
+  chromeos::OverscanCalibrator* calibrator = GetCalibrator(id);
+  if (!calibrator)
+    return false;
+  calibrator->Commit();
+  overscan_calibrators_[id].reset();
+  return true;
+}
+
+chromeos::OverscanCalibrator* DisplayInfoProviderChromeOS::GetCalibrator(
+    const std::string& id) {
+  auto iter = overscan_calibrators_.find(id);
+  if (iter == overscan_calibrators_.end())
+    return nullptr;
+  return iter->second.get();
 }
 
 // static

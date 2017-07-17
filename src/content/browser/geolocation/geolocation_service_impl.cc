@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/metrics/histogram.h"
 #include "content/browser/geolocation/geolocation_service_context.h"
-#include "content/public/common/mojo_geoposition.mojom.h"
 
 namespace content {
 
@@ -79,7 +78,7 @@ GeolocationServiceImpl::~GeolocationServiceImpl() {
   // Make sure to respond to any pending callback even without a valid position.
   if (!position_callback_.is_null()) {
     if (!current_position_.valid) {
-      current_position_.error_code = MojoGeoposition::ErrorCode(
+      current_position_.error_code = blink::mojom::Geoposition::ErrorCode(
           GEOPOSITION_ERROR_CODE_POSITION_UNAVAILABLE);
       current_position_.error_message = mojo::String("");
     }
@@ -123,7 +122,7 @@ void GeolocationServiceImpl::SetHighAccuracy(bool high_accuracy) {
 }
 
 void GeolocationServiceImpl::QueryNextPosition(
-    const PositionCallback& callback) {
+    const QueryNextPositionCallback& callback) {
   if (!position_callback_.is_null()) {
     DVLOG(1) << "Overlapped call to QueryNextPosition!";
     OnConnectionError();  // Simulate a connection error.
@@ -178,7 +177,7 @@ void GeolocationServiceImpl::OnLocationUpdate(const Geoposition& position) {
   current_position_.speed = position.speed;
   current_position_.timestamp = position.timestamp.ToDoubleT();
   current_position_.error_code =
-      MojoGeoposition::ErrorCode(position.error_code);
+      blink::mojom::Geoposition::ErrorCode(position.error_code);
   current_position_.error_message = position.error_message;
 
   has_position_to_report_ = true;
@@ -189,7 +188,7 @@ void GeolocationServiceImpl::OnLocationUpdate(const Geoposition& position) {
 
 void GeolocationServiceImpl::ReportCurrentPosition() {
   position_callback_.Run(current_position_.Clone());
-  position_callback_.reset();
+  position_callback_.Reset();
   has_position_to_report_ = false;
 }
 

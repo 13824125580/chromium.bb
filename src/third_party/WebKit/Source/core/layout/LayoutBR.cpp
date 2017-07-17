@@ -24,7 +24,7 @@
 #include "core/dom/Document.h"
 #include "core/dom/StyleEngine.h"
 #include "core/editing/PositionWithAffinity.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/LayoutObjectInlines.h"
 
 namespace blink {
 
@@ -41,13 +41,6 @@ LayoutBR::LayoutBR(Node* node)
 
 LayoutBR::~LayoutBR()
 {
-}
-
-LayoutRect LayoutBR::selectionRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer) const
-{
-    // Although line breaks contain no actual text, if we're selected we need
-    // to return a rect that includes space to illustrate a newline.
-    return LayoutText::selectionRectForPaintInvalidation(paintInvalidationContainer);
 }
 
 int LayoutBR::lineHeight(bool firstLine) const

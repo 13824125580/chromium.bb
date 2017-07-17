@@ -37,8 +37,8 @@
 #include "wtf/Allocator.h"
 #include "wtf/DynamicAnnotations.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/CString.h"
+#include <memory>
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementation specific tracing API definitions.
@@ -116,7 +116,7 @@
 //                    const char** arg_names,
 //                    const unsigned char* arg_types,
 //                    const unsigned long long* arg_values,
-//                    PassOwnPtr<TracedValue> tracedValues[],
+//                    std::unique_ptr<TracedValue> tracedValues[],
 //                    unsigned char flags)
 #define TRACE_EVENT_API_ADD_TRACE_EVENT \
     blink::EventTracer::addTraceEvent
@@ -267,11 +267,11 @@
     INTERNAL_TRACE_EVENT_UID(scoped_context)(context.data());
 
 // These values must be in sync with base::debug::TraceLog::CategoryGroupEnabledFlags.
-#define ENABLED_FOR_RECORDING (1 << 0)
-#define ENABLED_FOR_EVENT_CALLBACK (1 << 2)
+#define INTERNAL_ENABLED_FOR_RECORDING (1 << 0)
+#define INTERNAL_ENABLED_FOR_EVENT_CALLBACK (1 << 2)
 
 #define INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE() \
-    (*INTERNALTRACEEVENTUID(categoryGroupEnabled) & (ENABLED_FOR_RECORDING | ENABLED_FOR_EVENT_CALLBACK))
+    (*INTERNALTRACEEVENTUID(categoryGroupEnabled) & (INTERNAL_ENABLED_FOR_RECORDING | INTERNAL_ENABLED_FOR_EVENT_CALLBACK))
 
 #define INTERNAL_TRACE_MEMORY(category, name)
 
@@ -427,24 +427,24 @@ static inline void setTraceValue(TracedValue*, unsigned char* type, unsigned lon
     *type = TRACE_VALUE_TYPE_CONVERTABLE;
 }
 
-template<typename T> static inline void setTraceValue(const PassOwnPtr<T>& ptr, unsigned char* type, unsigned long long* value)
+template<typename T> static inline void setTraceValue(const std::unique_ptr<T>& ptr, unsigned char* type, unsigned long long* value)
 {
     setTraceValue(ptr.get(), type, value);
 }
 
 template<typename T> struct TracedValueTraits {
     static const bool isTracedValue = false;
-    static PassOwnPtr<TracedValue> moveFromIfTracedValue(const T&)
+    static std::unique_ptr<TracedValue> moveFromIfTracedValue(const T&)
     {
         return nullptr;
     }
 };
 
-template<typename T> struct TracedValueTraits<PassOwnPtr<T>> {
+template<typename T> struct TracedValueTraits<std::unique_ptr<T>> {
     static const bool isTracedValue = std::is_convertible<T*, TracedValue*>::value;
-    static PassOwnPtr<TracedValue> moveFromIfTracedValue(const PassOwnPtr<T>& tracedValue)
+    static std::unique_ptr<TracedValue> moveFromIfTracedValue(std::unique_ptr<T>&& tracedValue)
     {
-        return tracedValue;
+        return std::move(tracedValue);
     }
 };
 
@@ -453,9 +453,9 @@ template<typename T> bool isTracedValue(const T&)
     return TracedValueTraits<T>::isTracedValue;
 }
 
-template<typename T> PassOwnPtr<TracedValue> moveFromIfTracedValue(const T& value)
+template<typename T> std::unique_ptr<TracedValue> moveFromIfTracedValue(T&& value)
 {
-    return TracedValueTraits<T>::moveFromIfTracedValue(value);
+    return TracedValueTraits<T>::moveFromIfTracedValue(std::forward<T>(value));
 }
 
 // These addTraceEvent template functions are defined here instead of in the
@@ -490,7 +490,7 @@ static inline TraceEventHandle addTraceEvent(
     double timestamp,
     unsigned flags,
     const char* arg1Name,
-    const ARG1_TYPE& arg1Val)
+    ARG1_TYPE&& arg1Val)
 {
     const int numArgs = 1;
     unsigned char argTypes[1];
@@ -500,7 +500,7 @@ static inline TraceEventHandle addTraceEvent(
         return TRACE_EVENT_API_ADD_TRACE_EVENT(
             phase, categoryEnabled, name, scope, id, bindId, timestamp,
             numArgs, &arg1Name, argTypes, argValues,
-            moveFromIfTracedValue(arg1Val),
+            moveFromIfTracedValue(std::forward<ARG1_TYPE>(arg1Val)),
             nullptr,
             flags);
     }
@@ -521,9 +521,9 @@ static inline TraceEventHandle addTraceEvent(
     double timestamp,
     unsigned flags,
     const char* arg1Name,
-    const ARG1_TYPE& arg1Val,
+    ARG1_TYPE&& arg1Val,
     const char* arg2Name,
-    const ARG2_TYPE& arg2Val)
+    ARG2_TYPE&& arg2Val)
 {
     const int numArgs = 2;
     const char* argNames[2] = { arg1Name, arg2Name };
@@ -535,8 +535,8 @@ static inline TraceEventHandle addTraceEvent(
         return TRACE_EVENT_API_ADD_TRACE_EVENT(
             phase, categoryEnabled, name, scope, id, bindId, timestamp,
             numArgs, argNames, argTypes, argValues,
-            moveFromIfTracedValue(arg1Val),
-            moveFromIfTracedValue(arg2Val),
+            moveFromIfTracedValue(std::forward<ARG1_TYPE>(arg1Val)),
+            moveFromIfTracedValue(std::forward<ARG2_TYPE>(arg2Val)),
             flags);
     }
     return TRACE_EVENT_API_ADD_TRACE_EVENT(
@@ -566,11 +566,11 @@ static inline TraceEventHandle addTraceEvent(
     unsigned long long id,
     unsigned flags,
     const char* arg1Name,
-    const ARG1_TYPE& arg1Val)
+    ARG1_TYPE&& arg1Val)
 {
     return addTraceEvent(phase, categoryEnabled, name, scope, id,
         blink::TraceEvent::noBindId, EventTracer::systemTraceTime(), flags,
-        arg1Name, arg1Val);
+        arg1Name, std::forward<ARG1_TYPE>(arg1Val));
 }
 
 
@@ -583,13 +583,14 @@ static inline TraceEventHandle addTraceEvent(
     unsigned long long id,
     unsigned flags,
     const char* arg1Name,
-    const ARG1_TYPE& arg1Val,
+    ARG1_TYPE&& arg1Val,
     const char* arg2Name,
-    const ARG2_TYPE& arg2Val)
+    ARG2_TYPE&& arg2Val)
 {
     return addTraceEvent(phase, categoryEnabled, name, scope, id,
         blink::TraceEvent::noBindId, EventTracer::systemTraceTime(), flags,
-        arg1Name, arg1Val, arg2Name, arg2Val);
+        arg1Name, std::forward<ARG1_TYPE>(arg1Val),
+        arg2Name, std::forward<ARG2_TYPE>(arg2Val));
 }
 
 // Used by TRACE_EVENTx macro. Do not use directly.

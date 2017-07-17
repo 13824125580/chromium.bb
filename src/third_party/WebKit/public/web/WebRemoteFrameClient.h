@@ -8,11 +8,12 @@
 #include "public/platform/WebFocusType.h"
 #include "public/platform/WebSecurityOrigin.h"
 #include "public/web/WebDOMMessageEvent.h"
+#include "public/web/WebFrame.h"
 
 namespace blink {
 class WebInputEvent;
-class WebLocalFrame;
-class WebRemoteFrame;
+enum class WebClientRedirectPolicy;
+enum class WebFrameLoadType;
 struct WebRect;
 
 class WebRemoteFrameClient {
@@ -25,21 +26,19 @@ public:
     virtual void frameDetached(DetachType) { }
 
     // Notifies the embedder that a postMessage was issued to a remote frame.
-    virtual void postMessageEvent(
+    virtual void forwardPostMessage(
         WebLocalFrame* sourceFrame,
         WebRemoteFrame* targetFrame,
         WebSecurityOrigin targetOrigin,
-        WebDOMMessageEvent) { }
+        WebDOMMessageEvent) {}
 
     // Send initial drawing parameters to a child frame that is being rendered
     // out of process.
-    virtual void initializeChildFrame(
-        const WebRect& frameRect,
-        float deviceScaleFactor) { }
+    virtual void initializeChildFrame(float deviceScaleFactor) { }
 
     // A remote frame was asked to start a navigation.
     virtual void navigate(const WebURLRequest& request, bool shouldReplaceCurrentEntry) { }
-    virtual void reload(bool ignoreCache, bool isClientRedirect) { }
+    virtual void reload(WebFrameLoadType, WebClientRedirectPolicy) {}
 
     // FIXME: Remove this method once we have input routing in the browser
     // process. See http://crbug.com/339659.

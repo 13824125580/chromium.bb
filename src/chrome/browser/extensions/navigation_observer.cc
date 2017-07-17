@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/navigation_observer.h"
 
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/navigation_controller.h"
@@ -20,8 +21,11 @@ using content::NavigationEntry;
 namespace extensions {
 
 NavigationObserver::NavigationObserver(Profile* profile)
-    : profile_(profile), weak_factory_(this) {
+    : profile_(profile),
+      extension_registry_observer_(this),
+      weak_factory_(this) {
   RegisterForNotifications();
+  extension_registry_observer_.Add(ExtensionRegistry::Get(profile));
 }
 
 NavigationObserver::~NavigationObserver() {}
@@ -29,10 +33,7 @@ NavigationObserver::~NavigationObserver() {}
 void NavigationObserver::Observe(int type,
                                  const content::NotificationSource& source,
                                  const content::NotificationDetails& details) {
-  if (type != content::NOTIFICATION_NAV_ENTRY_COMMITTED) {
-    NOTREACHED();
-    return;
-  }
+  DCHECK_EQ(content::NOTIFICATION_NAV_ENTRY_COMMITTED, type);
 
   NavigationController* controller =
       content::Source<NavigationController>(source).ptr();
@@ -86,22 +87,26 @@ void NavigationObserver::PromptToEnableExtensionIfNecessary(
         base::Bind(&NavigationObserver::OnInstallPromptDone,
                    weak_factory_.GetWeakPtr()),
         extension, nullptr,
-        make_scoped_ptr(new ExtensionInstallPrompt::Prompt(type)),
+        base::WrapUnique(new ExtensionInstallPrompt::Prompt(type)),
         ExtensionInstallPrompt::GetDefaultShowDialogCallback());
   }
 }
 
 void NavigationObserver::OnInstallPromptDone(
     ExtensionInstallPrompt::Result result) {
+  // The extension was already uninstalled.
+  if (in_progress_prompt_extension_id_.empty())
+    return;
+
   ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   const Extension* extension = extension_service->GetExtensionById(
       in_progress_prompt_extension_id_, true);
+  CHECK(extension);
 
   if (result == ExtensionInstallPrompt::Result::ACCEPTED) {
     NavigationController* nav_controller =
         in_progress_prompt_navigation_controller_;
-    CHECK(extension);
     CHECK(nav_controller);
 
     // Grant permissions, re-enable the extension, and then reload the tab.
@@ -109,11 +114,25 @@ void NavigationObserver::OnInstallPromptDone(
     nav_controller->Reload(true);
   } else {
     std::string histogram_name =
-        result == ExtensionInstallPrompt::Result::USER_CANCELED
+       result == ExtensionInstallPrompt::Result::USER_CANCELED
             ? "ReEnableCancel"
             : "ReEnableAbort";
     ExtensionService::RecordPermissionMessagesHistogram(extension,
                                                         histogram_name.c_str());
+  }
+
+  in_progress_prompt_extension_id_ = std::string();
+  in_progress_prompt_navigation_controller_ = nullptr;
+  extension_install_prompt_.reset();
+}
+
+void NavigationObserver::OnExtensionUninstalled(
+    content::BrowserContext* browser_context,
+    const Extension* extension,
+    UninstallReason reason) {
+  if (in_progress_prompt_extension_id_.empty() ||
+      in_progress_prompt_extension_id_ != extension->id()) {
+    return;
   }
 
   in_progress_prompt_extension_id_ = std::string();

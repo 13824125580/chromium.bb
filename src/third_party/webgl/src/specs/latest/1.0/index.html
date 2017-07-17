@@ -28,7 +28,7 @@
     <!--end-logo-->
 
     <h1>WebGL Specification</h1>
-    <h2 class="no-toc">Editor's Draft 19 February 2016</h2>
+    <h2 class="no-toc">Editor's Draft <span id="LastEditDate"></span></h2>
     <dl>
         <dt>This version:
             <dd>
@@ -1158,6 +1158,14 @@ for (var i = 0; i < numVertices; i++) {
     See <a href="#CONTEXT_LOST">the context lost event</a> for further details.
     </p>
     <pre class="idl">
+typedef (ArrayBuffer or ArrayBufferView) BufferDataSource;
+typedef (ImageBitmap or
+         ImageData or
+         HTMLImageElement or
+         HTMLCanvasElement or
+         HTMLVideoElement) TexImageSource;
+typedef (Float32Array or sequence&lt;GLfloat&gt;) VertexAttribFVSource;
+
 [NoInterfaceObject]
 interface <dfn id="WebGLRenderingContextBase">WebGLRenderingContextBase</dfn>
 {
@@ -1605,7 +1613,6 @@ interface <dfn id="WebGLRenderingContextBase">WebGLRenderingContextBase</dfn>
     void blendFuncSeparate(GLenum srcRGB, GLenum dstRGB,
                            GLenum srcAlpha, GLenum dstAlpha);
 
-    typedef (ArrayBuffer or ArrayBufferView) BufferDataSource;
     void bufferData(GLenum target, GLsizeiptr size, GLenum usage);
     void bufferData(GLenum target, BufferDataSource? data, GLenum usage);
     void bufferSubData(GLenum target, GLintptr offset, BufferDataSource? data);
@@ -1732,11 +1739,6 @@ interface <dfn id="WebGLRenderingContextBase">WebGLRenderingContextBase</dfn>
     void stencilOp(GLenum fail, GLenum zfail, GLenum zpass);
     void stencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum zpass);
 
-    typedef (ImageBitmap or
-             ImageData or
-             HTMLImageElement or
-             HTMLCanvasElement or
-             HTMLVideoElement) TexImageSource;
     void texImage2D(GLenum target, GLint level, GLint internalformat,
                     GLsizei width, GLsizei height, GLint border, GLenum format,
                     GLenum type, ArrayBufferView? pixels);
@@ -1794,7 +1796,6 @@ interface <dfn id="WebGLRenderingContextBase">WebGLRenderingContextBase</dfn>
     void validateProgram(WebGLProgram? program);
 
     void vertexAttrib1f(GLuint indx, GLfloat x);
-    typedef (Float32Array or sequence&lt;GLfloat&gt;) VertexAttribFVSource;
     void vertexAttrib1fv(GLuint indx, VertexAttribFVSource values);
     void vertexAttrib2f(GLuint indx, GLfloat x, GLfloat y);
     void vertexAttrib2fv(GLuint indx, VertexAttribFVSource values);
@@ -2028,6 +2029,10 @@ WebGLRenderingContext implements WebGLRenderingContextBase;
             </table><br>
             <p>All queries returning sequences or typed arrays return a new object each time.</p>
             <p>If <em>pname</em> is not in the table above, generates an <code>INVALID_ENUM</code> error and returns null.</p>
+            <p>If <em>pname</em> is <code>IMPLEMENTATION_COLOR_READ_FORMAT</code>
+            or <code>IMPLEMENTATION_COLOR_READ_TYPE</code>, and the currently bound framebuffer is
+            not <em>framebuffer complete</em>, generates an <code>INVALID_OPERATION</code> error and
+            returns null.
             <p>The following <em>pname</em> arguments return a string describing some aspect of the current WebGL implementation:</p>
             <table>
               <tr><td>VERSION</td>
@@ -3065,8 +3070,9 @@ WebGLRenderingContext implements WebGLRenderingContextBase;
         any loss of context. Any objects referenced by a disabled extension, such as the object returned
         by <code>getExtension</code>, are no longer associated with the WebGL rendering context. Any
         extension objects that derive from <code>WebGLObject</code> have their
-        <a href="#webgl-object-invalidated-flag">invalidated</a> flag set to true. Any use of a disabled
-        extension or its referenced objects generates an INVALID_OPERATION error.
+        <a href="#webgl-object-invalidated-flag">invalidated</a> flag set to true. Behavior of
+        extensions' methods after context loss is defined by the steps in the
+        section <a href="#WEBGLRENDERINGCONTEXT">"The WebGL context"</a>.
     <p>
         There are no other mechanisms to disable an extension.
     </p>
@@ -3132,7 +3138,7 @@ interface <dfn id="WebGLContextLostEvent">WebGLContextEvent</dfn> : <a href="htt
 
 // EventInit is defined in the DOM4 specification.
 dictionary WebGLContextEventInit : <a href="http://www.w3.org/TR/domcore/#eventinit">EventInit</a> {
-    DOMString statusMessage;
+    DOMString statusMessage = "";
 };</pre>
 
     <p>
@@ -3583,7 +3589,7 @@ is <code>BROWSER_DEFAULT_WEBGL</code>.
 <p>
 If the <code>TexImageSource</code> is an <code>ImageBitmap</code>, then these three parameters will
 be ignored. Instead the equivalent
-<a href="https://wiki.whatwg.org/wiki/ImageBitmap_Options">ImageBitmapOptions</a> should be used to
+<a href="https://html.spec.whatwg.org/multipage/webappapis.html#imagebitmapoptions">ImageBitmapOptions</a> should be used to
 create an <code>ImageBitmap</code> with the desired format.
 
 <h3><a name="READS_OUTSIDE_FRAMEBUFFER">Reading Pixels Outside the Framebuffer</a></h3>
@@ -3874,15 +3880,14 @@ extensions.
     content.
 </div>
 
-<h3><a name="PREPROCESSOR_DEFINED_IN_MACRO">GLSL ES Preprocessor "defined" Operator Generated By Macro Replacement</a></h3>
+<h3><a name="PREPROCESSOR_DEFINED_IN_MACRO">GLSL ES Preprocessor "defined" Operator</a></h3>
 
 <p>
     The C++ standard, which the GLSL ES preprocessor specification refers to, has undefined behavior
     when the <code>defined</code> operator is generated by macro replacement when parsing the
     controlling expression of an <code>#if</code> or <code>#elif</code> directive. When shader code
     processed by the WebGL API generates the token <code>defined</code> during macro replacement
-    inside a preprocessor expression, that token must be immediately handled as the
-    <code>defined</code> operator before any further macro replacement.
+    inside a preprocessor expression, that must result in a compiler error.
 </p>
 
 <p>
@@ -3890,10 +3895,14 @@ extensions.
     <code>defined</code> operator.
 </p>
 
+<p>
+    Using <code>defined</code> as a macro name also has undefined behavior in the C++ standard. In
+    the WebGL API, using <code>defined</code> as a macro name must result in a compiler error.
+</p>
+
 <div class="note rationale">
-    This behavior is enforced across GLES implementations by dEQP tests, so shaders created on other
-    platforms may rely on it. In addition, the ported dEQP tests in the WebGL conformance suite are
-    only valid if this behavior is specified.
+    Behavior of the WebGL API should be consistent in cases where the native API spec allows undefined
+    behavior.
 </div>
 
 <h3><a name="EXTENSION_DIRECTIVE_LOCATION">GLSL ES #extension directive location</a></h3>
@@ -3932,6 +3941,14 @@ extensions.
     example <a href="https://www.khronos.org/registry/gles/specs/3.0/es_spec_3.0.4.pdf#nameddest=section-4.4.4">OpenGL
     ES 3.0.4 &sect;4.4.4</a> "Framebuffer Completeness", subsection
     "Framebuffer Attachment Completeness".
+</div>
+
+<h3>Transferring vertices when current program is null</h3>
+
+<div>
+    Any command that transfers vertices to the GL generates <code>INVALID_OPERATION</code> if the
+    <code>CURRENT_PROGRAM</code> is null. This includes <code>drawElements</code> and
+    <code>drawArrays</code>.
 </div>
 
 <!-- ======================================================================================================= -->

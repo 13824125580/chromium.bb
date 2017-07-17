@@ -287,6 +287,8 @@ bookmark.pdf * * *
 bookmarkgetcolor.pdf mac * *
 bug_0_length_line.pdf mac * *
 bug_0_width_line.pdf mac * *
+bug_434.pdf * * noxfa
+bug_434.pdf win * xfa
 bug_white_space.pdf mac * *
 calcorderindex_test.pdf * * *
 calculate_average.pdf mac * *
@@ -475,3 +477,15 @@ widget_javascript.pdf mac * *
 zh_file1.pdf mac * *
 zh_function_list.pdf mac * *
 zh_shared_document.pdf mac * *
+
+#
+# xfa_specific
+#
+Choose.pdf * * *
+data_binding.pdf * * *
+Date_FormCale.pdf * * *
+Sum.pdf * * *
+TimeField.pdf * * *
+Test_CheckBox.pdf * * *
+Test_DateField_locale_zh_HK.pdf * * *
+

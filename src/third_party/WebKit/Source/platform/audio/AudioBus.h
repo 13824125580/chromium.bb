@@ -31,9 +31,9 @@
 
 #include "platform/audio/AudioChannel.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/ThreadSafeRefCounted.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -151,17 +151,18 @@ protected:
 
     AudioBus(unsigned numberOfChannels, size_t length, bool allocate);
 
-    void speakersCopyFrom(const AudioBus&);
-    void discreteCopyFrom(const AudioBus&);
-    void speakersSumFrom(const AudioBus&);
     void discreteSumFrom(const AudioBus&);
-    void speakersSumFrom5_1_ToMono(const AudioBus&);
+
+    // Up/down-mix by in-place summing upon the existing channel content.
+    // http://webaudio.github.io/web-audio-api/#channel-up-mixing-and-down-mixing
+    void sumFromByUpMixing(const AudioBus&);
+    void sumFromByDownMixing(const AudioBus&);
 
     size_t m_length;
-    Vector<OwnPtr<AudioChannel>> m_channels;
+    Vector<std::unique_ptr<AudioChannel>> m_channels;
     int m_layout;
     float m_busGain;
-    OwnPtr<AudioFloatArray> m_dezipperGainValues;
+    std::unique_ptr<AudioFloatArray> m_dezipperGainValues;
     bool m_isFirstTime;
     float m_sampleRate; // 0.0 if unknown or N/A
 };

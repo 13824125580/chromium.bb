@@ -6,7 +6,7 @@
 #define ASH_SHELF_SHELF_DELEGATE_H_
 
 #include "ash/ash_export.h"
-#include "ash/shelf/shelf_item_types.h"
+#include "ash/common/shelf/shelf_item_types.h"
 
 namespace ash {
 class Shelf;
@@ -24,6 +24,18 @@ class ASH_EXPORT ShelfDelegate {
   // Callback used to inform the delegate that a specific shelf no longer
   // exists.
   virtual void OnShelfDestroyed(Shelf* shelf) = 0;
+
+  // Called when |shelf|'s alignment changes.
+  virtual void OnShelfAlignmentChanged(Shelf* shelf) = 0;
+
+  // Called when |shelf|'s auto-hide behavior changes.
+  virtual void OnShelfAutoHideBehaviorChanged(Shelf* shelf) = 0;
+
+  // Called when |shelf|'s auto-hide state changes.
+  virtual void OnShelfAutoHideStateChanged(Shelf* shelf) = 0;
+
+  // Called when |shelf|'s visibility state is committed.
+  virtual void OnShelfVisibilityStateChanged(Shelf* shelf) = 0;
 
   // Get the shelf ID from an application ID.
   virtual ShelfID GetShelfIDForAppID(const std::string& app_id) = 0;

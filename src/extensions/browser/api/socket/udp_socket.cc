@@ -6,8 +6,10 @@
 
 #include <algorithm>
 
+#include "base/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "extensions/browser/api/api_resource.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/udp/datagram_socket.h"
@@ -82,7 +84,11 @@ void UDPSocket::Disconnect() {
   is_connected_ = false;
   socket_.Close();
   read_callback_.Reset();
-  recv_from_callback_.Reset();
+  // TODO(devlin): Should we do this for all callbacks?
+  if (!recv_from_callback_.is_null()) {
+    base::ResetAndReturn(&recv_from_callback_)
+        .Run(net::ERR_CONNECTION_CLOSED, nullptr, std::string(), 0);
+  }
   send_to_callback_.Reset();
   multicast_groups_.clear();
 }
@@ -243,11 +249,11 @@ void UDPSocket::OnSendToComplete(int result) {
 bool UDPSocket::IsBound() { return socket_.is_connected(); }
 
 int UDPSocket::JoinGroup(const std::string& address) {
-  net::IPAddressNumber ip;
-  if (!net::ParseIPLiteralToNumber(address, &ip))
+  net::IPAddress ip;
+  if (!ip.AssignFromIPLiteral(address))
     return net::ERR_ADDRESS_INVALID;
 
-  std::string normalized_address = net::IPAddressToString(ip);
+  std::string normalized_address = ip.ToString();
   std::vector<std::string>::iterator find_result = std::find(
       multicast_groups_.begin(), multicast_groups_.end(), normalized_address);
   if (find_result != multicast_groups_.end())
@@ -260,11 +266,11 @@ int UDPSocket::JoinGroup(const std::string& address) {
 }
 
 int UDPSocket::LeaveGroup(const std::string& address) {
-  net::IPAddressNumber ip;
-  if (!net::ParseIPLiteralToNumber(address, &ip))
+  net::IPAddress ip;
+  if (!ip.AssignFromIPLiteral(address))
     return net::ERR_ADDRESS_INVALID;
 
-  std::string normalized_address = net::IPAddressToString(ip);
+  std::string normalized_address = ip.ToString();
   std::vector<std::string>::iterator find_result = std::find(
       multicast_groups_.begin(), multicast_groups_.end(), normalized_address);
   if (find_result == multicast_groups_.end())

@@ -26,6 +26,11 @@ enum DocumentReadyState { "loading", "interactive", "complete" };
 // http://www.w3.org/TR/page-visibility/#VisibilityState
 enum VisibilityState { "hidden", "visible", "prerender", "unloaded" };
 
+// https://mikewest.github.io/cors-rfc1918/#feature-detect
+enum AddressSpace { "local", "private", "public" };
+
+typedef (HTMLScriptElement or SVGScriptElement) HTMLOrSVGScriptElement;
+
 // https://dom.spec.whatwg.org/#interface-document
 
 // FIXME: Document should have a constructor. crbug.com/238234
@@ -49,15 +54,15 @@ interface Document : Node {
     HTMLCollection getElementsByTagNameNS(DOMString? namespaceURI, DOMString localName);
     HTMLCollection getElementsByClassName(DOMString classNames);
 
-    [NewObject, CustomElementCallbacks, PerWorldBindings, RaisesException] Element createElement(DOMString localName);
-    [NewObject, CustomElementCallbacks, RaisesException] Element createElementNS(DOMString? namespaceURI, DOMString qualifiedName);
+    [NewObject, DoNotTestNewObject, CustomElementCallbacks, PerWorldBindings, RaisesException] Element createElement(DOMString localName);
+    [NewObject, DoNotTestNewObject, CustomElementCallbacks, RaisesException] Element createElementNS(DOMString? namespaceURI, DOMString qualifiedName);
     [NewObject] DocumentFragment createDocumentFragment();
     [NewObject] Text createTextNode(DOMString data);
     [NewObject] Comment createComment(DOMString data);
     [NewObject, RaisesException] ProcessingInstruction createProcessingInstruction(DOMString target, DOMString data);
 
-    [NewObject, CustomElementCallbacks, RaisesException] Node importNode(Node node, optional boolean deep = false);
-    [RaisesException, CustomElementCallbacks] Node adoptNode(Node node);
+    [NewObject, DoNotTestNewObject, CEReactions, CustomElementCallbacks, RaisesException] Node importNode(Node node, optional boolean deep = false);
+    [RaisesException, CEReactions, CustomElementCallbacks] Node adoptNode(Node node);
 
     [NewObject, RaisesException, MeasureAs=DocumentCreateAttribute] Attr createAttribute(DOMString localName);
     [NewObject, RaisesException, MeasureAs=DocumentCreateAttributeNS] Attr createAttributeNS(DOMString? namespaceURI, DOMString qualifiedName);
@@ -69,6 +74,9 @@ interface Document : Node {
     // NodeFilter.SHOW_ALL = 0xFFFFFFFF
     [NewObject] NodeIterator createNodeIterator(Node root, optional unsigned long whatToShow = 0xFFFFFFFF, optional NodeFilter? filter = null);
     [NewObject] TreeWalker createTreeWalker(Node root, optional unsigned long whatToShow = 0xFFFFFFFF, optional NodeFilter? filter = null);
+
+    // NonDocumentRootScroller (https://github.com/bokand/NonDocumentRootScroller)
+    [RaisesException=Setter, RuntimeEnabled=SetRootScroller] attribute Element? rootScroller;
 
     // FIXME: CDATASection has been removed from the spec. crbug.com/437205
     [RaisesException, MeasureAs=DocumentCreateCDATASection] CDATASection createCDATASection(DOMString data);
@@ -83,11 +91,6 @@ interface Document : Node {
 
     // resource metadata management
 
-    // Inheritance of [Unforgeable] attributes is not supported.  So we have to
-    // define the same unforgeable attributes in derived interfaces as well.
-    // See that HTMLDocument and XMLDocument redefine 'location' attribute.
-    // Keep all the definitions consistent.
-    // TODO(yukishiino): Support inheritance of attributes defined on instance.
     [PutForwards=href, Unforgeable] readonly attribute Location? location;
     [RaisesException=Setter] attribute DOMString domain;
     readonly attribute DOMString referrer;
@@ -102,32 +105,31 @@ interface Document : Node {
     readonly attribute DocumentReadyState readyState;
 
     // DOM tree accessors
-    [CustomElementCallbacks] attribute DOMString title;
-    [CustomElementCallbacks] attribute DOMString dir;
-    [RaisesException=Setter, CustomElementCallbacks, PerWorldBindings] attribute HTMLElement? body;
+    [CEReactions, CustomElementCallbacks] attribute DOMString title;
+    [CEReactions, CustomElementCallbacks] attribute DOMString dir;
+    [CEReactions, RaisesException=Setter, CustomElementCallbacks, PerWorldBindings] attribute HTMLElement? body;
     readonly attribute HTMLHeadElement? head;
-    [SameObject] readonly attribute HTMLCollection images;
-    [SameObject] readonly attribute HTMLCollection embeds;
-    [SameObject, ImplementedAs=embeds] readonly attribute HTMLCollection plugins;
-    [SameObject] readonly attribute HTMLCollection links;
-    [SameObject] readonly attribute HTMLCollection forms;
-    [SameObject] readonly attribute HTMLCollection scripts;
+    [SameObject, Measure] readonly attribute HTMLCollection images;
+    [SameObject, Measure] readonly attribute HTMLCollection embeds;
+    [SameObject, ImplementedAs=embeds, Measure] readonly attribute HTMLCollection plugins;
+    [SameObject, Measure] readonly attribute HTMLCollection links;
+    [SameObject, Measure] readonly attribute HTMLCollection forms;
+    [SameObject, Measure] readonly attribute HTMLCollection scripts;
     [PerWorldBindings] NodeList getElementsByName(DOMString elementName);
-    readonly attribute HTMLScriptElement? currentScript;
+    [ImplementedAs=currentScriptForBinding] readonly attribute HTMLOrSVGScriptElement? currentScript;
 
     // dynamic markup insertion
     // FIXME: There are two open() methods in the spec.
-    [Custom, CustomElementCallbacks, RaisesException] void open();
-    [RaisesException] void close();
-    [CallWith=FirstWindow, CustomElementCallbacks, RaisesException] void write(DOMString... text);
-    [CallWith=FirstWindow, CustomElementCallbacks, RaisesException] void writeln(DOMString... text);
+    [Custom, CEReactions, CustomElementCallbacks, RaisesException, MeasureAs=DocumentOpen] void open();
+    [CEReactions, RaisesException] void close();
+    [CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void write(DOMString... text);
+    [CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void writeln(DOMString... text);
 
     // user interaction
     [ImplementedAs=domWindow] readonly attribute Window? defaultView;
-    readonly attribute Element? activeElement;
     boolean hasFocus();
-    [CustomElementCallbacks, MeasureAs=DocumentDesignMode] attribute DOMString designMode;
-    [CustomElementCallbacks, RaisesException] boolean execCommand(DOMString commandId, optional boolean showUI = false, optional DOMString value = "");
+    [CEReactions, CustomElementCallbacks, MeasureAs=DocumentDesignMode] attribute DOMString designMode;
+    [CEReactions, CustomElementCallbacks, RaisesException] boolean execCommand(DOMString commandId, optional boolean showUI = false, optional DOMString value = "");
     [RaisesException] boolean queryCommandEnabled(DOMString commandId);
     [RaisesException] boolean queryCommandIndeterm(DOMString commandId);
     [RaisesException] boolean queryCommandState(DOMString commandId);
@@ -141,33 +143,22 @@ interface Document : Node {
 
     // FIXME: *Color are on HTMLDocument.
 
-    readonly attribute HTMLCollection anchors;
-    readonly attribute HTMLCollection applets;
+    [Measure] readonly attribute HTMLCollection anchors;
+    [Measure] readonly attribute HTMLCollection applets;
 
     // FIXME: clear(), captureEvents(), releaseEvents() and all are on HTMLDocument.
 
     // CSS Object Model (CSSOM)
     // http://dev.w3.org/csswg/cssom/#extensions-to-the-document-interface
-    [SameObject] readonly attribute StyleSheetList styleSheets;
     attribute DOMString? selectedStylesheetSet;
     readonly attribute DOMString? preferredStylesheetSet;
 
-    // CSSOM View Module
-    // http://dev.w3.org/csswg/cssom-view/#extensions-to-the-document-interface
-    // FIXME: The x and y arguments should be of type double.
-    Element? elementFromPoint(long x, long y);
-    sequence<Element> elementsFromPoint(long x, long y);
     readonly attribute Element? scrollingElement;
-
-    // Selection API
-    // http://w3c.github.io/selection-api/#extensions-to-document-interface
-    Selection? getSelection();
 
     // Pointer Lock
     // https://dvcs.w3.org/hg/pointerlock/raw-file/default/index.html#extensions-to-the-document-interface
     attribute EventHandler onpointerlockchange;
     attribute EventHandler onpointerlockerror;
-    [MeasureAs=DocumentPointerLockElement] readonly attribute Element? pointerLockElement;
     [MeasureAs=DocumentExitPointerLock] void exitPointerLock();
 
     // Touch Events
@@ -200,6 +191,10 @@ interface Document : Node {
     readonly attribute boolean hidden;
     readonly attribute VisibilityState visibilityState;
 
+    // CORS and RFC1918
+    // https://mikewest.github.io/cors-rfc1918/#feature-detect
+    [RuntimeEnabled=CorsRFC1918, ImplementedAs=addressSpaceForBindings] readonly attribute AddressSpace addressSpace;
+
     // Non-standard APIs
     [MeasureAs=DocumentCaretRangeFromPoint] Range caretRangeFromPoint([Default=Undefined] optional long x, [Default=Undefined] optional long y);
 
@@ -226,3 +221,4 @@ interface Document : Node {
 Document implements GlobalEventHandlers;
 Document implements ParentNode;
 Document implements NonElementParentNode;
+Document implements DocumentOrShadowRoot;

@@ -9,10 +9,10 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "chrome/browser/android/download/download_controller_base.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "content/public/browser/android/content_view_core.h"
-#include "content/public/browser/android/download_controller_android.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/context_menu_params.h"
@@ -27,12 +27,11 @@ using base::android::ConvertUTF16ToJavaString;
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(ContextMenuHelper);
 
-namespace {
-
 const int kShareImageMaxWidth = 2048;
 const int kShareImageMaxHeight = 2048;
 
-}  // namespace
+const char kDataReductionProxyPassthroughHeader[] =
+    "Chrome-Proxy: pass-through\r\n";
 
 ContextMenuHelper::ContextMenuHelper(content::WebContents* web_contents)
     : web_contents_(web_contents) {
@@ -108,12 +107,16 @@ ContextMenuHelper::CreateJavaContextMenuParams(
   return jmenu_info;
 }
 
-void ContextMenuHelper::OnStartDownload(JNIEnv* env,
-                                        const JavaParamRef<jobject>& obj,
-                                        jboolean jis_link,
-                                        const JavaParamRef<jstring>& jheaders) {
-  std::string headers(ConvertJavaStringToUTF8(env, jheaders));
-  content::DownloadControllerAndroid::Get()->StartContextMenuDownload(
+void ContextMenuHelper::OnStartDownload(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean jis_link,
+    jboolean jis_data_reduction_proxy_enabled) {
+  std::string headers;
+  if (jis_data_reduction_proxy_enabled)
+    headers = kDataReductionProxyPassthroughHeader;
+
+  DownloadControllerBase::Get()->StartContextMenuDownload(
       context_menu_params_,
       web_contents_,
       jis_link,

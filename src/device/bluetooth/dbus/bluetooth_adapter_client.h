@@ -5,21 +5,25 @@
 #ifndef DEVICE_BLUETOOTH_DBUS_BLUETOOTH_ADAPTER_CLIENT_H_
 #define DEVICE_BLUETOOTH_DBUS_BLUETOOTH_ADAPTER_CLIENT_H_
 
-#include <stdint.h>
-
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/observer_list.h"
-#include "base/values.h"
 #include "dbus/object_path.h"
 #include "dbus/property.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/dbus/bluez_dbus_client.h"
 
+namespace dbus {
+class ObjectProxy;
+}
+
 namespace bluez {
+
+class BluetoothServiceRecordBlueZ;
 
 // BluetoothAdapterClient is used to communicate with objects representing
 // local Bluetooth Adapters.
@@ -34,10 +38,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterClient : public BluezDBusClient {
     // Copy content of |filter| into this filter
     void CopyFrom(const DiscoveryFilter& filter);
 
-    scoped_ptr<std::vector<std::string>> uuids;
-    scoped_ptr<int16_t> rssi;
-    scoped_ptr<uint16_t> pathloss;
-    scoped_ptr<std::string> transport;
+    std::unique_ptr<std::vector<std::string>> uuids;
+    std::unique_ptr<int16_t> rssi;
+    std::unique_ptr<uint16_t> pathloss;
+    std::unique_ptr<std::string> transport;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(DiscoveryFilter);
@@ -133,6 +137,9 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterClient : public BluezDBusClient {
   // any values should be copied if needed.
   virtual Properties* GetProperties(const dbus::ObjectPath& object_path) = 0;
 
+  // Callback used to send back the handle of a created service record.
+  using ServiceRecordCallback = base::Callback<void(uint32_t)>;
+
   // The ErrorCallback is used by adapter methods to indicate failure.
   // It receives two arguments: the name of the error in |error_name| and
   // an optional message in |error_message|.
@@ -168,6 +175,20 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterClient : public BluezDBusClient {
                                   const DiscoveryFilter& discovery_filter,
                                   const base::Closure& callback,
                                   const ErrorCallback& error_callback) = 0;
+
+  // Creates the service record |record| on the adapter with the object path
+  // |object_path|.
+  virtual void CreateServiceRecord(const dbus::ObjectPath& object_path,
+                                   const BluetoothServiceRecordBlueZ& record,
+                                   const ServiceRecordCallback& callback,
+                                   const ErrorCallback& error_callback) = 0;
+
+  // Removes the service record with the uuid |uuid| on the adapter with the
+  // object path |object_path|.
+  virtual void RemoveServiceRecord(const dbus::ObjectPath& object_path,
+                                   uint32_t handle,
+                                   const base::Closure& callback,
+                                   const ErrorCallback& error_callback) = 0;
 
   // Creates the instance.
   static BluetoothAdapterClient* Create();

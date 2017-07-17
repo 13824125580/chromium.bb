@@ -72,7 +72,7 @@ void QuicCryptoStream::SendHandshakeMessage(
   session()->OnCryptoHandshakeMessageSent(message);
   const QuicData& data = message.GetSerialized();
   // TODO(wtc): check the return value.
-  WriteOrBufferData(string(data.data(), data.length()), false, listener);
+  WriteOrBufferData(StringPiece(data.data(), data.length()), false, listener);
 }
 
 bool QuicCryptoStream::ExportKeyingMaterial(StringPiece label,
@@ -93,9 +93,6 @@ bool QuicCryptoStream::ExportTokenBindingKeyingMaterial(string* result) const {
   if (!encryption_established()) {
     QUIC_BUG << "ExportTokenBindingKeyingMaterial was called before initial"
              << "encryption was established.";
-    return false;
-  }
-  if (!FLAGS_quic_save_initial_subkey_secret) {
     return false;
   }
   return CryptoUtils::ExportKeyingMaterial(

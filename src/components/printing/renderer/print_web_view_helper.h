@@ -5,12 +5,12 @@
 #ifndef COMPONENTS_PRINTING_RENDERER_PRINT_WEB_VIEW_HELPER_H_
 #define COMPONENTS_PRINTING_RENDERER_PRINT_WEB_VIEW_HELPER_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -108,7 +108,7 @@ class PrintWebViewHelper
   };
 
   PrintWebViewHelper(content::RenderView* render_view,
-                     scoped_ptr<Delegate> delegate,
+                     std::unique_ptr<Delegate> delegate,
                      bool single_thread_mode = false);
   ~PrintWebViewHelper() override;
 
@@ -172,6 +172,7 @@ class PrintWebViewHelper
   void PrintPage(blink::WebLocalFrame* frame, bool user_initiated) override;
   void DidStartLoading() override;
   void DidStopLoading() override;
+  void OnDestruct() override;
 
   // Message handlers ---------------------------------------------------------
 #if defined(ENABLE_BASIC_PRINTING)
@@ -371,10 +372,10 @@ class PrintWebViewHelper
   void SetPrintPagesParams(const PrintMsg_PrintPages_Params& settings);
 
   // WebView used only to print the selection.
-  scoped_ptr<PrepareFrameAndViewForPrint> prep_frame_view_;
+  std::unique_ptr<PrepareFrameAndViewForPrint> prep_frame_view_;
   bool reset_prep_frame_view_;
 
-  scoped_ptr<PrintMsg_PrintPages_Params> print_pages_params_;
+  std::unique_ptr<PrintMsg_PrintPages_Params> print_pages_params_;
   bool is_print_ready_metafile_sent_;
   bool ignore_css_margins_;
 
@@ -389,7 +390,7 @@ class PrintWebViewHelper
   bool print_for_preview_;
 
   // Used to check the prerendering status.
-  const scoped_ptr<Delegate> delegate_;
+  const std::unique_ptr<Delegate> delegate_;
 
   // Keeps track of the state of print preview between messages.
   // TODO(vitalybuka): Create PrintPreviewContext when needed and delete after
@@ -473,8 +474,8 @@ class PrintWebViewHelper
     FrameReference source_frame_;
     blink::WebNode source_node_;
 
-    scoped_ptr<PrepareFrameAndViewForPrint> prep_frame_view_;
-    scoped_ptr<PdfMetafileSkia> metafile_;
+    std::unique_ptr<PrepareFrameAndViewForPrint> prep_frame_view_;
+    std::unique_ptr<PdfMetafileSkia> metafile_;
 
     // Total page count in the renderer.
     int total_page_count_;

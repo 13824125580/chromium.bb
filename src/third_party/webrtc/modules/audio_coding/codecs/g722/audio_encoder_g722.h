@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "webrtc/base/buffer.h"
+#include "webrtc/base/constructormagic.h"
 #include "webrtc/modules/audio_coding/codecs/audio_encoder.h"
 #include "webrtc/modules/audio_coding/codecs/g722/g722_interface.h"
 
@@ -35,18 +36,18 @@ class AudioEncoderG722 final : public AudioEncoder {
   explicit AudioEncoderG722(const CodecInst& codec_inst);
   ~AudioEncoderG722() override;
 
-  size_t MaxEncodedBytes() const override;
   int SampleRateHz() const override;
   size_t NumChannels() const override;
   int RtpTimestampRateHz() const override;
   size_t Num10MsFramesInNextPacket() const override;
   size_t Max10MsFramesInAPacket() const override;
   int GetTargetBitrate() const override;
-  EncodedInfo EncodeInternal(uint32_t rtp_timestamp,
-                             rtc::ArrayView<const int16_t> audio,
-                             size_t max_encoded_bytes,
-                             uint8_t* encoded) override;
   void Reset() override;
+
+ protected:
+  EncodedInfo EncodeImpl(uint32_t rtp_timestamp,
+                         rtc::ArrayView<const int16_t> audio,
+                         rtc::Buffer* encoded) override;
 
  private:
   // The encoder state for one channel.

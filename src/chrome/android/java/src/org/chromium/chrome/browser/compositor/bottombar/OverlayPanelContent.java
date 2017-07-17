@@ -30,39 +30,25 @@ import org.chromium.content_public.browser.WebContentsObserver;
  */
 public class OverlayPanelContent {
 
-    /**
-     * The ContentViewCore that this panel will display.
-     */
+    /** The ContentViewCore that this panel will display. */
     private ContentViewCore mContentViewCore;
 
-    /**
-     * The pointer to the native version of this class.
-     */
+    /** The pointer to the native version of this class. */
     private long mNativeOverlayPanelContentPtr;
 
-    /**
-     * Used for progress bar events.
-     */
+    /** Used for progress bar events. */
     private final WebContentsDelegateAndroid mWebContentsDelegate;
 
-    /**
-     * The activity that this content is contained in.
-     */
+    /** The activity that this content is contained in. */
     private ChromeActivity mActivity;
 
-    /**
-     * Observer used for tracking loading and navigation.
-     */
+    /** Observer used for tracking loading and navigation. */
     private WebContentsObserver mWebContentsObserver;
 
-    /**
-     * The URL that was directly loaded using the {@link #loadUrl(String)} method.
-     */
+    /** The URL that was directly loaded using the {@link #loadUrl(String)} method. */
     private String mLoadedUrl;
 
-    /**
-     * Whether the ContentViewCore has started loading a URL.
-     */
+    /** Whether the ContentViewCore has started loading a URL. */
     private boolean mDidStartLoadingUrl;
 
     /**
@@ -78,29 +64,19 @@ public class OverlayPanelContent {
      */
     private boolean mIsProcessingPendingNavigation;
 
-    /**
-     * Whether the content view is currently being displayed.
-     */
+    /** Whether the content view is currently being displayed. */
     private boolean mIsContentViewShowing;
 
-    /**
-     * The ContentViewCore responsible for displaying content.
-     */
+    /** The ContentViewCore responsible for displaying content. */
     private ContentViewClient mContentViewClient;
 
-    /**
-     * The observer used by this object to inform implementers of different events.
-     */
+    /** The observer used by this object to inform implementers of different events. */
     private OverlayContentDelegate mContentDelegate;
 
-    /**
-     * Used to observe progress bar events.
-     */
+    /** Used to observe progress bar events. */
     private OverlayContentProgressObserver mProgressObserver;
 
-    /**
-     * If a URL is set to delayed load (load on user interaction), it will be stored here.
-     */
+    /** If a URL is set to delayed load (load on user interaction), it will be stored here. */
     private String mPendingUrl;
 
     // http://crbug.com/522266 : An instance of InterceptNavigationDelegateImpl should be kept in
@@ -190,6 +166,37 @@ public class OverlayPanelContent {
     // ============================================================================================
 
     /**
+     * Load a URL; this will trigger creation of a new ContentViewCore if being loaded immediately,
+     * otherwise one is created when the panel's content becomes visible.
+     * @param url The URL that should be loaded.
+     * @param shouldLoadImmediately If a URL should be loaded immediately or wait until visibility
+     *                        changes.
+     */
+    public void loadUrl(String url, boolean shouldLoadImmediately) {
+        mPendingUrl = null;
+
+        if (!shouldLoadImmediately) {
+            mPendingUrl = url;
+        } else {
+            createNewContentView();
+            mLoadedUrl = url;
+            mDidStartLoadingUrl = true;
+            mIsProcessingPendingNavigation = true;
+            if (!mContentDelegate.handleInterceptLoadUrl(mContentViewCore, url)) {
+                mContentViewCore.getWebContents().getNavigationController().loadUrl(
+                        new LoadUrlParams(url));
+            }
+        }
+    }
+
+    /**
+     * Makes the content visible, causing it to be rendered.
+     */
+    public void showContent() {
+        setVisibility(true);
+    }
+
+    /**
      * Creates a ContentViewCore. This method will be overridden by tests.
      * @param activity The ChromeActivity.
      * @return The newly created ContentViewCore.
@@ -219,16 +226,18 @@ public class OverlayPanelContent {
         mContentViewCore.setContentViewClient(mContentViewClient);
 
         ContentView cv = ContentView.createContentView(mActivity, mContentViewCore);
+
         // Creates an initially hidden WebContents which gets shown when the panel is opened.
-        mContentViewCore.initialize(cv, cv,
-                WebContentsFactory.createWebContents(false, true), mActivity.getWindowAndroid());
+        WebContents panelWebContents = WebContentsFactory.createWebContents(false, true);
+        mContentViewCore.initialize(cv, cv, panelWebContents, mActivity.getWindowAndroid());
 
         // Transfers the ownership of the WebContents to the native OverlayPanelContent.
-        nativeSetWebContents(mNativeOverlayPanelContentPtr, mContentViewCore,
-                mWebContentsDelegate);
+        nativeSetWebContents(mNativeOverlayPanelContentPtr, panelWebContents, mWebContentsDelegate);
+
+        nativeSetViewAndroid(mNativeOverlayPanelContentPtr, mContentViewCore);
 
         mWebContentsObserver =
-                new WebContentsObserver(mContentViewCore.getWebContents()) {
+                new WebContentsObserver(panelWebContents) {
                     @Override
                     public void didStartLoading(String url) {
                         mContentDelegate.onContentLoadStarted(url);
@@ -268,7 +277,7 @@ public class OverlayPanelContent {
 
         mInterceptNavigationDelegate = new InterceptNavigationDelegateImpl();
         nativeSetInterceptNavigationDelegate(mNativeOverlayPanelContentPtr,
-                mInterceptNavigationDelegate, mContentViewCore.getWebContents());
+                mInterceptNavigationDelegate, panelWebContents);
 
         mContentDelegate.onContentViewCreated(mContentViewCore);
     }
@@ -278,8 +287,8 @@ public class OverlayPanelContent {
      */
     private void destroyContentView() {
         if (mContentViewCore != null) {
+            // Native destroy will call up to destroy the Java WebContents.
             nativeDestroyWebContents(mNativeOverlayPanelContentPtr);
-            mContentViewCore.getWebContents().destroy();
             mContentViewCore.destroy();
             mContentViewCore = null;
             if (mWebContentsObserver != null) {
@@ -295,38 +304,6 @@ public class OverlayPanelContent {
             // After everything has been disposed, notify the observer.
             mContentDelegate.onContentViewDestroyed();
         }
-    }
-
-    /**
-     * Load a URL; this will trigger creation of a new ContentViewCore if being loaded immediately,
-     * otherwise one is created when the panel's content becomes visible.
-     * @param url The URL that should be loaded.
-     * @param shouldLoadImmediately If a URL should be loaded immediately or wait until visibility
-     *                        changes.
-     */
-    public void loadUrl(String url, boolean shouldLoadImmediately) {
-        mPendingUrl = null;
-
-        if (!shouldLoadImmediately) {
-            mPendingUrl = url;
-        } else {
-            createNewContentView();
-            mLoadedUrl = url;
-            mDidStartLoadingUrl = true;
-            mIsProcessingPendingNavigation = true;
-            if (!mContentDelegate.handleInterceptLoadUrl(mContentViewCore, url)) {
-                mContentViewCore.getWebContents().getNavigationController().loadUrl(
-                        new LoadUrlParams(url));
-            }
-        }
-    }
-
-    /**
-     * Notifies that the panel's bar has been touched. Calling this method will turn the Content
-     * visible, causing it to be rendered.
-     */
-    public void notifyBarTouched() {
-        setVisibility(true);
     }
 
     // ============================================================================================
@@ -483,7 +460,9 @@ public class OverlayPanelContent {
     private native void nativeRemoveLastHistoryEntry(
             long nativeOverlayPanelContent, String historyUrl, long urlTimeMs);
     private native void nativeSetWebContents(long nativeOverlayPanelContent,
-            ContentViewCore contentViewCore, WebContentsDelegateAndroid delegate);
+            WebContents webContents, WebContentsDelegateAndroid delegate);
+    private native void nativeSetViewAndroid(long nativeOverlayPanelContent,
+            ContentViewCore contentViewCore);
     private native void nativeDestroyWebContents(long nativeOverlayPanelContent);
     private native void nativeSetInterceptNavigationDelegate(long nativeOverlayPanelContent,
             InterceptNavigationDelegate delegate, WebContents webContents);

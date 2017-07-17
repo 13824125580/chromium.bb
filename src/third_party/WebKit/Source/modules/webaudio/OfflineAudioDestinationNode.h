@@ -31,6 +31,7 @@
 #include "public/platform/WebThread.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -53,6 +54,7 @@ public:
     // AudioDestinationHandler
     void startRendering() override;
     void stopRendering() override;
+    unsigned long maxChannelCount() const override;
 
     float sampleRate()  const override { return m_renderTarget->sampleRate(); }
 
@@ -81,7 +83,7 @@ private:
     void finishOfflineRendering();
 
     // Suspend/completion callbacks for the main thread.
-    void notifySuspend();
+    void notifySuspend(size_t);
     void notifyComplete();
 
     // The offline version of render() method. If the rendering needs to be
@@ -97,7 +99,7 @@ private:
     RefPtr<AudioBus> m_renderBus;
 
     // Rendering thread.
-    OwnPtr<WebThread> m_renderThread;
+    std::unique_ptr<WebThread> m_renderThread;
 
     // These variables are for counting the number of frames for the current
     // progress and the remaining frames to be processed.

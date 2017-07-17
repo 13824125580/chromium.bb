@@ -28,6 +28,10 @@ namespace base {
 class RefCountedMemory;
 }
 
+namespace color_utils {
+struct HSL;
+}
+
 namespace gfx {
 class ImageSkia;
 }
@@ -53,6 +57,9 @@ class UI_BASE_EXPORT ThemeProvider {
 
   // Get the color specified by |id|.
   virtual SkColor GetColor(int id) const = 0;
+
+  // Get the HSL shift specified by |id|.
+  virtual color_utils::HSL GetTint(int id) const = 0;
 
   // Get the property (e.g. an alignment expressed in an enum, or a width or
   // height) specified by |id|.
@@ -80,8 +87,14 @@ class UI_BASE_EXPORT ThemeProvider {
   // ThemeProvider, but it's used in many places on OSX.
   virtual bool UsingSystemTheme() const = 0;
 
+  // Returns whether or not theme is in Incognito mode.
+  virtual bool InIncognitoMode() const = 0;
+
   // Gets the NSImage with the specified |id|.
   virtual NSImage* GetNSImageNamed(int id) const = 0;
+
+  // Returns true if the theme has defined a custom color for color |id|.
+  virtual bool HasCustomColor(int id) const = 0;
 
   // Gets the NSImage that GetNSImageNamed (above) would return, but returns it
   // as a pattern color.
@@ -95,6 +108,9 @@ class UI_BASE_EXPORT ThemeProvider {
 
   // Gets the NSGradient with the specified |id|.
   virtual NSGradient* GetNSGradient(int id) const = 0;
+
+  // Whether the "increase contrast" accessibility setting is enabled.
+  virtual bool ShouldIncreaseContrast() const = 0;
 #endif
 };
 

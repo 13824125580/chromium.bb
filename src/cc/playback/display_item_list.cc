@@ -30,7 +30,6 @@
 #include "ui/gfx/skia_util.h"
 
 namespace cc {
-class ImageSerializationProcessor;
 
 namespace {
 
@@ -59,7 +58,8 @@ scoped_refptr<DisplayItemList> DisplayItemList::Create(
 
 scoped_refptr<DisplayItemList> DisplayItemList::CreateFromProto(
     const proto::DisplayItemList& proto,
-    ImageSerializationProcessor* image_serialization_processor) {
+    ClientPictureCache* client_picture_cache,
+    std::vector<uint32_t>* used_engine_picture_ids) {
   gfx::Rect layer_rect = ProtoToRect(proto.layer_rect());
   scoped_refptr<DisplayItemList> list =
       DisplayItemList::Create(ProtoToRect(proto.layer_rect()),
@@ -68,7 +68,8 @@ scoped_refptr<DisplayItemList> DisplayItemList::CreateFromProto(
   for (int i = 0; i < proto.items_size(); i++) {
     const proto::DisplayItem& item_proto = proto.items(i);
     DisplayItemProtoFactory::AllocateAndConstruct(
-        layer_rect, list.get(), item_proto, image_serialization_processor);
+        layer_rect, list.get(), item_proto, client_picture_cache,
+        used_engine_picture_ids);
   }
 
   list->Finalize();
@@ -90,19 +91,18 @@ DisplayItemList::DisplayItemList(gfx::Rect layer_rect,
   if (settings_.use_cached_picture) {
     SkRTreeFactory factory;
     recorder_.reset(new SkPictureRecorder());
-    canvas_ = skia::SharePtr(recorder_->beginRecording(
-        layer_rect_.width(), layer_rect_.height(), &factory));
-    canvas_->translate(-layer_rect_.x(), -layer_rect_.y());
-    canvas_->clipRect(gfx::RectToSkRect(layer_rect_));
+
+    SkCanvas* canvas = recorder_->beginRecording(
+        layer_rect_.width(), layer_rect_.height(), &factory);
+    canvas->translate(-layer_rect_.x(), -layer_rect_.y());
+    canvas->clipRect(gfx::RectToSkRect(layer_rect_));
   }
 }
 
 DisplayItemList::~DisplayItemList() {
 }
 
-void DisplayItemList::ToProtobuf(
-    proto::DisplayItemList* proto,
-    ImageSerializationProcessor* image_serialization_processor) {
+void DisplayItemList::ToProtobuf(proto::DisplayItemList* proto) {
   // The flattened SkPicture approach is going away, and the proto
   // doesn't currently support serializing that flattened picture.
   DCHECK(retain_individual_display_items_);
@@ -112,26 +112,39 @@ void DisplayItemList::ToProtobuf(
 
   DCHECK_EQ(0, proto->items_size());
   for (const auto& item : items_)
-    item.ToProtobuf(proto->add_items(), image_serialization_processor);
+    item.ToProtobuf(proto->add_items());
 }
 
 void DisplayItemList::Raster(SkCanvas* canvas,
                              SkPicture::AbortCallback* callback,
                              const gfx::Rect& canvas_target_playback_rect,
                              const gfx::AxisTransform2d& contents_transform) const {
+  canvas->save();
+
+  if (!canvas_target_playback_rect.IsEmpty()) {
+    // canvas_target_playback_rect is specified in device space. We can't
+    // use clipRect because canvas CTM will be applied on it. Use clipRegion
+    // instead because it ignores canvas CTM.
+    SkRegion device_clip;
+    device_clip.setRect(gfx::RectToSkIRect(canvas_target_playback_rect));
+    canvas->clipRegion(device_clip);
+  }
+
+  canvas->translate(contents_transform.translation().x(), contents_transform.translation().y());
+  canvas->scale(contents_transform.scale_x(), contents_transform.scale_y());
+  Raster(canvas, callback);
+  canvas->restore();
+}
+
+void DisplayItemList::Raster(SkCanvas* canvas,
+                             SkPicture::AbortCallback* callback) const {
   if (!settings_.use_cached_picture) {
-    canvas->save();
-    canvas->translate(contents_transform.translation().x(), contents_transform.translation().y());
-    canvas->scale(contents_transform.scale_x(), contents_transform.scale_y());
     for (const auto& item : items_)
-      item.Raster(canvas, canvas_target_playback_rect, callback);
-    canvas->restore();
+      item.Raster(canvas, callback);
   } else {
     DCHECK(picture_);
 
     canvas->save();
-    canvas->translate(contents_transform.translation().x(), contents_transform.translation().y());
-    canvas->scale(contents_transform.scale_x(), contents_transform.scale_y());
     canvas->translate(layer_rect_.x(), layer_rect_.y());
     if (callback) {
       // If we have a callback, we need to call |draw()|, |drawPicture()|
@@ -149,8 +162,8 @@ void DisplayItemList::Raster(SkCanvas* canvas,
 
 void DisplayItemList::ProcessAppendedItem(const DisplayItem* item) {
   if (settings_.use_cached_picture) {
-    DCHECK(canvas_);
-    item->Raster(canvas_.get(), gfx::Rect(), nullptr);
+    DCHECK(recorder_);
+    item->Raster(recorder_->getRecordingCanvas(), nullptr);
   }
   if (!retain_individual_display_items_) {
     items_.Clear();
@@ -158,10 +171,10 @@ void DisplayItemList::ProcessAppendedItem(const DisplayItem* item) {
 }
 
 void DisplayItemList::RasterIntoCanvas(const DisplayItem& item) {
-  DCHECK(canvas_);
+  DCHECK(recorder_);
   DCHECK(!retain_individual_display_items_);
 
-  item.Raster(canvas_.get(), gfx::Rect(), nullptr);
+  item.Raster(recorder_->getRecordingCanvas(), nullptr);
 }
 
 bool DisplayItemList::RetainsIndividualDisplayItems() const {
@@ -169,6 +182,7 @@ bool DisplayItemList::RetainsIndividualDisplayItems() const {
 }
 
 void DisplayItemList::Finalize() {
+  TRACE_EVENT0("cc", "DisplayItemList::Finalize");
   // TODO(dtrainor): Need to deal with serializing visual_rects_.
   // http://crbug.com/568757.
   DCHECK(!retain_individual_display_items_ ||
@@ -187,14 +201,11 @@ void DisplayItemList::Finalize() {
     // Convert to an SkPicture for faster rasterization.
     DCHECK(settings_.use_cached_picture);
     DCHECK(!picture_);
-    picture_ = skia::AdoptRef(recorder_->endRecordingAsPicture());
+    picture_ = recorder_->finishRecordingAsPicture();
     DCHECK(picture_);
     picture_memory_usage_ =
         SkPictureUtils::ApproximateBytesUsed(picture_.get());
     recorder_.reset();
-    canvas_.clear();
-    is_suitable_for_gpu_rasterization_ =
-        picture_->suitableForGpuRasterization(nullptr);
   }
 }
 
@@ -203,7 +214,9 @@ bool DisplayItemList::IsSuitableForGpuRasterization() const {
 }
 
 int DisplayItemList::ApproximateOpCount() const {
+  if (retain_individual_display_items_)
   return approximate_op_count_;
+  return picture_ ? picture_->approximateOpCount() : 0;
 }
 
 size_t DisplayItemList::ApproximateMemoryUsage() const {
@@ -240,10 +253,10 @@ bool DisplayItemList::ShouldBeAnalyzedForSolidColor() const {
   return ApproximateOpCount() <= kOpCountThatIsOkToAnalyze;
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 DisplayItemList::AsValue(bool include_items) const {
-  scoped_refptr<base::trace_event::TracedValue> state =
-      new base::trace_event::TracedValue();
+  std::unique_ptr<base::trace_event::TracedValue> state(
+      new base::trace_event::TracedValue());
 
   state->BeginDictionary("params");
   if (include_items) {
@@ -268,15 +281,14 @@ DisplayItemList::AsValue(bool include_items) const {
     canvas->translate(-layer_rect_.x(), -layer_rect_.y());
     canvas->clipRect(gfx::RectToSkRect(layer_rect_));
     Raster(canvas, NULL, gfx::Rect(), 1.f);
-    skia::RefPtr<SkPicture> picture =
-        skia::AdoptRef(recorder.endRecordingAsPicture());
+    sk_sp<SkPicture> picture = recorder.finishRecordingAsPicture();
 
     std::string b64_picture;
     PictureDebugUtil::SerializeAsBase64(picture.get(), &b64_picture);
     state->SetString("skp64", b64_picture);
   }
 
-  return state;
+  return std::move(state);
 }
 
 void DisplayItemList::EmitTraceSnapshot() const {
@@ -310,15 +322,6 @@ void DisplayItemList::GetDiscardableImagesInRect(
     const gfx::Scaling2d& raster_scale,
     std::vector<DrawImage>* images) {
   image_map_.GetDiscardableImagesInRect(rect, raster_scale, images);
-}
-
-bool DisplayItemList::HasDiscardableImageInRect(
-    const gfx::Rect& layer_rect) const {
-  return image_map_.HasDiscardableImageInRect(layer_rect);
-}
-
-bool DisplayItemList::MayHaveDiscardableImages() const {
-  return !image_map_.empty();
 }
 
 }  // namespace cc

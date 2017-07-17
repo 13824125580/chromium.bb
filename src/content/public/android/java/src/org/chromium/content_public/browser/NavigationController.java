@@ -76,9 +76,9 @@ public interface NavigationController {
     public void reloadToRefreshContent(boolean checkForRepost);
 
     /**
-     * Reload the current page, ignoring the contents of the cache.
+     * Reload the current page, bypassing the contents of the cache.
      */
-    public void reloadIgnoringCache(boolean checkForRepost);
+    public void reloadBypassingCache(boolean checkForRepost);
 
     /**
      * Reload the current page with Lo-Fi off, ignoring the contents of the cache.
@@ -156,6 +156,7 @@ public interface NavigationController {
      * @param index Index to retrieve the NavigationEntry for.
      * @return Entry containing info about the navigation, null if the index is out of bounds.
      */
+    @VisibleForTesting
     public NavigationEntry getEntryAtIndex(int index);
 
     /**

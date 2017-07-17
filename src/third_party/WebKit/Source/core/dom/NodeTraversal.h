@@ -34,6 +34,8 @@
 namespace blink {
 
 template <class Iterator> class TraversalRange;
+template <class TraversalNext> class TraversalAncestorsIterator;
+template <class TraversalNext> class TraversalInclusiveAncestorsIterator;
 template <class TraversalNext> class TraversalChildrenIterator;
 template <class TraversalNext> class TraversalDescendantIterator;
 template <class TraversalNext> class TraversalInclusiveDescendantIterator;
@@ -100,10 +102,12 @@ public:
     static unsigned countChildren(const Node& parent) { return parent.countChildren(); }
     static ContainerNode* parentOrShadowHostNode(const Node& node) { return node.parentOrShadowHostNode(); }
 
+    static TraversalRange<TraversalAncestorsIterator<NodeTraversal>> ancestorsOf(const Node&);
+    static TraversalRange<TraversalInclusiveAncestorsIterator<NodeTraversal>> inclusiveAncestorsOf(const Node&);
     static TraversalRange<TraversalChildrenIterator<NodeTraversal>> childrenOf(const Node&);
     static TraversalRange<TraversalDescendantIterator<NodeTraversal>> descendantsOf(const Node&);
     static TraversalRange<TraversalInclusiveDescendantIterator<NodeTraversal>> inclusiveDescendantsOf(const Node&);
-    static TraversalRange<TraversalNextIterator<NodeTraversal>> startsAt(const Node*);
+    static TraversalRange<TraversalNextIterator<NodeTraversal>> startsAt(const Node&);
     static TraversalRange<TraversalNextIterator<NodeTraversal>> startsAfter(const Node&);
 
 private:
@@ -124,7 +128,7 @@ public:
     Iterator begin() { return Iterator(m_start); }
     Iterator end() { return Iterator::end(); }
 private:
-    RawPtrWillBeMember<const StartNodeType> m_start;
+    Member<const StartNodeType> m_start;
 };
 
 template <class TraversalNext>
@@ -137,7 +141,33 @@ public:
 protected:
     explicit TraversalIteratorBase(NodeType* current) : m_current(current) { }
 
-    RawPtrWillBeMember<NodeType> m_current;
+    Member<NodeType> m_current;
+};
+
+template <class TraversalNext>
+class TraversalAncestorsIterator : public TraversalIteratorBase<TraversalNext> {
+    STACK_ALLOCATED();
+public:
+    using StartNodeType = Node;
+    using TraversalIteratorBase<TraversalNext>::m_current;
+    explicit TraversalAncestorsIterator(const StartNodeType* start) : TraversalIteratorBase<TraversalNext>(TraversalNext::parent(*start)) { }
+    void operator++() { m_current = TraversalNext::parent(*m_current); }
+    static TraversalAncestorsIterator end() { return TraversalAncestorsIterator(); }
+private:
+    TraversalAncestorsIterator() : TraversalIteratorBase<TraversalNext>(nullptr) { }
+};
+
+template <class TraversalNext>
+class TraversalInclusiveAncestorsIterator : public TraversalIteratorBase<TraversalNext> {
+    STACK_ALLOCATED();
+public:
+    using StartNodeType = Node;
+    using TraversalIteratorBase<TraversalNext>::m_current;
+    explicit TraversalInclusiveAncestorsIterator(const StartNodeType* start) : TraversalIteratorBase<TraversalNext>(const_cast<StartNodeType*>(start)) { }
+    void operator++() { m_current = TraversalNext::parent(*m_current); }
+    static TraversalInclusiveAncestorsIterator end() { return TraversalInclusiveAncestorsIterator(); }
+private:
+    TraversalInclusiveAncestorsIterator() : TraversalIteratorBase<TraversalNext>(nullptr) { }
 };
 
 template <class TraversalNext>
@@ -175,7 +205,7 @@ public:
     static TraversalDescendantIterator end() { return TraversalDescendantIterator(); }
 private:
     TraversalDescendantIterator() : TraversalIteratorBase<TraversalNext>(nullptr), m_root(nullptr) { }
-    RawPtrWillBeMember<const Node> m_root;
+    Member<const Node> m_root;
 };
 
 template <class TraversalNext>
@@ -189,8 +219,18 @@ public:
     void operator++() { m_current = TraversalNext::next(*m_current, m_root); }
     static TraversalInclusiveDescendantIterator end() { return TraversalInclusiveDescendantIterator(nullptr); }
 private:
-    RawPtrWillBeMember<const StartNodeType> m_root;
+    Member<const StartNodeType> m_root;
 };
+
+inline TraversalRange<TraversalAncestorsIterator<NodeTraversal>> NodeTraversal::ancestorsOf(const Node& node)
+{
+    return TraversalRange<TraversalAncestorsIterator<NodeTraversal>>(&node);
+}
+
+inline TraversalRange<TraversalInclusiveAncestorsIterator<NodeTraversal>> NodeTraversal::inclusiveAncestorsOf(const Node& node)
+{
+    return TraversalRange<TraversalInclusiveAncestorsIterator<NodeTraversal>>(&node);
+}
 
 inline TraversalRange<TraversalChildrenIterator<NodeTraversal>> NodeTraversal::childrenOf(const Node& parent)
 {
@@ -207,14 +247,14 @@ inline TraversalRange<TraversalInclusiveDescendantIterator<NodeTraversal>> NodeT
     return TraversalRange<TraversalInclusiveDescendantIterator<NodeTraversal>>(&root);
 }
 
-inline TraversalRange<TraversalNextIterator<NodeTraversal>> NodeTraversal::startsAt(const Node* start)
+inline TraversalRange<TraversalNextIterator<NodeTraversal>> NodeTraversal::startsAt(const Node& start)
 {
-    return TraversalRange<TraversalNextIterator<NodeTraversal>>(start);
+    return TraversalRange<TraversalNextIterator<NodeTraversal>>(&start);
 };
 
 inline TraversalRange<TraversalNextIterator<NodeTraversal>> NodeTraversal::startsAfter(const Node& start)
 {
-    return startsAt(NodeTraversal::next(start));
+    return TraversalRange<TraversalNextIterator<NodeTraversal>>(NodeTraversal::next(start));
 };
 
 template <class NodeType>

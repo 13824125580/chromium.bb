@@ -58,7 +58,7 @@ bool GrGLSLSupportsNamedFragmentShaderOutputs(GrGLSLGeneration);
  */
 inline const char* GrGLSLTexture2DFunctionName(GrSLType coordType, GrSLType samplerType,
                                                GrGLSLGeneration glslGen) {
-    SkASSERT(GrSLTypeIsSamplerType(samplerType));
+    SkASSERT(GrSLTypeIs2DTextureType(samplerType));
     SkASSERT(kVec2f_GrSLType == coordType || kVec3f_GrSLType == coordType);
     // GL_TEXTURE_RECTANGLE_ARB is written against OpenGL 2.0/GLSL 1.10. At that time there were
     // separate texture*() functions. In OpenGL 3.0/GLSL 1.30 the different texture*() functions
@@ -84,6 +84,23 @@ void GrGLSLAppendDefaultFloatPrecisionDeclaration(GrSLPrecision,
                                                   SkString* out);
 
 /**
+ * Converts a GrSLPrecision to its corresponding GLSL precision qualifier.
+ */
+static inline const char* GrGLSLPrecisionString(GrSLPrecision p) {
+    switch (p) {
+        case kLow_GrSLPrecision:
+            return "lowp";
+        case kMedium_GrSLPrecision:
+            return "mediump";
+        case kHigh_GrSLPrecision:
+            return "highp";
+        default:
+            SkFAIL("Unexpected precision type.");
+            return "";
+    }
+}
+
+/**
  * Converts a GrSLType to a string containing the name of the equivalent GLSL type.
  */
 static inline const char* GrGLSLTypeString(GrSLType t) {
@@ -98,6 +115,8 @@ static inline const char* GrGLSLTypeString(GrSLType t) {
             return "vec3";
         case kVec4f_GrSLType:
             return "vec4";
+        case kMat22f_GrSLType:
+            return "mat2";
         case kMat33f_GrSLType:
             return "mat3";
         case kMat44f_GrSLType:
@@ -108,6 +127,8 @@ static inline const char* GrGLSLTypeString(GrSLType t) {
             return "samplerExternalOES";
         case kSampler2DRect_GrSLType:
             return "sampler2DRect";
+        case kSamplerBuffer_GrSLType:
+            return "samplerBuffer";
         case kBool_GrSLType:
             return "bool";
         case kInt_GrSLType:

@@ -19,7 +19,6 @@
 #include "webrtc/api/java/jni/jni_helpers.h"
 #include "webrtc/base/logging.h"
 #include "webrtc/base/thread.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 
 namespace webrtc_jni {
 
@@ -44,6 +43,8 @@ enum COLOR_FORMATTYPE {
 
 // Arbitrary interval to poll the codec for new outputs.
 enum { kMediaCodecPollMs = 10 };
+// Arbitrary interval to poll at when there should be no more frames.
+enum { kMediaCodecPollNoFramesMs = 100 };
 // Media codec maximum output buffer ready timeout.
 enum { kMediaCodecTimeoutMs = 1000 };
 // Interval to print codec statistics (bitrate, fps, encoding/decoding time).
@@ -53,15 +54,11 @@ enum { kMaxPendingFramesVp8 = 1 };
 // Maximum amount of pending frames for VP9 decoder.
 enum { kMaxPendingFramesVp9 = 1 };
 // Maximum amount of pending frames for H.264 decoder.
-enum { kMaxPendingFramesH264 = 8 };
+enum { kMaxPendingFramesH264 = 3 };
 // Maximum amount of decoded frames for which per-frame logging is enabled.
 enum { kMaxDecodedLogFrames = 10 };
 // Maximum amount of encoded frames for which per-frame logging is enabled.
 enum { kMaxEncodedLogFrames = 10 };
-
-static inline int64_t GetCurrentTimeMs() {
-  return webrtc::TickTime::Now().Ticks() / 1000000LL;
-}
 
 static inline void AllowBlockingCalls() {
   rtc::Thread* current_thread = rtc::Thread::Current();

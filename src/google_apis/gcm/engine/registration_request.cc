@@ -13,7 +13,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "google_apis/gcm/base/gcm_util.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
@@ -90,7 +90,7 @@ RegistrationRequest::CustomRequestHandler::~CustomRequestHandler() {}
 RegistrationRequest::RegistrationRequest(
     const GURL& registration_url,
     const RequestInfo& request_info,
-    scoped_ptr<CustomRequestHandler> custom_request_handler,
+    std::unique_ptr<CustomRequestHandler> custom_request_handler,
     const net::BackoffEntry::Policy& backoff_policy,
     const RegistrationCallback& callback,
     int max_retry_count,

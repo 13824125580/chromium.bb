@@ -18,6 +18,7 @@ const char kRegionIgnoredRe[] =
     "province|region|other"
     "|provincia"  // es
     "|bairro|suburb";  // pt-BR, pt-PT
+const char kAddressNameIgnoredRe[] = "address.*nickname|address.*label";
 const char kCompanyRe[] =
     "company|business|organization|organisation"
     "|firma|firmenname"  // de-DE
@@ -124,16 +125,16 @@ const char kStateRe[] =
 // credit_card_field.cc
 /////////////////////////////////////////////////////////////////////////////
 const char kNameOnCardRe[] =
-    "card.?(?:holder|owner)|name.*\\bon\\b.*card"
+    "card.?(?:holder|owner)|name.*(\\b)?on(\\b)?.*card"
     "|(?:card|cc).?name|cc.?full.?name"
-    "|karteninhaber"  // de-DE
-    "|nombre.*tarjeta"  // es
-    "|nom.*carte"  // fr-FR
-    "|nome.*cart"  // it-IT
-    "|名前"  // ja-JP
-    "|Имя.*карты"  // ru
+    "|karteninhaber"                   // de-DE
+    "|nombre.*tarjeta"                 // es
+    "|nom.*carte"                      // fr-FR
+    "|nome.*cart"                      // it-IT
+    "|名前"                            // ja-JP
+    "|Имя.*карты"                      // ru
     "|信用卡开户名|开户名|持卡人姓名"  // zh-CN
-    "|持卡人姓名";  // zh-TW
+    "|持卡人姓名";                     // zh-TW
 const char kNameOnCardContextualRe[] =
     "name";
 const char kCardNumberRe[] =
@@ -184,11 +185,22 @@ const char kExpirationYearRe[] =
     "|Срок действия карты"  // ru
     "|年|有效期";  // zh-CN
 
-// The "yy" portion of the regex is just looking for two adjacent y's.
+// Used to match a expiration date field with a two digit year.
+// The following conditions must be met:
+//  - Exactly two adjacent y's.
+//  - (optional) Exactly two adjacent m's before the y's.
+//    - (optional) Separated by white-space and/or a dash or slash.
+//  - (optional) Prepended with some text similar to "Expiration Date".
+// Tested in components/autofill/core/common/autofill_regexes_unittest.cc
 const char kExpirationDate2DigitYearRe[] =
-    "(?:exp.*date.*|mm\\s*[-/]\\s*)[^y]yy([^y]|$)";
+    "(?:exp.*date[^y\\n\\r]*|mm\\s*[-/]?\\s*)yy(?:[^y]|$)";
+// Used to match a expiration date field with a four digit year.
+// Same requirements as |kExpirationDate2DigitYearRe| except:
+//  - Exactly four adjacent y's.
+// Tested in components/autofill/core/common/autofill_regexes_unittest.cc
 const char kExpirationDate4DigitYearRe[] =
-    "^mm\\s*[-/]\\syyyy$";
+    "(?:exp.*date[^y\\n\\r]*|mm\\s*[-/]?\\s*)yyyy(?:[^y]|$)";
+// Used to match expiration date fields that do not specify a year length.
 const char kExpirationDateRe[] =
     "expir|exp.*date|^expfield$"
     "|gueltig|gültig"  // de-DE
@@ -268,14 +280,14 @@ const char kLastNameRe[] =
 // phone_field.cc
 /////////////////////////////////////////////////////////////////////////////
 const char kPhoneRe[] =
-    "phone|mobile"
-    "|telefonnummer"  // de-DE
-    "|telefono|teléfono"  // es
-    "|telfixe"  // fr-FR
-    "|電話"  // ja-JP
-    "|telefone|telemovel"  // pt-BR, pt-PT
-    "|телефон"  // ru
-    "|电话"  // zh-CN
+    "phone|mobile|contact.?number"
+    "|telefonnummer"                                // de-DE
+    "|telefono|teléfono"                            // es
+    "|telfixe"                                      // fr-FR
+    "|電話"                                         // ja-JP
+    "|telefone|telemovel"                           // pt-BR, pt-PT
+    "|телефон"                                      // ru
+    "|电话"                                         // zh-CN
     "|(?:전화|핸드폰|휴대폰|휴대전화)(?:.?번호)?";  // ko-KR
 const char kCountryCodeRe[] =
     "country.*code|ccode|_cc";

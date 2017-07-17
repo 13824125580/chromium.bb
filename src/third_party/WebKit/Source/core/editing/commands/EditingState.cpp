@@ -16,7 +16,7 @@ EditingState::~EditingState()
 
 void EditingState::abort()
 {
-    ASSERT(!m_isAborted);
+    DCHECK(!m_isAborted);
     m_isAborted = true;
 }
 
@@ -29,7 +29,7 @@ IgnorableEditingAbortState::~IgnorableEditingAbortState()
 {
 }
 
-#if ENABLE(ASSERT)
+#if DCHECK_IS_ON()
 // ---
 
 NoEditingAbortChecker::NoEditingAbortChecker(const char* file, int line)
@@ -38,7 +38,7 @@ NoEditingAbortChecker::NoEditingAbortChecker(const char* file, int line)
 
 NoEditingAbortChecker::~NoEditingAbortChecker()
 {
-    ASSERT_AT(!m_editingState.isAborted(), m_file, m_line, "");
+    DCHECK_AT(!m_editingState.isAborted(), m_file, m_line) << "The operation should not have been aborted.";
 }
 
 #endif

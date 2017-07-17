@@ -9,7 +9,9 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
@@ -56,7 +58,7 @@ std::string GenerateKey(const GURL& app_url) {
   std::string key;
   crypto::SHA256HashString(app_url.spec().c_str(), raw,
                            crypto::kSHA256Length);
-  base::Base64Encode(std::string(raw, crypto::kSHA256Length), &key);
+  base::Base64Encode(base::StringPiece(raw, crypto::kSHA256Length), &key);
   return key;
 }
 
@@ -102,7 +104,7 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
   }
 
   // Create the manifest
-  scoped_ptr<base::DictionaryValue> root(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> root(new base::DictionaryValue);
   root->SetString(keys::kPublicKey, GenerateKey(web_app.app_url));
   root->SetString(keys::kName, base::UTF16ToUTF8(web_app.title));
   root->SetString(keys::kVersion, ConvertTimeToExtensionVersion(create_time));
@@ -125,10 +127,11 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
     icons->SetString(size, icon_path);
 
     if (icon.url.is_valid()) {
-      base::DictionaryValue* linked_icon = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> linked_icon(
+          new base::DictionaryValue());
       linked_icon->SetString(keys::kLinkedAppIconURL, icon.url.spec());
       linked_icon->SetInteger(keys::kLinkedAppIconSize, icon.width);
-      linked_icons->Append(linked_icon);
+      linked_icons->Append(std::move(linked_icon));
     }
   }
 

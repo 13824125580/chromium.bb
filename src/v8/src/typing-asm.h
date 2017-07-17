@@ -6,6 +6,7 @@
 #define V8_TYPING_ASM_H_
 
 #include "src/allocation.h"
+#include "src/ast/ast-type-bounds.h"
 #include "src/ast/ast.h"
 #include "src/effects.h"
 #include "src/type-info.h"
@@ -24,6 +25,7 @@ class AsmTyper : public AstVisitor {
   bool Validate();
   void set_allow_simd(bool simd) { allow_simd_ = simd; }
   const char* error_message() { return error_message_; }
+  const AstTypeBounds* bounds() { return &bounds_; }
 
   enum StandardMember {
     kNone = 0,
@@ -92,7 +94,7 @@ class AsmTyper : public AstVisitor {
   Type* expected_type_;
   Type* computed_type_;
   VariableInfo* property_info_;
-  int intish_;  // How many ops we've gone without a x|0.
+  int32_t intish_;  // How many ops we've gone without a x|0.
 
   Type* return_type_;  // Return type of last function.
   size_t array_size_;  // Array size of last ArrayLiteral.
@@ -117,6 +119,8 @@ class AsmTyper : public AstVisitor {
 
   TypeCache const& cache_;
 
+  AstTypeBounds bounds_;
+
   static const int kErrorMessageLimit = 100;
   char error_message_[kErrorMessageLimit];
 
@@ -135,6 +139,9 @@ class AsmTyper : public AstVisitor {
 
   void VisitHeapAccess(Property* expr, bool assigning, Type* assignment_type);
 
+  void CheckPolymorphicStdlibArguments(enum StandardMember standard_member,
+                                       ZoneList<Expression*>* args);
+
   Expression* GetReceiverOfPropertyAccess(Expression* expr, const char* name);
   bool IsMathObject(Expression* expr);
   bool IsSIMDObject(Expression* expr);
@@ -148,7 +155,8 @@ class AsmTyper : public AstVisitor {
 
   void SetType(Variable* variable, Type* type);
   Type* GetType(Variable* variable);
-  VariableInfo* GetVariableInfo(Variable* variable, bool setting);
+  VariableInfo* GetVariableInfo(Variable* variable);
+  VariableInfo* MakeVariableInfo(Variable* variable);
   void SetVariableInfo(Variable* variable, const VariableInfo* info);
 
   VariableInfo* LibType(ObjectTypeMap* map, Handle<String> name);
@@ -161,8 +169,6 @@ class AsmTyper : public AstVisitor {
                             const char* msg);
 
   void VisitLiteral(Literal* expr, bool is_return);
-
-  void VisitVariableProxy(VariableProxy* expr, bool assignment);
 
   void VisitIntegerBitwiseOperator(BinaryOperation* expr, Type* left_expected,
                                    Type* right_expected, Type* result_type,

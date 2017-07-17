@@ -4,8 +4,10 @@
 
 #include "net/cert/internal/signature_algorithm.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "net/der/input.h"
 #include "net/der/parse_values.h"
@@ -260,8 +262,8 @@ WARN_UNUSED_RESULT bool IsNull(const der::Input& input) {
 //         PUBLIC-KEYS { pk-rsa }
 //         SMIME-CAPS { IDENTIFIED BY sha512WithRSAEncryption }
 //     }
-scoped_ptr<SignatureAlgorithm> ParseRsaPkcs1(DigestAlgorithm digest,
-                                             const der::Input& params) {
+std::unique_ptr<SignatureAlgorithm> ParseRsaPkcs1(DigestAlgorithm digest,
+                                                  const der::Input& params) {
   // TODO(svaldez): Add warning about non-strict parsing.
   if (!IsNull(params) && !IsEmpty(params))
     return nullptr;
@@ -313,55 +315,12 @@ scoped_ptr<SignatureAlgorithm> ParseRsaPkcs1(DigestAlgorithm digest,
 //      PUBLIC-KEYS { pk-ec }
 //      SMIME-CAPS { IDENTIFIED BY ecdsa-with-SHA512 }
 //     }
-scoped_ptr<SignatureAlgorithm> ParseEcdsa(DigestAlgorithm digest,
-                                          const der::Input& params) {
+std::unique_ptr<SignatureAlgorithm> ParseEcdsa(DigestAlgorithm digest,
+                                               const der::Input& params) {
   if (!IsEmpty(params))
     return nullptr;
 
   return SignatureAlgorithm::CreateEcdsa(digest);
-}
-
-// Parses a HashAlgorithm as defined by RFC 5912:
-//
-//     HashAlgorithm  ::=  AlgorithmIdentifier{DIGEST-ALGORITHM,
-//                             {HashAlgorithms}}
-//
-//     HashAlgorithms DIGEST-ALGORITHM ::=  {
-//         { IDENTIFIER id-sha1 PARAMS TYPE NULL ARE preferredPresent } |
-//         { IDENTIFIER id-sha224 PARAMS TYPE NULL ARE preferredPresent } |
-//         { IDENTIFIER id-sha256 PARAMS TYPE NULL ARE preferredPresent } |
-//         { IDENTIFIER id-sha384 PARAMS TYPE NULL ARE preferredPresent } |
-//         { IDENTIFIER id-sha512 PARAMS TYPE NULL ARE preferredPresent }
-//     }
-WARN_UNUSED_RESULT bool ParseHashAlgorithm(const der::Input input,
-                                           DigestAlgorithm* out) {
-  der::Input oid;
-  der::Input params;
-  if (!ParseAlgorithmIdentifier(input, &oid, &params))
-    return false;
-
-  DigestAlgorithm hash;
-
-  if (oid == der::Input(kOidSha1)) {
-    hash = DigestAlgorithm::Sha1;
-  } else if (oid == der::Input(kOidSha256)) {
-    hash = DigestAlgorithm::Sha256;
-  } else if (oid == der::Input(kOidSha384)) {
-    hash = DigestAlgorithm::Sha384;
-  } else if (oid == der::Input(kOidSha512)) {
-    hash = DigestAlgorithm::Sha512;
-  } else {
-    // Unsupported digest algorithm.
-    return false;
-  }
-
-  // From RFC 5912: "PARAMS TYPE NULL ARE preferredPresent". Which is to say
-  // the can either be absent, or NULL.
-  if (!IsEmpty(params) && !IsNull(params))
-    return false;
-
-  *out = hash;
-  return true;
 }
 
 // Parses a MaskGenAlgorithm as defined by RFC 5912:
@@ -463,7 +422,7 @@ WARN_UNUSED_RESULT bool ReadOptionalContextSpecificUint32(der::Parser* parser,
 //
 // Which is to say the parameters MUST be present, and of type
 // RSASSA-PSS-params.
-scoped_ptr<SignatureAlgorithm> ParseRsaPss(const der::Input& params) {
+std::unique_ptr<SignatureAlgorithm> ParseRsaPss(const der::Input& params) {
   der::Parser parser(params);
   der::Parser params_parser;
   if (!parser.ReadSequence(&params_parser))
@@ -539,6 +498,37 @@ scoped_ptr<SignatureAlgorithm> ParseRsaPss(const der::Input& params) {
 
 }  // namespace
 
+WARN_UNUSED_RESULT bool ParseHashAlgorithm(const der::Input input,
+                                           DigestAlgorithm* out) {
+  der::Input oid;
+  der::Input params;
+  if (!ParseAlgorithmIdentifier(input, &oid, &params))
+    return false;
+
+  DigestAlgorithm hash;
+
+  if (oid == der::Input(kOidSha1)) {
+    hash = DigestAlgorithm::Sha1;
+  } else if (oid == der::Input(kOidSha256)) {
+    hash = DigestAlgorithm::Sha256;
+  } else if (oid == der::Input(kOidSha384)) {
+    hash = DigestAlgorithm::Sha384;
+  } else if (oid == der::Input(kOidSha512)) {
+    hash = DigestAlgorithm::Sha512;
+  } else {
+    // Unsupported digest algorithm.
+    return false;
+  }
+
+  // From RFC 5912: "PARAMS TYPE NULL ARE preferredPresent". Which is to say
+  // the can either be absent, or NULL.
+  if (!IsEmpty(params) && !IsNull(params))
+    return false;
+
+  *out = hash;
+  return true;
+}
+
 RsaPssParameters::RsaPssParameters(DigestAlgorithm mgf1_hash,
                                    uint32_t salt_length)
     : mgf1_hash_(mgf1_hash), salt_length_(salt_length) {
@@ -547,7 +537,7 @@ RsaPssParameters::RsaPssParameters(DigestAlgorithm mgf1_hash,
 SignatureAlgorithm::~SignatureAlgorithm() {
 }
 
-scoped_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateFromDer(
+std::unique_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateFromDer(
     const der::Input& algorithm_identifier) {
   der::Input oid;
   der::Input params;
@@ -590,25 +580,25 @@ scoped_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateFromDer(
   return nullptr;  // Unsupported OID.
 }
 
-scoped_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateRsaPkcs1(
+std::unique_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateRsaPkcs1(
     DigestAlgorithm digest) {
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new SignatureAlgorithm(SignatureAlgorithmId::RsaPkcs1, digest, nullptr));
 }
 
-scoped_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateEcdsa(
+std::unique_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateEcdsa(
     DigestAlgorithm digest) {
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new SignatureAlgorithm(SignatureAlgorithmId::Ecdsa, digest, nullptr));
 }
 
-scoped_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateRsaPss(
+std::unique_ptr<SignatureAlgorithm> SignatureAlgorithm::CreateRsaPss(
     DigestAlgorithm digest,
     DigestAlgorithm mgf1_hash,
     uint32_t salt_length) {
-  return make_scoped_ptr(new SignatureAlgorithm(
+  return base::WrapUnique(new SignatureAlgorithm(
       SignatureAlgorithmId::RsaPss, digest,
-      make_scoped_ptr(new RsaPssParameters(mgf1_hash, salt_length))));
+      base::WrapUnique(new RsaPssParameters(mgf1_hash, salt_length))));
 }
 
 const RsaPssParameters* SignatureAlgorithm::ParamsForRsaPss() const {
@@ -620,7 +610,7 @@ const RsaPssParameters* SignatureAlgorithm::ParamsForRsaPss() const {
 SignatureAlgorithm::SignatureAlgorithm(
     SignatureAlgorithmId algorithm,
     DigestAlgorithm digest,
-    scoped_ptr<SignatureAlgorithmParameters> params)
+    std::unique_ptr<SignatureAlgorithmParameters> params)
     : algorithm_(algorithm), digest_(digest), params_(std::move(params)) {}
 
 }  // namespace net

@@ -38,6 +38,7 @@ from webkitpy.common.system.outputcapture import OutputCapture
 
 
 class TrivialMockPort(object):
+
     def __init__(self):
         self.host = MockSystemHost()
         self.host.executive.kill_process = lambda x: None
@@ -51,6 +52,7 @@ class TrivialMockPort(object):
 
 
 class MockFile(object):
+
     def __init__(self, server_process):
         self._server_process = server_process
         self.closed = False
@@ -67,6 +69,7 @@ class MockFile(object):
 
 
 class MockProc(object):
+
     def __init__(self, server_process):
         self.stdin = MockFile(server_process)
         self.stdout = MockFile(server_process)
@@ -81,6 +84,7 @@ class MockProc(object):
 
 
 class FakeServerProcess(server_process.ServerProcess):
+
     def _start(self):
         self._proc = MockProc(self)
         self.stdin = self._proc.stdin
@@ -91,8 +95,10 @@ class FakeServerProcess(server_process.ServerProcess):
 
 
 class TestServerProcess(unittest.TestCase):
+
     def test_basic(self):
-        cmd = [sys.executable, '-c', 'import sys; import time; time.sleep(0.02); print "stdout"; sys.stdout.flush(); print >>sys.stderr, "stderr"']
+        cmd = [sys.executable, '-c',
+               'import sys; import time; time.sleep(0.02); print "stdout"; sys.stdout.flush(); print >>sys.stderr, "stderr"']
         host = SystemHost()
         factory = PortFactory(host)
         port = factory.get()
@@ -100,13 +106,13 @@ class TestServerProcess(unittest.TestCase):
         proc = server_process.ServerProcess(port, 'python', cmd)
         proc.write('')
 
-        self.assertEqual(proc.poll(), None)
+        self.assertIsNone(proc.poll())
         self.assertFalse(proc.has_crashed())
 
         # check that doing a read after an expired deadline returns
         # nothing immediately.
         line = proc.read_stdout_line(now - 1)
-        self.assertEqual(line, None)
+        self.assertIsNone(line)
 
         # FIXME: This part appears to be flaky. line should always be non-None.
         # FIXME: https://bugs.webkit.org/show_bug.cgi?id=88280
@@ -149,6 +155,7 @@ class TestServerProcess(unittest.TestCase):
 
 
 class TestQuoteData(unittest.TestCase):
+
     def test_plain(self):
         qd = server_process.quote_data
         self.assertEqual(qd("foo"), ["foo"])

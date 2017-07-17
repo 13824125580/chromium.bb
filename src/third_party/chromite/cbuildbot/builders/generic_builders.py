@@ -14,6 +14,7 @@ import traceback
 
 from chromite.cbuildbot import constants
 from chromite.cbuildbot import failures_lib
+from chromite.cbuildbot import manifest_version
 from chromite.cbuildbot import results_lib
 from chromite.cbuildbot import trybot_patch_pool
 from chromite.cbuildbot.stages import build_stages
@@ -117,6 +118,8 @@ class Builder(object):
       parallel.RunParallelSteps(steps)
 
     except BaseException as ex:
+      logging.error('BaseException in _RunParallelStages %s' % ex,
+                    exc_info=True)
       # If a stage threw an exception, it might not have correctly reported
       # results (e.g. because it was killed before it could report the
       # results.) In this case, attribute the exception to any stages that
@@ -152,9 +155,11 @@ class Builder(object):
   def GetVersionInfo(self):
     """Returns a manifest_version.VersionInfo object for this build.
 
-    Subclasses must override this method.
+    Chrome OS Subclasses must override this method. Site specific builds which
+    don't use Chrome OS versioning should leave this alone.
     """
-    raise NotImplementedError()
+    # Placeholder version for non-Chrome OS builds.
+    return manifest_version.VersionInfo('1.0.0')
 
   def GetSyncInstance(self):
     """Returns an instance of a SyncStage that should be run.
@@ -256,17 +261,16 @@ class Builder(object):
     --test-bootstrap wasn't passed in.
     """
     stage = None
-    chromite_pool = self.patch_pool.Filter(project=constants.CHROMITE_PROJECT)
-    if self._run.config.internal:
-      manifest_pool = self.patch_pool.FilterIntManifest()
-    else:
-      manifest_pool = self.patch_pool.FilterExtManifest()
+
+    patches_needed = sync_stages.BootstrapStage.BootstrapPatchesNeeded(
+        self._run, self.patch_pool)
+
     chromite_branch = git.GetChromiteTrackingBranch()
-    if (chromite_pool or manifest_pool or
+
+    if (patches_needed or
         self._run.options.test_bootstrap or
         chromite_branch != self._run.options.branch):
-      stage = sync_stages.BootstrapStage(self._run, chromite_pool,
-                                         manifest_pool)
+      stage = sync_stages.BootstrapStage(self._run, self.patch_pool)
     return stage
 
   def Run(self):
@@ -308,11 +312,17 @@ class Builder(object):
         success = self._ReExecuteInBuildroot(sync_instance)
       else:
         self._RunStage(report_stages.BuildReexecutionFinishedStage)
+        self._RunStage(report_stages.ConfigDumpStage)
         self.RunStages()
 
     except Exception as ex:
+      if isinstance(ex, failures_lib.ExitEarlyException):
+        # One stage finished and exited early, not a failure.
+        raise
+
       exception_thrown = True
-      if results_lib.Results.BuildSucceededSoFar():
+      build_id, db = self._run.GetCIDBHandle()
+      if results_lib.Results.BuildSucceededSoFar(db, build_id):
         # If the build is marked as successful, but threw exceptions, that's a
         # problem. Print the traceback for debugging.
         if isinstance(ex, failures_lib.CompoundFailure):
@@ -330,12 +340,12 @@ class Builder(object):
       if print_report:
         results_lib.WriteCheckpoint(self._run.options.buildroot)
         completion_instance = self.GetCompletionInstance()
-        self._RunStage(report_stages.ReportStage, sync_instance,
-                       completion_instance)
-        success = results_lib.Results.BuildSucceededSoFar()
+        self._RunStage(report_stages.ReportStage, completion_instance)
+        build_id, db = self._run.GetCIDBHandle()
+        success = results_lib.Results.BuildSucceededSoFar(db, build_id)
         if exception_thrown and success:
           success = False
-          cros_build_lib.PrintBuildbotStepWarnings()
+          logging.PrintBuildbotStepWarnings()
           print("""\
 Exception thrown, but all stages marked successful. This is an internal error,
 because the stage that threw the exception should be marked as failing.""")

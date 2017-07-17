@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 
+#include "ash/common/accessibility_types.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -164,10 +165,10 @@ void SetUpCrasAndEnableChromeVox(int volume_percent, bool mute_on) {
   // is disabled.
   cras->SetOutputVolumePercent(volume_percent);
   cras->SetOutputMute(mute_on);
-  a11y->EnableSpokenFeedback(false, ui::A11Y_NOTIFICATION_NONE);
+  a11y->EnableSpokenFeedback(false, ash::A11Y_NOTIFICATION_NONE);
 
   // Spoken feedback is enabled.
-  a11y->EnableSpokenFeedback(true, ui::A11Y_NOTIFICATION_NONE);
+  a11y->EnableSpokenFeedback(true, ash::A11Y_NOTIFICATION_NONE);
   base::RunLoop().RunUntilIdle();
 }
 
@@ -183,7 +184,7 @@ void WaitForAutoEnrollmentState(policy::AutoEnrollmentState state) {
   base::RunLoop loop;
   AutoEnrollmentController* auto_enrollment_controller =
       LoginDisplayHost::default_host()->GetAutoEnrollmentController();
-  scoped_ptr<AutoEnrollmentController::ProgressCallbackList::Subscription>
+  std::unique_ptr<AutoEnrollmentController::ProgressCallbackList::Subscription>
       progress_subscription(
           auto_enrollment_controller->RegisterProgressCallback(
               base::Bind(&QuitLoopOnAutoEnrollmentProgress, state, &loop)));
@@ -218,7 +219,7 @@ class MockOutShowHide : public T {
   }
 
  private:
-  scoped_ptr<H> actor_;
+  std::unique_ptr<H> actor_;
 };
 
 #define MOCK(mock_var, screen_name, mocked_class, actor_class)               \
@@ -368,7 +369,7 @@ IN_PROC_BROWSER_TEST_F(WizardControllerTest, VolumeIsAdjustedForChromeVox) {
 class WizardControllerTestURLFetcherFactory
     : public net::TestURLFetcherFactory {
  public:
-  scoped_ptr<net::URLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::URLFetcher> CreateURLFetcher(
       int id,
       const GURL& url,
       net::URLFetcher::RequestType request_type,
@@ -377,14 +378,14 @@ class WizardControllerTestURLFetcherFactory
             url.spec(),
             SimpleGeolocationProvider::DefaultGeolocationProviderURL().spec(),
             base::CompareCase::SENSITIVE)) {
-      return scoped_ptr<net::URLFetcher>(new net::FakeURLFetcher(
+      return std::unique_ptr<net::URLFetcher>(new net::FakeURLFetcher(
           url, d, std::string(kGeolocationResponseBody), net::HTTP_OK,
           net::URLRequestStatus::SUCCESS));
     }
     if (base::StartsWith(url.spec(),
                          chromeos::DefaultTimezoneProviderURL().spec(),
                          base::CompareCase::SENSITIVE)) {
-      return scoped_ptr<net::URLFetcher>(new net::FakeURLFetcher(
+      return std::unique_ptr<net::URLFetcher>(new net::FakeURLFetcher(
           url, d, std::string(kTimezoneResponseBody), net::HTTP_OK,
           net::URLRequestStatus::SUCCESS));
     }
@@ -507,7 +508,7 @@ class WizardControllerFlowTest : public WizardControllerTest {
   }
 
   void WaitUntilTimezoneResolved() {
-    scoped_ptr<TimeZoneTestRunner> runner(new TimeZoneTestRunner);
+    std::unique_ptr<TimeZoneTestRunner> runner(new TimeZoneTestRunner);
     if (!WizardController::default_controller()
              ->SetOnTimeZoneResolvedForTesting(
                  base::Bind(&TimeZoneTestRunner::OnResolved,
@@ -533,15 +534,16 @@ class WizardControllerFlowTest : public WizardControllerTest {
       mock_wrong_hwid_screen_;
   MockOutShowHide<MockEnableDebuggingScreen,
       MockEnableDebuggingScreenActor>* mock_enable_debugging_screen_;
-  scoped_ptr<MockDeviceDisabledScreenActor> device_disabled_screen_actor_;
+  std::unique_ptr<MockDeviceDisabledScreenActor> device_disabled_screen_actor_;
 
  private:
   NetworkPortalDetectorTestImpl* network_portal_detector_;
 
   // Use a test factory as a fallback so we don't have to deal with other
   // requests.
-  scoped_ptr<WizardControllerTestURLFetcherFactory> fallback_fetcher_factory_;
-  scoped_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
+  std::unique_ptr<WizardControllerTestURLFetcherFactory>
+      fallback_fetcher_factory_;
+  std::unique_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WizardControllerFlowTest);
 };
@@ -903,7 +905,7 @@ class WizardControllerBrokenLocalStateTest : public WizardControllerTest {
 
     fake_session_manager_client_ = new FakeSessionManagerClient;
     DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        scoped_ptr<SessionManagerClient>(fake_session_manager_client_));
+        std::unique_ptr<SessionManagerClient>(fake_session_manager_client_));
   }
 
   void SetUpOnMainThread() override {
@@ -923,7 +925,7 @@ class WizardControllerBrokenLocalStateTest : public WizardControllerTest {
   }
 
  private:
-  scoped_ptr<PrefService> local_state_;
+  std::unique_ptr<PrefService> local_state_;
   FakeSessionManagerClient* fake_session_manager_client_;
 
   DISALLOW_COPY_AND_ASSIGN(WizardControllerBrokenLocalStateTest);

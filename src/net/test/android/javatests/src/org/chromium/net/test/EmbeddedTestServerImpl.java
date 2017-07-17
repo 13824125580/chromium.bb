@@ -5,6 +5,7 @@
 package org.chromium.net.test;
 
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 
@@ -14,6 +15,7 @@ import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.test.util.UrlUtils;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -75,7 +77,7 @@ public class EmbeddedTestServerImpl extends IEmbeddedTestServerImpl.Stub {
         runOnHandlerThread(new Callable<Void>() {
             @Override
             public Void call() {
-                if (mNativeEmbeddedTestServer == 0) nativeInit();
+                if (mNativeEmbeddedTestServer == 0) nativeInit(UrlUtils.getIsolatedTestRoot());
                 assert mNativeEmbeddedTestServer != 0;
                 return null;
             }
@@ -96,6 +98,23 @@ public class EmbeddedTestServerImpl extends IEmbeddedTestServerImpl.Stub {
             @Override
             public Boolean call() {
                 return nativeStart(mNativeEmbeddedTestServer);
+            }
+        });
+    }
+
+    /** Add the default handlers and serve files from the provided directory relative to the
+     *  external storage directory.
+     *
+     *  @param directoryPath The path of the directory from which files should be served, relative
+     *      to the external storage directory.
+     */
+    @Override
+    public void addDefaultHandlers(final String directoryPath) {
+        runOnHandlerThread(new Callable<Void>() {
+            @Override
+            public Void call() {
+                nativeAddDefaultHandlers(mNativeEmbeddedTestServer, directoryPath);
+                return null;
             }
         });
     }
@@ -157,7 +176,18 @@ public class EmbeddedTestServerImpl extends IEmbeddedTestServerImpl.Stub {
             }
         });
 
-        mHandlerThread.quitSafely();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            mHandlerThread.quitSafely();
+        } else {
+            runOnHandlerThread(new Callable<Void>() {
+                @Override
+                public Void call() {
+                    mHandlerThread.quit();
+                    return null;
+                }
+            });
+        }
+
         try {
             mHandlerThread.join();
         } catch (InterruptedException e) {
@@ -176,11 +206,13 @@ public class EmbeddedTestServerImpl extends IEmbeddedTestServerImpl.Stub {
         mNativeEmbeddedTestServer = 0;
     }
 
-    private native void nativeInit();
+    private native void nativeInit(String testDataDir);
     private native void nativeDestroy(long nativeEmbeddedTestServerAndroid);
     private native boolean nativeStart(long nativeEmbeddedTestServerAndroid);
     private native boolean nativeShutdownAndWaitUntilComplete(long nativeEmbeddedTestServerAndroid);
     private native String nativeGetURL(long nativeEmbeddedTestServerAndroid, String relativeUrl);
+    private native void nativeAddDefaultHandlers(
+            long nativeEmbeddedTestServerAndroid, String directoryPath);
     private native void nativeServeFilesFromDirectory(
             long nativeEmbeddedTestServerAndroid, String directoryPath);
 }

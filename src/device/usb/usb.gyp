@@ -5,6 +5,11 @@
 {
   'variables': {
     'chromium_code': 1,
+    'mojom_files': [
+      'public/interfaces/chooser_service.mojom',
+      'public/interfaces/device.mojom',
+      'public/interfaces/device_manager.mojom',
+    ],
   },
   'targets': [
     {
@@ -14,7 +19,6 @@
         'device_usb_mojo_bindings',
         '../../components/components.gyp:device_event_log_component',
         '../../net/net.gyp:net',
-        '../../third_party/libusb/libusb.gyp:libusb',
         '../core/core.gyp:device_core',
       ],
       'include_dirs': [
@@ -29,28 +33,24 @@
         'mojo/device_manager_impl.h',
         'mojo/type_converters.cc',
         'mojo/type_converters.h',
+        'mojo/permission_provider.cc',
+        'mojo/permission_provider.h',
         'usb_configuration_android.cc',
         'usb_configuration_android.h',
-        'usb_context.cc',
-        'usb_context.h',
         'usb_descriptors.cc',
         'usb_descriptors.h',
-        'usb_device_impl.cc',
-        'usb_device_impl.h',
+        'usb_device_linux.cc',
+        'usb_device_linux.h',
         'usb_device.cc',
         'usb_device.h',
         'usb_device_android.cc',
         'usb_device_android.h',
         'usb_device_filter.cc',
         'usb_device_filter.h',
-        'usb_device_handle_impl.cc',
-        'usb_device_handle_impl.h',
         'usb_device_handle.cc',
         'usb_device_handle.h',
         'usb_endpoint_android.cc',
         'usb_endpoint_android.h',
-        'usb_error.cc',
-        'usb_error.h',
         'usb_ids.cc',
         'usb_ids.h',
         'usb_interface_android.cc',
@@ -59,8 +59,6 @@
         'usb_service.h',
         'usb_service_android.cc',
         'usb_service_android.h',
-        'usb_service_impl.cc',
-        'usb_service_impl.h',
         'webusb_descriptors.cc',
         'webusb_descriptors.h',
       ],
@@ -89,6 +87,10 @@
       ],
       'conditions': [
         ['use_udev == 1', {
+          'sources': [
+            'usb_service_linux.cc',
+            'usb_service_linux.h',
+          ],
           'dependencies': [
             '../udev_linux/udev.gyp:udev_linux',
           ],
@@ -98,11 +100,12 @@
             'device_usb_java',
             'device_usb_jni_headers',
           ],
-          'dependencies!': [
+        }],
+        ['OS=="win" or OS=="mac"', {
+          'dependencies': [
             '../../third_party/libusb/libusb.gyp:libusb',
           ],
-          # These sources are libusb-specific.
-          'sources!': [
+          'sources': [
             'usb_context.cc',
             'usb_context.h',
             'usb_device_handle_impl.cc',
@@ -113,23 +116,36 @@
             'usb_error.h',
             'usb_service_impl.cc',
             'usb_service_impl.h',
-          ]
+          ],
+        }],
+        ['OS=="linux" or OS=="android"', {
+          'sources': [
+            'usb_device_handle_usbfs.cc',
+            'usb_device_handle_usbfs.h',
+          ],
         }],
         ['chromeos==1', {
           'dependencies': [
             '../../chromeos/chromeos.gyp:chromeos',
           ],
-        }],
+        }]
       ]
     },
     {
       'target_name': 'device_usb_mojo_bindings',
       'type': 'static_library',
-      'sources': [
-        'public/interfaces/device.mojom',
-        'public/interfaces/device_manager.mojom',
-        'public/interfaces/permission_provider.mojom',
+      'sources': [ '<@(mojom_files)' ],
+      'includes': [
+        '../../mojo/mojom_bindings_generator.gypi',
       ],
+    },
+    {
+      'target_name': 'device_usb_mojo_bindings_for_blink',
+      'type': 'static_library',
+      'sources': [ '<@(mojom_files)' ],
+      'variables': {
+        'for_blink': 'true',
+      },
       'includes': [
         '../../mojo/mojom_bindings_generator.gypi',
       ],

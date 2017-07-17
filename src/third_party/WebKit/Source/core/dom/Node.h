@@ -26,22 +26,19 @@
 #define Node_h
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
+#include "bindings/core/v8/NodeOrString.h"
 #include "core/CoreExport.h"
 #include "core/dom/MutationObserver.h"
 #include "core/dom/SimulatedClickOptions.h"
-#include "core/dom/StyleChangeReason.h"
 #include "core/dom/TreeScope.h"
-#include "core/dom/TreeShared.h"
 #include "core/editing/EditingBoundary.h"
 #include "core/events/EventTarget.h"
-#include "core/inspector/InstanceCounters.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/heap/Handle.h"
-#include "platform/weborigin/KURLHash.h"
 #include "wtf/Forward.h"
 
-// This needs to be here because Document.h also depends on it.
+// This needs to be here because Element.cpp also depends on it.
 #define DUMP_NODE_STATISTICS 0
 
 namespace blink {
@@ -63,6 +60,7 @@ class HTMLInputElement;
 class HTMLQualifiedName;
 class HTMLSlotElement;
 class IntRect;
+class EventDispatchHandlingState;
 class KeyboardEvent;
 class NSResolver;
 class NameNodeList;
@@ -87,12 +85,10 @@ class SVGQualifiedName;
 class ShadowRoot;
 template <typename NodeType> class StaticNodeTypeList;
 using StaticNodeList = StaticNodeTypeList<Node>;
+class StyleChangeReasonForTracing;
 class TagCollection;
 class Text;
 class TouchEvent;
-#if !ENABLE(OILPAN)
-template <typename T> struct WeakIdentifierMapTraits;
-#endif
 
 const int nodeStyleChangeShift = 19;
 
@@ -102,6 +98,14 @@ enum StyleChangeType {
     SubtreeStyleChange = 2 << nodeStyleChangeShift,
     NeedsReattachStyleChange = 3 << nodeStyleChangeShift,
 };
+
+enum class CustomElementState {
+    Uncustomized = 0,
+    Custom = 1,
+    Undefined = 2,
+};
+
+CORE_EXPORT std::ostream& operator<<(std::ostream&, CustomElementState);
 
 class NodeRareDataBase {
 public:
@@ -122,20 +126,9 @@ protected:
 class Node;
 WILL_NOT_BE_EAGERLY_TRACED_CLASS(Node);
 
-#if ENABLE(OILPAN)
-#define NODE_BASE_CLASSES public EventTarget
-#else
-// TreeShared should be the last to pack TreeShared::m_refCount and
-// Node::m_nodeFlags on 64bit platforms.
-#define NODE_BASE_CLASSES public EventTarget, public TreeShared<Node>
-#endif
-
 // This class represents a DOM node in the DOM tree.
 // https://dom.spec.whatwg.org/#interface-node
-class CORE_EXPORT Node : NODE_BASE_CLASSES {
-#if !ENABLE(OILPAN)
-    DEFINE_EVENT_TARGET_REFCOUNTING(TreeShared<Node>);
-#endif
+class CORE_EXPORT Node : public EventTarget {
     DEFINE_WRAPPERTYPEINFO();
     friend class TreeScope;
     friend class TreeScopeAdopter;
@@ -173,7 +166,6 @@ public:
         DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 0x20,
     };
 
-#if ENABLE(OILPAN)
     // Override operator new to allocate Node subtype objects onto
     // a dedicated heap.
     GC_PLUGIN_IGNORE("crbug.com/443854")
@@ -184,14 +176,9 @@ public:
     static void* allocateObject(size_t size, bool isEager)
     {
         ThreadState* state = ThreadStateFor<ThreadingTrait<Node>::Affinity>::state();
-        return Heap::allocateOnHeapIndex(state, size, isEager ? BlinkGC::EagerSweepHeapIndex : BlinkGC::NodeHeapIndex, GCInfoTrait<EventTarget>::index());
+        const char typeName[] = "blink::Node";
+        return ThreadHeap::allocateOnArenaIndex(state, size, isEager ? BlinkGC::EagerSweepArenaIndex : BlinkGC::NodeArenaIndex, GCInfoTrait<EventTarget>::index(), typeName);
     }
-#else // !ENABLE(OILPAN)
-    // All Nodes are placed in their own heap partition for security.
-    // See http://crbug.com/246860 for detail.
-    void* operator new(size_t);
-    void operator delete(void*);
-#endif
 
     static void dumpStatistics();
 
@@ -211,11 +198,18 @@ public:
     ContainerNode* parentElementOrDocumentFragment() const;
     Node* previousSibling() const { return m_previous; }
     Node* nextSibling() const { return m_next; }
-    PassRefPtrWillBeRawPtr<NodeList> childNodes();
+    NodeList* childNodes();
     Node* firstChild() const;
     Node* lastChild() const;
     Node& treeRoot() const;
+    Node& shadowIncludingRoot() const;
+    bool isUnclosedNodeOf(const Node&) const;
 
+    void prepend(const HeapVector<NodeOrString>&, ExceptionState&);
+    void append(const HeapVector<NodeOrString>&, ExceptionState&);
+    void before(const HeapVector<NodeOrString>&, ExceptionState&);
+    void after(const HeapVector<NodeOrString>&, ExceptionState&);
+    void replaceWith(const HeapVector<NodeOrString>&, ExceptionState&);
     void remove(ExceptionState& = ASSERT_NO_EXCEPTION);
 
     Node* pseudoAwareNextSibling() const;
@@ -225,19 +219,17 @@ public:
 
     const KURL& baseURI() const;
 
-    PassRefPtrWillBeRawPtr<Node> insertBefore(PassRefPtrWillBeRawPtr<Node> newChild, Node* refChild, ExceptionState& = ASSERT_NO_EXCEPTION);
-    PassRefPtrWillBeRawPtr<Node> replaceChild(PassRefPtrWillBeRawPtr<Node> newChild, PassRefPtrWillBeRawPtr<Node> oldChild, ExceptionState& = ASSERT_NO_EXCEPTION);
-    PassRefPtrWillBeRawPtr<Node> removeChild(PassRefPtrWillBeRawPtr<Node> child, ExceptionState& = ASSERT_NO_EXCEPTION);
-    PassRefPtrWillBeRawPtr<Node> appendChild(PassRefPtrWillBeRawPtr<Node> newChild, ExceptionState& = ASSERT_NO_EXCEPTION);
+    Node* insertBefore(Node* newChild, Node* refChild, ExceptionState& = ASSERT_NO_EXCEPTION);
+    Node* replaceChild(Node* newChild, Node* oldChild, ExceptionState& = ASSERT_NO_EXCEPTION);
+    Node* removeChild(Node* child, ExceptionState& = ASSERT_NO_EXCEPTION);
+    Node* appendChild(Node* newChild, ExceptionState& = ASSERT_NO_EXCEPTION);
 
     bool hasChildren() const { return firstChild(); }
-    virtual PassRefPtrWillBeRawPtr<Node> cloneNode(bool deep) = 0;
+    virtual Node* cloneNode(bool deep) = 0;
     void normalize();
 
-    // TODO(yosin): Once we drop |Node.prototype.isSameNode()|, we should
-    // get rid of |isSameNodeDeprecated()|.
-    bool isSameNodeDeprecated(Node* other) const { return this == other; }
     bool isEqualNode(Node*) const;
+    bool isSameNode(const Node* other) const { return this == other; }
     bool isDefaultNamespace(const AtomicString& namespaceURI) const;
     const AtomicString& lookupPrefix(const AtomicString& namespaceURI) const;
     const AtomicString& lookupNamespaceURI(const String& prefix) const;
@@ -255,25 +247,28 @@ public:
     bool isHTMLElement() const { return getFlag(IsHTMLFlag); }
     bool isSVGElement() const { return getFlag(IsSVGFlag); }
 
-    bool isPseudoElement() const { return getPseudoId() != NOPSEUDO; }
-    bool isBeforePseudoElement() const { return getPseudoId() == BEFORE; }
-    bool isAfterPseudoElement() const { return getPseudoId() == AFTER; }
-    bool isFirstLetterPseudoElement() const { return getPseudoId() == FIRST_LETTER; }
-    virtual PseudoId getPseudoId() const { return NOPSEUDO; }
+    bool isPseudoElement() const { return getPseudoId() != PseudoIdNone; }
+    bool isBeforePseudoElement() const { return getPseudoId() == PseudoIdBefore; }
+    bool isAfterPseudoElement() const { return getPseudoId() == PseudoIdAfter; }
+    bool isFirstLetterPseudoElement() const { return getPseudoId() == PseudoIdFirstLetter; }
+    virtual PseudoId getPseudoId() const { return PseudoIdNone; }
 
     bool isCustomElement() const { return getFlag(CustomElementFlag); }
-    enum CustomElementState {
-        NotCustomElement  = 0,
-        WaitingForUpgrade = 1 << 0,
-        Upgraded          = 1 << 1
+    CustomElementState getCustomElementState() const;
+    void setCustomElementState(CustomElementState);
+    bool isV0CustomElement() const { return getFlag(V0CustomElementFlag); }
+    enum V0CustomElementState {
+        V0NotCustomElement  = 0,
+        V0WaitingForUpgrade = 1 << 0,
+        V0Upgraded          = 1 << 1
     };
-    CustomElementState customElementState() const
+    V0CustomElementState getV0CustomElementState() const
     {
-        return isCustomElement()
-            ? (getFlag(CustomElementUpgradedFlag) ? Upgraded : WaitingForUpgrade)
-            : NotCustomElement;
+        return isV0CustomElement()
+            ? (getFlag(V0CustomElementUpgradedFlag) ? V0Upgraded : V0WaitingForUpgrade)
+            : V0NotCustomElement;
     }
-    void setCustomElementState(CustomElementState newState);
+    void setV0CustomElementState(V0CustomElementState newState);
 
     virtual bool isMediaControlElement() const { return false; }
     virtual bool isMediaControls() const { return false; }
@@ -301,6 +296,9 @@ public:
 
     bool canParticipateInFlatTree() const;
     bool isSlotOrActiveInsertionPoint() const;
+    // A re-distribution across v0 and v1 shadow trees is not supported.
+    bool isSlotable() const { return isTextNode() || (isElementNode() && !isInsertionPoint()); }
+    AtomicString slotName() const;
 
     bool hasCustomStyleCallbacks() const { return getFlag(HasCustomStyleCallbacksFlag); }
 
@@ -350,7 +348,7 @@ public:
     virtual void notifyLoadedSheetAndAllCriticalSubresources(LoadedSheetErrorStatus) { }
     virtual void startLoadingDynamicSheet() { ASSERT_NOT_REACHED(); }
 
-    bool hasName() const { ASSERT(!isTextNode()); return getFlag(HasNameOrIsEditingTextFlag); }
+    bool hasName() const { DCHECK(!isTextNode()); return getFlag(HasNameOrIsEditingTextFlag); }
 
     bool isUserActionElement() const { return getFlag(IsUserActionElementFlag); }
     void setUserActionElement(bool flag) { setFlag(flag, IsUserActionElementFlag); }
@@ -369,18 +367,16 @@ public:
     StyleChangeType getStyleChangeType() const { return static_cast<StyleChangeType>(m_nodeFlags & StyleChangeMask); }
     bool childNeedsStyleRecalc() const { return getFlag(ChildNeedsStyleRecalcFlag); }
     bool isLink() const { return getFlag(IsLinkFlag); }
-    bool isEditingText() const { ASSERT(isTextNode()); return getFlag(HasNameOrIsEditingTextFlag); }
+    bool isEditingText() const { DCHECK(isTextNode()); return getFlag(HasNameOrIsEditingTextFlag); }
 
-    void setHasName(bool f) { ASSERT(!isTextNode()); setFlag(f, HasNameOrIsEditingTextFlag); }
+    void setHasName(bool f) { DCHECK(!isTextNode()); setFlag(f, HasNameOrIsEditingTextFlag); }
     void setChildNeedsStyleRecalc() { setFlag(ChildNeedsStyleRecalcFlag); }
     void clearChildNeedsStyleRecalc() { clearFlag(ChildNeedsStyleRecalcFlag); }
 
     void setNeedsStyleRecalc(StyleChangeType, const StyleChangeReasonForTracing&);
     void clearNeedsStyleRecalc();
 
-#if ENABLE(ASSERT)
     bool needsDistributionRecalc() const;
-#endif
 
     bool childNeedsDistributionRecalc() const { return getFlag(ChildNeedsDistributionRecalcFlag); }
     void setChildNeedsDistributionRecalc()  { setFlag(ChildNeedsDistributionRecalcFlag); }
@@ -472,15 +468,21 @@ public:
 
     TreeScope& treeScope() const
     {
-        ASSERT(m_treeScope);
+        DCHECK(m_treeScope);
+        return *m_treeScope;
+    }
+
+    TreeScope& containingTreeScope() const
+    {
+        DCHECK(isInTreeScope());
         return *m_treeScope;
     }
 
     bool inActiveDocument() const;
 
-    // Returns true if this node is associated with a document and is in its associated document's
+    // Returns true if this node is associated with a shadow-including document and is in its associated document's
     // node tree, false otherwise.
-    bool inDocument() const
+    bool inShadowIncludingDocument() const
     {
         return getFlag(InDocumentFlag);
     }
@@ -492,7 +494,7 @@ public:
     bool isInV0ShadowTree() const;
     bool isChildOfV1ShadowHost() const;
     bool isChildOfV0ShadowHost() const;
-    bool isSlotAssignable() const { return isTextNode() || isElementNode(); }
+    ShadowRoot* v1ShadowRootOfParent() const;
 
     bool isDocumentTypeNode() const { return getNodeType() == DOCUMENT_TYPE_NODE; }
     virtual bool childTypeAllowed(NodeType) const { return false; }
@@ -500,7 +502,7 @@ public:
 
     bool isDescendantOf(const Node*) const;
     bool contains(const Node*) const;
-    bool containsIncludingShadowDOM(const Node*) const;
+    bool isShadowIncludingInclusiveAncestorOf(const Node*) const;
     bool containsIncludingHostElements(const Node&) const;
     Node* commonAncestor(const Node&, ContainerNode* (*parent)(const Node&)) const;
 
@@ -562,7 +564,7 @@ public:
 
     const ComputedStyle& computedStyleRef() const;
 
-    const ComputedStyle* ensureComputedStyle(PseudoId pseudoElementSpecifier = NOPSEUDO) { return virtualEnsureComputedStyle(pseudoElementSpecifier); }
+    const ComputedStyle* ensureComputedStyle(PseudoId pseudoElementSpecifier = PseudoIdNone) { return virtualEnsureComputedStyle(pseudoElementSpecifier); }
 
     // -----------------------------------------------------------------------------
     // Notification of document structure changes (see ContainerNode.h for more notification methods)
@@ -573,7 +575,7 @@ public:
     // dispatching.
     //
     // WebKit notifies this callback regardless if the subtree of the node is a document tree or a floating subtree.
-    // Implementation can determine the type of subtree by seeing insertionPoint->inDocument().
+    // Implementation can determine the type of subtree by seeing insertionPoint->inShadowIncludingDocument().
     // For a performance reason, notifications are delivered only to ContainerNode subclasses if the insertionPoint is out of document.
     //
     // There are another callback named didNotifySubtreeInsertionsToDocument(), which is called after all the descendant is notified,
@@ -628,22 +630,22 @@ public:
     Node* toNode() final;
 
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const final;
+    ExecutionContext* getExecutionContext() const final;
 
     void removeAllEventListeners() override;
     void removeAllEventListenersRecursively();
 
     // Handlers to do/undo actions on the target node before an event is dispatched to it and after the event
     // has been dispatched.  The data pointer is handed back by the preDispatch and passed to postDispatch.
-    virtual void* preDispatchEventHandler(Event*) { return nullptr; }
-    virtual void postDispatchEventHandler(Event*, void* /*dataFromPreDispatch*/) { }
+    virtual EventDispatchHandlingState* preDispatchEventHandler(Event*) { return nullptr; }
+    virtual void postDispatchEventHandler(Event*, EventDispatchHandlingState*) { }
 
-    void dispatchScopedEvent(PassRefPtrWillBeRawPtr<Event>);
+    void dispatchScopedEvent(Event*);
 
     virtual void handleLocalEvents(Event&);
 
     void dispatchSubtreeModifiedEvent();
-    DispatchEventResult dispatchDOMActivateEvent(int detail, PassRefPtrWillBeRawPtr<Event> underlyingEvent);
+    DispatchEventResult dispatchDOMActivateEvent(int detail, Event* underlyingEvent);
 
     DispatchEventResult dispatchMouseEvent(const PlatformMouseEvent&, const AtomicString& eventType, int clickCount = 0, Node* relatedTarget = nullptr);
 
@@ -658,7 +660,7 @@ public:
     EventTargetData* eventTargetData() override;
     EventTargetData& ensureEventTargetData() override;
 
-    void getRegisteredMutationObserversOfType(WillBeHeapHashMap<RefPtrWillBeMember<MutationObserver>, MutationRecordDeliveryOptions>&, MutationObserver::MutationType, const QualifiedName* attributeName);
+    void getRegisteredMutationObserversOfType(HeapHashMap<Member<MutationObserver>, MutationRecordDeliveryOptions>&, MutationObserver::MutationType, const QualifiedName* attributeName);
     void registerMutationObserver(MutationObserver&, MutationObserverOptions, const HashSet<AtomicString>& attributeFilter);
     void unregisterMutationObserver(MutationObserverRegistration*);
     void registerTransientMutationObserver(MutationObserverRegistration*);
@@ -666,11 +668,10 @@ public:
     void notifyMutationObserversNodeWillDetach();
 
     unsigned connectedSubframeCount() const;
-    void incrementConnectedSubframeCount(unsigned amount = 1);
-    void decrementConnectedSubframeCount(unsigned amount = 1);
-    void updateAncestorConnectedSubframeCountForInsertion() const;
+    void incrementConnectedSubframeCount();
+    void decrementConnectedSubframeCount();
 
-    PassRefPtrWillBeRawPtr<StaticNodeList> getDestinationInsertionPoints();
+    StaticNodeList* getDestinationInsertionPoints();
     HTMLSlotElement* assignedSlot() const;
     HTMLSlotElement* assignedSlotForBinding();
 
@@ -679,7 +680,12 @@ public:
 
     bool isFinishedParsingChildren() const { return getFlag(IsFinishedParsingChildrenFlag); }
 
+    void checkSlotChangeAfterInserted() { checkSlotChange(); }
+    void checkSlotChangeBeforeRemoved() { checkSlotChange(); }
+
     DECLARE_VIRTUAL_TRACE();
+
+    DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
     unsigned lengthOfContents() const;
 
@@ -724,13 +730,16 @@ private:
         StyleChangeMask = 1 << nodeStyleChangeShift | 1 << (nodeStyleChangeShift + 1),
 
         CustomElementFlag = 1 << 21,
-        CustomElementUpgradedFlag = 1 << 22,
+        CustomElementCustomFlag = 1 << 22,
 
         HasNameOrIsEditingTextFlag = 1 << 23,
         HasWeakReferencesFlag = 1 << 24,
         V8CollectableDuringMinorGCFlag = 1 << 25,
         HasEventTargetDataFlag = 1 << 26,
         AlreadySpellCheckedFlag = 1 << 27,
+
+        V0CustomElementFlag = 1 << 28,
+        V0CustomElementUpgradedFlag = 1 << 29,
 
         DefaultNodeFlags = IsFinishedParsingChildrenFlag | NeedsReattachStyleChange
     };
@@ -761,25 +770,16 @@ protected:
 
     virtual void didMoveToNewDocument(Document& oldDocument);
 
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
-    bool removeEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
-    DispatchEventResult dispatchEventInternal(PassRefPtrWillBeRawPtr<Event>) override;
+    void addedEventListener(const AtomicString& eventType, RegisteredEventListener&) override;
+    void removedEventListener(const AtomicString& eventType, const RegisteredEventListener&) override;
+    DispatchEventResult dispatchEventInternal(Event*) override;
 
     static void reattachWhitespaceSiblingsIfNeeded(Text* start);
-
-#if !ENABLE(OILPAN)
-    void willBeDeletedFromDocument();
-#endif
 
     bool hasRareData() const { return getFlag(HasRareDataFlag); }
 
     NodeRareData* rareData() const;
     NodeRareData& ensureRareData();
-#if !ENABLE(OILPAN)
-    void clearRareData();
-
-    void clearEventTargetData();
-#endif
 
     void setHasCustomStyleCallbacks() { setFlag(true, HasCustomStyleCallbacksFlag); }
 
@@ -795,21 +795,14 @@ protected:
     void setIsFinishedParsingChildren(bool value) { setFlag(value, IsFinishedParsingChildrenFlag); }
 
 private:
-    friend class TreeShared<Node>;
-#if !ENABLE(OILPAN)
-    // FIXME: consider exposing proper API for this instead.
-    friend struct WeakIdentifierMapTraits<Node>;
-
-    void removedLastRef();
-#endif
-    bool hasTreeSharedParent() const { return !!parentOrShadowHostNode(); }
-
     // Gets nodeName without caching AtomicStrings. Used by
     // debugName. Compositor may call debugName from the "impl" thread
     // during "commit". The main thread is stopped at that time, but
     // it is not safe to cache AtomicStrings because those are
     // per-thread.
     virtual String debugNodeName() const;
+
+    void checkSlotChange();
 
     enum EditableLevel { Editable, RichlyEditable };
     bool hasEditableStyle(EditableLevel, UserSelectAllTreatment = UserSelectAllIsAlwaysNonEditable) const;
@@ -826,18 +819,18 @@ private:
 
     virtual ComputedStyle* nonLayoutObjectComputedStyle() const { return nullptr; }
 
-    virtual const ComputedStyle* virtualEnsureComputedStyle(PseudoId = NOPSEUDO);
+    virtual const ComputedStyle* virtualEnsureComputedStyle(PseudoId = PseudoIdNone);
 
     void trackForDebugging();
 
-    WillBeHeapVector<OwnPtrWillBeMember<MutationObserverRegistration>>* mutationObserverRegistry();
-    WillBeHeapHashSet<RawPtrWillBeMember<MutationObserverRegistration>>* transientMutationObserverRegistry();
+    HeapVector<Member<MutationObserverRegistration>>* mutationObserverRegistry();
+    HeapHashSet<Member<MutationObserverRegistration>>* transientMutationObserverRegistry();
 
     uint32_t m_nodeFlags;
-    RawPtrWillBeMember<ContainerNode> m_parentOrShadowHostNode;
-    RawPtrWillBeMember<TreeScope> m_treeScope;
-    RawPtrWillBeMember<Node> m_previous;
-    RawPtrWillBeMember<Node> m_next;
+    Member<ContainerNode> m_parentOrShadowHostNode;
+    Member<TreeScope> m_treeScope;
+    Member<Node> m_previous;
+    Member<Node> m_next;
     // When a node has rare data we move the layoutObject into the rare data.
     union DataUnion {
         DataUnion() : m_layoutObject(nullptr) { }
@@ -850,13 +843,13 @@ private:
 
 inline void Node::setParentOrShadowHostNode(ContainerNode* parent)
 {
-    ASSERT(isMainThread());
+    DCHECK(isMainThread());
     m_parentOrShadowHostNode = parent;
 }
 
 inline ContainerNode* Node::parentOrShadowHostNode() const
 {
-    ASSERT(isMainThread());
+    DCHECK(isMainThread());
     return m_parentOrShadowHostNode;
 }
 
@@ -915,17 +908,15 @@ DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES_REFCOUNTED(Node)
     DEFINE_TYPE_CASTS(thisType, Node, node, is##thisType(*node), is##thisType(node))
 
 #define DECLARE_NODE_FACTORY(T) \
-    static PassRefPtrWillBeRawPtr<T> create(Document&)
+    static T* create(Document&)
 #define DEFINE_NODE_FACTORY(T) \
-PassRefPtrWillBeRawPtr<T> T::create(Document& document) \
+T* T::create(Document& document) \
 { \
-    return adoptRefWillBeNoop(new T(document)); \
+    return new T(document); \
 }
 
-// These printers are available only for testing in "webkit_unit_tests", and
-// implemented in "core/testing/CoreTestPrinters.cpp".
-std::ostream& operator<<(std::ostream&, const Node&);
-std::ostream& operator<<(std::ostream&, const Node*);
+CORE_EXPORT std::ostream& operator<<(std::ostream&, const Node&);
+CORE_EXPORT std::ostream& operator<<(std::ostream&, const Node*);
 
 } // namespace blink
 

@@ -187,7 +187,7 @@ std::string FixupPath(const std::string& text) {
   GURL file_url = net::FilePathToFileURL(base::FilePath(filename));
   if (file_url.is_valid()) {
     return base::UTF16ToUTF8(url_formatter::FormatUrl(
-        file_url, std::string(), url_formatter::kFormatUrlOmitUsernamePassword,
+        file_url, url_formatter::kFormatUrlOmitUsernamePassword,
         net::UnescapeRule::NORMAL, nullptr, nullptr, nullptr));
   }
 
@@ -411,23 +411,29 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
   int trimmed_length = static_cast<int>(trimmed.length());
   if (url::DoesBeginWindowsDriveSpec(trimmed.data(), 0, trimmed_length) ||
       url::DoesBeginUNCPath(trimmed.data(), 0, trimmed_length, true))
-    return "file";
+    return url::kFileScheme;
 #elif defined(OS_POSIX)
   if (base::FilePath::IsSeparator(trimmed.data()[0]) ||
       trimmed.data()[0] == '~')
-    return "file";
+    return url::kFileScheme;
 #endif
 
   // Otherwise, we need to look at things carefully.
   std::string scheme;
   if (!GetValidScheme(*text, &parts->scheme, &scheme)) {
     // Try again if there is a ';' in the text. If changing it to a ':' results
-    // in a scheme being found, continue processing with the modified text.
+    // in a standard scheme, "about", "chrome" or "file" scheme being found,
+    // continue processing with the modified text.
     bool found_scheme = false;
     size_t semicolon = text->find(';');
     if (semicolon != 0 && semicolon != std::string::npos) {
       (*text)[semicolon] = ':';
-      if (GetValidScheme(*text, &parts->scheme, &scheme))
+      if (GetValidScheme(*text, &parts->scheme, &scheme) &&
+          (url::IsStandard(
+               scheme.c_str(),
+               url::Component(0, static_cast<int>(scheme.length()))) ||
+           scheme == url::kAboutScheme || scheme == kChromeUIScheme ||
+           scheme == url::kFileScheme))
         found_scheme = true;
       else
         (*text)[semicolon] = ';';
@@ -620,11 +626,13 @@ GURL FixupRelativeFile(const base::FilePath& base_dir,
 #if defined(OS_WIN)
     std::wstring unescaped = base::UTF8ToWide(net::UnescapeURLComponent(
         base::WideToUTF8(trimmed),
-        net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS));
+        net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS));
 #elif defined(OS_POSIX)
     std::string unescaped = net::UnescapeURLComponent(
         trimmed,
-        net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS);
+        net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
 #endif
 
     if (!ValidPathForFile(unescaped, &full_path))
@@ -639,8 +647,7 @@ GURL FixupRelativeFile(const base::FilePath& base_dir,
     GURL file_url = net::FilePathToFileURL(full_path);
     if (file_url.is_valid())
       return GURL(base::UTF16ToUTF8(url_formatter::FormatUrl(
-          file_url, std::string(),
-          url_formatter::kFormatUrlOmitUsernamePassword,
+          file_url, url_formatter::kFormatUrlOmitUsernamePassword,
           net::UnescapeRule::NORMAL, nullptr, nullptr, nullptr)));
     // Invalid files fall through to regular processing.
   }

@@ -53,7 +53,7 @@ WebSettingsImpl::WebSettingsImpl(Settings* settings, DevToolsEmulator* devToolsE
     , m_viewportMetaNonUserScalableQuirk(false)
     , m_clobberUserAgentInitialScaleQuirk(false)
 {
-    ASSERT(settings);
+    DCHECK(settings);
 }
 
 void WebSettingsImpl::setFromStrings(const WebString& name, const WebString& value)
@@ -71,11 +71,6 @@ void WebSettingsImpl::setFixedFontFamily(const WebString& font, UScriptCode scri
 {
     if (m_settings->genericFontFamilySettings().updateFixed(font, script))
         m_settings->notifyGenericFontFamilyChange();
-}
-
-void WebSettingsImpl::setReportWheelOverscroll(bool enabled)
-{
-    m_settings->setReportWheelOverscroll(enabled);
 }
 
 void WebSettingsImpl::setForceZeroLayoutHeight(bool enabled)
@@ -287,6 +282,16 @@ void WebSettingsImpl::setLoadWithOverviewMode(bool enabled)
     m_settings->setLoadWithOverviewMode(enabled);
 }
 
+void WebSettingsImpl::setShouldReuseGlobalForUnownedMainFrame(bool enabled)
+{
+    m_settings->setShouldReuseGlobalForUnownedMainFrame(enabled);
+}
+
+void WebSettingsImpl::setProgressBarCompletion(ProgressBarCompletion progressBarCompletion)
+{
+    m_settings->setProgressBarCompletion(static_cast<blink::ProgressBarCompletion>(progressBarCompletion));
+}
+
 void WebSettingsImpl::setPluginsEnabled(bool enabled)
 {
     m_devToolsEmulator->setPluginsEnabled(enabled);
@@ -407,6 +412,11 @@ void WebSettingsImpl::setTextTrackFontVariant(const WebString& fontVariant)
     m_settings->setTextTrackFontVariant(fontVariant);
 }
 
+void WebSettingsImpl::setTextTrackMarginPercentage(float percentage)
+{
+    m_settings->setTextTrackMarginPercentage(percentage);
+}
+
 void WebSettingsImpl::setTextTrackTextColor(const WebString& color)
 {
     m_settings->setTextTrackTextColor(color);
@@ -420,11 +430,6 @@ void WebSettingsImpl::setTextTrackTextShadow(const WebString& shadow)
 void WebSettingsImpl::setTextTrackTextSize(const WebString& size)
 {
     m_settings->setTextTrackTextSize(size);
-}
-
-void WebSettingsImpl::setUnsafePluginPastingEnabled(bool enabled)
-{
-    m_settings->setUnsafePluginPastingEnabled(enabled);
 }
 
 void WebSettingsImpl::setDNSPrefetchingEnabled(bool enabled)
@@ -487,11 +492,6 @@ void WebSettingsImpl::setExperimentalWebGLEnabled(bool enabled)
     m_settings->setWebGLEnabled(enabled);
 }
 
-void WebSettingsImpl::setOpenGLMultisamplingEnabled(bool enabled)
-{
-    m_settings->setOpenGLMultisamplingEnabled(enabled);
-}
-
 void WebSettingsImpl::setRenderVSyncNotificationEnabled(bool enabled)
 {
     m_renderVSyncNotificationEnabled = enabled;
@@ -500,6 +500,11 @@ void WebSettingsImpl::setRenderVSyncNotificationEnabled(bool enabled)
 void WebSettingsImpl::setWebGLErrorsToConsoleEnabled(bool enabled)
 {
     m_settings->setWebGLErrorsToConsoleEnabled(enabled);
+}
+
+void WebSettingsImpl::setAlwaysShowContextMenuOnTouch(bool enabled)
+{
+    m_settings->setAlwaysShowContextMenuOnTouch(enabled);
 }
 
 void WebSettingsImpl::setShowContextMenuOnMouseUp(bool enabled)
@@ -625,6 +630,11 @@ void WebSettingsImpl::setStrictPowerfulFeatureRestrictions(bool enabled)
 void WebSettingsImpl::setStrictlyBlockBlockableMixedContent(bool enabled)
 {
     m_settings->setStrictlyBlockBlockableMixedContent(enabled);
+}
+
+void WebSettingsImpl::setPassiveEventListenerDefault(PassiveEventListenerDefault defaultValue)
+{
+    m_settings->setPassiveListenerDefault(static_cast<PassiveListenerDefault>(defaultValue));
 }
 
 void WebSettingsImpl::setPasswordEchoEnabled(bool flag)
@@ -793,9 +803,14 @@ void WebSettingsImpl::setV8CacheOptions(V8CacheOptions options)
     m_settings->setV8CacheOptions(static_cast<blink::V8CacheOptions>(options));
 }
 
-void WebSettingsImpl::setUseMobileViewportStyle(bool enabled)
+void WebSettingsImpl::setV8CacheStrategiesForCacheStorage(V8CacheStrategiesForCacheStorage strategies)
 {
-    m_devToolsEmulator->setUseMobileViewportStyle(enabled);
+    m_settings->setV8CacheStrategiesForCacheStorage(static_cast<blink::V8CacheStrategiesForCacheStorage>(strategies));
+}
+
+void WebSettingsImpl::setViewportStyle(WebViewportStyle style)
+{
+    m_devToolsEmulator->setViewportStyle(style);
 }
 
 } // namespace blink

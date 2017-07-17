@@ -8,7 +8,7 @@
 #include "base/lazy_instance.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/tracked_objects.h"
 
 namespace remoting {
@@ -117,7 +117,7 @@ void LogMessageHandler::SendLogMessageToClient(
   std::string message = str.substr(message_start);
   base::TrimWhitespaceASCII(message, base::TRIM_ALL, &message);
 
-  scoped_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
   dictionary->SetString("type", kDebugMessageTypeName);
   dictionary->SetString("severity", severity_string);
   dictionary->SetString("message", message);

@@ -9,7 +9,6 @@
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -20,8 +19,8 @@
 #include "ui/base/models/simple_menu_model.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -62,11 +61,9 @@ void SystemMenuModelBuilder::Init() {
   menu_model_.reset(model);
   BuildMenu(model);
 #if defined(OS_WIN)
-  // On Windows with HOST_DESKTOP_TYPE_NATIVE we put the menu items in the
-  // system menu (not at the end). Doing this necessitates adding a trailing
-  // separator.
-  if (browser()->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_NATIVE)
-    model->AddSeparator(ui::NORMAL_SEPARATOR);
+  // On Windows we put the menu items in the system menu (not at the end). Doing
+  // this necessitates adding a trailing separator.
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
 #endif
 }
 
@@ -163,7 +160,7 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
 
   // To show the menu we need at least two logged in users.
   ash::SessionStateDelegate* delegate =
-      ash::Shell::GetInstance()->session_state_delegate();
+      ash::WmShell::Get()->GetSessionStateDelegate();
   int logged_in_users = delegate->NumberOfLoggedInUsers();
   if (logged_in_users <= 1)
     return;

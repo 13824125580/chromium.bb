@@ -7,6 +7,8 @@
 #include "core/frame/LocalFrame.h"
 #include "modules/presentation/PresentationConnection.h"
 #include "public/platform/modules/presentation/WebPresentationClient.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -25,9 +27,9 @@ PresentationController::~PresentationController()
 }
 
 // static
-PassOwnPtrWillBeRawPtr<PresentationController> PresentationController::create(LocalFrame& frame, WebPresentationClient* client)
+PresentationController* PresentationController::create(LocalFrame& frame, WebPresentationClient* client)
 {
-    return adoptPtrWillBeNoop(new PresentationController(frame, client));
+    return new PresentationController(frame, client);
 }
 
 // static
@@ -39,13 +41,13 @@ const char* PresentationController::supplementName()
 // static
 PresentationController* PresentationController::from(LocalFrame& frame)
 {
-    return static_cast<PresentationController*>(WillBeHeapSupplement<LocalFrame>::from(frame, supplementName()));
+    return static_cast<PresentationController*>(Supplement<LocalFrame>::from(frame, supplementName()));
 }
 
 // static
 void PresentationController::provideTo(LocalFrame& frame, WebPresentationClient* client)
 {
-    WillBeHeapSupplement<LocalFrame>::provideTo(frame, PresentationController::supplementName(), PresentationController::create(frame, client));
+    Supplement<LocalFrame>::provideTo(frame, PresentationController::supplementName(), PresentationController::create(frame, client));
 }
 
 WebPresentationClient* PresentationController::client()
@@ -57,7 +59,7 @@ DEFINE_TRACE(PresentationController)
 {
     visitor->trace(m_presentation);
     visitor->trace(m_connections);
-    WillBeHeapSupplement<LocalFrame>::trace(visitor);
+    Supplement<LocalFrame>::trace(visitor);
     LocalFrameLifecycleObserver::trace(visitor);
 }
 
@@ -65,12 +67,12 @@ void PresentationController::didStartDefaultSession(WebPresentationConnectionCli
 {
     if (!m_presentation || !m_presentation->defaultRequest())
         return;
-    PresentationConnection::take(this, adoptPtr(connectionClient), m_presentation->defaultRequest());
+    PresentationConnection::take(this, wrapUnique(connectionClient), m_presentation->defaultRequest());
 }
 
 void PresentationController::didChangeSessionState(WebPresentationConnectionClient* connectionClient, WebPresentationConnectionState state)
 {
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+    std::unique_ptr<WebPresentationConnectionClient> client = wrapUnique(connectionClient);
 
     PresentationConnection* connection = findConnection(client.get());
     if (!connection)
@@ -80,7 +82,7 @@ void PresentationController::didChangeSessionState(WebPresentationConnectionClie
 
 void PresentationController::didCloseConnection(WebPresentationConnectionClient* connectionClient, WebPresentationConnectionCloseReason reason, const WebString& message)
 {
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+    std::unique_ptr<WebPresentationConnectionClient> client = wrapUnique(connectionClient);
 
     PresentationConnection* connection = findConnection(client.get());
     if (!connection)
@@ -90,7 +92,7 @@ void PresentationController::didCloseConnection(WebPresentationConnectionClient*
 
 void PresentationController::didReceiveSessionTextMessage(WebPresentationConnectionClient* connectionClient, const WebString& message)
 {
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+    std::unique_ptr<WebPresentationConnectionClient> client = wrapUnique(connectionClient);
 
     PresentationConnection* connection = findConnection(client.get());
     if (!connection)
@@ -100,7 +102,7 @@ void PresentationController::didReceiveSessionTextMessage(WebPresentationConnect
 
 void PresentationController::didReceiveSessionBinaryMessage(WebPresentationConnectionClient* connectionClient, const uint8_t* data, size_t length)
 {
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+    std::unique_ptr<WebPresentationConnectionClient> client = wrapUnique(connectionClient);
 
     PresentationConnection* connection = findConnection(client.get());
     if (!connection)
@@ -119,7 +121,7 @@ void PresentationController::setDefaultRequestUrl(const KURL& url)
         return;
 
     if (url.isValid())
-        m_client->setDefaultPresentationUrl(url.string());
+        m_client->setDefaultPresentationUrl(url.getString());
     else
         m_client->setDefaultPresentationUrl(blink::WebString());
 }

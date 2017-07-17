@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,8 +16,10 @@
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
+#include "components/precache/core/precache_fetcher.h"
+#include "components/precache/core/precache_session_table.h"
 #include "components/precache/core/precache_url_table.h"
 
 class GURL;
@@ -25,19 +29,27 @@ class FilePath;
 class Time;
 }
 
+namespace net {
+class HttpResponseInfo;
+}
+
 namespace sql {
 class Connection;
 }
 
 namespace precache {
 
-// Class that tracks information related to precaching. This class can be
-// constructed or destroyed on any threads, but all other methods must be called
-// on the same thread (e.g. the DB thread).
-class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
+class PrecacheUnfinishedWork;
+
+// Class that tracks information related to precaching. This class may be
+// constructed on any thread, but all calls to, and destruction of this class
+// must be done on the the DB thread.
+class PrecacheDatabase {
  public:
   // A PrecacheDatabase can be constructed on any thread.
   PrecacheDatabase();
+
+  ~PrecacheDatabase();
 
   // Initializes the precache database, using the specified database file path.
   // Init must be called before any other methods.
@@ -55,8 +67,8 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   void RecordURLPrefetch(const GURL& url,
                          const base::TimeDelta& latency,
                          const base::Time& fetch_time,
-                         int64_t size,
-                         bool was_cached);
+                         const net::HttpResponseInfo& info,
+                         int64_t size);
 
   // Report precache-related metrics in response to a URL being fetched, where
   // the fetch was not motivated by precaching. |is_connection_cellular|
@@ -64,16 +76,26 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   void RecordURLNonPrefetch(const GURL& url,
                             const base::TimeDelta& latency,
                             const base::Time& fetch_time,
+                            const net::HttpResponseInfo& info,
                             int64_t size,
-                            bool was_cached,
                             int host_rank,
                             bool is_connection_cellular);
 
- private:
-  friend class base::RefCountedThreadSafe<PrecacheDatabase>;
-  friend class PrecacheDatabaseTest;
+  // Gets the state required to continue a precache session.
+  std::unique_ptr<PrecacheUnfinishedWork> GetUnfinishedWork();
 
-  ~PrecacheDatabase();
+  // Stores the state required to continue a precache session so that the
+  // session can be resumed later.
+  void SaveUnfinishedWork(
+      std::unique_ptr<PrecacheUnfinishedWork> unfinished_work);
+
+  // Deletes unfinished work from the database.
+  void DeleteUnfinishedWork();
+
+  base::WeakPtr<PrecacheDatabase> GetWeakPtr();
+
+ private:
+  friend class PrecacheDatabaseTest;
 
   bool IsDatabaseAccessible() const;
 
@@ -91,12 +113,16 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   // posted.
   void MaybePostFlush();
 
-  scoped_ptr<sql::Connection> db_;
+  std::unique_ptr<sql::Connection> db_;
 
   // Table that keeps track of URLs that are in the cache because of precaching,
   // and wouldn't be in the cache otherwise. If |buffered_writes_| is non-empty,
   // then this table will not be up to date until the next call to Flush().
   PrecacheURLTable precache_url_table_;
+
+  // Table that persists state related to a precache session, including
+  // unfinished work to be done.
+  PrecacheSessionTable precache_session_table_;
 
   // A vector of write operations to be run on the database.
   std::vector<base::Closure> buffered_writes_;
@@ -112,6 +138,8 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   // ThreadChecker used to ensure that all methods other than the constructor
   // or destructor are called on the same thread.
   base::ThreadChecker thread_checker_;
+
+  base::WeakPtrFactory<PrecacheDatabase> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PrecacheDatabase);
 };

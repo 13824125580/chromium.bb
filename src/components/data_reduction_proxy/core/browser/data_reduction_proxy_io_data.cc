@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_protocol.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_stats.h"
@@ -21,6 +22,7 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_network_delegate.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
+#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_storage_delegate.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
@@ -54,8 +56,8 @@ class BasicHTTPURLRequestContextGetter : public net::URLRequestContextGetter {
   ~BasicHTTPURLRequestContextGetter() override;
 
   scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
-  scoped_ptr<net::HttpUserAgentSettings> user_agent_settings_;
-  scoped_ptr<net::URLRequestContext> url_request_context_;
+  std::unique_ptr<net::HttpUserAgentSettings> user_agent_settings_;
+  std::unique_ptr<net::URLRequestContext> url_request_context_;
 
   DISALLOW_COPY_AND_ASSIGN(BasicHTTPURLRequestContextGetter);
 };
@@ -89,44 +91,47 @@ BasicHTTPURLRequestContextGetter::~BasicHTTPURLRequestContextGetter() {
 }
 
 DataReductionProxyIOData::DataReductionProxyIOData(
-    const Client& client,
+    Client client,
     int param_flags,
     net::NetLog* net_log,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     bool enabled,
-    bool enable_quic,
-    const std::string& user_agent)
+    const std::string& user_agent,
+    const std::string& channel)
     : client_(client),
       net_log_(net_log),
       io_task_runner_(io_task_runner),
       ui_task_runner_(ui_task_runner),
+      data_use_group_provider_(nullptr),
       enabled_(enabled),
       url_request_context_getter_(nullptr),
       basic_url_request_context_getter_(
           new BasicHTTPURLRequestContextGetter(user_agent, io_task_runner)),
+      channel_(channel),
       weak_factory_(this) {
   DCHECK(net_log);
   DCHECK(io_task_runner_);
   DCHECK(ui_task_runner_);
-  scoped_ptr<DataReductionProxyParams> params(
+  std::unique_ptr<DataReductionProxyParams> params(
       new DataReductionProxyParams(param_flags));
-  params->EnableQuic(enable_quic);
   event_creator_.reset(new DataReductionProxyEventCreator(this));
   configurator_.reset(
       new DataReductionProxyConfigurator(net_log, event_creator_.get()));
-  bool use_config_client = params::IsConfigClientEnabled();
+  bool use_config_client =
+      params::IsConfigClientEnabled() && client_ != Client::CRONET_ANDROID;
   DataReductionProxyMutableConfigValues* raw_mutable_config = nullptr;
   if (use_config_client) {
-    scoped_ptr<DataReductionProxyMutableConfigValues> mutable_config =
+    std::unique_ptr<DataReductionProxyMutableConfigValues> mutable_config =
         DataReductionProxyMutableConfigValues::CreateFromParams(params.get());
     raw_mutable_config = mutable_config.get();
     config_.reset(new DataReductionProxyConfig(
-        net_log, std::move(mutable_config), configurator_.get(),
+        io_task_runner, net_log, std::move(mutable_config), configurator_.get(),
         event_creator_.get()));
   } else {
     config_.reset(new DataReductionProxyConfig(
-        net_log, std::move(params), configurator_.get(), event_creator_.get()));
+        io_task_runner, net_log, std::move(params), configurator_.get(),
+        event_creator_.get()));
   }
 
   // It is safe to use base::Unretained here, since it gets executed
@@ -144,14 +149,14 @@ DataReductionProxyIOData::DataReductionProxyIOData(
     // caller is owned by |this|.
     config_client_.reset(new DataReductionProxyConfigServiceClient(
         std::move(params), GetBackoffPolicy(), request_options_.get(),
-        raw_mutable_config, config_.get(), event_creator_.get(), net_log_,
+        raw_mutable_config, config_.get(), event_creator_.get(), this, net_log_,
         base::Bind(&DataReductionProxyIOData::StoreSerializedConfig,
                    base::Unretained(this))));
   }
 
   proxy_delegate_.reset(new DataReductionProxyDelegate(
-      request_options_.get(), config_.get(), configurator_.get(),
-      event_creator_.get(), bypass_stats_.get(), net_log_));
+      config_.get(), configurator_.get(), event_creator_.get(),
+      bypass_stats_.get(), net_log_));
  }
 
  DataReductionProxyIOData::DataReductionProxyIOData()
@@ -206,34 +211,48 @@ bool DataReductionProxyIOData::IsEnabled() const {
   return enabled_;
 }
 
-scoped_ptr<net::URLRequestInterceptor>
+void DataReductionProxyIOData::SetPingbackReportingFraction(
+    float pingback_reporting_fraction) {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+  ui_task_runner_->PostTask(
+      FROM_HERE,
+      base::Bind(&DataReductionProxyService::SetPingbackReportingFraction,
+                 service_, pingback_reporting_fraction));
+}
+
+std::unique_ptr<net::URLRequestInterceptor>
 DataReductionProxyIOData::CreateInterceptor() {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
-  return make_scoped_ptr(new DataReductionProxyInterceptor(
+  return base::WrapUnique(new DataReductionProxyInterceptor(
       config_.get(), config_client_.get(), bypass_stats_.get(),
       event_creator_.get()));
 }
 
-scoped_ptr<DataReductionProxyNetworkDelegate>
+std::unique_ptr<DataReductionProxyNetworkDelegate>
 DataReductionProxyIOData::CreateNetworkDelegate(
-    scoped_ptr<net::NetworkDelegate> wrapped_network_delegate,
+    std::unique_ptr<net::NetworkDelegate> wrapped_network_delegate,
     bool track_proxy_bypass_statistics) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
-  scoped_ptr<DataReductionProxyNetworkDelegate> network_delegate(
+  std::unique_ptr<DataReductionProxyNetworkDelegate> network_delegate(
       new DataReductionProxyNetworkDelegate(
           std::move(wrapped_network_delegate), config_.get(),
           request_options_.get(), configurator_.get()));
   if (track_proxy_bypass_statistics)
     network_delegate->InitIODataAndUMA(this, bypass_stats_.get());
+  if (data_use_group_provider_) {
+    network_delegate->SetDataUseGroupProvider(
+        std::move(data_use_group_provider_));
+  }
+
   return network_delegate;
 }
 
-scoped_ptr<DataReductionProxyDelegate>
+std::unique_ptr<DataReductionProxyDelegate>
 DataReductionProxyIOData::CreateProxyDelegate() const {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
-  return make_scoped_ptr(new DataReductionProxyDelegate(
-      request_options_.get(), config_.get(), configurator_.get(),
-      event_creator_.get(), bypass_stats_.get(), net_log_));
+  return base::WrapUnique(new DataReductionProxyDelegate(
+      config_.get(), configurator_.get(), event_creator_.get(),
+      bypass_stats_.get(), net_log_));
 }
 
 // TODO(kundaji): Rename this method to something more descriptive.
@@ -285,14 +304,15 @@ void DataReductionProxyIOData::UpdateContentLengths(
     int64_t original_size,
     bool data_reduction_proxy_enabled,
     DataReductionProxyRequestType request_type,
-    const std::string& data_usage_host,
+    const scoped_refptr<DataUseGroup>& data_use_group,
     const std::string& mime_type) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
+
   ui_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&DataReductionProxyService::UpdateContentLengths, service_,
                  data_used, original_size, data_reduction_proxy_enabled,
-                 request_type, data_usage_host, mime_type));
+                 request_type, data_use_group, mime_type));
 }
 
 void DataReductionProxyIOData::SetLoFiModeActiveOnMainFrame(
@@ -304,15 +324,16 @@ void DataReductionProxyIOData::SetLoFiModeActiveOnMainFrame(
                  service_, lo_fi_mode_active));
 }
 
-void DataReductionProxyIOData::AddEvent(scoped_ptr<base::Value> event) {
+void DataReductionProxyIOData::AddEvent(std::unique_ptr<base::Value> event) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   ui_task_runner_->PostTask(
       FROM_HERE, base::Bind(&DataReductionProxyService::AddEvent, service_,
                             base::Passed(&event)));
 }
 
-void DataReductionProxyIOData::AddEnabledEvent(scoped_ptr<base::Value> event,
-                                               bool enabled) {
+void DataReductionProxyIOData::AddEnabledEvent(
+    std::unique_ptr<base::Value> event,
+    bool enabled) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   ui_task_runner_->PostTask(
       FROM_HERE, base::Bind(&DataReductionProxyService::AddEnabledEvent,
@@ -320,7 +341,7 @@ void DataReductionProxyIOData::AddEnabledEvent(scoped_ptr<base::Value> event,
 }
 
 void DataReductionProxyIOData::AddEventAndSecureProxyCheckState(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     SecureProxyCheckState state) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   ui_task_runner_->PostTask(
@@ -330,7 +351,7 @@ void DataReductionProxyIOData::AddEventAndSecureProxyCheckState(
 }
 
 void DataReductionProxyIOData::AddAndSetLastBypassEvent(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     int64_t expiration_ticks) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   ui_task_runner_->PostTask(

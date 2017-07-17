@@ -30,13 +30,11 @@ class AshTestHelperTest : public testing::Test {
     testing::Test::TearDown();
   }
 
-  ash::test::AshTestHelper* ash_test_helper() {
-    return ash_test_helper_.get();
-  }
+  ash::test::AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
 
  private:
   base::MessageLoopForUI message_loop_;
-  scoped_ptr<ash::test::AshTestHelper> ash_test_helper_;
+  std::unique_ptr<ash::test::AshTestHelper> ash_test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(AshTestHelperTest);
 };
@@ -50,7 +48,7 @@ TEST_F(AshTestHelperTest, AshTestHelper) {
 
   // Enough state is initialized to create a window.
   using views::Widget;
-  scoped_ptr<Widget> w1(new Widget);
+  std::unique_ptr<Widget> w1(new Widget);
   Widget::InitParams params;
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = ash_test_helper()->CurrentContext();

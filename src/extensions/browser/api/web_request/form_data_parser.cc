@@ -296,7 +296,7 @@ FormDataParser::Result::~Result() {}
 FormDataParser::~FormDataParser() {}
 
 // static
-scoped_ptr<FormDataParser> FormDataParser::Create(
+std::unique_ptr<FormDataParser> FormDataParser::Create(
     const net::URLRequest& request) {
   std::string value;
   const bool found = request.extra_request_headers().GetHeader(
@@ -305,7 +305,7 @@ scoped_ptr<FormDataParser> FormDataParser::Create(
 }
 
 // static
-scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
+std::unique_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
     const std::string* content_type_header) {
   enum ParserChoice {URL_ENCODED, MULTIPART, ERROR_CHOICE};
   ParserChoice choice = ERROR_CHOICE;
@@ -326,7 +326,7 @@ scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
       size_t offset = content_type_header->find(kBoundaryString);
       if (offset == std::string::npos) {
         // Malformed header.
-        return scoped_ptr<FormDataParser>();
+        return std::unique_ptr<FormDataParser>();
       }
       offset += sizeof(kBoundaryString) - 1;
       boundary = content_type_header->substr(
@@ -339,20 +339,22 @@ scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
 
   switch (choice) {
     case URL_ENCODED:
-      return scoped_ptr<FormDataParser>(new FormDataParserUrlEncoded());
+      return std::unique_ptr<FormDataParser>(new FormDataParserUrlEncoded());
     case MULTIPART:
-      return scoped_ptr<FormDataParser>(new FormDataParserMultipart(boundary));
+      return std::unique_ptr<FormDataParser>(
+          new FormDataParserMultipart(boundary));
     case ERROR_CHOICE:
-      return scoped_ptr<FormDataParser>();
+      return std::unique_ptr<FormDataParser>();
   }
   NOTREACHED();  // Some compilers do not believe this is unreachable.
-  return scoped_ptr<FormDataParser>();
+  return std::unique_ptr<FormDataParser>();
 }
 
 FormDataParser::FormDataParser() {}
 
 const net::UnescapeRule::Type FormDataParserUrlEncoded::unescape_rules_ =
-    net::UnescapeRule::URL_SPECIAL_CHARS |
+    net::UnescapeRule::PATH_SEPARATORS |
+    net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
     net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS | net::UnescapeRule::SPACES |
     net::UnescapeRule::REPLACE_PLUS_WITH_SPACE;
 
@@ -519,8 +521,10 @@ bool FormDataParserMultipart::GetNextNameValue(Result* result) {
   }
 
   std::string unescaped_name = net::UnescapeURLComponent(
-      name.as_string(), net::UnescapeRule::URL_SPECIAL_CHARS |
-                            net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS);
+      name.as_string(),
+      net::UnescapeRule::PATH_SEPARATORS |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+          net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS);
   result->set_name(unescaped_name);
   result->set_value(value);
 

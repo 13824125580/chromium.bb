@@ -5,9 +5,10 @@
 #ifndef ASH_FRAME_CUSTOM_FRAME_VIEW_ASH_H_
 #define ASH_FRAME_CUSTOM_FRAME_VIEW_ASH_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/window/non_client_view.h"
 
@@ -57,9 +58,11 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
   void UpdateWindowIcon() override;
   void UpdateWindowTitle() override;
   void SizeConstraintsChanged() override;
+  void ActivationChanged(bool active) override;
 
   // views::View:
   gfx::Size GetPreferredSize() const override;
+  void Layout() override;
   const char* GetClassName() const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
@@ -94,7 +97,8 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
   HeaderView* header_view_;
 
   // Updates the hittest bounds overrides based on the window state type.
-  scoped_ptr<FrameBorderHitTestController> frame_border_hit_test_controller_;
+  std::unique_ptr<FrameBorderHitTestController>
+      frame_border_hit_test_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomFrameViewAsh);
 };

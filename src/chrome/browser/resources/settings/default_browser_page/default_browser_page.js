@@ -6,17 +6,6 @@
  * @fileoverview
  * 'settings-default-browser-page' is the settings page that contains
  * settings to change the default browser (i.e. which the OS will open).
- *
- * Example:
- *
- *   <iron-animated-pages>
- *     <settings-default-browser-page>
- *     </settings-default-browser-page>
- *     ... other pages ...
- *   </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-default-browser-page
  */
 Polymer({
   is: 'settings-default-browser-page',
@@ -62,17 +51,10 @@ Polymer({
     },
   },
 
-  behaviors: [
-    I18nBehavior,
-  ],
-
   ready: function() {
     var self = this;
     cr.define('Settings', function() {
       return {
-        setAsDefaultConcluded: function() {
-          return self.setAsDefaultConcluded_.apply(self, arguments);
-        },
         updateDefaultBrowserState: function() {
           return self.updateDefaultBrowserState_.apply(self, arguments);
         },
@@ -97,7 +79,7 @@ Polymer({
     }
 
     this.showButton_ = !isDefault && canBeDefault;
-    if (!this.showButton) {
+    if (!this.showButton_) {
       this.message_ = loadTimeData.getString(
           canBeDefault ? 'defaultBrowserDefault' : 'defaultBrowserUnknown');
     }

@@ -27,7 +27,7 @@ namespace blink {
 
 struct SameSizeAsCSSProperty {
     uint32_t bitfields;
-    RawPtrWillBeMember<void*> value;
+    Member<void*> value;
 };
 
 static_assert(sizeof(CSSProperty) == sizeof(SameSizeAsCSSProperty), "CSSProperty should stay small");
@@ -228,6 +228,9 @@ bool CSSProperty::isAffectedByAllProperty(CSSPropertyID propertyID)
         return false;
 
     if (propertyID == CSSPropertyVariable)
+        return false;
+
+    if (CSSPropertyMetadata::isDescriptorOnly(propertyID))
         return false;
 
     // all shorthand spec says:

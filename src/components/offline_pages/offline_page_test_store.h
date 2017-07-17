@@ -39,15 +39,18 @@ class OfflinePageTestStore : public OfflinePageMetadataStore {
   void Load(const LoadCallback& callback) override;
   void AddOrUpdateOfflinePage(const OfflinePageItem& offline_page,
                               const UpdateCallback& callback) override;
-  void RemoveOfflinePages(const std::vector<int64_t>& bookmark_ids,
+  void RemoveOfflinePages(const std::vector<int64_t>& offline_ids,
                           const UpdateCallback& callback) override;
   void Reset(const ResetCallback& callback) override;
 
-  void UpdateLastAccessTime(int64_t bookmark_id,
+  void UpdateLastAccessTime(int64_t offline_id,
                             const base::Time& last_access_time);
 
   // Returns all pages, regardless their states.
   std::vector<OfflinePageItem> GetAllPages() const;
+
+  // Clear all pages in the store.
+  void ClearAllPages();
 
   const OfflinePageItem& last_saved_page() const { return last_saved_page_; }
 

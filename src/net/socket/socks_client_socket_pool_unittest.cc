@@ -6,6 +6,7 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
@@ -83,9 +84,9 @@ class SOCKSClientSocketPoolTest : public testing::Test {
     SocketDataProvider* data_provider() { return data_.get(); }
 
    private:
-    scoped_ptr<StaticSocketDataProvider> data_;
-    scoped_ptr<MockWrite[]> writes_;
-    scoped_ptr<MockRead[]> reads_;
+    std::unique_ptr<StaticSocketDataProvider> data_;
+    std::unique_ptr<MockWrite[]> writes_;
+    std::unique_ptr<MockRead[]> reads_;
   };
 
   SOCKSClientSocketPoolTest()
@@ -96,6 +97,7 @@ class SOCKSClientSocketPoolTest : public testing::Test {
               kMaxSocketsPerGroup,
               &host_resolver_,
               &transport_socket_pool_,
+              NULL,
               NULL) {}
 
   ~SOCKSClientSocketPoolTest() override {}
@@ -110,7 +112,7 @@ class SOCKSClientSocketPoolTest : public testing::Test {
     return test_base_.GetOrderOfRequest(index);
   }
 
-  std::vector<scoped_ptr<TestSocketRequest>>* requests() {
+  std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
     return test_base_.requests();
   }
 
@@ -296,7 +298,7 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringTransportConnect) {
   EXPECT_EQ(0, transport_socket_pool_.cancel_count());
 
   // Now wait for the TCP sockets to connect.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(1));
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(2));
@@ -332,7 +334,7 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringSOCKSConnect) {
   EXPECT_EQ(0, transport_socket_pool_.release_count());
 
   // Now wait for the async data to reach the SOCKS connect jobs.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(1));
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(2));

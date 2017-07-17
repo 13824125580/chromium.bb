@@ -4,6 +4,8 @@
 
 #include "net/quic/quic_client_promised_info.h"
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/scoped_ptr.h"
 #include "net/gfe2/balsa_headers.h"
@@ -44,7 +46,7 @@ class MockQuicClientSession : public QuicClientSession {
       : QuicClientSession(
             DefaultQuicConfig(),
             connection,
-            QuicServerId("example.com", 80, PRIVACY_MODE_DISABLED),
+            QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
         crypto_config_(CryptoTestUtils::ProofVerifierForTesting()),
@@ -70,8 +72,9 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
   class StreamVisitor;
 
   QuicClientPromisedInfoTest()
-      : connection_(
-            new StrictMock<MockConnection>(&helper_, Perspective::IS_CLIENT)),
+      : connection_(new StrictMock<MockQuicConnection>(&helper_,
+                                                       &alarm_factory_,
+                                                       Perspective::IS_CLIENT)),
         session_(connection_, &push_promise_index_),
         body_("hello world"),
         promise_id_(gfe_quic::test::kServerDataStreamId1) {
@@ -98,7 +101,7 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
     serialized_push_promise_ =
         SpdyUtils::SerializeUncompressedHeaders(push_promise_);
 
-    client_request_ = SpdyHeaderBlock(push_promise_);
+    client_request_ = push_promise_.Clone();
   }
 
   class StreamVisitor : public QuicSpdyClientStream::Visitor {
@@ -141,14 +144,15 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
     stream_->OnPromiseHeadersComplete(id, serialized_push_promise_.size());
   }
 
-  MockConnectionHelper helper_;
-  StrictMock<MockConnection>* connection_;
+  MockQuicConnectionHelper helper_;
+  MockAlarmFactory alarm_factory_;
+  StrictMock<MockQuicConnection>* connection_;
   QuicClientPushPromiseIndex push_promise_index_;
 
   MockQuicClientSession session_;
-  scoped_ptr<QuicSpdyClientStream> stream_;
-  scoped_ptr<StreamVisitor> stream_visitor_;
-  scoped_ptr<QuicSpdyClientStream> promised_stream_;
+  std::unique_ptr<QuicSpdyClientStream> stream_;
+  std::unique_ptr<StreamVisitor> stream_visitor_;
+  std::unique_ptr<QuicSpdyClientStream> promised_stream_;
   BalsaHeaders headers_;
   string headers_string_;
   string body_;
@@ -176,7 +180,7 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseCleanupAlarm) {
   // Fire the alarm that will cancel the promised stream.
   EXPECT_CALL(*connection_,
               SendRstStream(promise_id_, QUIC_STREAM_CANCELLED, 0));
-  helper_.FireAlarm(QuicClientPromisedInfoPeer::GetAlarm(promised));
+  alarm_factory_.FireAlarm(QuicClientPromisedInfoPeer::GetAlarm(promised));
 
   // Verify that the promise is gone after the alarm fires.
   EXPECT_EQ(session_.GetPromisedById(promise_id_), nullptr);
@@ -213,6 +217,21 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseInvalidUrl) {
   EXPECT_EQ(session_.GetPromisedByUrl(promise_url_), nullptr);
 }
 
+TEST_F(QuicClientPromisedInfoTest, PushPromiseInvalidUrl) {
+  // Promise with an unsafe method
+  push_promise_[":method"] = "PUT";
+  serialized_push_promise_ =
+      SpdyUtils::SerializeUncompressedHeaders(push_promise_);
+
+  EXPECT_CALL(*connection_,
+              SendRstStream(promise_id_, QUIC_INVALID_PROMISE_METHOD, 0));
+  ReceivePromise(promise_id_);
+
+  // Verify that the promise headers were ignored
+  EXPECT_EQ(session_.GetPromisedById(promise_id_), nullptr);
+  EXPECT_EQ(session_.GetPromisedByUrl(promise_url_), nullptr);
+}
+
 TEST_F(QuicClientPromisedInfoTest, PushPromiseUnauthorizedUrl) {
   session_.set_authorized(false);
 
@@ -233,8 +252,8 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseMismatch) {
 
   // Need to send the promised response headers and initiate the
   // rendezvous for secondary validation to proceed.
-  QuicSpdyClientStream* promise_stream =
-      static_cast<QuicSpdyClientStream*>(session_.GetStream(promise_id_));
+  QuicSpdyClientStream* promise_stream = static_cast<QuicSpdyClientStream*>(
+      session_.GetOrCreateStream(promise_id_));
   promise_stream->OnStreamHeaders(headers_string_);
   promise_stream->OnStreamHeadersComplete(false, headers_string_.size());
 
@@ -260,8 +279,8 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseVaryWaits) {
   EXPECT_NE(session_.GetPromisedById(promise_id_), nullptr);
 
   // Send Response, should trigger promise validation and complete rendezvous
-  QuicSpdyClientStream* promise_stream =
-      static_cast<QuicSpdyClientStream*>(session_.GetStream(promise_id_));
+  QuicSpdyClientStream* promise_stream = static_cast<QuicSpdyClientStream*>(
+      session_.GetOrCreateStream(promise_id_));
   ASSERT_NE(promise_stream, nullptr);
   promise_stream->OnStreamHeaders(headers_string_);
   promise_stream->OnStreamHeadersComplete(false, headers_string_.size());
@@ -276,8 +295,8 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseVaryNoWait) {
   QuicClientPromisedInfo* promised = session_.GetPromisedById(promise_id_);
   ASSERT_NE(promised, nullptr);
 
-  QuicSpdyClientStream* promise_stream =
-      static_cast<QuicSpdyClientStream*>(session_.GetStream(promise_id_));
+  QuicSpdyClientStream* promise_stream = static_cast<QuicSpdyClientStream*>(
+      session_.GetOrCreateStream(promise_id_));
   ASSERT_NE(promise_stream, nullptr);
 
   // Send Response, should trigger promise validation and complete rendezvous
@@ -310,7 +329,7 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseWaitCancels) {
   EXPECT_NE(session_.GetPromisedById(promise_id_), nullptr);
 
   // Create response stream, but no data yet.
-  session_.GetStream(promise_id_);
+  session_.GetOrCreateStream(promise_id_);
 
   // Fire the alarm that will cancel the promised stream.
   EXPECT_CALL(session_, CloseStream(promise_id_));
@@ -328,8 +347,8 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseDataClosed) {
   QuicClientPromisedInfo* promised = session_.GetPromisedById(promise_id_);
   ASSERT_NE(promised, nullptr);
 
-  QuicSpdyClientStream* promise_stream =
-      static_cast<QuicSpdyClientStream*>(session_.GetStream(promise_id_));
+  QuicSpdyClientStream* promise_stream = static_cast<QuicSpdyClientStream*>(
+      session_.GetOrCreateStream(promise_id_));
   ASSERT_NE(promise_stream, nullptr);
 
   // Send response, rendezvous will be able to finish synchronously.

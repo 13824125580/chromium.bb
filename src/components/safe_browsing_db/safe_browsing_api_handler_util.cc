@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -27,9 +27,12 @@ const char kJsonKeyThreatType[] = "threat_type";
 // SB2RemoteCallThreatSubType.
 enum UmaThreatSubType {
   UMA_THREAT_SUB_TYPE_NOT_SET = 0,
-  UMA_THREAT_SUB_TYPE_LANDING = 1,
-  UMA_THREAT_SUB_TYPE_DISTRIBUTION = 2,
+  UMA_THREAT_SUB_TYPE_POTENTIALLY_HALMFUL_APP_LANDING = 1,
+  UMA_THREAT_SUB_TYPE_POTENTIALLY_HALMFUL_APP_DISTRIBUTION = 2,
   UMA_THREAT_SUB_TYPE_UNKNOWN = 3,
+  UMA_THREAT_SUB_TYPE_SOCIAL_ENGINEERING_ADS = 4,
+  UMA_THREAT_SUB_TYPE_SOCIAL_ENGINEERING_LANDING = 5,
+  UMA_THREAT_SUB_TYPE_PHISHING = 6,
   UMA_THREAT_SUB_TYPE_MAX_VALUE
 };
 
@@ -45,14 +48,11 @@ void ReportUmaThreatSubType(SBThreatType threat_type,
   }
 }
 
-// Parse the extra key/value pair(s) added by Safe Browsing backend.  To make
-// it binary compatible with the Pver3 metadata that UIManager expects to
-// deserialize, we convert it to a MalwarePatternType.
-//
-// TODO(nparker):  When chrome desktop is converted to use Pver4, convert this
-// to the new proto instead.
-const std::string ParseExtraMetadataToPB(const base::DictionaryValue* match,
-                                         SBThreatType threat_type) {
+// Parse the appropriate "*_pattern_type" key from the metadata.
+// Returns NONE if no pattern type was found.
+ThreatPatternType ParseThreatSubType(
+    const base::DictionaryValue* match,
+    SBThreatType threat_type) {
   std::string pattern_key;
   if (threat_type == SB_THREAT_TYPE_URL_MALWARE) {
     pattern_key = "pha_pattern_type";
@@ -64,22 +64,51 @@ const std::string ParseExtraMetadataToPB(const base::DictionaryValue* match,
   std::string pattern_type;
   if (!match->GetString(pattern_key, &pattern_type)) {
     ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_NOT_SET);
-    return std::string();
+    return ThreatPatternType::NONE;
   }
 
-  MalwarePatternType pb;
-  if (pattern_type == "LANDING") {
-    pb.set_pattern_type(MalwarePatternType::LANDING);
-    ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_LANDING);
-  } else if (pattern_type == "DISTRIBUTION") {
-    pb.set_pattern_type(MalwarePatternType::DISTRIBUTION);
-    ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_DISTRIBUTION);
+  if (threat_type == SB_THREAT_TYPE_URL_MALWARE) {
+    if (pattern_type == "LANDING") {
+      ReportUmaThreatSubType(
+          threat_type, UMA_THREAT_SUB_TYPE_POTENTIALLY_HALMFUL_APP_LANDING);
+      return ThreatPatternType::MALWARE_LANDING;
+    } else if (pattern_type == "DISTRIBUTION") {
+      ReportUmaThreatSubType(
+          threat_type,
+          UMA_THREAT_SUB_TYPE_POTENTIALLY_HALMFUL_APP_DISTRIBUTION);
+      return ThreatPatternType::MALWARE_DISTRIBUTION;
+    } else {
+      ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_UNKNOWN);
+      return ThreatPatternType::NONE;
+    }
   } else {
-    ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_UNKNOWN);
-    return std::string();
+    DCHECK(threat_type == SB_THREAT_TYPE_URL_PHISHING);
+    if (pattern_type == "SOCIAL_ENGINEERING_ADS") {
+      ReportUmaThreatSubType(threat_type,
+                             UMA_THREAT_SUB_TYPE_SOCIAL_ENGINEERING_ADS);
+      return ThreatPatternType::SOCIAL_ENGINEERING_ADS;
+    } else if (pattern_type == "SOCIAL_ENGINEERING_LANDING") {
+      ReportUmaThreatSubType(threat_type,
+                             UMA_THREAT_SUB_TYPE_SOCIAL_ENGINEERING_LANDING);
+      return ThreatPatternType::SOCIAL_ENGINEERING_LANDING;
+    } else if (pattern_type == "PHISHING") {
+      ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_PHISHING);
+      return ThreatPatternType::PHISHING;
+    } else {
+      ReportUmaThreatSubType(threat_type, UMA_THREAT_SUB_TYPE_UNKNOWN);
+      return ThreatPatternType::NONE;
+    }
   }
+}
 
-  return pb.SerializeAsString();
+// Parse the optional "UserPopulation" key from the metadata.
+// Returns empty string if none was found.
+std::string ParseUserPopulation(const base::DictionaryValue* match) {
+  std::string population_id;
+  if (!match->GetString("UserPopulation", &population_id))
+    return std::string();
+  else
+    return population_id;
 }
 
 int GetThreatSeverity(int java_threat_num) {
@@ -112,19 +141,21 @@ SBThreatType JavaToSBThreatType(int java_threat_num) {
 // Valid examples:
 // {"matches":[{"threat_type":"5"}]}
 //   or
-// {"matches":[{"threat_type":"4"},
-//             {"threat_type":"5", "se_pattern_type":"LANDING"}]}
-UmaRemoteCallResult ParseJsonToThreatAndPB(const std::string& metadata_str,
-                                           SBThreatType* worst_threat,
-                                           std::string* metadata_pb_str) {
+// {"matches":[{"threat_type":"4", "pha_pattern_type":"LANDING"},
+//             {"threat_type":"5"}]}
+//   or
+// {"matches":[{"threat_type":"4", "UserPopulation":"YXNvZWZpbmFqO..."}]
+UmaRemoteCallResult ParseJsonFromGMSCore(const std::string& metadata_str,
+                                         SBThreatType* worst_threat,
+                                         ThreatMetadata* metadata) {
   *worst_threat = SB_THREAT_TYPE_SAFE;  // Default to safe.
-  *metadata_pb_str = std::string();
+  *metadata = ThreatMetadata();  // Default values.
 
   if (metadata_str.empty())
     return UMA_STATUS_JSON_EMPTY;
 
   // Pick out the "matches" list.
-  scoped_ptr<base::Value> value = base::JSONReader::Read(metadata_str);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(metadata_str);
   const base::ListValue* matches = nullptr;
   if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY) ||
       !(static_cast<base::DictionaryValue*>(value.get()))
@@ -157,7 +188,11 @@ UmaRemoteCallResult ParseJsonToThreatAndPB(const std::string& metadata_str,
   *worst_threat = JavaToSBThreatType(worst_threat_num);
   if (*worst_threat == SB_THREAT_TYPE_SAFE || !worst_match)
     return UMA_STATUS_JSON_UNKNOWN_THREAT;
-  *metadata_pb_str = ParseExtraMetadataToPB(worst_match, *worst_threat);
+
+  // Fill in the metadata
+  metadata->threat_pattern_type =
+      ParseThreatSubType(worst_match, *worst_threat);
+  metadata->population_id = ParseUserPopulation(worst_match);
 
   return UMA_STATUS_UNSAFE;  // success
 }

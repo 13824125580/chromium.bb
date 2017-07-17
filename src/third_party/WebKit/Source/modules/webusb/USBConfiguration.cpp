@@ -5,6 +5,7 @@
 #include "modules/webusb/USBConfiguration.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "device/usb/public/interfaces/device.mojom-blink.h"
 #include "modules/webusb/USBDevice.h"
 #include "modules/webusb/USBInterface.h"
 
@@ -17,20 +18,12 @@ USBConfiguration* USBConfiguration::create(const USBDevice* device, size_t confi
 
 USBConfiguration* USBConfiguration::create(const USBDevice* device, size_t configurationValue, ExceptionState& exceptionState)
 {
-    for (size_t i = 0; i < device->info().configurations.size(); ++i) {
-        if (device->info().configurations[i].configurationValue == configurationValue)
+    const auto& configurations = device->info().configurations;
+    for (size_t i = 0; i < configurations.size(); ++i) {
+        if (configurations[i]->configuration_value == configurationValue)
             return new USBConfiguration(device, i);
     }
     exceptionState.throwRangeError("Invalid configuration value.");
-    return nullptr;
-}
-
-USBConfiguration* USBConfiguration::createFromValue(const USBDevice* device, uint8_t configurationValue)
-{
-    for (size_t i = 0; i < device->info().configurations.size(); ++i) {
-        if (device->info().configurations[i].configurationValue == configurationValue)
-            return new USBConfiguration(device, i);
-    }
     return nullptr;
 }
 
@@ -42,19 +35,19 @@ USBConfiguration::USBConfiguration(const USBDevice* device, size_t configuration
     ASSERT(m_configurationIndex < m_device->info().configurations.size());
 }
 
-const WebUSBDeviceInfo::Configuration& USBConfiguration::info() const
+const USBDevice* USBConfiguration::device() const
 {
-    return m_device->info().configurations[m_configurationIndex];
+    return m_device;
 }
 
-uint8_t USBConfiguration::configurationValue() const
+size_t USBConfiguration::index() const
 {
-    return info().configurationValue;
+    return m_configurationIndex;
 }
 
-String USBConfiguration::configurationName() const
+const device::usb::blink::ConfigurationInfo& USBConfiguration::info() const
 {
-    return info().configurationName;
+    return *m_device->info().configurations[m_configurationIndex];
 }
 
 HeapVector<Member<USBInterface>> USBConfiguration::interfaces() const

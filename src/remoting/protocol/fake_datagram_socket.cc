@@ -10,7 +10,7 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -137,7 +137,7 @@ FakeDatagramChannelFactory::FakeDatagramChannelFactory()
 FakeDatagramChannelFactory::~FakeDatagramChannelFactory() {
   for (ChannelsMap::iterator it = channels_.begin(); it != channels_.end();
        ++it) {
-    EXPECT_TRUE(it->second == nullptr);
+    EXPECT_FALSE(it->second);
   }
 }
 
@@ -155,9 +155,9 @@ FakeDatagramSocket* FakeDatagramChannelFactory::GetFakeChannel(
 void FakeDatagramChannelFactory::CreateChannel(
     const std::string& name,
     const ChannelCreatedCallback& callback) {
-  EXPECT_TRUE(channels_[name] == nullptr);
+  EXPECT_FALSE(channels_[name]);
 
-  scoped_ptr<FakeDatagramSocket> channel(new FakeDatagramSocket());
+  std::unique_ptr<FakeDatagramSocket> channel(new FakeDatagramSocket());
   channels_[name] = channel->GetWeakPtr();
 
   if (peer_factory_) {
@@ -181,7 +181,7 @@ void FakeDatagramChannelFactory::CreateChannel(
 }
 
 void FakeDatagramChannelFactory::NotifyChannelCreated(
-    scoped_ptr<FakeDatagramSocket> owned_socket,
+    std::unique_ptr<FakeDatagramSocket> owned_socket,
     const std::string& name,
     const ChannelCreatedCallback& callback) {
   if (channels_.find(name) != channels_.end())

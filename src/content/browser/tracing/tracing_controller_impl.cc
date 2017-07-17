@@ -12,11 +12,11 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "components/tracing/process_metrics_memory_dump_provider.h"
+#include "components/tracing/common/process_metrics_memory_dump_provider.h"
 #include "content/browser/tracing/file_tracing_provider_impl.h"
 #include "content/browser/tracing/trace_message_filter.h"
 #include "content/browser/tracing/tracing_ui.h"
@@ -46,7 +46,7 @@
 #endif
 
 #if defined(OS_WIN)
-#include "content/browser/tracing/etw_system_event_consumer_win.h"
+#include "content/browser/tracing/etw_tracing_agent_win.h"
 #endif
 
 using base::trace_event::TraceLog;
@@ -90,8 +90,27 @@ std::string GetNetworkTypeString() {
   return "Unknown";
 }
 
-scoped_ptr<base::DictionaryValue> GenerateTracingMetadataDict()  {
-  scoped_ptr<base::DictionaryValue> metadata_dict(new base::DictionaryValue());
+std::string GetClockString() {
+  switch (base::TimeTicks::GetClock()) {
+    case base::TimeTicks::Clock::LINUX_CLOCK_MONOTONIC:
+      return "LINUX_CLOCK_MONOTONIC";
+    case base::TimeTicks::Clock::IOS_CF_ABSOLUTE_TIME_MINUS_KERN_BOOTTIME:
+      return "IOS_CF_ABSOLUTE_TIME_MINUS_KERN_BOOTTIME";
+    case base::TimeTicks::Clock::MAC_MACH_ABSOLUTE_TIME:
+      return "MAC_MACH_ABSOLUTE_TIME";
+    case base::TimeTicks::Clock::WIN_QPC:
+      return "WIN_QPC";
+    case base::TimeTicks::Clock::WIN_ROLLOVER_PROTECTED_TIME_GET_TIME:
+      return "WIN_ROLLOVER_PROTECTED_TIME_GET_TIME";
+  }
+
+  NOTREACHED();
+  return std::string();
+}
+
+std::unique_ptr<base::DictionaryValue> GenerateTracingMetadataDict() {
+  std::unique_ptr<base::DictionaryValue> metadata_dict(
+      new base::DictionaryValue());
 
   metadata_dict->SetString("network-type", GetNetworkTypeString());
   metadata_dict->SetString("product-version", GetContentClient()->GetProduct());
@@ -140,12 +159,12 @@ scoped_ptr<base::DictionaryValue> GenerateTracingMetadataDict()  {
   metadata_dict->SetString("gpu-gl-renderer", gpu_info.gl_renderer);
 #endif
 
-  scoped_ptr<TracingDelegate> delegate(
+  std::unique_ptr<TracingDelegate> delegate(
       GetContentClient()->browser()->GetTracingDelegate());
   if (delegate)
     delegate->GenerateMetadataDict(metadata_dict.get());
 
-  // Highres ticks.
+  metadata_dict->SetString("clock-domain", GetClockString());
   metadata_dict->SetBoolean("highres-ticks",
                             base::TimeTicks::IsHighResolution());
 
@@ -260,7 +279,7 @@ bool TracingControllerImpl::StartTracing(
       ++pending_start_tracing_ack_count_;
     }
 #elif defined(OS_WIN)
-    EtwSystemEventConsumer::GetInstance()->StartAgentTracing(
+    EtwTracingAgent::GetInstance()->StartAgentTracing(
         trace_config,
         base::Bind(&TracingControllerImpl::OnStartAgentTracingAcked,
                    base::Unretained(this)));
@@ -330,7 +349,7 @@ bool TracingControllerImpl::StopTracing(
   if (trace_data_sink) {
     if (TraceLog::GetInstance()->GetCurrentTraceConfig()
         .IsArgumentFilterEnabled()) {
-      scoped_ptr<TracingDelegate> delegate(
+      std::unique_ptr<TracingDelegate> delegate(
           GetContentClient()->browser()->GetTracingDelegate());
       if (delegate) {
         trace_data_sink->SetMetadataFilterPredicate(
@@ -412,8 +431,7 @@ bool TracingControllerImpl::GetTraceBufferUsage(
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&TracingControllerImpl::OnTraceLogStatusReply,
-                 base::Unretained(this), scoped_refptr<TraceMessageFilter>(),
-                 status));
+                 base::Unretained(this), nullptr, status));
 
   // Notify all child processes.
   for (TraceMessageFilterSet::iterator it = trace_message_filters_.begin();
@@ -470,10 +488,11 @@ bool TracingControllerImpl::IsTracing() const {
 void TracingControllerImpl::AddTraceMessageFilter(
     TraceMessageFilter* trace_message_filter) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
         base::Bind(&TracingControllerImpl::AddTraceMessageFilter,
                    base::Unretained(this),
-                   make_scoped_refptr(trace_message_filter)));
+                   base::RetainedRef(trace_message_filter)));
     return;
   }
 
@@ -501,10 +520,11 @@ void TracingControllerImpl::AddTraceMessageFilter(
 void TracingControllerImpl::RemoveTraceMessageFilter(
     TraceMessageFilter* trace_message_filter) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
         base::Bind(&TracingControllerImpl::RemoveTraceMessageFilter,
                    base::Unretained(this),
-                   make_scoped_refptr(trace_message_filter)));
+                   base::RetainedRef(trace_message_filter)));
     return;
   }
 
@@ -520,10 +540,11 @@ void TracingControllerImpl::RemoveTraceMessageFilter(
     TraceMessageFilterSet::const_iterator it =
         pending_stop_tracing_filters_.find(trace_message_filter);
     if (it != pending_stop_tracing_filters_.end()) {
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+      BrowserThread::PostTask(
+          BrowserThread::UI, FROM_HERE,
           base::Bind(&TracingControllerImpl::OnStopTracingAcked,
                      base::Unretained(this),
-                     make_scoped_refptr(trace_message_filter),
+                     base::RetainedRef(trace_message_filter),
                      std::vector<std::string>()));
     }
   }
@@ -535,11 +556,12 @@ void TracingControllerImpl::RemoveTraceMessageFilter(
           BrowserThread::UI, FROM_HERE,
           base::Bind(&TracingControllerImpl::OnTraceLogStatusReply,
                      base::Unretained(this),
-                     make_scoped_refptr(trace_message_filter),
+                     base::RetainedRef(trace_message_filter),
                      base::trace_event::TraceLogStatus()));
     }
   }
   if (pending_memory_dump_ack_count_ > 0) {
+    DCHECK(!queued_memory_dump_requests_.empty());
     TraceMessageFilterSet::const_iterator it =
         pending_memory_dump_filters_.find(trace_message_filter);
     if (it != pending_memory_dump_filters_.end()) {
@@ -547,8 +569,9 @@ void TracingControllerImpl::RemoveTraceMessageFilter(
           BrowserThread::UI, FROM_HERE,
           base::Bind(&TracingControllerImpl::OnProcessMemoryDumpResponse,
                      base::Unretained(this),
-                     make_scoped_refptr(trace_message_filter),
-                     pending_memory_dump_guid_, false /* success */));
+                     base::RetainedRef(trace_message_filter),
+                     queued_memory_dump_requests_.front().args.dump_guid,
+                     false /* success */));
     }
   }
   trace_message_filters_.erase(trace_message_filter);
@@ -565,7 +588,7 @@ void TracingControllerImpl::AddTracingAgent(const std::string& agent_name) {
     return;
   }
 #elif defined(OS_WIN)
-  auto etw_agent = EtwSystemEventConsumer::GetInstance();
+  auto etw_agent = EtwTracingAgent::GetInstance();
   if (agent_name == etw_agent->GetTracingAgentName()) {
     additional_tracing_agents_.push_back(etw_agent);
     return;
@@ -605,11 +628,11 @@ void TracingControllerImpl::OnStopTracingAcked(
     TraceMessageFilter* trace_message_filter,
     const std::vector<std::string>& known_category_groups) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-        base::Bind(&TracingControllerImpl::OnStopTracingAcked,
-                   base::Unretained(this),
-                   make_scoped_refptr(trace_message_filter),
-                   known_category_groups));
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(
+            &TracingControllerImpl::OnStopTracingAcked, base::Unretained(this),
+            base::RetainedRef(trace_message_filter), known_category_groups));
     return;
   }
 
@@ -720,7 +743,7 @@ void TracingControllerImpl::OnTraceLogStatusReply(
         BrowserThread::UI, FROM_HERE,
         base::Bind(&TracingControllerImpl::OnTraceLogStatusReply,
                    base::Unretained(this),
-                   make_scoped_refptr(trace_message_filter), status));
+                   base::RetainedRef(trace_message_filter), status));
     return;
   }
 
@@ -899,21 +922,50 @@ void TracingControllerImpl::RequestGlobalMemoryDump(
                    base::Unretained(this), args, callback));
     return;
   }
-  // Abort if another dump is already in progress.
-  if (pending_memory_dump_guid_) {
-    DVLOG(1) << "Requested memory dump " << args.dump_guid
-             << " while waiting for " << pending_memory_dump_guid_;
-    if (!callback.is_null())
-      callback.Run(args.dump_guid, false /* success */);
-    return;
+
+  bool another_dump_already_in_progress = !queued_memory_dump_requests_.empty();
+
+  // If this is a periodic memory dump request and there already is another
+  // request in the queue with the same level of detail, there's no point in
+  // enqueuing this request.
+  if (another_dump_already_in_progress &&
+      args.dump_type == base::trace_event::MemoryDumpType::PERIODIC_INTERVAL) {
+    for (const auto& request : queued_memory_dump_requests_) {
+      if (request.args.level_of_detail == args.level_of_detail) {
+        VLOG(1) << base::trace_event::MemoryDumpManager::kLogPrefix << " ("
+                << base::trace_event::MemoryDumpTypeToString(args.dump_type)
+                << ") skipped because another dump request with the same "
+                   "level of detail ("
+                << base::trace_event::MemoryDumpLevelOfDetailToString(
+                       args.level_of_detail)
+                << ") is already in the queue";
+        if (!callback.is_null())
+          callback.Run(args.dump_guid, false /* success */);
+        return;
+      }
+    }
   }
+
+  queued_memory_dump_requests_.emplace_back(args, callback);
+
+  // If another dump is already in progress, this dump will automatically be
+  // scheduled when the other dump finishes.
+  if (another_dump_already_in_progress)
+    return;
+
+  PerformNextQueuedGlobalMemoryDump();
+}
+
+void TracingControllerImpl::PerformNextQueuedGlobalMemoryDump() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  DCHECK(!queued_memory_dump_requests_.empty());
+  const base::trace_event::MemoryDumpRequestArgs& args =
+      queued_memory_dump_requests_.front().args;
 
   // Count myself (local trace) in pending_memory_dump_ack_count_, acked by
   // OnBrowserProcessMemoryDumpDone().
   pending_memory_dump_ack_count_ = trace_message_filters_.size() + 1;
   pending_memory_dump_filters_.clear();
-  pending_memory_dump_guid_ = args.dump_guid;
-  pending_memory_dump_callback_ = callback;
   failed_memory_dump_count_ = 0;
 
   MemoryDumpManagerDelegate::CreateProcessDump(
@@ -929,6 +981,13 @@ void TracingControllerImpl::RequestGlobalMemoryDump(
   for (const scoped_refptr<TraceMessageFilter>& tmf : trace_message_filters_)
     tmf->SendProcessMemoryDumpRequest(args);
 }
+
+TracingControllerImpl::QueuedMemoryDumpRequest::QueuedMemoryDumpRequest(
+    const base::trace_event::MemoryDumpRequestArgs& args,
+    const base::trace_event::MemoryDumpCallback& callback)
+    : args(args), callback(callback) {}
+
+TracingControllerImpl::QueuedMemoryDumpRequest::~QueuedMemoryDumpRequest() {}
 
 uint64_t TracingControllerImpl::GetTracingProcessId() const {
   return ChildProcessHost::kBrowserTracingProcessId;
@@ -961,7 +1020,7 @@ void TracingControllerImpl::OnProcessMemoryDumpResponse(
         BrowserThread::UI, FROM_HERE,
         base::Bind(&TracingControllerImpl::OnProcessMemoryDumpResponse,
                    base::Unretained(this),
-                   make_scoped_refptr(trace_message_filter), dump_guid,
+                   base::RetainedRef(trace_message_filter), dump_guid,
                    success));
     return;
   }
@@ -969,7 +1028,8 @@ void TracingControllerImpl::OnProcessMemoryDumpResponse(
   TraceMessageFilterSet::iterator it =
       pending_memory_dump_filters_.find(trace_message_filter);
 
-  if (pending_memory_dump_guid_ != dump_guid ||
+  DCHECK(!queued_memory_dump_requests_.empty());
+  if (queued_memory_dump_requests_.front().args.dump_guid != dump_guid ||
       it == pending_memory_dump_filters_.end()) {
     DLOG(WARNING) << "Received unexpected memory dump response: " << dump_guid;
     return;
@@ -980,8 +1040,9 @@ void TracingControllerImpl::OnProcessMemoryDumpResponse(
   pending_memory_dump_filters_.erase(it);
   if (!success) {
     ++failed_memory_dump_count_;
-    DLOG(WARNING) << "Global memory dump failed because of NACK from child "
-                  << trace_message_filter->peer_pid();
+    VLOG(1) << base::trace_event::MemoryDumpManager::kLogPrefix
+            << " failed because of NACK from child "
+            << trace_message_filter->peer_pid();
   }
   FinalizeGlobalMemoryDumpIfAllProcessesReplied();
 }
@@ -992,7 +1053,8 @@ void TracingControllerImpl::OnBrowserProcessMemoryDumpDone(uint64_t dump_guid,
   --pending_memory_dump_ack_count_;
   if (!success) {
     ++failed_memory_dump_count_;
-    DLOG(WARNING) << "Global memory dump aborted on the current process";
+    VLOG(1) << base::trace_event::MemoryDumpManager::kLogPrefix
+            << " aborted on the current process";
   }
   FinalizeGlobalMemoryDumpIfAllProcessesReplied();
 }
@@ -1001,14 +1063,24 @@ void TracingControllerImpl::FinalizeGlobalMemoryDumpIfAllProcessesReplied() {
   if (pending_memory_dump_ack_count_ > 0)
     return;
 
-  DCHECK_NE(0u, pending_memory_dump_guid_);
-  const bool global_success = failed_memory_dump_count_ == 0;
-  if (!pending_memory_dump_callback_.is_null()) {
-    pending_memory_dump_callback_.Run(pending_memory_dump_guid_,
-                                      global_success);
-    pending_memory_dump_callback_.Reset();
+  DCHECK(!queued_memory_dump_requests_.empty());
+  {
+    const auto& callback = queued_memory_dump_requests_.front().callback;
+    if (!callback.is_null()) {
+      const bool global_success = failed_memory_dump_count_ == 0;
+      callback.Run(queued_memory_dump_requests_.front().args.dump_guid,
+                   global_success);
+    }
   }
-  pending_memory_dump_guid_ = 0;
+  queued_memory_dump_requests_.pop_front();
+
+  // Schedule the next queued dump (if applicable).
+  if (!queued_memory_dump_requests_.empty()) {
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&TracingControllerImpl::PerformNextQueuedGlobalMemoryDump,
+                   base::Unretained(this)));
+  }
 }
 
 }  // namespace content

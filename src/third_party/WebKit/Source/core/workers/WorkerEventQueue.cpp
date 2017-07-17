@@ -30,12 +30,13 @@
 #include "core/dom/ExecutionContextTask.h"
 #include "core/events/Event.h"
 #include "core/inspector/InspectorInstrumentation.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<WorkerEventQueue> WorkerEventQueue::create(ExecutionContext* context)
+WorkerEventQueue* WorkerEventQueue::create(ExecutionContext* context)
 {
-    return adoptPtrWillBeNoop(new WorkerEventQueue(context));
+    return new WorkerEventQueue(context);
 }
 
 WorkerEventQueue::WorkerEventQueue(ExecutionContext* context)
@@ -46,23 +47,21 @@ WorkerEventQueue::WorkerEventQueue(ExecutionContext* context)
 
 WorkerEventQueue::~WorkerEventQueue()
 {
-    ASSERT(m_eventTaskMap.isEmpty());
+    DCHECK(m_eventTaskMap.isEmpty());
 }
 
 DEFINE_TRACE(WorkerEventQueue)
 {
-#if ENABLE(OILPAN)
     visitor->trace(m_executionContext);
     visitor->trace(m_eventTaskMap);
-#endif
     EventQueue::trace(visitor);
 }
 
 class WorkerEventQueue::EventDispatcherTask : public ExecutionContextTask {
 public:
-    static PassOwnPtr<EventDispatcherTask> create(PassRefPtrWillBeRawPtr<Event> event, WorkerEventQueue* eventQueue)
+    static std::unique_ptr<EventDispatcherTask> create(Event* event, WorkerEventQueue* eventQueue)
     {
-        return adoptPtr(new EventDispatcherTask(event, eventQueue));
+        return wrapUnique(new EventDispatcherTask(event, eventQueue));
     }
 
     ~EventDispatcherTask() override
@@ -71,13 +70,9 @@ public:
             m_eventQueue->removeEvent(m_event.get());
     }
 
-    void dispatchEvent(ExecutionContext*, PassRefPtrWillBeRawPtr<Event> prpEvent)
+    void dispatchEvent(ExecutionContext* context, Event* event)
     {
-        // Stash the event on the stack in a RefPtrWillBeRawPtr; trying to do this
-        // in a single line causes an optimization bug with MSVC. MSVC generates code
-        // that passes the event arg (forcing PassRefPtrWillBeRawPtr to be released)
-        // before the target is queried.
-        RefPtrWillBeRawPtr<Event> event = prpEvent;
+        InspectorInstrumentation::AsyncTask asyncTask(context, event);
         event->target()->dispatchEvent(event);
     }
 
@@ -97,33 +92,32 @@ public:
     }
 
 private:
-    EventDispatcherTask(PassRefPtrWillBeRawPtr<Event> event, WorkerEventQueue* eventQueue)
+    EventDispatcherTask(Event* event, WorkerEventQueue* eventQueue)
         : m_event(event)
         , m_eventQueue(eventQueue)
         , m_isCancelled(false)
     {
     }
 
-    RefPtrWillBePersistent<Event> m_event;
-    RawPtrWillBePersistent<WorkerEventQueue> m_eventQueue;
+    Persistent<Event> m_event;
+    Persistent<WorkerEventQueue> m_eventQueue;
     bool m_isCancelled;
 };
 
 void WorkerEventQueue::removeEvent(Event* event)
 {
-    InspectorInstrumentation::didRemoveEvent(event->target(), event);
+    InspectorInstrumentation::asyncTaskCanceled(event->target()->getExecutionContext(), event);
     m_eventTaskMap.remove(event);
 }
 
-bool WorkerEventQueue::enqueueEvent(PassRefPtrWillBeRawPtr<Event> prpEvent)
+bool WorkerEventQueue::enqueueEvent(Event* event)
 {
     if (m_isClosed)
         return false;
-    RefPtrWillBeRawPtr<Event> event = prpEvent;
-    InspectorInstrumentation::didEnqueueEvent(event->target(), event.get());
-    OwnPtr<EventDispatcherTask> task = EventDispatcherTask::create(event, this);
-    m_eventTaskMap.add(event.release(), task.get());
-    m_executionContext->postTask(BLINK_FROM_HERE, task.release());
+    InspectorInstrumentation::asyncTaskScheduled(event->target()->getExecutionContext(), event->type(), event);
+    std::unique_ptr<EventDispatcherTask> task = EventDispatcherTask::create(event, this);
+    m_eventTaskMap.add(event, task.get());
+    m_executionContext->postTask(BLINK_FROM_HERE, std::move(task));
     return true;
 }
 
@@ -143,7 +137,7 @@ void WorkerEventQueue::close()
     for (const auto& entry : m_eventTaskMap) {
         Event* event = entry.key.get();
         EventDispatcherTask* task = entry.value;
-        InspectorInstrumentation::didRemoveEvent(event->target(), event);
+        InspectorInstrumentation::asyncTaskCanceled(event->target()->getExecutionContext(), event);
         task->cancel();
     }
     m_eventTaskMap.clear();

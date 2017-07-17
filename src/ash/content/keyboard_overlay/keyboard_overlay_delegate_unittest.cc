@@ -4,13 +4,14 @@
 
 #include "ash/content/keyboard_overlay/keyboard_overlay_delegate.h"
 
-#include "ash/shelf/shelf_types.h"
+#include "ash/common/shelf/shelf_types.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -35,8 +36,7 @@ TEST_P(KeyboardOverlayDelegateTest, ShowAndClose) {
     return;
 
   UpdateDisplay("500x400,300x200");
-  ash::Shell* shell = ash::Shell::GetInstance();
-  shell->SetShelfAlignment(shelf_alignment(), shell->GetPrimaryRootWindow());
+  Shelf::ForPrimaryDisplay()->SetAlignment(shelf_alignment());
   KeyboardOverlayDelegate delegate(base::ASCIIToUTF16("Title"),
                                    GURL("chrome://keyboardoverlay/"));
   // Showing the dialog creates a widget.
@@ -49,7 +49,7 @@ TEST_P(KeyboardOverlayDelegateTest, ShowAndClose) {
 
   // The widget is horizontally centered at the bottom of the work area.
   gfx::Rect work_area =
-      gfx::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
   gfx::Rect bounds = widget->GetRestoredBounds();
   EXPECT_EQ(work_area.CenterPoint().x(), bounds.CenterPoint().x());
   EXPECT_EQ(work_area.bottom(), bounds.bottom());
@@ -64,6 +64,6 @@ INSTANTIATE_TEST_CASE_P(ShelfAlignmentAny,
                         testing::Values(SHELF_ALIGNMENT_BOTTOM,
                                         SHELF_ALIGNMENT_LEFT,
                                         SHELF_ALIGNMENT_RIGHT,
-                                        SHELF_ALIGNMENT_TOP));
+                                        SHELF_ALIGNMENT_BOTTOM_LOCKED));
 
 }  // namespace ash

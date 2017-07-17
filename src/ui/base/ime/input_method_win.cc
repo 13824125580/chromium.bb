@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <cwctype>
 
 #include "base/auto_reset.h"
 #include "base/command_line.h"
@@ -14,11 +15,11 @@
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/win/tsf_input_scope.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/display/win/screen_win.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/gfx/win/dpi.h"
 #include "ui/gfx/win/hwnd_util.h"
 
 namespace {
@@ -166,7 +167,8 @@ void InputMethodWin::DispatchKeyEvent(ui::KeyEvent* event) {
   }
 
   // If only 1 WM_CHAR per the key event, set it as the character of it.
-  if (char_msgs.size() == 1)
+  if (char_msgs.size() == 1 &&
+      !std::iswcntrl(static_cast<wint_t>(char_msgs[0].wParam)))
     event->set_character(static_cast<base::char16>(char_msgs[0].wParam));
 
   // Dispatches the key events to the Chrome IME extension which is listening to
@@ -214,16 +216,27 @@ void InputMethodWin::OnTextInputTypeChanged(const TextInputClient* client) {
 }
 
 void InputMethodWin::OnCaretBoundsChanged(const TextInputClient* client) {
-  if (!enabled_ || !IsTextInputClientFocused(client) ||
-      !IsWindowFocused(client)) {
+  if (!IsTextInputClientFocused(client) || !IsWindowFocused(client))
     return;
+  TextInputType text_input_type = GetTextInputType();
+  if (client == GetTextInputClient() &&
+      text_input_type != TEXT_INPUT_TYPE_NONE &&
+      text_input_type != TEXT_INPUT_TYPE_PASSWORD && GetEngine()) {
+    // |enabled_| == false could be faked, and the engine should rely on the
+    // real type from GetTextInputType().
+    GetEngine()->SetCompositionBounds(GetCompositionBounds(client));
   }
+  if (!enabled_)
+    return;
+
   // The current text input type should not be NONE if |client| is focused.
   DCHECK(!IsTextInputTypeNone());
   // Tentatively assume that the returned value is DIP (Density Independent
   // Pixel). See the comment in text_input_client.h and http://crbug.com/360334.
   const gfx::Rect dip_screen_bounds(GetTextInputClient()->GetCaretBounds());
-  const gfx::Rect screen_bounds = gfx::win::DIPToScreenRect(dip_screen_bounds);
+  const gfx::Rect screen_bounds =
+      display::win::ScreenWin::DIPToScreenRect(toplevel_window_handle_,
+                                               dip_screen_bounds);
 
   HWND attached_window = toplevel_window_handle_;
   // TODO(ime): see comment in TextInputClient::GetCaretBounds(), this
@@ -235,15 +248,21 @@ void InputMethodWin::OnCaretBoundsChanged(const TextInputClient* client) {
   gfx::Rect caret_rect(gfx::Point(window_point.x, window_point.y),
                        screen_bounds.size());
   imm32_manager_.UpdateCaretRect(attached_window, caret_rect);
-
-  if (client == GetTextInputClient() &&
-      GetTextInputType() != ui::TEXT_INPUT_TYPE_PASSWORD && GetEngine())
-    GetEngine()->SetCompositionBounds(GetCompositionBounds(client));
 }
 
 void InputMethodWin::CancelComposition(const TextInputClient* client) {
-  if (enabled_ && IsTextInputClientFocused(client))
+  if (IsTextInputClientFocused(client)) {
+    // |enabled_| == false could be faked, and the engine should rely on the
+    // real type get from GetTextInputType().
+    TextInputType text_input_type = GetTextInputType();
+    if (text_input_type != TEXT_INPUT_TYPE_NONE &&
+        text_input_type != TEXT_INPUT_TYPE_PASSWORD && GetEngine()) {
+      GetEngine()->Reset();
+    }
+
+    if (enabled_)
     imm32_manager_.CancelIME(toplevel_window_handle_);
+  }
 }
 
 void InputMethodWin::OnInputLocaleChanged() {
@@ -598,7 +617,9 @@ LRESULT InputMethodWin::OnQueryCharPosition(IMECHARPOSITION* char_positon) {
       return 0;
     dip_rect = client->GetCaretBounds();
   }
-  const gfx::Rect rect = gfx::win::DIPToScreenRect(dip_rect);
+  const gfx::Rect rect =
+      display::win::ScreenWin::DIPToScreenRect(toplevel_window_handle_,
+                                               dip_rect);
 
   char_positon->pt.x = rect.x();
   char_positon->pt.y = rect.y();
@@ -620,15 +641,16 @@ bool InputMethodWin::IsWindowFocused(const TextInputClient* client) const {
 }
 
 void InputMethodWin::DispatchFabricatedKeyEvent(ui::KeyEvent* event) {
-  if (event->is_char()) {
-    if (GetTextInputClient()) {
-      ui::KeyEvent ch_event(*event);
-      ch_event.set_character(static_cast<base::char16>(event->key_code()));
-      GetTextInputClient()->InsertChar(ch_event);
+  // The key event if from calling input.ime.sendKeyEvent or test.
+  ui::EventDispatchDetails details = DispatchKeyEventPostIME(event);
+  if (details.dispatcher_destroyed || details.target_destroyed ||
+      event->stopped_propagation()) {
       return;
     }
-  }
-  ignore_result(DispatchKeyEventPostIME(event));
+
+  if ((event->is_char() || event->GetDomKey().IsCharacter()) &&
+      event->type() == ui::ET_KEY_PRESSED && GetTextInputClient())
+    GetTextInputClient()->InsertChar(*event);
 }
 
 void InputMethodWin::ConfirmCompositionText() {
@@ -650,7 +672,10 @@ void InputMethodWin::UpdateIMEState() {
   // Use switch here in case we are going to add more text input types.
   // We disable input method in password field.
   const HWND window_handle = toplevel_window_handle_;
-  const TextInputType text_input_type = GetTextInputType();
+  const TextInputType text_input_type =
+      (GetEngine() && GetEngine()->IsInterestedInKeyEvent())
+          ? TEXT_INPUT_TYPE_NONE
+          : GetTextInputType();
   const TextInputMode text_input_mode = GetTextInputMode();
   switch (text_input_type) {
     case ui::TEXT_INPUT_TYPE_NONE:
@@ -681,7 +706,7 @@ void InputMethodWin::UpdateIMEState() {
   if (engine) {
     if (old_text_input_type != ui::TEXT_INPUT_TYPE_NONE)
       engine->FocusOut();
-    if (text_input_type != ui::TEXT_INPUT_TYPE_NONE)
+    if (GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE)
       engine->FocusIn(context);
   }
 }

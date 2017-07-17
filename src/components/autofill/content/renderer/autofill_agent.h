@@ -12,10 +12,13 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/autofill/content/public/interfaces/autofill_agent.mojom.h"
+#include "components/autofill/content/public/interfaces/autofill_driver.mojom.h"
 #include "components/autofill/content/renderer/form_cache.h"
 #include "components/autofill/content/renderer/page_click_listener.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
 #include "third_party/WebKit/public/web/WebAutofillClient.h"
 #include "third_party/WebKit/public/web/WebFormControlElement.h"
 #include "third_party/WebKit/public/web/WebFormElement.h"
@@ -30,6 +33,7 @@ namespace autofill {
 
 struct FormData;
 struct FormFieldData;
+struct PasswordFormFillData;
 class PasswordAutofillAgent;
 class PasswordGenerationAgent;
 
@@ -42,7 +46,8 @@ class PasswordGenerationAgent;
 
 class AutofillAgent : public content::RenderFrameObserver,
                       public PageClickListener,
-                      public blink::WebAutofillClient {
+                      public blink::WebAutofillClient,
+                      public mojom::AutofillAgent {
  public:
   // PasswordAutofillAgent is guaranteed to outlive AutofillAgent.
   // PasswordGenerationAgent may be NULL. If it is not, then it is also
@@ -51,6 +56,13 @@ class AutofillAgent : public content::RenderFrameObserver,
                 PasswordAutofillAgent* password_autofill_manager,
                 PasswordGenerationAgent* password_generation_agent);
   ~AutofillAgent() override;
+
+  void BindRequest(mojom::AutofillAgentRequest request);
+
+ protected:
+  // blink::WebAutofillClient:
+  void didAssociateFormControls(
+      const blink::WebVector<blink::WebNode>& nodes) override;
 
  private:
   // Functor used as a simplified comparison function for FormData. Only
@@ -66,6 +78,10 @@ class AutofillAgent : public content::RenderFrameObserver,
    public:
     LegacyAutofillAgent(content::RenderView* render_view, AutofillAgent* agent);
     ~LegacyAutofillAgent() override;
+
+    // Shuts the LegacyAutofillAgent down on RenderFrame deletion. Safe to call
+    // multiple times.
+    void Shutdown();
 
    private:
     // content::RenderViewObserver:
@@ -115,6 +131,20 @@ class AutofillAgent : public content::RenderFrameObserver,
   void WillSubmitForm(const blink::WebFormElement& form) override;
   void DidChangeScrollOffset() override;
   void FocusedNodeChanged(const blink::WebNode& node) override;
+  void OnDestruct() override;
+
+  // Fires IPC messages for a given form submission. Will always fire
+  // AutofillHostMsg_WillSubmitForm,  and will also fire
+  // AutofillHostMsg_FormSubmitted if |form_submitted| is true. Respects
+  // submitted_forms_ contents to ensure no duplicate submissions of
+  // AutofillHostMsg_WillSubmitForm.
+  void FireHostSubmitEvents(const blink::WebFormElement& form,
+                            bool form_submitted);
+  void FireHostSubmitEvents(const FormData& form_data, bool form_submitted);
+
+  // Shuts the AutofillAgent down on RenderFrame deletion. Safe to call multiple
+  // times.
+  void Shutdown();
 
   // Pass-through from LegacyAutofillAgent. This correlates with the
   // RenderViewObserver method.
@@ -130,10 +160,7 @@ class AutofillAgent : public content::RenderFrameObserver,
   void textFieldDidReceiveKeyDown(
       const blink::WebInputElement& element,
       const blink::WebKeyboardEvent& event) override;
-  void didRequestAutocomplete(const blink::WebFormElement& form) override;
   void setIgnoreTextChanges(bool ignore) override;
-  void didAssociateFormControls(
-      const blink::WebVector<blink::WebNode>& nodes) override;
   void openTextDataListChooser(const blink::WebInputElement& element) override;
   void dataListOptionsChanged(const blink::WebInputElement& element) override;
   void firstUserGestureObserved() override;
@@ -142,9 +169,11 @@ class AutofillAgent : public content::RenderFrameObserver,
   void OnFieldTypePredictionsAvailable(
       const std::vector<FormDataPredictions>& forms);
   void OnFillForm(int query_id, const FormData& form);
-  void OnFirstUserGestureObservedInTab();
   void OnPing();
   void OnPreviewForm(int query_id, const FormData& form);
+
+  // mojom::AutofillAgent:
+  void FirstUserGestureObservedInTab() override;
 
   // For external Autofill selection.
   void OnClearForm();
@@ -156,20 +185,17 @@ class AutofillAgent : public content::RenderFrameObserver,
                                 const base::string16& password);
   void OnPreviewPasswordSuggestion(const base::string16& username,
                                    const base::string16& password);
+  void OnShowInitialPasswordAccountSuggestions(
+      int key,
+      const PasswordFormFillData& form_data);
 
   // Called when a same-page navigation is detected.
   void OnSamePageNavigationCompleted();
-
-  // Called when interactive autocomplete finishes. |message| is printed to
-  // the console if non-empty.
-  void OnRequestAutocompleteResult(
-      blink::WebFormElement::AutocompleteResult result,
-      const base::string16& message,
-      const FormData& form_data);
-
-  // Called when an autocomplete request succeeds or fails with the |result|.
-  void FinishAutocompleteRequest(
-      blink::WebFormElement::AutocompleteResult result);
+  // Helper method which collects unowned elements (i.e., those not inside a
+  // form tag) and writes them into |output|. Returns true if the process is
+  // successful, and all conditions for firing events are true.
+  bool CollectFormlessElements(FormData* output);
+  FRIEND_TEST_ALL_PREFIXES(FormAutocompleteTest, CollectFormlessElements);
 
   // Called in a posted task by textFieldDidChange() to work-around a WebKit bug
   // http://bugs.webkit.org/show_bug.cgi?id=16976
@@ -223,6 +249,8 @@ class AutofillAgent : public content::RenderFrameObserver,
   // overriden in tests.
   virtual bool IsUserGesture() const;
 
+  void ConnectToMojoAutofillDriverIfNeeded();
+
   // Formerly cached forms for all frames, now only caches forms for the current
   // frame.
   FormCache form_cache_;
@@ -250,12 +278,12 @@ class AutofillAgent : public content::RenderFrameObserver,
   // Last form which was interacted with by the user.
   blink::WebFormElement last_interacted_form_;
 
+  // When dealing with forms that don't use a <form> tag, we keep track of the
+  // elements the user has modified so we can determine when submission occurs.
+  std::set<blink::WebFormControlElement> formless_elements_user_edited_;
+
   // Was the query node autofilled prior to previewing the form?
   bool was_query_node_autofilled_;
-
-  // Have we already shown Autofill suggestions for the field the user is
-  // currently editing?  Used to keep track of state for metrics logging.
-  bool has_shown_autofill_popup_for_current_edit_;
 
   // Whether or not to ignore text changes.  Useful for when we're committing
   // a composition when we are defocusing the WebView and we don't want to
@@ -272,6 +300,10 @@ class AutofillAgent : public content::RenderFrameObserver,
   // This is needed because generation is shown on field focus vs. field click
   // for the password manager. TODO(gcasto): Have both UIs show on focus.
   bool is_generation_popup_possibly_visible_;
+
+  mojo::BindingSet<mojom::AutofillAgent> bindings_;
+
+  mojom::AutofillDriverPtr mojo_autofill_driver_;
 
   base::WeakPtrFactory<AutofillAgent> weak_ptr_factory_;
 

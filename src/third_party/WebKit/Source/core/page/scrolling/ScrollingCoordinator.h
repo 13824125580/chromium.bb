@@ -34,6 +34,7 @@
 #include "platform/scroll/ScrollTypes.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 class WebScrollbarLayer;
@@ -52,11 +53,10 @@ class ScrollableArea;
 class CompositorAnimationTimeline;
 class WebLayerTreeView;
 
-class CORE_EXPORT ScrollingCoordinator final : public NoBaseWillBeGarbageCollectedFinalized<ScrollingCoordinator> {
+class CORE_EXPORT ScrollingCoordinator final : public GarbageCollectedFinalized<ScrollingCoordinator> {
     WTF_MAKE_NONCOPYABLE(ScrollingCoordinator);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ScrollingCoordinator);
 public:
-    static PassOwnPtrWillBeRawPtr<ScrollingCoordinator> create(Page*);
+    static ScrollingCoordinator* create(Page*);
 
     ~ScrollingCoordinator();
     DECLARE_TRACE();
@@ -96,7 +96,7 @@ public:
     MainThreadScrollingReasons mainThreadScrollingReasons() const;
     bool shouldUpdateScrollLayerPositionOnMainThread() const { return mainThreadScrollingReasons() != 0; }
 
-    PassOwnPtr<WebScrollbarLayer> createSolidColorScrollbarLayer(ScrollbarOrientation, int thumbThickness, int trackStart, bool isLeftSideVerticalScrollbar);
+    std::unique_ptr<WebScrollbarLayer> createSolidColorScrollbarLayer(ScrollbarOrientation, int thumbThickness, int trackStart, bool isLeftSideVerticalScrollbar);
 
     void willDestroyScrollableArea(ScrollableArea*);
     // Returns true if the coordinator handled this change.
@@ -116,6 +116,8 @@ public:
 
     void updateTouchEventTargetRectsIfNeeded();
 
+    CompositorAnimationTimeline* compositorAnimationTimeline() { return m_programmaticScrollAnimatorTimeline.get(); }
+
     // For testing purposes only. This ScrollingCoordinator is reused between layout test, and must be reset
     // for the results to be valid.
     void reset();
@@ -127,7 +129,7 @@ protected:
     bool isForMainFrame(ScrollableArea*) const;
     bool isForViewport(ScrollableArea*) const;
 
-    RawPtrWillBeMember<Page> m_page;
+    Member<Page> m_page;
 
     // Dirty flags used to idenfity what really needs to be computed after compositing is updated.
     bool m_scrollGestureRegionIsDirty;
@@ -145,15 +147,15 @@ private:
     void setTouchEventTargetRects(LayerHitTestRects&);
     void computeTouchEventTargetRects(LayerHitTestRects&);
 
-    WebScrollbarLayer* addWebScrollbarLayer(ScrollableArea*, ScrollbarOrientation, PassOwnPtr<WebScrollbarLayer>);
+    WebScrollbarLayer* addWebScrollbarLayer(ScrollableArea*, ScrollbarOrientation, std::unique_ptr<WebScrollbarLayer>);
     WebScrollbarLayer* getWebScrollbarLayer(ScrollableArea*, ScrollbarOrientation);
     void removeWebScrollbarLayer(ScrollableArea*, ScrollbarOrientation);
 
     bool frameViewIsDirty() const;
 
-    OwnPtr<CompositorAnimationTimeline> m_programmaticScrollAnimatorTimeline;
+    std::unique_ptr<CompositorAnimationTimeline> m_programmaticScrollAnimatorTimeline;
 
-    using ScrollbarMap = WillBeHeapHashMap<RawPtrWillBeMember<ScrollableArea>, OwnPtr<WebScrollbarLayer>>;
+    using ScrollbarMap = HeapHashMap<Member<ScrollableArea>, std::unique_ptr<WebScrollbarLayer>>;
     ScrollbarMap m_horizontalScrollbars;
     ScrollbarMap m_verticalScrollbars;
     HashSet<const PaintLayer*> m_layersWithTouchRects;

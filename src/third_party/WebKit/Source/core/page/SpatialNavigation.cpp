@@ -29,6 +29,7 @@
 #include "core/page/SpatialNavigation.h"
 
 #include "core/HTMLNames.h"
+#include "core/dom/NodeTraversal.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
@@ -159,7 +160,7 @@ bool hasOffscreenRect(Node* node, WebFocusType type)
     // exposed after we scroll. Adjust the viewport to post-scrolling position.
     // If the container has overflow:hidden, we cannot scroll, so we do not pass direction
     // and we do not adjust for scrolling.
-    int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frameView->hostWindow());
+    int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frameView->getHostWindow());
     switch (type) {
     case WebFocusTypeLeft:
         containerViewportRect.setX(containerViewportRect.x() - pixelsPerLineStep);
@@ -197,7 +198,7 @@ bool scrollInDirection(LocalFrame* frame, WebFocusType type)
     if (frame && canScrollInDirection(frame->document(), type)) {
         int dx = 0;
         int dy = 0;
-        int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frame->view()->hostWindow());
+        int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frame->view()->getHostWindow());
         switch (type) {
         case WebFocusTypeLeft:
             dx = - pixelsPerLineStep;
@@ -236,7 +237,7 @@ bool scrollInDirection(Node* container, WebFocusType type)
         int dy = 0;
         // TODO(leviw): Why are these values truncated (toInt) instead of rounding?
         FrameView* frameView = container->document().view();
-        int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frameView ? frameView->hostWindow() : nullptr);
+        int pixelsPerLineStep = ScrollableArea::pixelsPerLineStep(frameView ? frameView->getHostWindow() : nullptr);
         switch (type) {
         case WebFocusTypeLeft:
             dx = - std::min(pixelsPerLineStep, container->layoutBox()->scrollLeft().toInt());
@@ -320,13 +321,13 @@ bool canScrollInDirection(const Node* container, WebFocusType type)
 
     switch (type) {
     case WebFocusTypeLeft:
-        return (container->layoutObject()->style()->overflowX() != OHIDDEN && container->layoutBox()->scrollLeft() > 0);
+        return (container->layoutObject()->style()->overflowX() != OverflowHidden && container->layoutBox()->scrollLeft() > 0);
     case WebFocusTypeUp:
-        return (container->layoutObject()->style()->overflowY() != OHIDDEN && container->layoutBox()->scrollTop() > 0);
+        return (container->layoutObject()->style()->overflowY() != OverflowHidden && container->layoutBox()->scrollTop() > 0);
     case WebFocusTypeRight:
-        return (container->layoutObject()->style()->overflowX() != OHIDDEN && container->layoutBox()->scrollLeft() + container->layoutBox()->clientWidth() < container->layoutBox()->scrollWidth());
+        return (container->layoutObject()->style()->overflowX() != OverflowHidden && container->layoutBox()->scrollLeft() + container->layoutBox()->clientWidth() < container->layoutBox()->scrollWidth());
     case WebFocusTypeDown:
-        return (container->layoutObject()->style()->overflowY() != OHIDDEN && container->layoutBox()->scrollTop() + container->layoutBox()->clientHeight() < container->layoutBox()->scrollHeight());
+        return (container->layoutObject()->style()->overflowY() != OverflowHidden && container->layoutBox()->scrollTop() + container->layoutBox()->clientHeight() < container->layoutBox()->scrollHeight());
     default:
         ASSERT_NOT_REACHED();
         return false;
@@ -581,15 +582,15 @@ bool canBeScrolledIntoView(WebFocusType type, const FocusCandidate& candidate)
 {
     ASSERT(candidate.visibleNode && candidate.isOffscreen);
     LayoutRect candidateRect = candidate.rect;
-    for (Node* parentNode = candidate.visibleNode->parentNode(); parentNode; parentNode = parentNode->parentNode()) {
-        LayoutRect parentRect = nodeRectInAbsoluteCoordinates(parentNode);
+    for (Node& parentNode : NodeTraversal::ancestorsOf(*candidate.visibleNode)) {
+        LayoutRect parentRect = nodeRectInAbsoluteCoordinates(&parentNode);
         if (!candidateRect.intersects(parentRect)) {
-            if (((type == WebFocusTypeLeft || type == WebFocusTypeRight) && parentNode->layoutObject()->style()->overflowX() == OHIDDEN)
-                || ((type == WebFocusTypeUp || type == WebFocusTypeDown) && parentNode->layoutObject()->style()->overflowY() == OHIDDEN))
+            if (((type == WebFocusTypeLeft || type == WebFocusTypeRight) && parentNode.layoutObject()->style()->overflowX() == OverflowHidden)
+                || ((type == WebFocusTypeUp || type == WebFocusTypeDown) && parentNode.layoutObject()->style()->overflowY() == OverflowHidden))
                 return false;
         }
         if (parentNode == candidate.enclosingScrollableBox)
-            return canScrollInDirection(parentNode, type);
+            return canScrollInDirection(&parentNode, type);
     }
     return true;
 }
@@ -628,7 +629,7 @@ LayoutRect virtualRectForAreaElementAndDirection(HTMLAreaElement& area, WebFocus
     ASSERT(area.imageElement());
     // Area elements tend to overlap more than other focusable elements. We flatten the rect of the area elements
     // to minimize the effect of overlapping areas.
-    LayoutRect rect = virtualRectForDirection(type, rectToAbsoluteCoordinates(area.document().frame(), area.computeRect(area.imageElement()->layoutObject())), LayoutUnit(1));
+    LayoutRect rect = virtualRectForDirection(type, rectToAbsoluteCoordinates(area.document().frame(), area.computeAbsoluteRect(area.imageElement()->layoutObject())), LayoutUnit(1));
     return rect;
 }
 

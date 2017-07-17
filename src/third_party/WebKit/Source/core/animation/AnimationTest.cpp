@@ -32,14 +32,15 @@
 
 #include "core/animation/AnimationClock.h"
 #include "core/animation/AnimationTimeline.h"
+#include "core/animation/CompositorPendingAnimations.h"
 #include "core/animation/ElementAnimations.h"
 #include "core/animation/KeyframeEffect.h"
 #include "core/dom/Document.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/dom/QualifiedName.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/weborigin/KURL.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -84,11 +85,11 @@ protected:
         return animation->update(TimingUpdateForAnimationFrame);
     }
 
-    RefPtrWillBePersistent<Document> document;
+    Persistent<Document> document;
     Persistent<AnimationTimeline> timeline;
     Persistent<Animation> animation;
     TrackExceptionState exceptionState;
-    OwnPtr<DummyPageHolder> pageHolder;
+    std::unique_ptr<DummyPageHolder> pageHolder;
 };
 
 TEST_F(AnimationAnimationTest, InitialState)
@@ -727,7 +728,7 @@ TEST_F(AnimationAnimationTest, TimeToNextEffectSimpleCancelledBeforeStart)
 
 TEST_F(AnimationAnimationTest, AttachedAnimations)
 {
-    RefPtrWillBePersistent<Element> element = document->createElement("foo", ASSERT_NO_EXCEPTION);
+    Persistent<Element> element = document->createElement("foo", ASSERT_NO_EXCEPTION);
 
     Timing timing;
     KeyframeEffect* keyframeEffect = KeyframeEffect::create(element.get(), nullptr, timing);
@@ -736,7 +737,7 @@ TEST_F(AnimationAnimationTest, AttachedAnimations)
     timeline->serviceAnimations(TimingUpdateForAnimationFrame);
     EXPECT_EQ(1U, element->elementAnimations()->animations().find(animation)->value);
 
-    Heap::collectAllGarbage();
+    ThreadHeap::collectAllGarbage();
     EXPECT_TRUE(element->elementAnimations()->animations().isEmpty());
 }
 

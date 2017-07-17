@@ -4,11 +4,11 @@
 
 #include "net/cookies/cookie_store.h"
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "net/cookies/cookie_options.h"
 
 namespace net {
-
-CookieStore::CookieStore() {}
 
 CookieStore::~CookieStore() {}
 
@@ -31,7 +31,7 @@ std::string CookieStore::BuildCookieLine(
 std::string CookieStore::BuildCookieLine(
     const std::vector<CanonicalCookie*>& cookies) {
   std::string cookie_line;
-  for (const auto& cookie : cookies) {
+  for (auto* cookie : cookies) {
     if (!cookie_line.empty())
       cookie_line += "; ";
     // In Mozilla, if you set a cookie like "AAA", it will have an empty token
@@ -57,9 +57,21 @@ void CookieStore::GetAllCookiesForURLAsync(
     const GetCookieListCallback& callback) {
   CookieOptions options;
   options.set_include_httponly();
-  options.set_include_same_site();
+  options.set_same_site_cookie_mode(
+      CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
   options.set_do_not_update_access_time();
   GetCookieListWithOptionsAsync(url, options, callback);
 }
+
+void CookieStore::SetChannelIDServiceID(int id) {
+  DCHECK_EQ(-1, channel_id_service_id_);
+  channel_id_service_id_ = id;
+}
+
+int CookieStore::GetChannelIDServiceID() {
+  return channel_id_service_id_;
+}
+
+CookieStore::CookieStore() : channel_id_service_id_(-1) {}
 
 }  // namespace net

@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -51,8 +52,43 @@ enum SBThreatType {
   // Url leads to a blacklisted resource script. Note that no warnings should be
   // shown on this threat type, but an incident report might be sent.
   SB_THREAT_TYPE_BLACKLISTED_RESOURCE,
+
+  // Url abuses a permission API.
+  SB_THREAT_TYPE_API_ABUSE,
 };
 
+// Metadata that indicates what kind of URL match this is.
+enum class ThreatPatternType {
+  NONE = 0,                        // Pattern type didn't appear in the metadata
+  MALWARE_LANDING = 1,             // The match is a malware landing page
+  MALWARE_DISTRIBUTION = 2,        // The match is a malware distribution page
+  SOCIAL_ENGINEERING_ADS = 3,      // The match is a social engineering ads page
+  SOCIAL_ENGINEERING_LANDING = 4,  // The match is a social engineering landing
+                                   // page
+  PHISHING = 5,                    // The match is a phishing page
+  THREAT_PATTERN_TYPE_MAX_VALUE
+};
+
+// Metadata that was returned by a GetFullHash call. This is the parsed version
+// of the PB (from Pver3, or Pver4 local) or JSON (from Pver4 via GMSCore).
+// Some fields are only applicable to certain lists.
+struct ThreatMetadata {
+  ThreatMetadata();
+  ThreatMetadata(const ThreatMetadata& other);
+  ~ThreatMetadata();
+
+  // Type of blacklisted page. Used on malware and UwS lists.
+  // This will be NONE if it wasn't present in the reponse.
+  ThreatPatternType threat_pattern_type;
+
+  // Set of permissions blocked. Used with threat_type API_ABUSE.
+  // This will be empty if it wasn't present in the response.
+  std::set<std::string> api_permissions;
+
+  // Opaque base64 string used for user-population experiments in pver4.
+  // This will be empty if it wasn't present in the response.
+  std::string population_id;
+};
 
 // A truncated hash's type.
 typedef uint32_t SBPrefix;
@@ -68,10 +104,10 @@ struct SBFullHashResult {
   SBFullHash hash;
   // TODO(shess): Refactor to allow ListType here.
   int list_id;
-  std::string metadata;
-  // Used only for V4 results. The cache lifetime for this result. The response
-  // must not be cached for more than this duration to avoid false positives.
-  base::TimeDelta cache_duration;
+  ThreatMetadata metadata;
+  // Used only for V4 results. The cache expire time for this result. The
+  // response must not be cached after this time to avoid false positives.
+  base::Time cache_expire_after;
 };
 
 // Caches individual response from GETHASH request.
@@ -100,14 +136,12 @@ extern const char kExtensionBlacklist[];
 extern const char kIPBlacklist[];
 // SafeBrowsing unwanted URL list.
 extern const char kUnwantedUrlList[];
-// SafeBrowsing off-domain inclusion whitelist list name.
-extern const char kInclusionWhitelist[];
 // SafeBrowsing module whitelist list name.
 extern const char kModuleWhitelist[];
 // Blacklisted resource URLs list name.
 extern const char kResourceBlacklist[];
 /// This array must contain all Safe Browsing lists.
-extern const char* kAllLists[11];
+extern const char* kAllLists[10];
 
 enum ListType {
   INVALID = -1,
@@ -129,7 +163,7 @@ enum ListType {
   // See above comment.  Leave 13 available.
   UNWANTEDURL = 14,
   // See above comment.  Leave 15 available.
-  INCLUSIONWHITELIST = 16,
+  // Obsolete INCLUSIONWHITELIST = 16,
   // See above comment.  Leave 17 available.
   MODULEWHITELIST = 18,
   // See above comment. Leave 19 available.

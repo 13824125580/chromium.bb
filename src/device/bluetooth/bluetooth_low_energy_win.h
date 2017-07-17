@@ -8,9 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_low_energy_defs_win.h"
@@ -26,9 +27,9 @@ class DEVICE_BLUETOOTH_EXPORT DeviceRegistryPropertyValue {
   // containing the property value and |value_size| is the number of bytes in
   // |value|. Note the returned instance takes ownership of the bytes in
   // |value|.
-  static scoped_ptr<DeviceRegistryPropertyValue> Create(
+  static std::unique_ptr<DeviceRegistryPropertyValue> Create(
       DWORD property_type,
-      scoped_ptr<uint8_t[]> value,
+      std::unique_ptr<uint8_t[]> value,
       size_t value_size);
   ~DeviceRegistryPropertyValue();
 
@@ -40,12 +41,10 @@ class DEVICE_BLUETOOTH_EXPORT DeviceRegistryPropertyValue {
 
  private:
   DeviceRegistryPropertyValue(DWORD property_type,
-                              scoped_ptr<uint8_t[]> value,
-                              size_t value_size);
+                              std::unique_ptr<uint8_t[]> value);
 
   DWORD property_type_;
-  scoped_ptr<uint8_t[]> value_;
-  size_t value_size_;
+  std::unique_ptr<uint8_t[]> value_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceRegistryPropertyValue);
 };
@@ -58,7 +57,7 @@ class DEVICE_BLUETOOTH_EXPORT DevicePropertyValue {
   // property value and |value_size| is the number of bytes in |value|. Note the
   // returned instance takes ownership of the bytes in |value|.
   DevicePropertyValue(DEVPROPTYPE property_type,
-                      scoped_ptr<uint8_t[]> value,
+                      std::unique_ptr<uint8_t[]> value,
                       size_t value_size);
   ~DevicePropertyValue();
 
@@ -68,7 +67,7 @@ class DEVICE_BLUETOOTH_EXPORT DevicePropertyValue {
 
  private:
   DEVPROPTYPE property_type_;
-  scoped_ptr<uint8_t[]> value_;
+  std::unique_ptr<uint8_t[]> value_;
   size_t value_size_;
 
   DISALLOW_COPY_AND_ASSIGN(DevicePropertyValue);
@@ -150,8 +149,50 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyWrapper {
   virtual HRESULT ReadCharacteristicsOfAService(
       base::FilePath& service_path,
       const PBTH_LE_GATT_SERVICE service,
-      scoped_ptr<BTH_LE_GATT_CHARACTERISTIC>* out_included_characteristics,
+      std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC>* out_included_characteristics,
       USHORT* out_counts);
+
+  // Reads included descriptors of |characteristic| in service with service
+  // device path |service_path|. The result will be stored in
+  // |*out_included_descriptors| and |*out_counts|.
+  virtual HRESULT ReadDescriptorsOfACharacteristic(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      std::unique_ptr<BTH_LE_GATT_DESCRIPTOR>* out_included_descriptors,
+      USHORT* out_counts);
+
+  // Reads |characteristic| value in service with service device path
+  // |service_path|. The result will be stored in |*out_value|.
+  virtual HRESULT ReadCharacteristicValue(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC_VALUE>* out_value);
+
+  // Writes |characteristic| value in service with service device path
+  // |service_path| to |*new_value|.
+  virtual HRESULT WriteCharacteristicValue(
+      base::FilePath& service_path,
+      const PBTH_LE_GATT_CHARACTERISTIC characteristic,
+      PBTH_LE_GATT_CHARACTERISTIC_VALUE new_value);
+
+  // Register GATT events of |event_type| in the service with service device
+  // path |service_path|. |event_parameter| is the event's parameter. |callback|
+  // is the function to be invoked if the event happened. |context| is the input
+  // parameter to be given back through |callback|. |*out_handle| stores the
+  // unique handle in OS for this registration.
+  virtual HRESULT RegisterGattEvents(base::FilePath& service_path,
+                                     BTH_LE_GATT_EVENT_TYPE event_type,
+                                     PVOID event_parameter,
+                                     PFNBLUETOOTH_GATT_EVENT_CALLBACK callback,
+                                     PVOID context,
+                                     BLUETOOTH_GATT_EVENT_HANDLE* out_handle);
+  virtual HRESULT UnregisterGattEvent(BLUETOOTH_GATT_EVENT_HANDLE event_handle);
+
+  // Writes |descriptor| value in service with service device path
+  // |service_path| to |*new_value|.
+  virtual HRESULT WriteDescriptorValue(base::FilePath& service_path,
+                                       const PBTH_LE_GATT_DESCRIPTOR descriptor,
+                                       PBTH_LE_GATT_DESCRIPTOR_VALUE new_value);
 
  protected:
   BluetoothLowEnergyWrapper();

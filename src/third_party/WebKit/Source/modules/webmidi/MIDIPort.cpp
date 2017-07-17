@@ -40,7 +40,8 @@ namespace blink {
 using PortState = MIDIAccessor::MIDIPortState;
 
 MIDIPort::MIDIPort(MIDIAccess* access, const String& id, const String& manufacturer, const String& name, TypeCode type, const String& version, PortState state)
-    : ActiveDOMObject(access->executionContext())
+    : ActiveScriptWrappable(this)
+    , ActiveDOMObject(access->getExecutionContext())
     , m_id(id)
     , m_manufacturer(manufacturer)
     , m_name(name)
@@ -49,9 +50,9 @@ MIDIPort::MIDIPort(MIDIAccess* access, const String& id, const String& manufactu
     , m_access(access)
     , m_connection(ConnectionStateClosed)
 {
-    ASSERT(access);
-    ASSERT(type == TypeInput || type == TypeOutput);
-    ASSERT(state == PortState::MIDIPortStateDisconnected
+    DCHECK(access);
+    DCHECK(type == TypeInput || type == TypeOutput);
+    DCHECK(state == PortState::MIDIPortStateDisconnected
         || state == PortState::MIDIPortStateConnected);
     m_state = state;
 }
@@ -125,7 +126,7 @@ void MIDIPort::setState(PortState state)
     case PortState::MIDIPortStateConnected:
         switch (m_connection) {
         case ConnectionStateOpen:
-            ASSERT_NOT_REACHED();
+            NOTREACHED();
             break;
         case ConnectionStatePending:
             // We do not use |setStates| in order not to dispatch events twice.
@@ -141,9 +142,9 @@ void MIDIPort::setState(PortState state)
     }
 }
 
-ExecutionContext* MIDIPort::executionContext() const
+ExecutionContext* MIDIPort::getExecutionContext() const
 {
-    return m_access->executionContext();
+    return m_access->getExecutionContext();
 }
 
 bool MIDIPort::hasPendingActivity() const
@@ -162,8 +163,13 @@ void MIDIPort::stop()
 DEFINE_TRACE(MIDIPort)
 {
     visitor->trace(m_access);
-    RefCountedGarbageCollectedEventTargetWithInlineData<MIDIPort>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     ActiveDOMObject::trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(MIDIPort)
+{
+    visitor->traceWrappers(m_access);
 }
 
 void MIDIPort::open()
@@ -192,7 +198,7 @@ ScriptPromise MIDIPort::reject(ScriptState* scriptState, ExceptionCode ec, const
 
 void MIDIPort::setStates(PortState state, ConnectionState connection)
 {
-    ASSERT(state != PortState::MIDIPortStateDisconnected || connection != ConnectionStateOpen);
+    DCHECK(state != PortState::MIDIPortStateDisconnected || connection != ConnectionStateOpen);
     if (m_state == state && m_connection == connection)
         return;
     m_state = state;

@@ -11,12 +11,14 @@
 #include <unordered_set>
 
 #include "base/base64.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -126,9 +128,9 @@ void UnpackProtoFields(sql::Statement* statement,
 // The caller owns the returned EntryKernel*.  Assumes the statement currently
 // points to a valid row in the metas table. Returns NULL to indicate that
 // it detected a corruption in the data on unpacking.
-scoped_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
-                                    int* total_specifics_copies) {
-  scoped_ptr<EntryKernel> kernel(new EntryKernel());
+std::unique_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
+                                         int* total_specifics_copies) {
+  std::unique_ptr<EntryKernel> kernel(new EntryKernel());
   DCHECK_EQ(statement->ColumnCount(), static_cast<int>(FIELD_COUNT));
   int i = 0;
   for (i = BEGIN_FIELDS; i < INT64_FIELDS_END; ++i) {
@@ -158,7 +160,7 @@ scoped_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
     sync_pb::UniquePosition proto;
     if (!proto.ParseFromString(temp)) {
       DVLOG(1) << "Unpacked invalid position.  Assuming the DB is corrupt";
-      return scoped_ptr<EntryKernel>();
+      return std::unique_ptr<EntryKernel>();
     }
 
     kernel->mutable_ref(static_cast<UniquePositionField>(i)) =
@@ -175,7 +177,7 @@ scoped_ptr<EntryKernel> UnpackEntry(sql::Statement* statement,
       !kernel->ref(UNIQUE_POSITION).IsValid()) {
     DVLOG(1) << "Unpacked invalid position on an entity that should have a "
              << "valid position.  Assuming the DB is corrupt.";
-    return scoped_ptr<EntryKernel>();
+    return std::unique_ptr<EntryKernel>();
   }
 
   return kernel;
@@ -195,8 +197,8 @@ void OnSqliteError(const base::Closure& catastrophic_error_handler,
     // At this point sql::* and DirectoryBackingStore may be on the callstack so
     // don't invoke the error handler directly. Instead, PostTask to this thread
     // to avoid potential reentrancy issues.
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           catastrophic_error_handler);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  catastrophic_error_handler);
   }
 }
 
@@ -664,7 +666,8 @@ bool DirectoryBackingStore::LoadEntries(Directory::MetahandlesMap* handles_map,
   sql::Statement s(db_->GetUniqueStatement(select.c_str()));
 
   while (s.Step()) {
-    scoped_ptr<EntryKernel> kernel = UnpackEntry(&s, &total_specifics_copies);
+    std::unique_ptr<EntryKernel> kernel =
+        UnpackEntry(&s, &total_specifics_copies);
     // A null kernel is evidence of external data corruption.
     if (!kernel)
       return false;
@@ -710,7 +713,7 @@ bool DirectoryBackingStore::LoadDeleteJournals(
 
   while (s.Step()) {
     int total_entry_copies;
-    scoped_ptr<EntryKernel> kernel = UnpackEntry(&s, &total_entry_copies);
+    std::unique_ptr<EntryKernel> kernel = UnpackEntry(&s, &total_entry_copies);
     // A null kernel is evidence of external data corruption.
     if (!kernel)
       return false;

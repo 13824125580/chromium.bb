@@ -11,6 +11,7 @@
 
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/values.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/features/complex_feature.h"
 #include "extensions/common/features/simple_feature.h"
@@ -52,7 +53,7 @@ BaseFeatureProvider::BaseFeatureProvider(const base::DictionaryValue& root,
     }
 
     if (iter.value().GetType() == base::Value::TYPE_DICTIONARY) {
-      linked_ptr<SimpleFeature> feature((*factory_)());
+      std::unique_ptr<SimpleFeature> feature((*factory_)());
 
       std::vector<std::string> split = base::SplitString(
           iter.key(), ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -106,38 +107,36 @@ BaseFeatureProvider::BaseFeatureProvider(const base::DictionaryValue& root,
       if (parse_error)
         continue;
 
-      features_[iter.key()] = feature;
+      features_[iter.key()] = std::move(feature);
     } else if (iter.value().GetType() == base::Value::TYPE_LIST) {
       // This is a complex feature.
       const base::ListValue* list =
           static_cast<const base::ListValue*>(&iter.value());
       CHECK_GT(list->GetSize(), 0UL);
 
-      scoped_ptr<ComplexFeature::FeatureList> features(
+      std::unique_ptr<ComplexFeature::FeatureList> features(
           new ComplexFeature::FeatureList());
 
       // Parse and add all SimpleFeatures from the list.
-      for (base::ListValue::const_iterator list_iter = list->begin();
-           list_iter != list->end(); ++list_iter) {
-        if ((*list_iter)->GetType() != base::Value::TYPE_DICTIONARY) {
+      for (const auto& entry : *list) {
+        base::DictionaryValue* dict;
+        if (!entry->GetAsDictionary(&dict)) {
           LOG(ERROR) << iter.key() << ": Feature rules must be dictionaries.";
           continue;
         }
 
-        scoped_ptr<SimpleFeature> feature((*factory_)());
-        if (!ParseFeature(static_cast<const base::DictionaryValue*>(*list_iter),
-                          iter.key(),
-                          feature.get()))
+        std::unique_ptr<SimpleFeature> feature((*factory_)());
+        if (!ParseFeature(dict, iter.key(), feature.get()))
           continue;
 
         features->push_back(std::move(feature));
       }
 
-      linked_ptr<ComplexFeature> feature(
+      std::unique_ptr<ComplexFeature> feature(
           new ComplexFeature(std::move(features)));
       feature->set_name(iter.key());
 
-      features_[iter.key()] = feature;
+      features_[iter.key()] = std::move(feature);
     } else {
       LOG(ERROR) << iter.key() << ": Feature description must be dictionary or"
                  << " list of dictionaries.";
@@ -148,17 +147,8 @@ BaseFeatureProvider::BaseFeatureProvider(const base::DictionaryValue& root,
 BaseFeatureProvider::~BaseFeatureProvider() {
 }
 
-const std::vector<std::string>& BaseFeatureProvider::GetAllFeatureNames()
-    const {
-  if (feature_names_.empty()) {
-    for (FeatureMap::const_iterator iter = features_.begin();
-         iter != features_.end(); ++iter) {
-      feature_names_.push_back(iter->first);
-    }
-    // A std::map is sorted by its keys, so we don't need to sort feature_names_
-    // now.
-  }
-  return feature_names_;
+const FeatureMap& BaseFeatureProvider::GetAllFeatures() const {
+  return features_;
 }
 
 Feature* BaseFeatureProvider::GetFeature(const std::string& name) const {

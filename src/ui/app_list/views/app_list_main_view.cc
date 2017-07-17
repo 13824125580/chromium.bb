@@ -68,7 +68,12 @@ class AppListMainView::IconLoader : public AppListItemObserver {
  private:
   // AppListItemObserver overrides:
   void ItemIconChanged() override {
-    owner_->OnItemIconLoaded(this);
+    owner_->OnIconLoaderFinished(this);
+    // Note that IconLoader is released here.
+  }
+
+  void ItemBeingDestroyed() override {
+    owner_->OnIconLoaderFinished(this);
     // Note that IconLoader is released here.
   }
 
@@ -123,7 +128,7 @@ void AppListMainView::AddContentsViews() {
   search_box_view_->set_contents_view(contents_view_);
 
   contents_view_->SetPaintToLayer(true);
-  contents_view_->SetFillsBoundsOpaquely(false);
+  contents_view_->layer()->SetFillsBoundsOpaquely(false);
   contents_view_->layer()->SetMasksToBounds(true);
 
   delegate_->StartSearch();
@@ -225,7 +230,7 @@ void AppListMainView::OnIconLoadingWaitTimer() {
   GetWidget()->Show();
 }
 
-void AppListMainView::OnItemIconLoaded(IconLoader* loader) {
+void AppListMainView::OnIconLoaderFinished(IconLoader* loader) {
   ScopedVector<IconLoader>::iterator it = std::find(
       pending_icon_loaders_.begin(), pending_icon_loaders_.end(), loader);
   DCHECK(it != pending_icon_loaders_.end());

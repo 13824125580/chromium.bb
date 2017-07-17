@@ -7,25 +7,26 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/bind_to_current_loop.h"
+#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "url/gurl.h"
 
 namespace {
 
 using Type = media::MediaPermission::Type;
 
-content::PermissionName MediaPermissionTypeToPermissionName(Type type) {
+blink::mojom::PermissionName MediaPermissionTypeToPermissionName(Type type) {
   switch (type) {
     case Type::PROTECTED_MEDIA_IDENTIFIER:
-      return content::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
+      return blink::mojom::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
     case Type::AUDIO_CAPTURE:
-      return content::PermissionName::AUDIO_CAPTURE;
+      return blink::mojom::PermissionName::AUDIO_CAPTURE;
     case Type::VIDEO_CAPTURE:
-      return content::PermissionName::VIDEO_CAPTURE;
+      return blink::mojom::PermissionName::VIDEO_CAPTURE;
   }
   NOTREACHED();
-  return content::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
+  return blink::mojom::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
 }
 
 }  // namespace
@@ -98,6 +99,7 @@ void MediaPermissionDispatcher::RequestPermission(
 
   permission_service_->RequestPermission(
       MediaPermissionTypeToPermissionName(type), security_origin.spec(),
+      blink::WebUserGestureIndicator::isProcessingUserGesture(),
       base::Bind(&MediaPermissionDispatcher::OnPermissionStatus, weak_ptr_,
                  request_id));
 }
@@ -113,8 +115,9 @@ uint32_t MediaPermissionDispatcher::RegisterCallback(
   return request_id;
 }
 
-void MediaPermissionDispatcher::OnPermissionStatus(uint32_t request_id,
-                                                   PermissionStatus status) {
+void MediaPermissionDispatcher::OnPermissionStatus(
+    uint32_t request_id,
+    blink::mojom::PermissionStatus status) {
   DVLOG(2) << __FUNCTION__ << ": (" << request_id << ", " << status << ")";
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
 
@@ -124,7 +127,7 @@ void MediaPermissionDispatcher::OnPermissionStatus(uint32_t request_id,
   PermissionStatusCB permission_status_cb = iter->second;
   requests_.erase(iter);
 
-  permission_status_cb.Run(status == PermissionStatus::GRANTED);
+  permission_status_cb.Run(status == blink::mojom::PermissionStatus::GRANTED);
 }
 
 }  // namespace content

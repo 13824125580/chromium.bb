@@ -30,6 +30,7 @@
 #include "core/editing/PositionWithAffinity.h"
 #include "core/editing/TextAffinity.h"
 #include "platform/heap/Handle.h"
+#include <iosfwd>
 
 namespace blink {
 
@@ -45,9 +46,6 @@ namespace blink {
 // constructors auto-correct UPSTREAM to DOWNSTREAM if the
 // position is not at a line break.
 #define VP_UPSTREAM_IF_POSSIBLE TextAffinity::Upstream
-
-class InlineBox;
-class Range;
 
 // |VisiblePosition| is an immutable object representing "canonical position"
 // with affinity.
@@ -93,6 +91,13 @@ public:
     PositionWithAffinityTemplate<Strategy> toPositionWithAffinity() const { return m_positionWithAffinity; }
     TextAffinity affinity() const { return m_positionWithAffinity.affinity(); }
 
+    static VisiblePositionTemplate<Strategy> afterNode(Node*);
+    static VisiblePositionTemplate<Strategy> beforeNode(Node*);
+    static VisiblePositionTemplate<Strategy> firstPositionInNode(Node*);
+    static VisiblePositionTemplate<Strategy> inParentAfterNode(const Node&);
+    static VisiblePositionTemplate<Strategy> inParentBeforeNode(const Node&);
+    static VisiblePositionTemplate<Strategy> lastPositionInNode(Node*);
+
     DEFINE_INLINE_TRACE()
     {
         visitor->trace(m_positionWithAffinity);
@@ -120,6 +125,9 @@ CORE_EXPORT VisiblePosition createVisiblePosition(const Position&, TextAffinity 
 CORE_EXPORT VisiblePosition createVisiblePosition(const PositionWithAffinity&);
 CORE_EXPORT VisiblePositionInFlatTree createVisiblePosition(const PositionInFlatTree&, TextAffinity = VP_DEFAULT_AFFINITY);
 CORE_EXPORT VisiblePositionInFlatTree createVisiblePosition(const PositionInFlatTreeWithAffinity&);
+
+CORE_EXPORT std::ostream& operator<<(std::ostream&, const VisiblePosition&);
+CORE_EXPORT std::ostream& operator<<(std::ostream&, const VisiblePositionInFlatTree&);
 
 } // namespace blink
 

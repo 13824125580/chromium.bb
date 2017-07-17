@@ -7,12 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/version.h"
 #include "components/update_client/update_client.h"
 #include "url/gurl.h"
@@ -126,6 +127,7 @@ class ComponentUpdateService {
                                    CrxUpdateItem* item) const = 0;
 
   friend class ::ComponentsUI;
+  FRIEND_TEST_ALL_PREFIXES(DefaultComponentInstallerTest, RegisterComponent);
 };
 
 using ServiceObserver = ComponentUpdateService::Observer;
@@ -151,7 +153,7 @@ class OnDemandUpdater {
 };
 
 // Creates the component updater.
-scoped_ptr<ComponentUpdateService> ComponentUpdateServiceFactory(
+std::unique_ptr<ComponentUpdateService> ComponentUpdateServiceFactory(
     const scoped_refptr<Configurator>& config);
 
 }  // namespace component_updater

@@ -13,7 +13,6 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/views/profiles/profile_chooser_view.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -28,6 +27,7 @@
 #include "ui/gfx/range/range.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/box_layout.h"
@@ -43,9 +43,7 @@ ProfileSigninConfirmationDialogViews::ProfileSigninConfirmationDialogViews(
     : browser_(browser),
       username_(username),
       delegate_(delegate),
-      prompt_for_new_profile_(true),
-      continue_signin_button_(NULL) {
-}
+      prompt_for_new_profile_(true) {}
 
 ProfileSigninConfirmationDialogViews::~ProfileSigninConfirmationDialogViews() {}
 
@@ -104,15 +102,13 @@ int ProfileSigninConfirmationDialogViews::GetDefaultDialogButton() const {
 }
 
 views::View* ProfileSigninConfirmationDialogViews::CreateExtraView() {
-  if (prompt_for_new_profile_) {
-    const base::string16 continue_signin_text =
-        l10n_util::GetStringUTF16(IDS_ENTERPRISE_SIGNIN_CONTINUE_NEW_STYLE);
-    continue_signin_button_ =
-        new views::LabelButton(this, continue_signin_text);
-    continue_signin_button_->SetStyle(views::Button::STYLE_BUTTON);
-    continue_signin_button_->SetFocusable(true);
-  }
-  return continue_signin_button_;
+  if (!prompt_for_new_profile_)
+    return nullptr;
+
+  const base::string16 continue_signin_text =
+      l10n_util::GetStringUTF16(IDS_ENTERPRISE_SIGNIN_CONTINUE_NEW_STYLE);
+  return views::MdTextButton::CreateSecondaryUiButton(this,
+                                                      continue_signin_text);
 }
 
 bool ProfileSigninConfirmationDialogViews::Accept() {
@@ -161,7 +157,7 @@ void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
   prompt_label->SetDisplayedOnBackgroundColor(kPromptBarBackgroundColor);
 
   views::StyledLabel::RangeStyleInfo bold_style;
-  bold_style.font_style = gfx::Font::BOLD;
+  bold_style.weight = gfx::Font::Weight::BOLD;
   prompt_label->AddStyleRange(
       gfx::Range(offset, offset + domain.size()), bold_style);
 
@@ -184,13 +180,15 @@ void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
           IDS_ENTERPRISE_SIGNIN_EXPLANATION_WITH_PROFILE_CREATION_NEW_STYLE :
           IDS_ENTERPRISE_SIGNIN_EXPLANATION_WITHOUT_PROFILE_CREATION_NEW_STYLE,
           username, learn_more_text, &offsets);
-  explanation_label_ = new views::StyledLabel(signin_explanation_text, this);
-  explanation_label_->AddStyleRange(
+  views::StyledLabel* explanation_label =
+      new views::StyledLabel(signin_explanation_text, this);
+  explanation_label->AddStyleRange(
       gfx::Range(offsets[1], offsets[1] + learn_more_text.size()),
       views::StyledLabel::RangeStyleInfo::CreateForLink());
 
   // Layout the components.
   views::GridLayout* dialog_layout = new views::GridLayout(this);
+  dialog_layout->SetInsets(views::kPanelVertMargin, 0, 0, 0);
   SetLayoutManager(dialog_layout);
 
   // Use GridLayout inside the prompt bar because StyledLabel requires it.
@@ -220,10 +218,9 @@ void ProfileSigninConfirmationDialogViews::ViewHierarchyChanged(
   explanation_columns->AddPaddingColumn(0.0, views::kButtonHEdgeMarginNew);
   dialog_layout->StartRow(0, 1);
   const int kPreferredWidth = 440;
-  dialog_layout->AddView(
-      explanation_label_, 1, 1,
-      views::GridLayout::FILL, views::GridLayout::FILL,
-      kPreferredWidth, explanation_label_->GetHeightForWidth(kPreferredWidth));
+  dialog_layout->AddView(explanation_label, 1, 1, views::GridLayout::FILL,
+                         views::GridLayout::FILL, kPreferredWidth,
+                         explanation_label->GetHeightForWidth(kPreferredWidth));
 }
 
 void ProfileSigninConfirmationDialogViews::WindowClosing() {
@@ -247,7 +244,6 @@ void ProfileSigninConfirmationDialogViews::ButtonPressed(
     views::Button* sender,
     const ui::Event& event) {
   DCHECK(prompt_for_new_profile_);
-  DCHECK_EQ(continue_signin_button_, sender);
   if (delegate_) {
     delegate_->OnContinueSignin();
     delegate_ = NULL;

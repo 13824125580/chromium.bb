@@ -34,7 +34,6 @@
 #include "core/page/PagePopup.h"
 #include "public/web/WebPagePopup.h"
 #include "web/PageWidgetDelegate.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefCounted.h"
 
 namespace blink {
@@ -103,11 +102,12 @@ private:
     void setRootGraphicsLayer(GraphicsLayer*);
     void setIsAcceleratedCompositingActive(bool enter);
 
+    WebRect windowRectInScreen() const;
+
     WebWidgetClient* m_widgetClient;
-    WebRect m_windowRectInScreen;
     WebViewImpl* m_webView;
-    OwnPtrWillBePersistent<Page> m_page;
-    OwnPtrWillBePersistent<PagePopupChromeClient> m_chromeClient;
+    Persistent<Page> m_page;
+    Persistent<PagePopupChromeClient> m_chromeClient;
     PagePopupClient* m_popupClient;
     bool m_closing;
 

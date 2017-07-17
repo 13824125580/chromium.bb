@@ -8,6 +8,8 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <memory>
+
 #include "webrtc/api/datachannel.h"
 #include "webrtc/api/sctputils.h"
 #include "webrtc/api/test/fakedatachannelprovider.h"
@@ -85,7 +87,7 @@ class SctpDataChannelTest : public testing::Test {
 
   webrtc::InternalDataChannelInit init_;
   FakeDataChannelProvider provider_;
-  rtc::scoped_ptr<FakeDataChannelObserver> observer_;
+  std::unique_ptr<FakeDataChannelObserver> observer_;
   rtc::scoped_refptr<DataChannel> webrtc_data_channel_;
 };
 
@@ -246,7 +248,7 @@ TEST_F(SctpDataChannelTest, SendUnorderedAfterReceivesOpenAck) {
   cricket::ReceiveDataParams params;
   params.ssrc = init.id;
   params.type = cricket::DMT_CONTROL;
-  rtc::Buffer payload;
+  rtc::CopyOnWriteBuffer payload;
   webrtc::WriteDataChannelOpenAckMessage(&payload);
   dc->OnDataReceived(NULL, params, payload);
 
@@ -404,7 +406,7 @@ TEST_F(SctpDataChannelTest, OpenAckRoleInitialization) {
 TEST_F(SctpDataChannelTest, ClosedWhenSendBufferFull) {
   SetChannelReady();
 
-  rtc::Buffer buffer(1024);
+  rtc::CopyOnWriteBuffer buffer(1024);
   memset(buffer.data(), 0, buffer.size());
 
   webrtc::DataBuffer packet(buffer, true);
@@ -457,7 +459,7 @@ TEST_F(SctpDataChannelTest, RemotePeerRequestClose) {
 // Tests that the DataChannel is closed if the received buffer is full.
 TEST_F(SctpDataChannelTest, ClosedWhenReceivedBufferFull) {
   SetChannelReady();
-  rtc::Buffer buffer(1024);
+  rtc::CopyOnWriteBuffer buffer(1024);
   memset(buffer.data(), 0, buffer.size());
 
   cricket::ReceiveDataParams params;

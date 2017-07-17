@@ -4,8 +4,6 @@
 
 #include "core/animation/DeferredLegacyStyleInterpolation.h"
 
-#include "core/animation/ElementAnimations.h"
-#include "core/animation/css/CSSAnimatableValueFactory.h"
 #include "core/css/CSSBasicShapeValues.h"
 #include "core/css/CSSImageValue.h"
 #include "core/css/CSSPrimitiveValue.h"
@@ -14,33 +12,8 @@
 #include "core/css/CSSShadowValue.h"
 #include "core/css/CSSValueList.h"
 #include "core/css/CSSValuePair.h"
-#include "core/css/resolver/StyleResolver.h"
-#include "core/css/resolver/StyleResolverState.h"
 
 namespace blink {
-
-void DeferredLegacyStyleInterpolation::apply(StyleResolverState& state) const
-{
-    if (m_outdated || !state.element()->elementAnimations() || !state.element()->elementAnimations()->isAnimationStyleChange()) {
-        RefPtr<AnimatableValue> startAnimatableValue;
-        RefPtr<AnimatableValue> endAnimatableValue;
-
-        // Snapshot underlying values for neutral keyframes first because non-neutral keyframes will mutate the StyleResolverState.
-        if (!m_endCSSValue) {
-            endAnimatableValue = StyleResolver::createAnimatableValueSnapshot(state, m_id, m_endCSSValue.get());
-            startAnimatableValue = StyleResolver::createAnimatableValueSnapshot(state, m_id, m_startCSSValue.get());
-        } else {
-            startAnimatableValue = StyleResolver::createAnimatableValueSnapshot(state, m_id, m_startCSSValue.get());
-            endAnimatableValue = StyleResolver::createAnimatableValueSnapshot(state, m_id, m_endCSSValue.get());
-        }
-
-        m_innerInterpolation = LegacyStyleInterpolation::create(startAnimatableValue, endAnimatableValue, m_id);
-        m_outdated = false;
-    }
-
-    m_innerInterpolation->interpolate(m_cachedIteration, m_cachedFraction);
-    m_innerInterpolation->apply(state);
-}
 
 bool DeferredLegacyStyleInterpolation::interpolationRequiresStyleResolve(const CSSValue& value)
 {
@@ -87,16 +60,16 @@ bool DeferredLegacyStyleInterpolation::interpolationRequiresStyleResolve(const C
         return primitiveValue.isFontRelativeLength() || primitiveValue.isViewportPercentageLength();
 
     if (primitiveValue.isCalculated()) {
-        CSSLengthArray lengthArray(CSSPrimitiveValue::LengthUnitTypeCount);
+        CSSLengthArray lengthArray;
         primitiveValue.accumulateLengthArray(lengthArray);
-        return lengthArray[CSSPrimitiveValue::UnitTypeFontSize] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeFontXSize] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeRootFontSize] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeZeroCharacterWidth] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeViewportWidth] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeViewportHeight] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeViewportMin] != 0
-            || lengthArray[CSSPrimitiveValue::UnitTypeViewportMax] != 0;
+        return lengthArray.values[CSSPrimitiveValue::UnitTypeFontSize] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeFontXSize] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeRootFontSize] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeZeroCharacterWidth] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeViewportWidth] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeViewportHeight] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeViewportMin] != 0
+            || lengthArray.values[CSSPrimitiveValue::UnitTypeViewportMax] != 0;
     }
 
     CSSValueID id = primitiveValue.getValueID();
@@ -130,7 +103,7 @@ bool DeferredLegacyStyleInterpolation::interpolationRequiresStyleResolve(const C
 {
     size_t length = valueList.length();
     for (size_t index = 0; index < length; ++index) {
-        if (interpolationRequiresStyleResolve(*valueList.item(index)))
+        if (interpolationRequiresStyleResolve(valueList.item(index)))
             return true;
     }
     return false;

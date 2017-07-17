@@ -14,6 +14,8 @@
 
 namespace skia {
 
+class ScopedPlatformPaint;
+
 // -----------------------------------------------------------------------------
 // For now we just use SkBitmap for SkBitmapDevice
 //
@@ -40,13 +42,16 @@ class BitmapPlatformDevice : public SkBitmapDevice, public PlatformDevice {
   explicit BitmapPlatformDevice(const SkBitmap& other);
   ~BitmapPlatformDevice() override;
 
-  PlatformSurface BeginPlatformPaint() override;
-
  protected:
   SkBaseDevice* onCreateDevice(const CreateInfo&, const SkPaint*) override;
 
  private:
+  PlatformSurface BeginPlatformPaint(const SkMatrix& transform,
+                                     const SkIRect& clip_bounds) override;
+
   DISALLOW_COPY_AND_ASSIGN(BitmapPlatformDevice);
+
+  friend class ScopedPlatformPaint;
 };
 
 }  // namespace skia

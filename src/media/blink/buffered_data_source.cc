@@ -11,6 +11,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "media/base/media_log.h"
 #include "net/base/net_errors.h"
 
@@ -47,7 +48,7 @@ class BufferedDataSource::ReadOperation {
 
   // Runs |callback_| with the given |result|, deleting the operation
   // afterwards.
-  static void Run(scoped_ptr<ReadOperation> read_op, int result);
+  static void Run(std::unique_ptr<ReadOperation> read_op, int result);
 
   // State for the number of times this read operation has been retried.
   int retries() { return retries_; }
@@ -87,7 +88,8 @@ BufferedDataSource::ReadOperation::~ReadOperation() {
 
 // static
 void BufferedDataSource::ReadOperation::Run(
-    scoped_ptr<ReadOperation> read_op, int result) {
+    std::unique_ptr<ReadOperation> read_op,
+    int result) {
   base::ResetAndReturn(&read_op->callback_).Run(result);
 }
 
@@ -266,6 +268,10 @@ int64_t BufferedDataSource::GetMemoryUsage() const {
   return loader_ ? loader_->GetMemoryUsage() : 0;
 }
 
+GURL BufferedDataSource::GetUrlAfterRedirects() const {
+  return response_original_url_;
+}
+
 void BufferedDataSource::Read(int64_t position,
                               int size,
                               uint8_t* data,
@@ -386,7 +392,19 @@ void BufferedDataSource::StartCallback(
     loader_->Stop();
     return;
   }
+
   response_original_url_ = loader_->response_original_url();
+#if defined(OS_ANDROID)
+  // The response original url is the URL of this resource after following
+  // redirects. Update |url_| to this so that we only follow redirects once.
+  // We do this on Android only to preserve the behavior we had before the
+  // unified media pipeline. This behavior will soon exist on all platforms
+  // as we switch to MultiBufferDataSource (http://crbug.com/514719).
+  // If the response URL is empty (which happens when it's from a Service
+  // Worker), keep the original one.
+  if (!response_original_url_.is_empty())
+    url_ = response_original_url_;
+#endif  // defined(OS_ANDROID)
 
   // All responses must be successful. Resources that are assumed to be fully
   // buffered must have a known content length.

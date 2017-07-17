@@ -9,6 +9,7 @@
 #include "core/dom/DOMTypedArray.h"
 #include "platform/heap/Handle.h"
 #include "platform/transforms/TransformationMatrix.h"
+#include <memory>
 
 namespace blink {
 
@@ -53,8 +54,8 @@ public:
     DOMMatrix* scaleNonUniform(double sx, double sy = 1, double sz = 1,
         double ox = 0, double oy = 0, double oz = 0);
 
-    PassRefPtr<DOMFloat32Array> toFloat32Array() const;
-    PassRefPtr<DOMFloat64Array> toFloat64Array() const;
+    DOMFloat32Array* toFloat32Array() const;
+    DOMFloat64Array* toFloat64Array() const;
 
     const TransformationMatrix& matrix() const { return *m_matrix; }
 
@@ -62,10 +63,10 @@ public:
 
 protected:
     // TransformationMatrix needs to be 16-byte aligned. PartitionAlloc
-    // supports 16-byte alignment but Oilpan doesn't. So we use an OwnPtr
+    // supports 16-byte alignment but Oilpan doesn't. So we use an std::unique_ptr
     // to allocate TransformationMatrix on PartitionAlloc.
     // TODO(oilpan): Oilpan should support 16-byte aligned allocations.
-    OwnPtr<TransformationMatrix> m_matrix;
+    std::unique_ptr<TransformationMatrix> m_matrix;
     bool m_is2D;
 };
 

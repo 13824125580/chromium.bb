@@ -5,16 +5,18 @@
 #ifndef CC_DEBUG_DEBUG_RECT_HISTORY_H_
 #define CC_DEBUG_DEBUG_RECT_HISTORY_H_
 
+#include <memory>
 #include <vector>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "cc/layers/layer_lists.h"
+#include "cc/layers/layer_collections.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
 
 class LayerImpl;
 class LayerTreeDebugState;
+class LayerTreeImpl;
 
 // There are currently six types of debug rects:
 //
@@ -60,14 +62,14 @@ struct DebugRect {
 // the appropriate LayerTreeSettings are enabled.
 class DebugRectHistory {
  public:
-  static scoped_ptr<DebugRectHistory> Create();
+  static std::unique_ptr<DebugRectHistory> Create();
 
   ~DebugRectHistory();
 
   // Note: Saving debug rects must happen before layers' change tracking is
   // reset.
   void SaveDebugRectsForCurrentFrame(
-      LayerImpl* root_layer,
+      LayerTreeImpl* tree_impl,
       LayerImpl* hud_layer,
       const LayerImplList& render_surface_layer_list,
       const LayerTreeDebugState& debug_state);
@@ -77,20 +79,19 @@ class DebugRectHistory {
  private:
   DebugRectHistory();
 
-  void SavePaintRects(LayerImpl* layer);
+  void SavePaintRects(LayerTreeImpl* tree_impl);
   void SavePropertyChangedRects(const LayerImplList& render_surface_layer_list,
                                 LayerImpl* hud_layer);
   void SaveSurfaceDamageRects(
       const LayerImplList& render_surface_layer_list);
   void SaveScreenSpaceRects(
       const LayerImplList& render_surface_layer_list);
-  void SaveTouchEventHandlerRects(LayerImpl* layer);
+  void SaveTouchEventHandlerRects(LayerTreeImpl* layer);
   void SaveTouchEventHandlerRectsCallback(LayerImpl* layer);
-  void SaveWheelEventHandlerRects(LayerImpl* layer);
-  void SaveWheelEventHandlerRectsCallback(LayerImpl* layer);
-  void SaveScrollEventHandlerRects(LayerImpl* layer);
+  void SaveWheelEventHandlerRects(LayerTreeImpl* tree_impl);
+  void SaveScrollEventHandlerRects(LayerTreeImpl* layer);
   void SaveScrollEventHandlerRectsCallback(LayerImpl* layer);
-  void SaveNonFastScrollableRects(LayerImpl* layer);
+  void SaveNonFastScrollableRects(LayerTreeImpl* layer);
   void SaveNonFastScrollableRectsCallback(LayerImpl* layer);
   void SaveLayerAnimationBoundsRects(
       const LayerImplList& render_surface_layer_list);

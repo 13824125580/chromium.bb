@@ -17,12 +17,11 @@
 #include "cc/playback/filter_display_item.h"
 #include "cc/playback/float_clip_display_item.h"
 #include "cc/playback/transform_display_item.h"
-#include "skia/ext/refptr.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "third_party/skia/include/core/SkPicture.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/transform.h"
 
@@ -50,12 +49,12 @@ WebDisplayItemListImpl::WebDisplayItemListImpl(
 
 void WebDisplayItemListImpl::appendDrawingItem(
     const blink::WebRect& visual_rect,
-    const SkPicture* picture) {
+    sk_sp<const SkPicture> picture) {
   if (display_item_list_->RetainsIndividualDisplayItems()) {
     display_item_list_->CreateAndAppendItem<cc::DrawingDisplayItem>(
-        visual_rect, skia::SharePtr(picture));
+        visual_rect, std::move(picture));
   } else {
-    cc::DrawingDisplayItem item(skia::SharePtr(picture));
+    cc::DrawingDisplayItem item(std::move(picture));
     display_item_list_->RasterIntoCanvas(item);
   }
 }
@@ -68,11 +67,12 @@ void WebDisplayItemListImpl::appendClipItem(
   for (size_t i = 0; i < rounded_clip_rects.size(); ++i) {
     rounded_rects.push_back(rounded_clip_rects[i]);
   }
+  bool antialias = true;
   if (display_item_list_->RetainsIndividualDisplayItems()) {
     display_item_list_->CreateAndAppendItem<cc::ClipDisplayItem>(
-        visual_rect, clip_rect, rounded_rects);
+        visual_rect, clip_rect, rounded_rects, antialias);
   } else {
-    cc::ClipDisplayItem item(clip_rect, rounded_rects);
+    cc::ClipDisplayItem item(clip_rect, rounded_rects, antialias);
     display_item_list_->RasterIntoCanvas(item);
   }
 }
@@ -173,12 +173,11 @@ void WebDisplayItemListImpl::appendCompositingItem(
   if (display_item_list_->RetainsIndividualDisplayItems()) {
     display_item_list_->CreateAndAppendItem<cc::CompositingDisplayItem>(
         visual_rect, static_cast<uint8_t>(gfx::ToFlooredInt(255 * opacity)),
-        xfermode, bounds, skia::SharePtr(color_filter),
-        kLcdTextRequiresOpaqueLayer);
+        xfermode, bounds, sk_ref_sp(color_filter), kLcdTextRequiresOpaqueLayer);
   } else {
     cc::CompositingDisplayItem item(
         static_cast<uint8_t>(gfx::ToFlooredInt(255 * opacity)), xfermode,
-        bounds, skia::SharePtr(color_filter), kLcdTextRequiresOpaqueLayer);
+        bounds, sk_ref_sp(color_filter), kLcdTextRequiresOpaqueLayer);
     display_item_list_->RasterIntoCanvas(item);
   }
 }
@@ -229,6 +228,10 @@ void WebDisplayItemListImpl::appendScrollItem(
 void WebDisplayItemListImpl::appendEndScrollItem(
     const blink::WebRect& visual_rect) {
   appendEndTransformItem(visual_rect);
+}
+
+void WebDisplayItemListImpl::setIsSuitableForGpuRasterization(bool isSuitable) {
+  display_item_list_->SetIsSuitableForGpuRasterization(isSuitable);
 }
 
 WebDisplayItemListImpl::~WebDisplayItemListImpl() {

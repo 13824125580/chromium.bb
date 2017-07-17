@@ -6,6 +6,7 @@
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -19,17 +20,22 @@
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/scoped_ignore_content_verifier_for_test.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/extension.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/url_request/test_url_request_interceptor.h"
+#include "sync/api/fake_sync_change_processor.h"
+#include "sync/api/sync_error_factory_mock.h"
 #include "sync/protocol/extension_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
 
@@ -122,6 +128,7 @@ class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
   base::FilePath path_v1_;
   base::FilePath path_v2_;
   base::FilePath path_v3_;
+  extensions::ScopedIgnoreContentVerifierForTest ignore_content_verification_;
 };
 
 // Tests the process of updating an extension to one that requires higher
@@ -176,6 +183,30 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, UninstallFromDialog) {
   EXPECT_FALSE(GetExtensionDisabledGlobalError());
 }
 
+IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
+                       UninstallWhilePromptBeingShown) {
+  const Extension* extension = InstallAndUpdateIncreasingPermissionsExtension();
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(GetExtensionDisabledGlobalError());
+
+  // Navigate a tab to the disabled extension, it will show a permission
+  // increase dialog.
+  GURL url = extension->GetResourceURL("");
+  int starting_tab_count = browser()->tab_strip_model()->count();
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), url, NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+  int tab_count = browser()->tab_strip_model()->count();
+  EXPECT_EQ(starting_tab_count + 1, tab_count);
+
+  // Uninstall the extension while the dialog is being shown.
+  // Although the dialog is modal, a user can still uninstall the extension by
+  // other means, e.g. if the user had two browser windows open they can use the
+  // second browser window that does not contain the modal dialog, navigate to
+  // chrome://extensions and uninstall the extension.
+  UninstallExtension(extension->id());
+}
+
 // Tests that no error appears if the user disabled the extension.
 IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, UserDisabled) {
   const Extension* extension = InstallIncreasingPermissionExtensionV1();
@@ -213,6 +244,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
       GURL("http://localhost/autoupdate/v2.crx"),
       scoped_temp_dir_.path().AppendASCII("permissions2.crx"));
 
+  sync_service->MergeDataAndStartSyncing(
+      syncer::EXTENSIONS, syncer::SyncDataList(),
+      base::WrapUnique(new syncer::FakeSyncChangeProcessor()),
+      base::WrapUnique(new syncer::SyncErrorFactoryMock()));
   extensions::TestExtensionRegistryObserver install_observer(registry_);
   sync_service->ProcessSyncChanges(
       FROM_HERE,
@@ -265,12 +300,16 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, RemoteInstall) {
                                          syncer::AttachmentIdList(),
                                          syncer::AttachmentServiceProxy());
 
+  ExtensionSyncService* sync_service = ExtensionSyncService::Get(profile());
+  sync_service->MergeDataAndStartSyncing(
+      syncer::EXTENSIONS, syncer::SyncDataList(),
+      base::WrapUnique(new syncer::FakeSyncChangeProcessor()),
+      base::WrapUnique(new syncer::SyncErrorFactoryMock()));
   extensions::TestExtensionRegistryObserver install_observer(registry_);
-  ExtensionSyncService::Get(profile())->ProcessSyncChanges(
+  sync_service->ProcessSyncChanges(
       FROM_HERE,
       syncer::SyncChangeList(
-          1, syncer::SyncChange(FROM_HERE,
-                                syncer::SyncChange::ACTION_ADD,
+          1, syncer::SyncChange(FROM_HERE, syncer::SyncChange::ACTION_ADD,
                                 sync_data)));
 
   install_observer.WaitForExtensionWillBeInstalled();

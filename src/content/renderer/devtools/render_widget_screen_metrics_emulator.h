@@ -5,7 +5,8 @@
 #ifndef CONTENT_RENDERER_DEVTOOLS_RENDER_WIDGET_SCREEN_METRICS_EMULATOR_H_
 #define CONTENT_RENDERER_DEVTOOLS_RENDER_WIDGET_SCREEN_METRICS_EMULATOR_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "content/common/resize_params.h"
 #include "third_party/WebKit/public/web/WebDeviceEmulationParams.h"
 
@@ -54,6 +55,7 @@ class RenderWidgetScreenMetricsEmulator {
   // The following methods alter handlers' behavior for messages related to
   // widget size and position.
   void OnResize(const ResizeParams& params);
+  void OnUpdateWindowScreenRect(const gfx::Rect& window_screen_rect);
   void OnUpdateScreenRects(const gfx::Rect& view_screen_rect,
                            const gfx::Rect& window_screen_rect);
   void OnShowContextMenu(ContextMenuParams* params);

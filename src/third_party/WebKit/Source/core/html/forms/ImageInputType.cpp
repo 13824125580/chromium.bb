@@ -35,7 +35,6 @@
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutImage.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
 
 namespace blink {
@@ -48,9 +47,9 @@ inline ImageInputType::ImageInputType(HTMLInputElement& element)
 {
 }
 
-PassRefPtrWillBeRawPtr<InputType> ImageInputType::create(HTMLInputElement& element)
+InputType* ImageInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new ImageInputType(element));
+    return new ImageInputType(element);
 }
 
 const AtomicString& ImageInputType::formControlType() const
@@ -109,13 +108,12 @@ static IntPoint extractClickLocation(Event* event)
 
 void ImageInputType::handleDOMActivateEvent(Event* event)
 {
-    RefPtrWillBeRawPtr<HTMLInputElement> element(this->element());
-    if (element->isDisabledFormControl() || !element->form())
+    if (element().isDisabledFormControl() || !element().form())
         return;
-    element->setActivatedSubmit(true);
+    element().setActivatedSubmit(true);
     m_clickLocation = extractClickLocation(event);
-    element->form()->prepareForSubmission(event); // Event handlers can run.
-    element->setActivatedSubmit(false);
+    element().form()->prepareForSubmission(event); // Event handlers can run.
+    element().setActivatedSubmit(false);
     event->setDefaultHandled();
 }
 
@@ -182,11 +180,6 @@ bool ImageInputType::isEnumeratable()
     return false;
 }
 
-bool ImageInputType::isImage() const
-{
-    return true;
-}
-
 bool ImageInputType::shouldRespectHeightAndWidthAttributes()
 {
     return true;
@@ -194,45 +187,41 @@ bool ImageInputType::shouldRespectHeightAndWidthAttributes()
 
 unsigned ImageInputType::height() const
 {
-    RefPtrWillBeRawPtr<HTMLInputElement> element(this->element());
-
-    if (!element->layoutObject()) {
+    if (!element().layoutObject()) {
         // Check the attribute first for an explicit pixel value.
         unsigned height;
-        if (parseHTMLNonNegativeInteger(element->fastGetAttribute(heightAttr), height))
+        if (parseHTMLNonNegativeInteger(element().fastGetAttribute(heightAttr), height))
             return height;
 
         // If the image is available, use its height.
-        HTMLImageLoader* imageLoader = element->imageLoader();
+        HTMLImageLoader* imageLoader = element().imageLoader();
         if (imageLoader && imageLoader->image())
             return imageLoader->image()->imageSize(LayoutObject::shouldRespectImageOrientation(nullptr), 1).height();
     }
 
-    element->document().updateLayout();
+    element().document().updateStyleAndLayout();
 
-    LayoutBox* box = element->layoutBox();
+    LayoutBox* box = element().layoutBox();
     return box ? adjustForAbsoluteZoom(box->contentHeight(), box) : 0;
 }
 
 unsigned ImageInputType::width() const
 {
-    RefPtrWillBeRawPtr<HTMLInputElement> element(this->element());
-
-    if (!element->layoutObject()) {
+    if (!element().layoutObject()) {
         // Check the attribute first for an explicit pixel value.
         unsigned width;
-        if (parseHTMLNonNegativeInteger(element->fastGetAttribute(widthAttr), width))
+        if (parseHTMLNonNegativeInteger(element().fastGetAttribute(widthAttr), width))
             return width;
 
         // If the image is available, use its width.
-        HTMLImageLoader* imageLoader = element->imageLoader();
+        HTMLImageLoader* imageLoader = element().imageLoader();
         if (imageLoader && imageLoader->image())
             return imageLoader->image()->imageSize(LayoutObject::shouldRespectImageOrientation(nullptr), 1).width();
     }
 
-    element->document().updateLayout();
+    element().document().updateStyleAndLayout();
 
-    LayoutBox* box = element->layoutBox();
+    LayoutBox* box = element().layoutBox();
     return box ? adjustForAbsoluteZoom(box->contentWidth(), box) : 0;
 }
 

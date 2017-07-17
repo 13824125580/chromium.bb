@@ -44,10 +44,9 @@
 #include "core/html/parser/HTMLStackItem.h"
 #include "core/html/parser/HTMLToken.h"
 #include "core/html/parser/HTMLTokenizer.h"
-#include "platform/NotImplemented.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/MainThread.h"
 #include "wtf/text/CharacterNames.h"
+#include <memory>
 
 namespace blink {
 
@@ -268,7 +267,7 @@ private:
     unsigned m_end;
 };
 
-HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser, HTMLDocument* document, ParserContentPolicy parserContentPolicy, bool, const HTMLParserOptions& options)
+HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser, HTMLDocument* document, ParserContentPolicy parserContentPolicy, const HTMLParserOptions& options)
     : m_framesetOk(true)
 #if ENABLE(ASSERT)
     , m_isAttached(true)
@@ -361,7 +360,7 @@ DEFINE_TRACE(HTMLTreeBuilder::FragmentParsingContext)
     visitor->trace(m_contextElementStackItem);
 }
 
-PassRefPtrWillBeRawPtr<Element> HTMLTreeBuilder::takeScriptToProcess(TextPosition& scriptStartPosition)
+Element* HTMLTreeBuilder::takeScriptToProcess(TextPosition& scriptStartPosition)
 {
     ASSERT(m_scriptToProcess);
     ASSERT(!m_tree.hasPendingTasks());
@@ -497,8 +496,8 @@ void HTMLTreeBuilder::processCloseWhenNestedTag(AtomicHTMLToken* token)
     m_framesetOk = false;
     HTMLElementStack::ElementRecord* nodeRecord = m_tree.openElements()->topRecord();
     while (1) {
-        RefPtrWillBeRawPtr<HTMLStackItem> item = nodeRecord->stackItem();
-        if (shouldClose(item.get())) {
+        HTMLStackItem* item = nodeRecord->stackItem();
+        if (shouldClose(item)) {
             ASSERT(item->isElementNode());
             processFakeEndTag(item->localName());
             break;
@@ -530,7 +529,7 @@ static void adjustSVGTagNameCase(AtomicHTMLToken* token)
     static PrefixedNameToQualifiedNameMap* caseMap = 0;
     if (!caseMap) {
         caseMap = new PrefixedNameToQualifiedNameMap;
-        OwnPtr<const SVGQualifiedName*[]> svgTags = SVGNames::getSVGTags();
+        std::unique_ptr<const SVGQualifiedName*[]> svgTags = SVGNames::getSVGTags();
         mapLoweredLocalNameToName(caseMap, svgTags.get(), SVGNames::SVGTagsCount);
     }
 
@@ -540,13 +539,13 @@ static void adjustSVGTagNameCase(AtomicHTMLToken* token)
     token->setName(casedName.localName());
 }
 
-template<PassOwnPtr<const QualifiedName*[]> getAttrs(), unsigned length>
+template<std::unique_ptr<const QualifiedName*[]> getAttrs(), unsigned length>
 static void adjustAttributes(AtomicHTMLToken* token)
 {
     static PrefixedNameToQualifiedNameMap* caseMap = 0;
     if (!caseMap) {
         caseMap = new PrefixedNameToQualifiedNameMap;
-        OwnPtr<const QualifiedName*[]> attrs = getAttrs();
+        std::unique_ptr<const QualifiedName*[]> attrs = getAttrs();
         mapLoweredLocalNameToName(caseMap, attrs.get(), length);
     }
 
@@ -585,10 +584,10 @@ static void adjustForeignAttributes(AtomicHTMLToken* token)
     if (!map) {
         map = new PrefixedNameToQualifiedNameMap;
 
-        OwnPtr<const QualifiedName*[]> attrs = XLinkNames::getXLinkAttrs();
+        std::unique_ptr<const QualifiedName*[]> attrs = XLinkNames::getXLinkAttrs();
         addNamesWithPrefix(map, xlinkAtom, attrs.get(), XLinkNames::XLinkAttrsCount);
 
-        OwnPtr<const QualifiedName*[]> xmlAttrs = XMLNames::getXMLAttrs();
+        std::unique_ptr<const QualifiedName*[]> xmlAttrs = XMLNames::getXMLAttrs();
         addNamesWithPrefix(map, xmlAtom, xmlAttrs.get(), XMLNames::XMLAttrsCount);
 
         map->add(WTF::xmlnsAtom, XMLNSNames::xmlnsAttr);
@@ -1465,7 +1464,7 @@ bool HTMLTreeBuilder::processBodyEndTagForInBody(AtomicHTMLToken* token)
         parseError(token);
         return false;
     }
-    notImplemented(); // Emit a more specific parse error based on stack contents.
+    DVLOG(1) << "Not implmeneted."; // Emit a more specific parse error based on stack contents.
     setInsertionMode(AfterBodyMode);
     return true;
 }
@@ -1477,7 +1476,7 @@ void HTMLTreeBuilder::processAnyOtherEndTagForInBody(AtomicHTMLToken* token)
         UseCounter::count(m_tree.currentNode()->document(), UseCounter::MenuItemCloseTag);
     HTMLElementStack::ElementRecord* record = m_tree.openElements()->topRecord();
     while (1) {
-        RefPtrWillBeRawPtr<HTMLStackItem> item = record->stackItem();
+        HTMLStackItem* item = record->stackItem();
         if (item->matchesHTMLTag(token->name())) {
             m_tree.generateImpliedEndTagsWithExclusion(token->name());
             if (!m_tree.currentStackItem()->matchesHTMLTag(token->name()))
@@ -1513,7 +1512,7 @@ void HTMLTreeBuilder::callTheAdoptionAgency(AtomicHTMLToken* token)
         // 4.c
         if ((m_tree.openElements()->contains(formattingElement)) && !m_tree.openElements()->inScope(formattingElement)) {
             parseError(token);
-            notImplemented(); // Check the stack of open elements for a more specific parse error.
+            DVLOG(1) << "Not implemented."; // Check the stack of open elements for a more specific parse error.
             return;
         }
         // 4.b
@@ -1536,7 +1535,7 @@ void HTMLTreeBuilder::callTheAdoptionAgency(AtomicHTMLToken* token)
         }
         // 7.
         ASSERT(furthestBlock->isAbove(formattingElementRecord));
-        RefPtrWillBeRawPtr<HTMLStackItem> commonAncestor = formattingElementRecord->next()->stackItem();
+        HTMLStackItem* commonAncestor = formattingElementRecord->next()->stackItem();
         // 8.
         HTMLFormattingElementList::Bookmark bookmark = m_tree.activeFormattingElements()->bookmarkFor(formattingElement);
         // 9.
@@ -1559,11 +1558,11 @@ void HTMLTreeBuilder::callTheAdoptionAgency(AtomicHTMLToken* token)
             if (node == formattingElementRecord)
                 break;
             // 9.7
-            RefPtrWillBeRawPtr<HTMLStackItem> newItem = m_tree.createElementFromSavedToken(node->stackItem().get());
+            HTMLStackItem* newItem = m_tree.createElementFromSavedToken(node->stackItem());
 
             HTMLFormattingElementList::Entry* nodeEntry = m_tree.activeFormattingElements()->find(node->element());
             nodeEntry->replaceElement(newItem);
-            node->replaceElement(newItem.release());
+            node->replaceElement(newItem);
 
             // 9.8
             if (lastNode == furthestBlock)
@@ -1574,13 +1573,13 @@ void HTMLTreeBuilder::callTheAdoptionAgency(AtomicHTMLToken* token)
             lastNode = node;
         }
         // 10.
-        m_tree.insertAlreadyParsedChild(commonAncestor.get(), lastNode);
+        m_tree.insertAlreadyParsedChild(commonAncestor, lastNode);
         // 11.
-        RefPtrWillBeRawPtr<HTMLStackItem> newItem = m_tree.createElementFromSavedToken(formattingElementRecord->stackItem().get());
+        HTMLStackItem* newItem = m_tree.createElementFromSavedToken(formattingElementRecord->stackItem());
         // 12.
-        m_tree.takeAllChildren(newItem.get(), furthestBlock);
+        m_tree.takeAllChildren(newItem, furthestBlock);
         // 13.
-        m_tree.reparent(furthestBlock, newItem.get());
+        m_tree.reparent(furthestBlock, newItem);
         // 14.
         m_tree.activeFormattingElements()->swapTo(formattingElement, newItem, bookmark);
         // 15.
@@ -1595,7 +1594,7 @@ void HTMLTreeBuilder::resetInsertionModeAppropriately()
     bool last = false;
     HTMLElementStack::ElementRecord* nodeRecord = m_tree.openElements()->topRecord();
     while (1) {
-        RefPtrWillBeRawPtr<HTMLStackItem> item = nodeRecord->stackItem();
+        HTMLStackItem* item = nodeRecord->stackItem();
         if (item->node() == m_tree.openElements()->rootNode()) {
             last = true;
             if (isParsingFragment())
@@ -1811,15 +1810,15 @@ void HTMLTreeBuilder::processEndTagForInBody(AtomicHTMLToken* token)
         return;
     }
     if (token->name() == formTag) {
-        RefPtrWillBeRawPtr<Element> node = m_tree.takeForm();
-        if (!node || !m_tree.openElements()->inScope(node.get())) {
+        Element* node = m_tree.takeForm();
+        if (!node || !m_tree.openElements()->inScope(node)) {
             parseError(token);
             return;
         }
         m_tree.generateImpliedEndTags();
-        if (m_tree.currentElement() != node.get())
+        if (m_tree.currentElement() != node)
             parseError(token);
-        m_tree.openElements()->remove(node.get());
+        m_tree.openElements()->remove(node);
     }
     if (token->name() == pTag) {
         if (!m_tree.openElements()->inButtonScope(token->name())) {
@@ -2465,7 +2464,7 @@ void HTMLTreeBuilder::processEndOfFile(AtomicHTMLToken* token)
     case InCaptionMode:
     case InRowMode:
         ASSERT(getInsertionMode() == InBodyMode || getInsertionMode() == InCellMode || getInsertionMode() == InCaptionMode || getInsertionMode() == InRowMode || getInsertionMode() == TemplateContentsMode);
-        notImplemented(); // Emit parse error based on what elements are still open.
+        DVLOG(1) << "Not implemented."; // Emit parse error based on what elements are still open.
         if (!m_templateInsertionModes.isEmpty() && processEndOfFileForInTemplateContents(token))
             return;
         break;
@@ -2508,7 +2507,7 @@ void HTMLTreeBuilder::processEndOfFile(AtomicHTMLToken* token)
     case TextMode:
         parseError(token);
         if (m_tree.currentStackItem()->hasTagName(scriptTag))
-            notImplemented(); // mark the script element as "already started".
+            DVLOG(1) << "Not implemented."; // mark the script element as "already started".
         m_tree.openElements()->pop();
         ASSERT(m_originalInsertionMode != TextMode);
         setInsertionMode(m_originalInsertionMode);
@@ -2524,7 +2523,7 @@ void HTMLTreeBuilder::processEndOfFile(AtomicHTMLToken* token)
 
 void HTMLTreeBuilder::defaultForInitial()
 {
-    notImplemented();
+    DVLOG(1) << "Not implemented.";
     m_tree.setDefaultCompatibilityMode();
     // FIXME: parse error
     setInsertionMode(BeforeHTMLMode);

@@ -5,10 +5,11 @@
 #ifndef MEDIA_CAST_SENDER_VIDEO_SENDER_H_
 #define MEDIA_CAST_SENDER_VIDEO_SENDER_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time/tick_clock.h"
@@ -25,7 +26,7 @@ class VideoFrame;
 
 namespace cast {
 
-class CastTransportSender;
+class CastTransport;
 class VideoEncoder;
 class VideoFrameFactory;
 
@@ -46,7 +47,7 @@ class VideoSender : public FrameSender,
               const StatusChangeCallback& status_change_cb,
               const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
               const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb,
-              CastTransportSender* const transport_sender,
+              CastTransport* const transport_sender,
               const PlayoutDelayChangeCB& playout_delay_change_cb);
 
   ~VideoSender() override;
@@ -60,7 +61,7 @@ class VideoSender : public FrameSender,
   // Creates a |VideoFrameFactory| object to vend |VideoFrame| object with
   // encoder affinity (defined as offering some sort of performance benefit). If
   // the encoder does not have any such capability, returns null.
-  scoped_ptr<VideoFrameFactory> CreateVideoFrameFactory();
+  std::unique_ptr<VideoFrameFactory> CreateVideoFrameFactory();
 
  protected:
   int GetNumberOfFramesInEncoder() const final;
@@ -70,12 +71,12 @@ class VideoSender : public FrameSender,
   // Called by the |video_encoder_| with the next EncodedFrame to send.
   void OnEncodedVideoFrame(const scoped_refptr<media::VideoFrame>& video_frame,
                            int encoder_bitrate,
-                           scoped_ptr<SenderEncodedFrame> encoded_frame);
+                           std::unique_ptr<SenderEncodedFrame> encoded_frame);
 
   // Encodes media::VideoFrame images into EncodedFrames.  Per configuration,
   // this will point to either the internal software-based encoder or a proxy to
   // a hardware-based encoder.
-  scoped_ptr<VideoEncoder> video_encoder_;
+  std::unique_ptr<VideoEncoder> video_encoder_;
 
   // The number of frames queued for encoding, but not yet sent.
   int frames_in_encoder_;
@@ -101,8 +102,13 @@ class VideoSender : public FrameSender,
   // The video encoder's performance metrics as of the last call to
   // OnEncodedVideoFrame().  See header file comments for SenderEncodedFrame for
   // an explanation of these values.
-  double last_reported_deadline_utilization_;
+  double last_reported_encoder_utilization_;
   double last_reported_lossy_utilization_;
+
+  // This tracks the time when the request was sent to encoder to encode a key
+  // frame on receiving a Pli message. It is used to limit the sender not
+  // to duplicately respond to multiple Pli messages in a short period.
+  base::TimeTicks last_time_attempted_to_resolve_pli_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<VideoSender> weak_factory_;

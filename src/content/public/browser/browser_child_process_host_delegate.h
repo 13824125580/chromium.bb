@@ -8,9 +8,12 @@
 #include "content/common/content_export.h"
 #include "ipc/ipc_listener.h"
 
-namespace content {
+namespace shell {
+class InterfaceProvider;
+class InterfaceRegistry;
+}
 
-class ServiceRegistry;
+namespace content {
 
 // Interface that all users of BrowserChildProcessHost need to provide.
 class CONTENT_EXPORT BrowserChildProcessHostDelegate : public IPC::Listener {
@@ -27,16 +30,21 @@ class CONTENT_EXPORT BrowserChildProcessHostDelegate : public IPC::Listener {
   virtual void OnProcessLaunched() {}
 
   // Called if the process failed to launch.  In this case the process never
-  // started so there is no available exit code.
-  virtual void OnProcessLaunchFailed() {}
+  // started so the code here is a platform specific error code.
+  virtual void OnProcessLaunchFailed(int error_code) {}
 
   // Called if the process crashed. |exit_code| is the status returned when the
   // process crashed (for posix, as returned from waitpid(), for Windows, as
   // returned from GetExitCodeProcess()).
   virtual void OnProcessCrashed(int exit_code) {}
 
-  // Returns the ServiceRegistry for this child process.
-  virtual ServiceRegistry* GetServiceRegistry();
+  // Returns the shell::InterfaceRegistry the browser process uses to expose
+  // interfaces to the child.
+  virtual shell::InterfaceRegistry* GetInterfaceRegistry();
+
+  // Returns the shell::InterfaceProvider the browser process can use to bind
+  // interfaces exposed to it from the child.
+  virtual shell::InterfaceProvider* GetRemoteInterfaces();
 };
 
 };  // namespace content

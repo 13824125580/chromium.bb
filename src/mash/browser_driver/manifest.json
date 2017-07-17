@@ -1,5 +1,0 @@
-{
-  "url": "mojo://browser_driver/",
-  "name": "Browser Driver",
-  "capabilities": { "*": [ "*" ] }
-}

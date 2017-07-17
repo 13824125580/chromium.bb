@@ -16,7 +16,7 @@ class NullEventQueue final : public EventQueue {
 public:
     NullEventQueue() { }
     ~NullEventQueue() override { }
-    bool enqueueEvent(PassRefPtrWillBeRawPtr<Event>) override { return true; }
+    bool enqueueEvent(Event*) override { return true; }
     bool cancelEvent(Event*) override { return true; }
     void close() override { }
 };
@@ -25,17 +25,25 @@ public:
 
 NullExecutionContext::NullExecutionContext()
     : m_tasksNeedSuspension(false)
-    , m_queue(adoptPtrWillBeNoop(new NullEventQueue()))
+    , m_isSecureContext(true)
+    , m_queue(new NullEventQueue())
 {
 }
 
-void NullExecutionContext::postTask(const WebTraceLocation&, PassOwnPtr<ExecutionContextTask>)
+void NullExecutionContext::postTask(const WebTraceLocation&, std::unique_ptr<ExecutionContextTask>, const String&)
 {
+}
+
+void NullExecutionContext::setIsSecureContext(bool isSecureContext)
+{
+    m_isSecureContext = isSecureContext;
 }
 
 bool NullExecutionContext::isSecureContext(String& errorMessage, const SecureContextCheck privilegeContextCheck) const
 {
-    return true;
+    if (!m_isSecureContext)
+        errorMessage = "A secure context is required";
+    return m_isSecureContext;
 }
 
 } // namespace blink

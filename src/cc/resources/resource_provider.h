@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <deque>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -19,7 +20,6 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_provider.h"
@@ -37,7 +37,6 @@
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
@@ -86,16 +85,18 @@ class CC_EXPORT ResourceProvider
     RESOURCE_TYPE_BITMAP,
   };
 
-  static scoped_ptr<ResourceProvider> Create(
-      OutputSurface* output_surface,
-      SharedBitmapManager* shared_bitmap_manager,
-      gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-      BlockingTaskRunner* blocking_main_thread_task_runner,
-      int highp_threshold_min,
-      size_t id_allocation_chunk_size,
-      bool use_gpu_memory_buffer_resources,
-      const std::vector<unsigned>& use_image_texture_targets);
+  ResourceProvider(ContextProvider* compositor_context_provider,
+                   SharedBitmapManager* shared_bitmap_manager,
+                   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
+                   BlockingTaskRunner* blocking_main_thread_task_runner,
+                   int highp_threshold_min,
+                   size_t id_allocation_chunk_size,
+                   bool delegated_sync_points_required,
+                   bool use_gpu_memory_buffer_resources,
+                   const std::vector<unsigned>& use_image_texture_targets);
   ~ResourceProvider() override;
+
+  void Initialize();
 
   void DidLoseOutputSurface() { lost_output_surface_ = true; }
 
@@ -139,18 +140,14 @@ class CC_EXPORT ResourceProvider
                                            TextureHint hint,
                                            ResourceFormat format);
 
-  // Wraps an IOSurface into a GL resource.
-  ResourceId CreateResourceFromIOSurface(const gfx::Size& size,
-                                         unsigned io_surface_id);
-
   // Wraps an external texture mailbox into a GL resource.
   ResourceId CreateResourceFromTextureMailbox(
       const TextureMailbox& mailbox,
-      scoped_ptr<SingleReleaseCallbackImpl> release_callback_impl);
+      std::unique_ptr<SingleReleaseCallbackImpl> release_callback_impl);
 
   ResourceId CreateResourceFromTextureMailbox(
       const TextureMailbox& mailbox,
-      scoped_ptr<SingleReleaseCallbackImpl> release_callback_impl,
+      std::unique_ptr<SingleReleaseCallbackImpl> release_callback_impl,
       bool read_lock_fences_enabled);
 
   void DeleteResource(ResourceId id);
@@ -218,23 +215,23 @@ class CC_EXPORT ResourceProvider
    public:
     ScopedReadLockGL(ResourceProvider* resource_provider,
                      ResourceId resource_id);
-    virtual ~ScopedReadLockGL();
+    ~ScopedReadLockGL();
 
-    unsigned texture_id() const { return resource_->gl_id; }
-    GLenum target() const { return resource_->target; }
-    const gfx::Size& texture_size() const { return resource_->size; }
-
-   protected:
-    ResourceProvider* resource_provider_;
-    ResourceId resource_id_;
+    unsigned texture_id() const { return texture_id_; }
+    GLenum target() const { return target_; }
+    const gfx::Size& size() const { return size_; }
 
    private:
-    const ResourceProvider::Resource* resource_;
+    ResourceProvider* resource_provider_;
+    ResourceId resource_id_;
+    unsigned texture_id_;
+    GLenum target_;
+    gfx::Size size_;
 
     DISALLOW_COPY_AND_ASSIGN(ScopedReadLockGL);
   };
 
-  class CC_EXPORT ScopedSamplerGL : public ScopedReadLockGL {
+  class CC_EXPORT ScopedSamplerGL {
    public:
     ScopedSamplerGL(ResourceProvider* resource_provider,
                     ResourceId resource_id,
@@ -243,11 +240,13 @@ class CC_EXPORT ResourceProvider
                     ResourceId resource_id,
                     GLenum unit,
                     GLenum filter);
-    ~ScopedSamplerGL() override;
+    ~ScopedSamplerGL();
 
+    unsigned texture_id() const { return resource_lock_.texture_id(); }
     GLenum target() const { return target_; }
 
    private:
+    ScopedReadLockGL resource_lock_;
     GLenum unit_;
     GLenum target_;
 
@@ -257,24 +256,72 @@ class CC_EXPORT ResourceProvider
   class CC_EXPORT ScopedWriteLockGL {
    public:
     ScopedWriteLockGL(ResourceProvider* resource_provider,
-                      ResourceId resource_id);
+                      ResourceId resource_id,
+                      bool create_mailbox);
     ~ScopedWriteLockGL();
 
     unsigned texture_id() const { return texture_id_; }
+    GLenum target() const { return target_; }
+    ResourceFormat format() const { return format_; }
+    const gfx::Size& size() const { return size_; }
 
-    void UpdateResourceSyncToken(const gpu::SyncToken& sync_token) {
-      set_sync_token_ = true;
+    const TextureMailbox& mailbox() const { return mailbox_; }
+
+    void set_sync_token(const gpu::SyncToken& sync_token) {
       sync_token_ = sync_token;
     }
 
+    void set_synchronized(bool synchronized) { synchronized_ = synchronized; }
+
    private:
     ResourceProvider* resource_provider_;
-    ResourceProvider::Resource* resource_;
+    ResourceId resource_id_;
     unsigned texture_id_;
-    bool set_sync_token_;
+    GLenum target_;
+    ResourceFormat format_;
+    gfx::Size size_;
+    TextureMailbox mailbox_;
     gpu::SyncToken sync_token_;
+    bool synchronized_;
+    base::ThreadChecker thread_checker_;
 
     DISALLOW_COPY_AND_ASSIGN(ScopedWriteLockGL);
+  };
+
+  class CC_EXPORT ScopedTextureProvider {
+   public:
+    ScopedTextureProvider(gpu::gles2::GLES2Interface* gl,
+                          ScopedWriteLockGL* resource_lock,
+                          bool use_mailbox);
+    ~ScopedTextureProvider();
+
+    unsigned texture_id() const { return texture_id_; }
+
+   private:
+    gpu::gles2::GLES2Interface* gl_;
+    bool use_mailbox_;
+    unsigned texture_id_;
+
+    DISALLOW_COPY_AND_ASSIGN(ScopedTextureProvider);
+  };
+
+  class CC_EXPORT ScopedSkSurfaceProvider {
+   public:
+    ScopedSkSurfaceProvider(ContextProvider* context_provider,
+                            ScopedWriteLockGL* resource_lock,
+                            bool use_mailbox,
+                            bool use_distance_field_text,
+                            bool can_use_lcd_text,
+                            int msaa_sample_count);
+    ~ScopedSkSurfaceProvider();
+
+    SkSurface* sk_surface() { return sk_surface_.get(); }
+
+   private:
+    ScopedTextureProvider texture_provider_;
+    sk_sp<SkSurface> sk_surface_;
+
+    DISALLOW_COPY_AND_ASSIGN(ScopedSkSurfaceProvider);
   };
 
   class CC_EXPORT ScopedReadLockSoftware {
@@ -298,6 +345,24 @@ class CC_EXPORT ResourceProvider
     DISALLOW_COPY_AND_ASSIGN(ScopedReadLockSoftware);
   };
 
+  class CC_EXPORT ScopedReadLockSkImage {
+   public:
+    ScopedReadLockSkImage(ResourceProvider* resource_provider,
+                          ResourceId resource_id);
+    ~ScopedReadLockSkImage();
+
+    const SkImage* sk_image() const { return sk_image_.get(); }
+
+    bool valid() const { return !!sk_image_; }
+
+   private:
+    ResourceProvider* resource_provider_;
+    ResourceId resource_id_;
+    sk_sp<SkImage> sk_image_;
+
+    DISALLOW_COPY_AND_ASSIGN(ScopedReadLockSkImage);
+  };
+
   class CC_EXPORT ScopedWriteLockSoftware {
    public:
     ScopedWriteLockSoftware(ResourceProvider* resource_provider,
@@ -309,7 +374,7 @@ class CC_EXPORT ResourceProvider
 
    private:
     ResourceProvider* resource_provider_;
-    ResourceProvider::Resource* resource_;
+    ResourceId resource_id_;
     SkBitmap sk_bitmap_;
     base::ThreadChecker thread_checker_;
 
@@ -326,43 +391,13 @@ class CC_EXPORT ResourceProvider
 
    private:
     ResourceProvider* resource_provider_;
-    ResourceProvider::Resource* resource_;
-    scoped_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer_;
+    ResourceId resource_id_;
+    ResourceFormat format_;
+    gfx::Size size_;
+    std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer_;
     base::ThreadChecker thread_checker_;
 
     DISALLOW_COPY_AND_ASSIGN(ScopedWriteLockGpuMemoryBuffer);
-  };
-
-  class CC_EXPORT ScopedWriteLockGr {
-   public:
-    ScopedWriteLockGr(ResourceProvider* resource_provider,
-                      ResourceId resource_id);
-    ~ScopedWriteLockGr();
-
-    void InitSkSurface(bool use_distance_field_text,
-                       bool can_use_lcd_text,
-                       int msaa_sample_count);
-    void ReleaseSkSurface();
-
-    SkSurface* sk_surface() { return sk_surface_.get(); }
-
-    gfx::Size GetResourceSize() const { return resource_->size; }
-
-    void UpdateResourceSyncToken(const gpu::SyncToken& sync_token) {
-      set_sync_token_ = true;
-      sync_token_ = sync_token;
-    }
-
-   private:
-    ResourceProvider* resource_provider_;
-    ResourceProvider::Resource* resource_;
-    base::ThreadChecker thread_checker_;
-    skia::RefPtr<SkSurface> sk_surface_;
-    skia::RefPtr<GrSurface> gr_surface_;
-    bool set_sync_token_;
-    gpu::SyncToken sync_token_;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedWriteLockGr);
   };
 
   class Fence : public base::RefCounted<Fence> {
@@ -431,21 +466,12 @@ class CC_EXPORT ResourceProvider
   // Indicates if we can currently lock this resource for write.
   bool CanLockForWrite(ResourceId id);
 
-  // Indicates if this resource is currently being used as an overlay by the
-  // windowing system.
-  // TODO(ccameron): This should be entirely hidden inside CanLockForWrite, but
-  // will erratically returns true, potentially breaking DCHECKs.
-  // http://crbug.com/577121
-  bool IsInUseByMacOSWindowServer(ResourceId id);
-
   // Indicates if this resource may be used for a hardware overlay plane.
   bool IsOverlayCandidate(ResourceId id);
 
   void WaitSyncTokenIfNeeded(ResourceId id);
 
   static GLint GetActiveTextureUnit(gpu::gles2::GLES2Interface* gl);
-
-  OutputSurface* output_surface() { return output_surface_; }
 
   void ValidateResource(ResourceId id) const;
 
@@ -456,17 +482,6 @@ class CC_EXPORT ResourceProvider
                     base::trace_event::ProcessMemoryDump* pmd) override;
 
   int tracing_id() const { return tracing_id_; }
-
- protected:
-  ResourceProvider(OutputSurface* output_surface,
-                   SharedBitmapManager* shared_bitmap_manager,
-                   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-                   BlockingTaskRunner* blocking_main_thread_task_runner,
-                   int highp_threshold_min,
-                   size_t id_allocation_chunk_size,
-                   bool use_gpu_memory_buffer_resources,
-                   const std::vector<unsigned>& use_image_texture_targets);
-  void Initialize();
 
  private:
   struct Resource {
@@ -484,19 +499,20 @@ class CC_EXPORT ResourceProvider
       // a sync token arrives from an external resource (such as a child or
       // parent), it is automatically initialized as NEEDS_WAIT as well
       // since we still need to wait on it before the resource is synchronized
-      // on the current context.
+      // on the current context. It is an error to use the resource locally for
+      // reading or writing if the resource is in this state.
       NEEDS_WAIT,
 
       // The SYNCHRONIZED state indicates that the resource has been properly
       // synchronized locally. This can either synchronized externally (such
       // as the case of software rasterized bitmaps), or synchronized
       // internally using a sync token that has been waited upon. In the
-      // former case which was synchronized externally, a corresponding sync
-      // token will not exist. In the latter case which was synchronized from
-      // the NEEDS_WAIT state, a corresponding sync token will exist which
-      // is assocaited with the resource. This sync token is still valid and
-      // still associated with the resource and can be passed as an external
-      // resource for others to wait on.
+      // former case where the resource was synchronized externally, a
+      // corresponding sync token will not exist. In the latter case which was
+      // synchronized from the NEEDS_WAIT state, a corresponding sync token will
+      // exist which is assocaited with the resource. This sync token is still
+      // valid and still associated with the resource and can be passed as an
+      // external resource for others to wait on.
       SYNCHRONIZED,
     };
 
@@ -518,7 +534,7 @@ class CC_EXPORT ResourceProvider
              const gfx::Size& size,
              Origin origin,
              GLenum filter);
-    Resource(const Resource& other);
+    Resource(Resource&& other);
 
     bool needs_sync_token() const { return needs_sync_token_; }
 
@@ -570,12 +586,14 @@ class CC_EXPORT ResourceProvider
     ResourceFormat format;
     SharedBitmapId shared_bitmap_id;
     SharedBitmap* shared_bitmap;
-    gfx::GpuMemoryBuffer* gpu_memory_buffer;
+    std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
 
    private:
     SynchronizationState synchronization_state_ = SYNCHRONIZED;
     bool needs_sync_token_ = false;
     TextureMailbox mailbox_;
+
+    DISALLOW_COPY_AND_ASSIGN(Resource);
   };
   using ResourceMap = std::unordered_map<ResourceId, Resource>;
 
@@ -602,7 +620,7 @@ class CC_EXPORT ResourceProvider
                              ResourceType type,
                              ResourceFormat format);
   ResourceId CreateBitmap(const gfx::Size& size);
-  Resource* InsertResource(ResourceId id, const Resource& resource);
+  Resource* InsertResource(ResourceId id, Resource resource);
   Resource* GetResource(ResourceId id);
   const Resource* LockForRead(ResourceId id);
   void UnlockForRead(ResourceId id);
@@ -637,11 +655,11 @@ class CC_EXPORT ResourceProvider
   // texture target used. The resource must be locked for reading.
   GLenum BindForSampling(ResourceId resource_id, GLenum unit, GLenum filter);
 
-  // Returns NULL if the output_surface_ does not have a ContextProvider.
+  // Returns null if we do not have a ContextProvider.
   gpu::gles2::GLES2Interface* ContextGL() const;
-  class GrContext* GrContext(bool worker_context) const;
+  bool IsGLContextLost() const;
 
-  OutputSurface* output_surface_;
+  ContextProvider* compositor_context_provider_;
   SharedBitmapManager* shared_bitmap_manager_;
   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
   BlockingTaskRunner* blocking_main_thread_task_runner_;
@@ -652,8 +670,9 @@ class CC_EXPORT ResourceProvider
   int next_child_;
   ChildMap children_;
 
+  const bool delegated_sync_points_required_;
+
   ResourceType default_resource_type_;
-  bool use_gpu_memory_buffer_resources_;
   bool use_texture_storage_ext_;
   bool use_texture_format_bgra_;
   bool use_texture_usage_hint_;
@@ -669,8 +688,8 @@ class CC_EXPORT ResourceProvider
   scoped_refptr<Fence> current_read_lock_fence_;
 
   const size_t id_allocation_chunk_size_;
-  scoped_ptr<IdAllocator> texture_id_allocator_;
-  scoped_ptr<IdAllocator> buffer_id_allocator_;
+  std::unique_ptr<IdAllocator> texture_id_allocator_;
+  std::unique_ptr<IdAllocator> buffer_id_allocator_;
 
   bool use_sync_query_;
   std::vector<unsigned> use_image_texture_targets_;

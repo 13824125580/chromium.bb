@@ -31,6 +31,7 @@
 #include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/editing/FrameSelection.h"
@@ -40,6 +41,7 @@
 #include "core/events/Event.h"
 #include "core/frame/FrameHost.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/FormData.h"
 #include "core/html/forms/FormController.h"
 #include "core/html/parser/HTMLParserIdioms.h"
@@ -87,11 +89,11 @@ HTMLTextAreaElement::HTMLTextAreaElement(Document& document, HTMLFormElement* fo
 {
 }
 
-PassRefPtrWillBeRawPtr<HTMLTextAreaElement> HTMLTextAreaElement::create(Document& document, HTMLFormElement* form)
+HTMLTextAreaElement* HTMLTextAreaElement::create(Document& document, HTMLFormElement* form)
 {
-    RefPtrWillBeRawPtr<HTMLTextAreaElement> textArea = adoptRefWillBeNoop(new HTMLTextAreaElement(document, form));
+    HTMLTextAreaElement* textArea = new HTMLTextAreaElement(document, form);
     textArea->ensureUserAgentShadowRoot();
-    return textArea.release();
+    return textArea;
 }
 
 void HTMLTextAreaElement::didAddUserAgentShadowRoot(ShadowRoot& root)
@@ -101,7 +103,7 @@ void HTMLTextAreaElement::didAddUserAgentShadowRoot(ShadowRoot& root)
 
 const AtomicString& HTMLTextAreaElement::formControlType() const
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, textarea, ("textarea", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, textarea, ("textarea"));
     return textarea;
 }
 
@@ -191,8 +193,10 @@ void HTMLTextAreaElement::parseAttribute(const QualifiedName& name, const Atomic
     } else if (name == accesskeyAttr) {
         // ignore for the moment
     } else if (name == maxlengthAttr) {
+        UseCounter::count(document(), UseCounter::TextAreaMaxLength);
         setNeedsValidityCheck();
     } else if (name == minlengthAttr) {
+        UseCounter::count(document(), UseCounter::TextAreaMinLength);
         setNeedsValidityCheck();
     } else {
         HTMLTextFormControlElement::parseAttribute(name, oldValue, value);
@@ -209,7 +213,7 @@ void HTMLTextAreaElement::appendToFormData(FormData& formData)
     if (name().isEmpty())
         return;
 
-    document().updateLayout();
+    document().updateStyleAndLayout();
 
     const String& text = (m_wrap == HardWrap) ? valueWithHardLineBreaks() : value();
     formData.append(name(), text);
@@ -272,6 +276,19 @@ void HTMLTextAreaElement::handleFocusEvent(Element*, WebFocusType)
 
 void HTMLTextAreaElement::subtreeHasChanged()
 {
+#if ENABLE(ASSERT)
+    // The innerEditor should have either Text nodes or a placeholder break
+    // element. If we see other nodes, it's a bug in editing code and we should
+    // fix it.
+    Element* innerEditor = innerEditorElement();
+    for (Node& node : NodeTraversal::descendantsOf(*innerEditor)) {
+        if (node.isTextNode())
+            continue;
+        ASSERT(isHTMLBRElement(node));
+        ASSERT(&node == innerEditor->lastChild());
+    }
+#endif
+    addPlaceholderBreakElementIfNecessary();
     setChangedSinceLastFormControlChangeEvent(true);
     m_valueIsUpToDate = false;
     setNeedsValidityCheck();
@@ -319,9 +336,20 @@ void HTMLTextAreaElement::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent*
 
 String HTMLTextAreaElement::sanitizeUserInputValue(const String& proposedValue, unsigned maxLength)
 {
-    if (maxLength > 0 && U16_IS_LEAD(proposedValue[maxLength - 1]))
-        --maxLength;
-    return proposedValue.left(maxLength);
+    unsigned submissionLength = 0;
+    unsigned i = 0;
+    for (; i < proposedValue.length(); ++i) {
+        submissionLength += proposedValue[i] == '\n' ? 2 : 1;
+        if (submissionLength == maxLength) {
+            ++i;
+            break;
+        }
+        if (submissionLength > maxLength)
+            break;
+    }
+    if (i > 0 && U16_IS_LEAD(proposedValue[i - 1]))
+        --i;
+    return proposedValue.left(i);
 }
 
 void HTMLTextAreaElement::updateValue() const
@@ -344,7 +372,6 @@ String HTMLTextAreaElement::value() const
 
 void HTMLTextAreaElement::setValue(const String& value, TextFieldEventBehavior eventBehavior)
 {
-    RefPtrWillBeRawPtr<HTMLTextAreaElement> protector(this);
     setValueCommon(value, eventBehavior);
     m_isDirty = true;
     if (document().focusedElement() == this)
@@ -426,10 +453,8 @@ String HTMLTextAreaElement::defaultValue() const
 
 void HTMLTextAreaElement::setDefaultValue(const String& defaultValue)
 {
-    RefPtrWillBeRawPtr<Node> protectFromMutationEvents(this);
-
     // To preserve comments, remove only the text nodes, then add a single text node.
-    WillBeHeapVector<RefPtrWillBeMember<Node>> textNodes;
+    HeapVector<Member<Node>> textNodes;
     for (Node* n = firstChild(); n; n = n->nextSibling()) {
         if (n->isTextNode())
             textNodes.append(n);
@@ -620,9 +645,9 @@ void HTMLTextAreaElement::updatePlaceholderText()
         return;
     }
     if (!placeholder) {
-        RefPtrWillBeRawPtr<HTMLDivElement> newElement = HTMLDivElement::create(document());
-        placeholder = newElement.get();
-        placeholder->setShadowPseudoId(AtomicString("-webkit-input-placeholder", AtomicString::ConstructFromLiteral));
+        HTMLDivElement* newElement = HTMLDivElement::create(document());
+        placeholder = newElement;
+        placeholder->setShadowPseudoId(AtomicString("-webkit-input-placeholder"));
         placeholder->setAttribute(idAttr, ShadowElementNames::placeholder());
         placeholder->setInlineStyleProperty(CSSPropertyDisplay, isPlaceholderVisible() ? CSSValueBlock : CSSValueNone, true);
         userAgentShadowRoot()->insertBefore(placeholder, innerEditorElement());
@@ -642,7 +667,7 @@ bool HTMLTextAreaElement::supportsAutofocus() const
 
 const AtomicString& HTMLTextAreaElement::defaultAutocapitalize() const
 {
-    DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences", AtomicString::ConstructFromLiteral));
+    DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences"));
     return sentences;
 }
 

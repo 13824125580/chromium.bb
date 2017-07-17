@@ -5,7 +5,7 @@
 #ifndef ASH_SHELF_SHELF_WINDOW_WATCHER_ITEM_DELEGATE_H_
 #define ASH_SHELF_SHELF_WINDOW_WATCHER_ITEM_DELEGATE_H_
 
-#include "ash/shelf/shelf_item_delegate.h"
+#include "ash/common/shelf/shelf_item_delegate.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 
@@ -14,13 +14,11 @@ class Window;
 }
 
 namespace ash {
-class ShelfModel;
 
 // ShelfItemDelegate for the items created by ShelfWindowWatcher.
 class ShelfWindowWatcherItemDelegate : public ShelfItemDelegate {
  public:
-  ShelfWindowWatcherItemDelegate(aura::Window* window, ShelfModel* model_);
-
+  explicit ShelfWindowWatcherItemDelegate(aura::Window* window);
   ~ShelfWindowWatcherItemDelegate() override;
 
  private:
@@ -28,7 +26,6 @@ class ShelfWindowWatcherItemDelegate : public ShelfItemDelegate {
   ShelfItemDelegate::PerformedAction ItemSelected(
       const ui::Event& event) override;
   base::string16 GetTitle() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root_window) override;
   ShelfMenuModel* CreateApplicationMenu(int event_flags) override;
   bool IsDraggable() override;
   bool CanPin() const override;
@@ -37,9 +34,6 @@ class ShelfWindowWatcherItemDelegate : public ShelfItemDelegate {
 
   // Stores a Window associated with this item. Not owned.
   aura::Window* window_;
-
-  // Not owned.
-  ShelfModel* model_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfWindowWatcherItemDelegate);
 };

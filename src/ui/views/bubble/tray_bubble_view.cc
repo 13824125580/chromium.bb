@@ -293,10 +293,10 @@ TrayBubbleView::InitParams::InitParams(AnchorType anchor_type,
 TrayBubbleView::InitParams::InitParams(const InitParams& other) = default;
 
 // static
-TrayBubbleView* TrayBubbleView::Create(gfx::NativeView parent_window,
-                                       View* anchor,
+TrayBubbleView* TrayBubbleView::Create(View* anchor,
                                        Delegate* delegate,
                                        InitParams* init_params) {
+  DCHECK(anchor);
   // Set arrow here so that it can be passed to the BubbleView constructor.
   if (init_params->anchor_type == ANCHOR_TYPE_TRAY) {
     if (init_params->anchor_alignment == ANCHOR_ALIGNMENT_BOTTOM) {
@@ -313,14 +313,13 @@ TrayBubbleView* TrayBubbleView::Create(gfx::NativeView parent_window,
     init_params->arrow = BubbleBorder::NONE;
   }
 
-  return new TrayBubbleView(parent_window, anchor, delegate, *init_params);
+  return new TrayBubbleView(anchor, delegate, *init_params);
 }
 
-TrayBubbleView::TrayBubbleView(gfx::NativeView parent_window,
-                               View* anchor,
+TrayBubbleView::TrayBubbleView(View* anchor,
                                Delegate* delegate,
                                const InitParams& init_params)
-    : BubbleDelegateView(anchor, init_params.arrow),
+    : BubbleDialogDelegateView(anchor, init_params.arrow),
       params_(init_params),
       delegate_(delegate),
       preferred_width_(init_params.min_width),
@@ -328,12 +327,11 @@ TrayBubbleView::TrayBubbleView(gfx::NativeView parent_window,
       owned_bubble_border_(bubble_border_),
       is_gesture_dragging_(false),
       mouse_actively_entered_(false) {
-  set_parent_window(parent_window);
+  DCHECK(anchor_widget());  // Computed by BubbleDialogDelegateView().
   set_notify_enter_exit_on_child(true);
   set_close_on_deactivate(init_params.close_on_deactivate);
   set_margins(gfx::Insets());
   SetPaintToLayer(true);
-  SetFillsBoundsOpaquely(true);
 
   bubble_content_mask_.reset(
       new TrayBubbleContentMask(bubble_border_->GetBorderCornerRadius()));
@@ -347,7 +345,7 @@ TrayBubbleView::~TrayBubbleView() {
 }
 
 void TrayBubbleView::InitializeAndShowBubble() {
-  // Must occur after call to BubbleDelegateView::CreateBubble().
+  // Must occur after call to BubbleDialogDelegateView::CreateBubble().
   SetAlignment(params_.arrow_alignment);
   bubble_border_->UpdateArrowOffset();
 
@@ -355,7 +353,7 @@ void TrayBubbleView::InitializeAndShowBubble() {
 
   GetWidget()->Show();
   GetWidget()->GetNativeWindow()->SetEventTargeter(
-      scoped_ptr<ui::EventTargeter>(new BubbleWindowTargeter(this)));
+      std::unique_ptr<ui::EventTargeter>(new BubbleWindowTargeter(this)));
   UpdateBubble();
 }
 
@@ -392,6 +390,10 @@ gfx::Insets TrayBubbleView::GetBorderInsets() const {
   return bubble_border_->GetInsets();
 }
 
+int TrayBubbleView::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
+}
+
 void TrayBubbleView::Init() {
   BoxLayout* layout = new BottomAlignedBoxLayout(this);
   layout->SetDefaultFlex(1);
@@ -406,13 +408,19 @@ gfx::Rect TrayBubbleView::GetAnchorRect() const {
                                   params_.anchor_alignment);
 }
 
+void TrayBubbleView::OnBeforeBubbleWidgetInit(Widget::InitParams* params,
+                                              Widget* bubble_widget) const {
+  if (delegate_)
+    delegate_->OnBeforeBubbleWidgetInit(anchor_widget(), bubble_widget, params);
+}
+
 bool TrayBubbleView::CanActivate() const {
   return params_.can_activate;
 }
 
 NonClientFrameView* TrayBubbleView::CreateNonClientFrameView(Widget* widget) {
   BubbleFrameView* frame = static_cast<BubbleFrameView*>(
-      BubbleDelegateView::CreateNonClientFrameView(widget));
+      BubbleDialogDelegateView::CreateNonClientFrameView(widget));
   frame->SetBubbleBorder(std::move(owned_bubble_border_));
   return frame;
 }
@@ -507,7 +515,6 @@ void TrayBubbleView::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
   if (details.is_add && details.child == this) {
     details.parent->SetPaintToLayer(true);
-    details.parent->SetFillsBoundsOpaquely(true);
     details.parent->layer()->SetMasksToBounds(true);
   }
 }

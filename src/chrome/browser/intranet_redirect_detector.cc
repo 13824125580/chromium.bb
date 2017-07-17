@@ -13,7 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -91,7 +91,8 @@ void IntranetRedirectDetector::FinishSleep() {
     // We don't want these fetches to affect existing state in the profile.
     fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
                           net::LOAD_DO_NOT_SAVE_COOKIES |
-                          net::LOAD_DO_NOT_SEND_COOKIES);
+                          net::LOAD_DO_NOT_SEND_COOKIES |
+                          net::LOAD_DO_NOT_SEND_AUTH_DATA);
     fetcher->SetRequestContext(g_browser_process->system_request_context());
     fetcher->Start();
     fetchers_.insert(fetcher);
@@ -104,7 +105,7 @@ void IntranetRedirectDetector::OnURLFetchComplete(
   Fetchers::iterator fetcher = fetchers_.find(
       const_cast<net::URLFetcher*>(source));
   DCHECK(fetcher != fetchers_.end());
-  scoped_ptr<net::URLFetcher> clean_up_fetcher(*fetcher);
+  std::unique_ptr<net::URLFetcher> clean_up_fetcher(*fetcher);
   fetchers_.erase(fetcher);
 
   // If any two fetches result in the same domain/host, we set the redirect

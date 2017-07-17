@@ -6,10 +6,13 @@
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "bindings/core/v8/ScriptState.h"
+#include "core/dom/DOMException.h"
 #include "core/dom/ExecutionContext.h"
 #include "modules/audio_output_devices/AudioOutputDeviceClient.h"
 #include "modules/audio_output_devices/SetSinkIdCallbacks.h"
 #include "public/platform/WebSecurityOrigin.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -28,7 +31,7 @@ private:
     SetSinkIdResolver(ScriptState*, HTMLMediaElement&, const String& sinkId);
     void timerFired(Timer<SetSinkIdResolver>*);
 
-    RefPtrWillBeMember<HTMLMediaElement> m_element;
+    Member<HTMLMediaElement> m_element;
     String m_sinkId;
     Timer<SetSinkIdResolver> m_timer;
 };
@@ -56,16 +59,16 @@ void SetSinkIdResolver::startAsync()
 
 void SetSinkIdResolver::timerFired(Timer<SetSinkIdResolver>* timer)
 {
-    ExecutionContext* context = executionContext();
+    ExecutionContext* context = getExecutionContext();
     ASSERT(context && context->isDocument());
-    OwnPtr<SetSinkIdCallbacks> callbacks = adoptPtr(new SetSinkIdCallbacks(this, *m_element, m_sinkId));
+    std::unique_ptr<SetSinkIdCallbacks> callbacks = wrapUnique(new SetSinkIdCallbacks(this, *m_element, m_sinkId));
     WebMediaPlayer* webMediaPlayer = m_element->webMediaPlayer();
     if (webMediaPlayer) {
-        // Using leakPtr() to transfer ownership because |webMediaPlayer| is a platform object that takes raw pointers
-        webMediaPlayer->setSinkId(m_sinkId, WebSecurityOrigin(context->securityOrigin()), callbacks.leakPtr());
+        // Using release() to transfer ownership because |webMediaPlayer| is a platform object that takes raw pointers
+        webMediaPlayer->setSinkId(m_sinkId, WebSecurityOrigin(context->getSecurityOrigin()), callbacks.release());
     } else {
         if (AudioOutputDeviceClient* client = AudioOutputDeviceClient::from(context)) {
-            client->checkIfAudioSinkExistsAndIsAuthorized(context, m_sinkId, callbacks.release());
+            client->checkIfAudioSinkExistsAndIsAuthorized(context, m_sinkId, std::move(callbacks));
         } else {
             // The context has been detached. Impossible to get a security origin to check.
             ASSERT(context->activeDOMObjectsAreStopped());
@@ -117,17 +120,17 @@ const char* HTMLMediaElementAudioOutputDevice::supplementName()
 
 HTMLMediaElementAudioOutputDevice& HTMLMediaElementAudioOutputDevice::from(HTMLMediaElement& element)
 {
-    HTMLMediaElementAudioOutputDevice* supplement = static_cast<HTMLMediaElementAudioOutputDevice*>(WillBeHeapSupplement<HTMLMediaElement>::from(element, supplementName()));
+    HTMLMediaElementAudioOutputDevice* supplement = static_cast<HTMLMediaElementAudioOutputDevice*>(Supplement<HTMLMediaElement>::from(element, supplementName()));
     if (!supplement) {
         supplement = new HTMLMediaElementAudioOutputDevice();
-        provideTo(element, supplementName(), adoptPtrWillBeNoop(supplement));
+        provideTo(element, supplementName(), supplement);
     }
     return *supplement;
 }
 
 DEFINE_TRACE(HTMLMediaElementAudioOutputDevice)
 {
-    WillBeHeapSupplement<HTMLMediaElement>::trace(visitor);
+    Supplement<HTMLMediaElement>::trace(visitor);
 }
 
 } // namespace blink

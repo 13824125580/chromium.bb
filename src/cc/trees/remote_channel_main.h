@@ -22,7 +22,7 @@ class CompositorMessageToMain;
 class CC_EXPORT RemoteChannelMain : public ChannelMain,
                                     public RemoteProtoChannel::ProtoReceiver {
  public:
-  static scoped_ptr<RemoteChannelMain> Create(
+  static std::unique_ptr<RemoteChannelMain> Create(
       RemoteProtoChannel* remote_proto_channel,
       ProxyMain* proxy_main,
       TaskRunnerProvider* task_runner_provider);
@@ -30,11 +30,12 @@ class CC_EXPORT RemoteChannelMain : public ChannelMain,
   ~RemoteChannelMain() override;
 
   // ChannelMain implementation
-  void SetThrottleFrameProductionOnImpl(bool throttle) override;
   void UpdateTopControlsStateOnImpl(TopControlsState constraints,
                                     TopControlsState current,
                                     bool animate) override;
   void InitializeOutputSurfaceOnImpl(OutputSurface* output_surface) override;
+  void InitializeMutatorOnImpl(
+      std::unique_ptr<LayerTreeMutator> mutator) override;
   void MainThreadHasStoppedFlingingOnImpl() override;
   void SetInputThrottledUntilCommitOnImpl(bool is_throttled) override;
   void SetDeferCommitsOnImpl(bool defer_commits) override;
@@ -55,11 +56,12 @@ class CC_EXPORT RemoteChannelMain : public ChannelMain,
                          bool hold_commit_for_activation) override;
   void SynchronouslyInitializeImpl(
       LayerTreeHost* layer_tree_host,
-      scoped_ptr<BeginFrameSource> external_begin_frame_source) override;
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source) override;
   void SynchronouslyCloseImpl() override;
 
   // RemoteProtoChannel::ProtoReceiver implementation
-  void OnProtoReceived(scoped_ptr<proto::CompositorMessage> proto) override;
+  void OnProtoReceived(
+      std::unique_ptr<proto::CompositorMessage> proto) override;
 
  protected:
   RemoteChannelMain(RemoteProtoChannel* remote_proto_channel,

@@ -39,9 +39,10 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkShader.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/display/display.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
@@ -281,9 +282,9 @@ struct GtkIconInfoDeleter {
     G_GNUC_END_IGNORE_DEPRECATIONS
   }
 };
-typedef scoped_ptr<GIcon, GObjectDeleter> ScopedGIcon;
-typedef scoped_ptr<GtkIconInfo, GtkIconInfoDeleter> ScopedGtkIconInfo;
-typedef scoped_ptr<GdkPixbuf, GObjectDeleter> ScopedGdkPixbuf;
+typedef std::unique_ptr<GIcon, GObjectDeleter> ScopedGIcon;
+typedef std::unique_ptr<GtkIconInfo, GtkIconInfoDeleter> ScopedGtkIconInfo;
+typedef std::unique_ptr<GdkPixbuf, GObjectDeleter> ScopedGdkPixbuf;
 
 // Prefix for app indicator ids
 const char kAppIndicatorIdPrefix[] = "chrome_app_indicator_";
@@ -430,13 +431,25 @@ gfx::FontRenderParams GetGtkFontRenderParams() {
 }
 
 double GetDPI() {
-  GtkSettings* gtk_settings = gtk_settings_get_default();
-  CHECK(gtk_settings);
-  gint gtk_dpi = -1;
-  g_object_get(gtk_settings, "gtk-xft-dpi", &gtk_dpi, NULL);
+  // Linux chrome currently does not support dynamic DPI changes.
+  // Keep using the first value detected.
+  static double dpi = -1.f;
+  if (dpi < 0) {
+    const double kDefaultDPI = 96;
 
-  // GTK multiplies the DPI by 1024 before storing it.
-  return (gtk_dpi > 0) ? gtk_dpi / 1024.0 : 96.0;
+    GtkSettings* gtk_settings = gtk_settings_get_default();
+    CHECK(gtk_settings);
+    gint gtk_dpi = -1;
+    g_object_get(gtk_settings, "gtk-xft-dpi", &gtk_dpi, NULL);
+
+    // GTK multiplies the DPI by 1024 before storing it.
+    dpi = (gtk_dpi > 0) ? gtk_dpi / 1024.0 : kDefaultDPI;
+
+    // DSF is always >=1.0 on win/cros and lower DSF has never been considered
+    // nor tested.
+    dpi = std::max(kDefaultDPI, dpi);
+  }
+  return dpi;
 }
 
 // Queries GTK for its font DPI setting and returns the number of pixels in a
@@ -453,7 +466,7 @@ double GetPixelsInPoint(float device_scale_factor) {
 }
 
 views::LinuxUI::NonClientMiddleClickAction GetDefaultMiddleClickAction() {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   switch (base::nix::GetDesktopEnvironment(env.get())) {
     case base::nix::DESKTOP_ENVIRONMENT_KDE4:
     case base::nix::DESKTOP_ENVIRONMENT_KDE5:
@@ -472,6 +485,7 @@ views::LinuxUI::NonClientMiddleClickAction GetDefaultMiddleClickAction() {
 Gtk2UI::Gtk2UI()
     : default_font_size_pixels_(0),
       default_font_style_(gfx::Font::NORMAL),
+      default_font_weight_(gfx::Font::Weight::NORMAL),
       middle_click_action_(GetDefaultMiddleClickAction()),
       device_scale_factor_(1.0) {
   GtkInitFromCommandLine(*base::CommandLine::ForCurrentProcess());
@@ -515,6 +529,10 @@ void Gtk2UI::Initialize() {
   Gtk2EventLoop::GetInstance();
 }
 
+void Gtk2UI::MaterialDesignControllerReady() {
+  UpdateMaterialDesignColors();
+}
+
 Gtk2UI::~Gtk2UI() {
   ClearAllThemeData();
 }
@@ -539,9 +557,12 @@ gfx::Image Gtk2UI::GetThemeImageNamed(int id) const {
 
 bool Gtk2UI::GetTint(int id, color_utils::HSL* tint) const {
   switch (id) {
+    // Tints for which the cross-platform default is fine. Before adding new
+    // values here, specifically verify they work well on Linux.
     case ThemeProperties::TINT_BACKGROUND_TAB:
-      // Tints for which the cross-platform default is fine. Before adding new
-      // values here, specifically verify they work well on Linux.
+    // TODO(estade): Return something useful for TINT_BUTTONS so that chrome://
+    // page icons are colored appropriately.
+    case ThemeProperties::TINT_BUTTONS:
       break;
     default:
       // Assume any tints not specifically verified on Linux aren't usable.
@@ -634,7 +655,7 @@ void Gtk2UI::SetNativeThemeOverride(const NativeThemeGetter& callback) {
 }
 
 bool Gtk2UI::GetDefaultUsesSystemTheme() const {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   switch (base::nix::GetDesktopEnvironment(env.get())) {
     case base::nix::DESKTOP_ENVIRONMENT_GNOME:
@@ -666,18 +687,17 @@ bool Gtk2UI::IsStatusIconSupported() const {
   return true;
 }
 
-scoped_ptr<views::StatusIconLinux> Gtk2UI::CreateLinuxStatusIcon(
+std::unique_ptr<views::StatusIconLinux> Gtk2UI::CreateLinuxStatusIcon(
     const gfx::ImageSkia& image,
     const base::string16& tool_tip) const {
   if (AppIndicatorIcon::CouldOpen()) {
     ++indicators_count;
-    return scoped_ptr<views::StatusIconLinux>(new AppIndicatorIcon(
+    return std::unique_ptr<views::StatusIconLinux>(new AppIndicatorIcon(
         base::StringPrintf("%s%d", kAppIndicatorIdPrefix, indicators_count),
-        image,
-        tool_tip));
-  } else {
-    return scoped_ptr<views::StatusIconLinux>(new Gtk2StatusIcon(
         image, tool_tip));
+  } else {
+    return std::unique_ptr<views::StatusIconLinux>(
+        new Gtk2StatusIcon(image, tool_tip));
   }
 }
 
@@ -713,13 +733,13 @@ gfx::Image Gtk2UI::GetIconForContentType(
   return gfx::Image();
 }
 
-scoped_ptr<views::Border> Gtk2UI::CreateNativeBorder(
+std::unique_ptr<views::Border> Gtk2UI::CreateNativeBorder(
     views::LabelButton* owning_button,
-    scoped_ptr<views::LabelButtonBorder> border) {
+    std::unique_ptr<views::LabelButtonBorder> border) {
   if (owning_button->GetNativeTheme() != NativeThemeGtk2::instance())
     return std::move(border);
 
-  scoped_ptr<views::LabelButtonAssetBorder> gtk_border(
+  std::unique_ptr<views::LabelButtonAssetBorder> gtk_border(
       new views::LabelButtonAssetBorder(owning_button->style()));
 
   gtk_border->set_insets(border->GetInsets());
@@ -804,10 +824,10 @@ void Gtk2UI::SetNonClientMiddleClickAction(NonClientMiddleClickAction action) {
   middle_click_action_ = action;
 }
 
-scoped_ptr<ui::LinuxInputMethodContext> Gtk2UI::CreateInputMethodContext(
+std::unique_ptr<ui::LinuxInputMethodContext> Gtk2UI::CreateInputMethodContext(
     ui::LinuxInputMethodContextDelegate* delegate,
     bool is_simple) const {
-  return scoped_ptr<ui::LinuxInputMethodContext>(
+  return std::unique_ptr<ui::LinuxInputMethodContext>(
       new X11InputMethodContextImplGtk2(delegate, is_simple));
 }
 
@@ -820,10 +840,12 @@ void Gtk2UI::GetDefaultFontDescription(
     std::string* family_out,
     int* size_pixels_out,
     int* style_out,
+    gfx::Font::Weight* weight_out,
     gfx::FontRenderParams* params_out) const {
   *family_out = default_font_family_;
   *size_pixels_out = default_font_size_pixels_;
   *style_out = default_font_style_;
+  *weight_out = default_font_weight_;
   *params_out = default_font_render_params_;
 }
 
@@ -891,7 +913,6 @@ void Gtk2UI::LoadGtkValues() {
 
   colors_[ThemeProperties::COLOR_TAB_TEXT] = label_color;
   colors_[ThemeProperties::COLOR_BOOKMARK_TEXT] = label_color;
-  colors_[ThemeProperties::COLOR_STATUS_BAR_TEXT] = label_color;
 
   UpdateDefaultFont();
 
@@ -973,6 +994,23 @@ void Gtk2UI::LoadGtkValues() {
       theme->GetSystemColor(ui::NativeTheme::kColorId_ThrobberSpinningColor);
   colors_[ThemeProperties::COLOR_TAB_THROBBER_WAITING] =
       theme->GetSystemColor(ui::NativeTheme::kColorId_ThrobberWaitingColor);
+}
+
+void Gtk2UI::UpdateMaterialDesignColors() {
+  // TODO(varkha): This should be merged back into LoadGtkValues() once Material
+  // Design is on unconditionally.
+  // Early return when Material Design Controller is not initialized yet. This
+  // is harmless and the colors will get updated when this method is called
+  // again after the initialization. See http://crbug.com/622234.
+  if (!ui::MaterialDesignController::is_mode_initialized() ||
+      !ui::MaterialDesignController::IsModeMaterial()) {
+    return;
+  }
+  NativeThemeGtk2* theme = NativeThemeGtk2::instance();
+  SkColor label_color =
+      theme->GetSystemColor(ui::NativeTheme::kColorId_LabelEnabledColor);
+  colors_[ThemeProperties::COLOR_BACKGROUND_TAB_TEXT] =
+      color_utils::BlendTowardOppositeLuma(label_color, 50);
 }
 
 SkColor Gtk2UI::BuildFrameColors() {
@@ -1097,9 +1135,13 @@ gfx::Image Gtk2UI::GenerateGtkThemeImage(int id) const {
 
   return gfx::Image();
 }
+
 SkBitmap Gtk2UI::GenerateGtkThemeBitmap(int id) const {
   switch (id) {
     case IDR_THEME_TOOLBAR: {
+      if (ui::MaterialDesignController::IsModeMaterial())
+        break;
+
       SkBitmap bitmap;
       bitmap.allocN32Pixels(kToolbarImageWidth, kToolbarImageHeight);
       bitmap.eraseColor(
@@ -1149,7 +1191,6 @@ SkBitmap Gtk2UI::GenerateGtkThemeBitmap(int id) const {
     // ResourceBundle. (i.e. in a light on dark theme, the dropdown arrow will
     // be dark on dark)
     case IDR_MENU_DROPARROW:
-    case IDR_BROWSER_ACTIONS_OVERFLOW:
       return GenerateTintedIcon(id, button_tint_);
   }
 
@@ -1160,6 +1201,9 @@ SkBitmap Gtk2UI::GenerateFrameImage(
     int color_id,
     const char* gradient_name) const {
 #if GTK_MAJOR_VERSION == 2
+  if (ui::MaterialDesignController::IsModeMaterial())
+    return SkBitmap();
+
   ColorMap::const_iterator it = colors_.find(color_id);
   DCHECK(it != colors_.end());
   SkColor base = it->second;
@@ -1181,12 +1225,11 @@ SkBitmap Gtk2UI::GenerateFrameImage(
                        NULL);
 
   if (gradient_size) {
-    skia::RefPtr<SkShader> shader = gfx::CreateGradientShader(
-        0, gradient_size, gradient_top_color, base);
     SkPaint paint;
     paint.setStyle(SkPaint::kFill_Style);
     paint.setAntiAlias(true);
-    paint.setShader(shader.get());
+    paint.setShader(gfx::CreateGradientShader(
+        0, gradient_size, gradient_top_color, base));
 
     canvas.DrawRect(gfx::Rect(0, 0, kToolbarImageWidth, gradient_size), paint);
   }
@@ -1194,14 +1237,12 @@ SkBitmap Gtk2UI::GenerateFrameImage(
   canvas.FillRect(gfx::Rect(0, gradient_size, kToolbarImageWidth,
                             kToolbarImageHeight - gradient_size), base);
   return canvas.ExtractImageRep().sk_bitmap();
-
 #else
   // Render a GtkHeaderBar as our title bar, cropping out any curved edges on
   // the left and right sides. Also remove the bottom border for good measure.
   SkBitmap bitmap;
   bitmap.allocN32Pixels(kToolbarImageWidth, 40);
   bitmap.eraseColor(0);
-
 
   static GtkWidget* title = NULL;
   if (!title) {
@@ -1242,6 +1283,9 @@ SkBitmap Gtk2UI::GenerateFrameImage(
 }
 
 SkBitmap Gtk2UI::GenerateTabImage(int base_id) const {
+  if (ui::MaterialDesignController::IsModeMaterial())
+    return SkBitmap();
+
   const SkBitmap* base_image = GetThemeImageNamed(base_id).ToSkBitmap();
   SkBitmap bg_tint = SkBitmapOperations::CreateHSLShiftedBitmap(
       *base_image, kDefaultTintBackgroundTab);
@@ -1333,9 +1377,8 @@ void Gtk2UI::UpdateDefaultFont() {
   }
 
   query.style = gfx::Font::NORMAL;
-  // TODO(davemoore): Support weights other than bold?
-  if (pango_font_description_get_weight(desc) == PANGO_WEIGHT_BOLD)
-    query.style |= gfx::Font::BOLD;
+  query.weight =
+      static_cast<gfx::Font::Weight>(pango_font_description_get_weight(desc));
   // TODO(davemoore): What about PANGO_STYLE_OBLIQUE?
   if (pango_font_description_get_style(desc) == PANGO_STYLE_ITALIC)
     query.style |= gfx::Font::ITALIC;
@@ -1348,6 +1391,9 @@ void Gtk2UI::UpdateDefaultFont() {
 void Gtk2UI::ResetStyle() {
   ClearAllThemeData();
   LoadGtkValues();
+  // TODO(varkha): There will be no need to call UpdateMaterialDesignColors()
+  // once Material Design is on unconditionally.
+  UpdateMaterialDesignColors();
   NativeThemeGtk2::instance()->NotifyObservers();
 }
 
@@ -1357,8 +1403,8 @@ void Gtk2UI::UpdateDeviceScaleFactor(float device_scale_factor) {
 }
 
 float Gtk2UI::GetDeviceScaleFactor() const {
-  if (gfx::Display::HasForceDeviceScaleFactor())
-    return gfx::Display::GetForcedDeviceScaleFactor();
+  if (display::Display::HasForceDeviceScaleFactor())
+    return display::Display::GetForcedDeviceScaleFactor();
   const int kCSSDefaultDPI = 96;
   const float scale = GetDPI() / kCSSDefaultDPI;
 

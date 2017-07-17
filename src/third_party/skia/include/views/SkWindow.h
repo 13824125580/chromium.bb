@@ -32,8 +32,14 @@ public:
     virtual ~SkWindow();
 
     struct AttachmentInfo {
+        AttachmentInfo()
+            : fSampleCount(0)
+            , fStencilBits(0)
+            , fColorBits(0) {}
+
         int fSampleCount;
         int fStencilBits;
+        int fColorBits;
     };
 
     SkSurfaceProps getSurfaceProps() const { return fSurfaceProps; }
@@ -46,7 +52,7 @@ public:
 
     void    resize(int width, int height);
     void    resize(const SkImageInfo&);
-    void    setColorType(SkColorType, SkColorProfileType);
+    void    setColorType(SkColorType, sk_sp<SkColorSpace>);
 
     bool    isDirty() const { return !fDirtyRgn.isEmpty(); }
     bool    update(SkIRect* updateArea);

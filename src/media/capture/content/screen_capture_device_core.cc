@@ -4,12 +4,12 @@
 
 #include "media/capture/content/screen_capture_device_core.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -19,7 +19,8 @@ namespace media {
 
 namespace {
 
-void DeleteCaptureMachine(scoped_ptr<VideoCaptureMachine> capture_machine) {
+void DeleteCaptureMachine(
+    std::unique_ptr<VideoCaptureMachine> capture_machine) {
   capture_machine.reset();
 }
 
@@ -37,7 +38,7 @@ bool VideoCaptureMachine::IsAutoThrottlingEnabled() const {
 
 void ScreenCaptureDeviceCore::AllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (state_ != kIdle) {
@@ -65,6 +66,17 @@ void ScreenCaptureDeviceCore::AllocateAndStart(
   TransitionStateTo(kCapturing);
 }
 
+void ScreenCaptureDeviceCore::RequestRefreshFrame() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (state_ != kCapturing)
+    return;
+
+  if (oracle_proxy_->AttemptPassiveRefresh())
+    return;
+  capture_machine_->MaybeCaptureForRefresh();
+}
+
 void ScreenCaptureDeviceCore::StopAndDeAllocate() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -86,7 +98,7 @@ void ScreenCaptureDeviceCore::CaptureStarted(bool success) {
 }
 
 ScreenCaptureDeviceCore::ScreenCaptureDeviceCore(
-    scoped_ptr<VideoCaptureMachine> capture_machine)
+    std::unique_ptr<VideoCaptureMachine> capture_machine)
     : state_(kIdle), capture_machine_(std::move(capture_machine)) {
   DCHECK(capture_machine_.get());
 }

@@ -26,11 +26,11 @@
 #ifndef TypingCommand_h
 #define TypingCommand_h
 
-#include "core/editing/commands/TextInsertionBaseCommand.h"
+#include "core/editing/commands/CompositeEditCommand.h"
 
 namespace blink {
 
-class TypingCommand final : public TextInsertionBaseCommand {
+class TypingCommand final : public CompositeEditCommand {
 public:
     enum ETypingCommand {
         DeleteSelection,
@@ -77,15 +77,18 @@ public:
     void deleteSelection(bool smartDelete, EditingState*);
     void setCompositionType(TextCompositionType type) { m_compositionType = type; }
 
+    ETypingCommand commandTypeOfOpenCommand() const { return m_commandType; }
+    TextCompositionType compositionType() const { return m_compositionType; }
+
 private:
-    static PassRefPtrWillBeRawPtr<TypingCommand> create(Document& document, ETypingCommand command, const String& text = "", Options options = 0, TextGranularity granularity = CharacterGranularity)
+    static TypingCommand* create(Document& document, ETypingCommand command, const String& text = "", Options options = 0, TextGranularity granularity = CharacterGranularity)
     {
-        return adoptRefWillBeNoop(new TypingCommand(document, command, text, options, granularity, TextCompositionNone));
+        return new TypingCommand(document, command, text, options, granularity, TextCompositionNone);
     }
 
-    static PassRefPtrWillBeRawPtr<TypingCommand> create(Document& document, ETypingCommand command, const String& text, Options options, TextCompositionType compositionType)
+    static TypingCommand* create(Document& document, ETypingCommand command, const String& text, Options options, TextCompositionType compositionType)
     {
-        return adoptRefWillBeNoop(new TypingCommand(document, command, text, options, CharacterGranularity, compositionType));
+        return new TypingCommand(document, command, text, options, CharacterGranularity, compositionType);
     }
 
     TypingCommand(Document&, ETypingCommand, const String& text, Options, TextGranularity, TextCompositionType);
@@ -94,7 +97,7 @@ private:
     bool isOpenForMoreTyping() const { return m_openForMoreTyping; }
     void closeTyping() { m_openForMoreTyping = false; }
 
-    static PassRefPtrWillBeRawPtr<TypingCommand> lastTypingCommandIfStillOpenForTyping(LocalFrame*);
+    static TypingCommand* lastTypingCommandIfStillOpenForTyping(LocalFrame*);
 
     void doApply(EditingState*) override;
     EditAction editingAction() const override;
@@ -112,7 +115,6 @@ private:
     bool makeEditableRootEmpty(EditingState*);
 
     void updateCommandTypeOfOpenCommand(ETypingCommand typingCommand) { m_commandType = typingCommand; }
-    ETypingCommand commandTypeOfOpenCommand() const { return m_commandType; }
 
     ETypingCommand m_commandType;
     String m_textToInsert;
@@ -132,6 +134,8 @@ private:
     bool m_shouldRetainAutocorrectionIndicator;
     bool m_shouldPreventSpellChecking;
 };
+
+DEFINE_TYPE_CASTS(TypingCommand, CompositeEditCommand, command, command->isTypingCommand(), command.isTypingCommand());
 
 } // namespace blink
 

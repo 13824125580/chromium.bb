@@ -11,39 +11,31 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "content/common/background_sync_service.mojom.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "third_party/WebKit/public/platform/modules/background_sync/background_sync.mojom.h"
 
 namespace content {
 
 class CONTENT_EXPORT BackgroundSyncClientImpl
-    : public NON_EXPORTED_BASE(BackgroundSyncServiceClient) {
+    : public NON_EXPORTED_BASE(blink::mojom::BackgroundSyncServiceClient) {
  public:
-  static void Create(
-      mojo::InterfaceRequest<BackgroundSyncServiceClient> request);
+  static void Create(mojo::InterfaceRequest<
+                     blink::mojom::BackgroundSyncServiceClient> request);
 
   ~BackgroundSyncClientImpl() override;
 
  private:
-  using SyncCallback = mojo::Callback<void(ServiceWorkerEventStatus)>;
   explicit BackgroundSyncClientImpl(
-      mojo::InterfaceRequest<BackgroundSyncServiceClient> request);
+      mojo::InterfaceRequest<blink::mojom::BackgroundSyncServiceClient>
+          request);
 
   // BackgroundSyncServiceClient methods:
-  void Sync(int64_t handle_id,
-            content::BackgroundSyncEventLastChance last_chance,
+  void Sync(const mojo::String& tag,
+            blink::mojom::BackgroundSyncEventLastChance last_chance,
             const SyncCallback& callback) override;
-  void SyncDidGetRegistration(
-      int64_t callback_id,
-      content::BackgroundSyncEventLastChance last_chance,
-      BackgroundSyncError error,
-      SyncRegistrationPtr registration);
 
-  mojo::StrongBinding<BackgroundSyncServiceClient> binding_;
-
-  int64_t callback_seq_num_;
-  std::map<int64_t, SyncCallback> sync_callbacks_;
+  mojo::StrongBinding<blink::mojom::BackgroundSyncServiceClient> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundSyncClientImpl);
 };

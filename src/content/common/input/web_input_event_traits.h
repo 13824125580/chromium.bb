@@ -27,7 +27,9 @@ class CONTENT_EXPORT WebInputEventTraits {
                           const blink::WebInputEvent& event);
   static void Coalesce(const blink::WebInputEvent& event_to_coalesce,
                        blink::WebInputEvent* event);
-  static bool WillReceiveAckFromRenderer(const blink::WebInputEvent& event);
+  static bool ShouldBlockEventStream(const blink::WebInputEvent& event);
+
+  static bool CanCauseScroll(const blink::WebMouseWheelEvent& event);
 
   // Return uniqueTouchEventId for WebTouchEvent, otherwise return 0.
   static uint32_t GetUniqueTouchEventId(const blink::WebInputEvent& event);

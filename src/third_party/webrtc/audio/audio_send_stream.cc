@@ -39,6 +39,7 @@ std::string AudioSendStream::Config::Rtp::ToString() const {
     }
   }
   ss << ']';
+  ss << ", nack: " << nack.ToString();
   ss << ", c_name: " << c_name;
   ss << '}';
   return ss.str();
@@ -50,7 +51,6 @@ std::string AudioSendStream::Config::ToString() const {
   ss << ", voe_channel_id: " << voe_channel_id;
   // TODO(solenberg): Encoder config.
   ss << ", cng_payload_type: " << cng_payload_type;
-  ss << ", red_payload_type: " << red_payload_type;
   ss << '}';
   return ss.str();
 }
@@ -75,13 +75,19 @@ AudioSendStream::AudioSendStream(
   channel_proxy_->SetRTCPStatus(true);
   channel_proxy_->SetLocalSSRC(config.rtp.ssrc);
   channel_proxy_->SetRTCP_CNAME(config.rtp.c_name);
+  // TODO(solenberg): Config NACK history window (which is a packet count),
+  // using the actual packet size for the configured codec.
+  channel_proxy_->SetNACKStatus(config_.rtp.nack.rtp_history_ms != 0,
+                                config_.rtp.nack.rtp_history_ms / 20);
+
+  channel_proxy_->RegisterExternalTransport(config.send_transport);
 
   for (const auto& extension : config.rtp.extensions) {
-    if (extension.name == RtpExtension::kAbsSendTime) {
+    if (extension.uri == RtpExtension::kAbsSendTimeUri) {
       channel_proxy_->SetSendAbsoluteSenderTimeStatus(true, extension.id);
-    } else if (extension.name == RtpExtension::kAudioLevel) {
+    } else if (extension.uri == RtpExtension::kAudioLevelUri) {
       channel_proxy_->SetSendAudioLevelIndicationStatus(true, extension.id);
-    } else if (extension.name == RtpExtension::kTransportSequenceNumber) {
+    } else if (extension.uri == RtpExtension::kTransportSequenceNumberUri) {
       channel_proxy_->EnableSendTransportSequenceNumber(extension.id);
     } else {
       RTC_NOTREACHED() << "Registering unsupported RTP extension.";
@@ -92,34 +98,38 @@ AudioSendStream::AudioSendStream(
 AudioSendStream::~AudioSendStream() {
   RTC_DCHECK(thread_checker_.CalledOnValidThread());
   LOG(LS_INFO) << "~AudioSendStream: " << config_.ToString();
+  channel_proxy_->DeRegisterExternalTransport();
   channel_proxy_->ResetCongestionControlObjects();
 }
 
 void AudioSendStream::Start() {
   RTC_DCHECK(thread_checker_.CalledOnValidThread());
+  ScopedVoEInterface<VoEBase> base(voice_engine());
+  int error = base->StartSend(config_.voe_channel_id);
+  if (error != 0) {
+    LOG(LS_ERROR) << "AudioSendStream::Start failed with error: " << error;
+  }
 }
 
 void AudioSendStream::Stop() {
   RTC_DCHECK(thread_checker_.CalledOnValidThread());
+  ScopedVoEInterface<VoEBase> base(voice_engine());
+  int error = base->StopSend(config_.voe_channel_id);
+  if (error != 0) {
+    LOG(LS_ERROR) << "AudioSendStream::Stop failed with error: " << error;
+  }
 }
 
-void AudioSendStream::SignalNetworkState(NetworkState state) {
-  RTC_DCHECK(thread_checker_.CalledOnValidThread());
-}
-
-bool AudioSendStream::DeliverRtcp(const uint8_t* packet, size_t length) {
-  // TODO(solenberg): Tests call this function on a network thread, libjingle
-  // calls on the worker thread. We should move towards always using a network
-  // thread. Then this check can be enabled.
-  // RTC_DCHECK(!thread_checker_.CalledOnValidThread());
-  return false;
-}
-
-bool AudioSendStream::SendTelephoneEvent(int payload_type, uint8_t event,
-                                         uint32_t duration_ms) {
+bool AudioSendStream::SendTelephoneEvent(int payload_type, int event,
+                                         int duration_ms) {
   RTC_DCHECK(thread_checker_.CalledOnValidThread());
   return channel_proxy_->SetSendTelephoneEventPayloadType(payload_type) &&
          channel_proxy_->SendTelephoneEventOutband(event, duration_ms);
+}
+
+void AudioSendStream::SetMuted(bool muted) {
+  RTC_DCHECK(thread_checker_.CalledOnValidThread());
+  channel_proxy_->SetInputMute(muted);
 }
 
 webrtc::AudioSendStream::Stats AudioSendStream::GetStats() const {
@@ -203,6 +213,18 @@ webrtc::AudioSendStream::Stats AudioSendStream::GetStats() const {
   stats.typing_noise_detected = audio_state->typing_noise_detected();
 
   return stats;
+}
+
+void AudioSendStream::SignalNetworkState(NetworkState state) {
+  RTC_DCHECK(thread_checker_.CalledOnValidThread());
+}
+
+bool AudioSendStream::DeliverRtcp(const uint8_t* packet, size_t length) {
+  // TODO(solenberg): Tests call this function on a network thread, libjingle
+  // calls on the worker thread. We should move towards always using a network
+  // thread. Then this check can be enabled.
+  // RTC_DCHECK(!thread_checker_.CalledOnValidThread());
+  return channel_proxy_->ReceivedRTCPPacket(packet, length);
 }
 
 const webrtc::AudioSendStream::Config& AudioSendStream::config() const {

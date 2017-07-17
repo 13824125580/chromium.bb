@@ -4,6 +4,10 @@
 
 #include "printing/backend/print_backend.h"
 
+namespace {
+bool g_native_cups_enabled = false;
+}  // namespace
+
 namespace printing {
 
 static std::string g_defaultPrinterName;
@@ -28,6 +32,9 @@ PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults()
       bw_model(UNKNOWN_COLOR_MODEL)
 {}
 
+PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults(
+    const PrinterSemanticCapsAndDefaults& other) = default;
+
 PrinterSemanticCapsAndDefaults::~PrinterSemanticCapsAndDefaults() {}
 
 PrinterCapsAndDefaults::PrinterCapsAndDefaults() {}
@@ -47,6 +54,16 @@ void PrintBackend::SetUserDefaultPrinterName(const std::string& printerName)
 const std::string& PrintBackend::GetUserDefaultPrinterName()
 {
     return g_defaultPrinterName;
+}
+
+// static
+bool PrintBackend::GetNativeCupsEnabled() {
+  return g_native_cups_enabled;
+}
+
+// static
+void PrintBackend::SetNativeCupsEnabled(bool enabled) {
+  g_native_cups_enabled = enabled;
 }
 
 }  // namespace printing

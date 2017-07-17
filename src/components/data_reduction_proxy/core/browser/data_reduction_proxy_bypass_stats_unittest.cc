@@ -7,13 +7,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/test/histogram_tester.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
@@ -70,7 +71,7 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
     // The |test_job_factory_| takes ownership of the interceptor.
     test_job_interceptor_ = new net::TestJobInterceptor();
     EXPECT_TRUE(test_job_factory_.SetProtocolHandler(
-        url::kHttpScheme, make_scoped_ptr(test_job_interceptor_)));
+        url::kHttpScheme, base::WrapUnique(test_job_interceptor_)));
 
     context_.set_job_factory(&test_job_factory_);
 
@@ -79,15 +80,15 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
     mock_url_request_ = context_.CreateRequest(GURL(), net::IDLE, &delegate_);
   }
 
-  scoped_ptr<net::URLRequest> CreateURLRequestWithResponseHeaders(
+  std::unique_ptr<net::URLRequest> CreateURLRequestWithResponseHeaders(
       const GURL& url,
       const std::string& response_headers) {
-    scoped_ptr<net::URLRequest> fake_request = context_.CreateRequest(
-        url, net::IDLE, &delegate_);
+    std::unique_ptr<net::URLRequest> fake_request =
+        context_.CreateRequest(url, net::IDLE, &delegate_);
 
     // Create a test job that will fill in the given response headers for the
     // |fake_request|.
-    scoped_ptr<net::URLRequestTestJob> test_job(new net::URLRequestTestJob(
+    std::unique_ptr<net::URLRequestTestJob> test_job(new net::URLRequestTestJob(
         fake_request.get(), context_.network_delegate(), response_headers,
         std::string(), true));
 
@@ -105,11 +106,9 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<DataReductionProxyBypassStats> BuildBypassStats() {
-    return make_scoped_ptr(
-        new DataReductionProxyBypassStats(
-            test_context_->config(),
-            test_context_->unreachable_callback()));
+  std::unique_ptr<DataReductionProxyBypassStats> BuildBypassStats() {
+    return base::WrapUnique(new DataReductionProxyBypassStats(
+        test_context_->config(), test_context_->unreachable_callback()));
   }
 
   net::URLRequest* url_request() {
@@ -128,11 +127,11 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
   base::MessageLoopForIO message_loop_;
   net::TestURLRequestContext context_;
   net::TestDelegate delegate_;
-  scoped_ptr<net::URLRequest> mock_url_request_;
+  std::unique_ptr<net::URLRequest> mock_url_request_;
   // |test_job_interceptor_| is owned by |test_job_factory_|.
   net::TestJobInterceptor* test_job_interceptor_;
   net::URLRequestJobFactoryImpl test_job_factory_;
-  scoped_ptr<DataReductionProxyTestContext> test_context_;
+  std::unique_ptr<DataReductionProxyTestContext> test_context_;
 };
 
 TEST_F(DataReductionProxyBypassStatsTest, IsDataReductionProxyUnreachable) {
@@ -175,7 +174,8 @@ TEST_F(DataReductionProxyBypassStatsTest, IsDataReductionProxyUnreachable) {
     EXPECT_CALL(*config(), WasDataReductionProxyUsed(url_request(), testing::_))
         .WillRepeatedly(testing::Return(test_case.was_proxy_used));
 
-    scoped_ptr<DataReductionProxyBypassStats> bypass_stats = BuildBypassStats();
+    std::unique_ptr<DataReductionProxyBypassStats> bypass_stats =
+        BuildBypassStats();
 
     bypass_stats->OnProxyFallback(fallback_proxy_server,
                                   net::ERR_PROXY_CONNECTION_FAILED);
@@ -189,7 +189,8 @@ TEST_F(DataReductionProxyBypassStatsTest, IsDataReductionProxyUnreachable) {
 TEST_F(DataReductionProxyBypassStatsTest, ProxyUnreachableThenReachable) {
   net::ProxyServer fallback_proxy_server =
       net::ProxyServer::FromURI("foo.com", net::ProxyServer::SCHEME_HTTP);
-  scoped_ptr<DataReductionProxyBypassStats> bypass_stats = BuildBypassStats();
+  std::unique_ptr<DataReductionProxyBypassStats> bypass_stats =
+      BuildBypassStats();
   EXPECT_CALL(*config(), IsDataReductionProxy(testing::_, testing::_))
       .WillOnce(testing::Return(true));
   EXPECT_CALL(*config(), WasDataReductionProxyUsed(url_request(), testing::_))
@@ -210,7 +211,8 @@ TEST_F(DataReductionProxyBypassStatsTest, ProxyUnreachableThenReachable) {
 TEST_F(DataReductionProxyBypassStatsTest, ProxyReachableThenUnreachable) {
   net::ProxyServer fallback_proxy_server =
       net::ProxyServer::FromURI("foo.com", net::ProxyServer::SCHEME_HTTP);
-  scoped_ptr<DataReductionProxyBypassStats> bypass_stats = BuildBypassStats();
+  std::unique_ptr<DataReductionProxyBypassStats> bypass_stats =
+      BuildBypassStats();
   EXPECT_CALL(*config(), WasDataReductionProxyUsed(url_request(), testing::_))
       .WillOnce(testing::Return(true));
   EXPECT_CALL(*config(), IsDataReductionProxy(testing::_, testing::_))
@@ -412,9 +414,10 @@ TEST_F(DataReductionProxyBypassStatsTest, RecordMissingViaHeaderBytes) {
 
   for (size_t i = 0; i < arraysize(test_cases); ++i) {
     base::HistogramTester histogram_tester;
-    scoped_ptr<DataReductionProxyBypassStats> bypass_stats = BuildBypassStats();
+    std::unique_ptr<DataReductionProxyBypassStats> bypass_stats =
+        BuildBypassStats();
 
-    scoped_ptr<net::URLRequest> fake_request(
+    std::unique_ptr<net::URLRequest> fake_request(
         CreateURLRequestWithResponseHeaders(GURL("http://www.google.com/"),
                                             test_cases[i].headers));
     fake_request->set_received_response_content_length(kResponseContentLength);
@@ -441,99 +444,77 @@ TEST_F(DataReductionProxyBypassStatsTest, RecordMissingViaHeaderBytes) {
   }
 }
 
-TEST_F(DataReductionProxyBypassStatsTest, RequestCompletionErrorCodes) {
+TEST_F(DataReductionProxyBypassStatsTest, SuccessfulRequestCompletion) {
   const std::string kPrimaryHistogramName =
-      "DataReductionProxy.RequestCompletionErrorCodes.Primary";
-  const std::string kFallbackHistogramName =
-      "DataReductionProxy.RequestCompletionErrorCodes.Fallback";
+      "DataReductionProxy.SuccessfulRequestCompletionCounts";
   const std::string kPrimaryMainFrameHistogramName =
-      "DataReductionProxy.RequestCompletionErrorCodes.MainFrame.Primary";
-  const std::string kFallbackMainFrameHistogramName =
-      "DataReductionProxy.RequestCompletionErrorCodes.MainFrame.Fallback";
+      "DataReductionProxy.SuccessfulRequestCompletionCounts.MainFrame";
 
-  struct TestCase {
+  const struct {
     bool was_proxy_used;
     bool is_load_bypass_proxy;
-    bool is_fallback;
+    size_t proxy_index;
     bool is_main_frame;
     net::Error net_error;
-  };
+  } tests[] = {{false, true, 0, true, net::OK},
+               {false, true, 0, false, net::ERR_TOO_MANY_REDIRECTS},
+               {false, false, 0, true, net::OK},
+               {false, false, 0, false, net::ERR_TOO_MANY_REDIRECTS},
+               {true, false, 0, true, net::OK},
+               {true, false, 0, true, net::ERR_TOO_MANY_REDIRECTS},
+               {true, false, 0, false, net::OK},
+               {true, false, 0, false, net::ERR_TOO_MANY_REDIRECTS},
+               {true, false, 1, true, net::OK},
+               {true, false, 1, true, net::ERR_TOO_MANY_REDIRECTS},
+               {true, false, 1, false, net::OK},
+               {true, false, 1, false, net::ERR_TOO_MANY_REDIRECTS}};
 
-  const TestCase test_cases[] = {
-    { false, true, false, true, net::OK },
-    { false, true, false, false, net::ERR_TOO_MANY_REDIRECTS },
-    { false, false, false, true, net::OK },
-    { false, false, false, false, net::ERR_TOO_MANY_REDIRECTS },
-    { true, false, false, true, net::OK },
-    { true, false, false, true, net::ERR_TOO_MANY_REDIRECTS },
-    { true, false, false, false, net::OK },
-    { true, false, false, false, net::ERR_TOO_MANY_REDIRECTS },
-    { true, false, true, true, net::OK },
-    { true, false, true, true, net::ERR_TOO_MANY_REDIRECTS },
-    { true, false, true, false, net::OK },
-    { true, false, true, false, net::ERR_TOO_MANY_REDIRECTS }
-  };
-
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (const auto& test : tests) {
     base::HistogramTester histogram_tester;
-    scoped_ptr<DataReductionProxyBypassStats> bypass_stats = BuildBypassStats();
+    std::unique_ptr<DataReductionProxyBypassStats> bypass_stats =
+        BuildBypassStats();
 
     std::string response_headers(
         "HTTP/1.1 200 OK\n"
         "Via: 1.1 Chrome-Compression-Proxy\n");
-    scoped_ptr<net::URLRequest> fake_request(
+    std::unique_ptr<net::URLRequest> fake_request(
         CreateURLRequestWithResponseHeaders(GURL("http://www.google.com/"),
                                             response_headers));
-    if (test_cases[i].is_load_bypass_proxy) {
+    if (test.is_load_bypass_proxy) {
       fake_request->SetLoadFlags(fake_request->load_flags() |
                                  net::LOAD_BYPASS_PROXY);
     }
-    if (test_cases[i].is_main_frame) {
+    if (test.is_main_frame) {
       fake_request->SetLoadFlags(fake_request->load_flags() |
                                  net::LOAD_MAIN_FRAME);
     }
 
-    int net_error_int = static_cast<int>(test_cases[i].net_error);
-    if (test_cases[i].net_error != net::OK) {
-      fake_request->CancelWithError(net_error_int);
-    }
+    if (test.net_error != net::OK)
+      fake_request->CancelWithError(static_cast<int>(test.net_error));
 
     DataReductionProxyTypeInfo proxy_info;
-    proxy_info.is_fallback = test_cases[i].is_fallback;
+    proxy_info.proxy_index = test.proxy_index;
     EXPECT_CALL(*config(), WasDataReductionProxyUsed(fake_request.get(),
                                                      testing::NotNull()))
         .WillRepeatedly(testing::DoAll(testing::SetArgPointee<1>(proxy_info),
-                                       Return(test_cases[i].was_proxy_used)));
+                                       Return(test.was_proxy_used)));
 
     bypass_stats->OnUrlRequestCompleted(fake_request.get(), false);
 
-    if (test_cases[i].was_proxy_used && !test_cases[i].is_load_bypass_proxy &&
-        !test_cases[i].is_fallback) {
-      histogram_tester.ExpectUniqueSample(
-          kPrimaryHistogramName, -net_error_int, 1);
+    if (test.was_proxy_used && !test.is_load_bypass_proxy &&
+        test.net_error == net::OK) {
+      histogram_tester.ExpectUniqueSample(kPrimaryHistogramName,
+                                          test.proxy_index, 1);
     } else {
       histogram_tester.ExpectTotalCount(kPrimaryHistogramName, 0);
     }
-    if (test_cases[i].was_proxy_used && !test_cases[i].is_load_bypass_proxy &&
-        test_cases[i].is_fallback) {
-      histogram_tester.ExpectUniqueSample(
-          kFallbackHistogramName, -net_error_int, 1);
-    } else {
-      histogram_tester.ExpectTotalCount(kFallbackHistogramName, 0);
-    }
-    if (test_cases[i].was_proxy_used && !test_cases[i].is_load_bypass_proxy &&
-        !test_cases[i].is_fallback && test_cases[i].is_main_frame) {
-      histogram_tester.ExpectUniqueSample(
-          kPrimaryMainFrameHistogramName, -net_error_int, 1);
+
+    if (test.was_proxy_used && !test.is_load_bypass_proxy &&
+        test.is_main_frame && test.net_error == net::OK) {
+      histogram_tester.ExpectUniqueSample(kPrimaryMainFrameHistogramName,
+                                          test.proxy_index, 1);
     } else {
       histogram_tester.ExpectTotalCount(kPrimaryMainFrameHistogramName, 0);
-    }
-    if (test_cases[i].was_proxy_used && !test_cases[i].is_load_bypass_proxy &&
-        test_cases[i].is_fallback && test_cases[i].is_main_frame) {
-      histogram_tester.ExpectUniqueSample(
-          kFallbackMainFrameHistogramName, -net_error_int, 1);
-    } else {
-      histogram_tester.ExpectTotalCount(kFallbackMainFrameHistogramName, 0);
     }
   }
 }
@@ -594,7 +575,7 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
     // |retry_data_reads| and |retry_socket_data_provider| are out here so that
     // they stay in scope for when the request is executed.
     std::vector<MockRead> retry_data_reads;
-    scoped_ptr<net::StaticSocketDataProvider> retry_socket_data_provider;
+    std::unique_ptr<net::StaticSocketDataProvider> retry_socket_data_provider;
     if (retry_response_headers) {
       retry_data_reads.push_back(MockRead(retry_response_headers));
       retry_data_reads.push_back(MockRead(retry_response_body));
@@ -606,7 +587,7 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
           retry_socket_data_provider.get());
     }
 
-    scoped_ptr<net::URLRequest> request(
+    std::unique_ptr<net::URLRequest> request(
         context_.CreateRequest(url, net::IDLE, &delegate_));
     request->set_method("GET");
     request->SetLoadFlags(net::LOAD_NORMAL);
@@ -702,8 +683,8 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
   net::MockClientSocketFactory mock_socket_factory_;
   net::TestURLRequestContext context_;
   net::URLRequestContextStorage context_storage_;
-  scoped_ptr<net::ProxyDelegate> proxy_delegate_;
-  scoped_ptr<DataReductionProxyTestContext> drp_test_context_;
+  std::unique_ptr<net::ProxyDelegate> proxy_delegate_;
+  std::unique_ptr<DataReductionProxyTestContext> drp_test_context_;
 };
 
 TEST_F(DataReductionProxyBypassStatsEndToEndTest, BypassedBytesNoRetry) {
@@ -744,7 +725,7 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest, BypassedBytesNoRetry) {
 
 TEST_F(DataReductionProxyBypassStatsEndToEndTest,
        BypassedBytesProxyOverridden) {
-  scoped_ptr<net::ProxyService> proxy_service(
+  std::unique_ptr<net::ProxyService> proxy_service(
       net::ProxyService::CreateFixed("http://test.com:80"));
   set_proxy_service(proxy_service.get());
   InitializeContext();
@@ -888,9 +869,6 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest,
     const char* initial_response_headers;
   };
   const TestCase test_cases[] = {
-    { "DataReductionProxy.BypassedBytes.MissingViaHeader4xx",
-      "HTTP/1.1 414 Request-URI Too Long\r\n\r\n",
-    },
     { "DataReductionProxy.BypassedBytes.MissingViaHeaderOther",
       "HTTP/1.1 200 OK\r\n\r\n",
     },
@@ -934,7 +912,8 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest,
 TEST_F(DataReductionProxyBypassStatsEndToEndTest, BypassedBytesNetErrorOther) {
   // Make the data reduction proxy host fail to resolve.
   net::ProxyServer origin = config()->test_params()->proxies_for_http().front();
-  scoped_ptr<net::MockHostResolver> host_resolver(new net::MockHostResolver());
+  std::unique_ptr<net::MockHostResolver> host_resolver(
+      new net::MockHostResolver());
   host_resolver->rules()->AddSimulatedFailure(origin.host_port_pair().host());
   set_host_resolver(host_resolver.get());
   InitializeContext();
@@ -950,6 +929,44 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest, BypassedBytesNetErrorOther) {
   histogram_tester.ExpectUniqueSample(
       "DataReductionProxy.BypassOnNetworkErrorPrimary",
       -net::ERR_PROXY_CONNECTION_FAILED, 1);
+}
+
+TEST_F(DataReductionProxyBypassStatsEndToEndTest,
+       BypassedBytesMissingViaHeader4xx) {
+  InitializeContext();
+  const char* test_case_response_headers[] = {
+      "HTTP/1.1 414 Request-URI Too Long\r\n\r\n",
+      "HTTP/1.1 404 Not Found\r\n\r\n",
+  };
+  for (const char* test_case : test_case_response_headers) {
+    ClearBadProxies();
+    // The first request should be bypassed for missing Via header.
+    {
+      base::HistogramTester histogram_tester;
+      CreateAndExecuteRequest(GURL("http://foo.com"), test_case,
+                              kErrorBody.c_str(), "HTTP/1.1 200 OK\r\n\r\n",
+                              kBody.c_str());
+
+      histogram_tester.ExpectUniqueSample(
+          "DataReductionProxy.BypassedBytes.MissingViaHeader4xx", kBody.size(),
+          1);
+      ExpectOtherBypassedBytesHistogramsEmpty(
+          histogram_tester,
+          "DataReductionProxy.BypassedBytes.MissingViaHeader4xx");
+    }
+    // The second request should be sent via the proxy.
+    {
+      base::HistogramTester histogram_tester;
+      CreateAndExecuteRequest(GURL("http://bar.com"),
+                              "HTTP/1.1 200 OK\r\n"
+                              "Via: 1.1 Chrome-Compression-Proxy\r\n\r\n",
+                              kNextBody.c_str(), nullptr, nullptr);
+      histogram_tester.ExpectUniqueSample(
+          "DataReductionProxy.BypassedBytes.NotBypassed", kNextBody.size(), 1);
+      ExpectOtherBypassedBytesHistogramsEmpty(
+          histogram_tester, "DataReductionProxy.BypassedBytes.NotBypassed");
+    }
+  }
 }
 
 }  // namespace data_reduction_proxy

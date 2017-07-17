@@ -88,6 +88,12 @@ enum InstallStatus {
   REENABLE_UPDATES_FAILED = 56,  // Autoupdates could not be enabled.
   UNPACKING_FAILED     = 57,  // Unpacking the (possibly patched) uncompressed
                               // archive failed.
+  IN_USE_DOWNGRADE     = 58,  // Successfully downgrade chrome but current
+                              // version is still running.
+  OLD_VERSION_DOWNGRADE = 59,  // Successfully downgrade chrome to an older
+                               // version.
+
+  MAX_INSTALL_STATUS   = 60,  // Bump this out to make space for new results.
 };
 
 // The type of an update archive.
@@ -199,7 +205,6 @@ extern const wchar_t kChromeFrameHelperDll[];
 extern const wchar_t kChromeFrameHelperExe[];
 extern const wchar_t kChromeFrameHelperWndClass[];
 extern const wchar_t kChromeLauncherExe[];
-extern const wchar_t kChromeMetroDll[];
 extern const wchar_t kChromeNewExe[];
 extern const wchar_t kChromeOldExe[];
 extern const wchar_t kCmdOnOsUpgrade[];

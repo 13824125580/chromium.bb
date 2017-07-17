@@ -8,7 +8,7 @@
 
 #include "android_webview/browser/net/init_native_callback.h"
 #include "base/memory/ref_counted_delete_on_message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "url/gurl.h"
 
 namespace android_webview {
@@ -29,7 +29,7 @@ class SubscriptionWrapper {
  public:
   SubscriptionWrapper() : weak_factory_(this) {}
 
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> Subscribe(
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> Subscribe(
       const GURL& url,
       const std::string& name,
       const net::CookieStore::CookieChangedCallback& callback) {
@@ -79,7 +79,7 @@ class SubscriptionWrapper {
     base::WeakPtr<SubscriptionWrapper> subscription_wrapper_;
     scoped_refptr<base::TaskRunner> client_task_runner_;
 
-    scoped_ptr<net::CookieStore::CookieChangedSubscription> subscription_;
+    std::unique_ptr<net::CookieStore::CookieChangedSubscription> subscription_;
 
     DISALLOW_COPY_AND_ASSIGN(NestedSubscription);
   };
@@ -118,7 +118,7 @@ void SetCookieWithDetailsAsyncOnCookieThread(
     base::Time last_access_time,
     bool secure,
     bool http_only,
-    bool same_site,
+    net::CookieSameSite same_site,
     bool enforce_strict_secure,
     net::CookiePriority priority,
     const net::CookieStore::SetCookiesCallback& callback) {
@@ -167,13 +167,13 @@ void DeleteAllCreatedBetweenAsyncOnCookieThread(
                                                  callback);
 }
 
-void DeleteAllCreatedBetweenForHostAsyncOnCookieThread(
-    const base::Time delete_begin,
-    const base::Time delete_end,
-    const GURL& url,
+void DeleteAllCreatedBetweenWithPredicateAsyncOnCookieThread(
+    const base::Time& delete_begin,
+    const base::Time& delete_end,
+    const net::CookieStore::CookiePredicate& predicate,
     const net::CookieStore::DeleteCallback& callback) {
-  GetCookieStore()->DeleteAllCreatedBetweenForHostAsync(
-      delete_begin, delete_end, url, callback);
+  GetCookieStore()->DeleteAllCreatedBetweenWithPredicateAsync(
+      delete_begin, delete_end, predicate, callback);
 }
 
 void DeleteSessionCookiesAsyncOnCookieThread(
@@ -194,6 +194,8 @@ void SetForceKeepSessionStateOnCookieThread() {
 AwCookieStoreWrapper::AwCookieStoreWrapper()
     : client_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       weak_factory_(this) {}
+
+AwCookieStoreWrapper::~AwCookieStoreWrapper() {}
 
 void AwCookieStoreWrapper::SetCookieWithOptionsAsync(
     const GURL& url,
@@ -217,7 +219,7 @@ void AwCookieStoreWrapper::SetCookieWithDetailsAsync(
     base::Time last_access_time,
     bool secure,
     bool http_only,
-    bool same_site,
+    net::CookieSameSite same_site,
     bool enforce_strict_secure,
     net::CookiePriority priority,
     const SetCookiesCallback& callback) {
@@ -285,15 +287,15 @@ void AwCookieStoreWrapper::DeleteAllCreatedBetweenAsync(
                  delete_end, CreateWrappedCallback<int>(callback)));
 }
 
-void AwCookieStoreWrapper::DeleteAllCreatedBetweenForHostAsync(
-    const base::Time delete_begin,
-    const base::Time delete_end,
-    const GURL& url,
+void AwCookieStoreWrapper::DeleteAllCreatedBetweenWithPredicateAsync(
+    const base::Time& delete_begin,
+    const base::Time& delete_end,
+    const CookiePredicate& predicate,
     const DeleteCallback& callback) {
   DCHECK(client_task_runner_->RunsTasksOnCurrentThread());
   PostTaskToCookieStoreTaskRunner(base::Bind(
-      &DeleteAllCreatedBetweenForHostAsyncOnCookieThread, delete_begin,
-      delete_end, url, CreateWrappedCallback<int>(callback)));
+      &DeleteAllCreatedBetweenWithPredicateAsyncOnCookieThread, delete_begin,
+      delete_end, predicate, CreateWrappedCallback<int>(callback)));
 }
 
 void AwCookieStoreWrapper::DeleteSessionCookiesAsync(
@@ -316,7 +318,7 @@ void AwCookieStoreWrapper::SetForceKeepSessionState() {
       base::Bind(&SetForceKeepSessionStateOnCookieThread));
 }
 
-scoped_ptr<net::CookieStore::CookieChangedSubscription>
+std::unique_ptr<net::CookieStore::CookieChangedSubscription>
 AwCookieStoreWrapper::AddCallbackForCookie(
     const GURL& url,
     const std::string& name,
@@ -333,7 +335,9 @@ AwCookieStoreWrapper::AddCallbackForCookie(
   return subscription->Subscribe(url, name, callback);
 }
 
-AwCookieStoreWrapper::~AwCookieStoreWrapper() {}
+bool AwCookieStoreWrapper::IsEphemeral() {
+  return GetCookieStore()->IsEphemeral();
+}
 
 base::Closure AwCookieStoreWrapper::CreateWrappedClosureCallback(
     const base::Closure& callback) {

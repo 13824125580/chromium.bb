@@ -4,44 +4,21 @@
 
 #include "net/cert/internal/verify_signed_data.h"
 
-#include "base/logging.h"
-#include "net/der/parse_values.h"
-
-// TODO(eroman): There is no intention to implement this for non-OpenSSL. Remove
-// this branch once the migration is complete. This could have been done as a
-// conditional file (_openssl.cc) in the build file instead, but that is likely
-// not worth the effort at this point.
-
-#if !defined(USE_OPENSSL)
-
-namespace net {
-
-bool VerifySignedData(const SignatureAlgorithm& signature_algorithm,
-                      const der::Input& signed_data,
-                      const der::BitString& signature_value,
-                      const der::Input& public_key,
-                      const SignaturePolicy* policy) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-}  // namespace net
-
-#else
-
+#include <openssl/bytestring.h>
 #include <openssl/digest.h>
 #include <openssl/ec.h>
 #include <openssl/ec_key.h>
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
-#include <openssl/x509.h>
 
 #include "base/compiler_specific.h"
+#include "base/logging.h"
 #include "crypto/openssl_util.h"
 #include "crypto/scoped_openssl_types.h"
 #include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/internal/signature_policy.h"
 #include "net/der/input.h"
+#include "net/der/parse_values.h"
 #include "net/der/parser.h"
 
 namespace net {
@@ -97,9 +74,10 @@ WARN_UNUSED_RESULT bool ImportPkeyFromSpki(const der::Input& spki,
                                            crypto::ScopedEVP_PKEY* pkey) {
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
-  const uint8_t* ptr = spki.UnsafeData();
-  pkey->reset(d2i_PUBKEY(nullptr, &ptr, spki.Length()));
-  if (!pkey->get() || ptr != spki.UnsafeData() + spki.Length() ||
+  CBS cbs;
+  CBS_init(&cbs, spki.UnsafeData(), spki.Length());
+  pkey->reset(EVP_parse_public_key(&cbs));
+  if (!*pkey || CBS_len(&cbs) != 0 ||
       EVP_PKEY_id(pkey->get()) != expected_pkey_id) {
     pkey->reset();
     return false;
@@ -311,5 +289,3 @@ bool VerifySignedData(const SignatureAlgorithm& signature_algorithm,
 }
 
 }  // namespace net
-
-#endif

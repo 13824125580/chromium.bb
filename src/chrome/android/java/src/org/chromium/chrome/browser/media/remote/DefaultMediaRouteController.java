@@ -19,16 +19,15 @@ import android.support.v7.media.MediaRouteSelector;
 import android.support.v7.media.MediaRouter;
 import android.support.v7.media.MediaRouter.RouteInfo;
 import android.support.v7.media.MediaSessionStatus;
-import android.util.Log;
 
 import com.google.android.gms.cast.CastMediaControlIntent;
 
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.CommandLine;
-import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.base.Log;
+import org.chromium.base.annotations.RemovableInRelease;
+import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.browser.media.remote.RemoteVideoInfo.PlayerState;
-import org.chromium.ui.widget.Toast;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -57,6 +56,7 @@ import javax.annotation.Nullable;
  *  Casting the second video to the same target device only takes one ACTION_PLAY intent if
  * the session is still active. Otherwise, the scenario is the same as for the first video.
  */
+@UsedByReflection("RemoteMediaPlayerController.java")
 public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
     /**
@@ -68,19 +68,15 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         void onError(String message, Bundle data);
     }
 
-    private static final String TAG = "DefaultMediaRouteController";
+    private static final String TAG = "MediaFling";
 
     private static final String ACTION_RECEIVE_SESSION_STATUS_UPDATE =
             "com.google.android.apps.chrome.videofling.RECEIVE_SESSION_STATUS_UPDATE";
     private static final String ACTION_RECEIVE_MEDIA_STATUS_UPDATE =
             "com.google.android.apps.chrome.videofling.RECEIVE_MEDIA_STATUS_UPDATE";
     private static final String MIME_TYPE = "video/mp4";
-    private boolean mDebug;
     private String mCurrentSessionId;
     private String mCurrentItemId;
-    private long mStreamPositionTimestamp;
-    private long mLastKnownStreamPosition;
-    private long mStreamDuration;
     private boolean mSeeking;
     private final String mIntentCategory;
     private PendingIntent mSessionStatusUpdateIntent;
@@ -90,6 +86,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
     private String mPreferredTitle;
     private long mStartPositionMillis;
+    private final PositionExtrapolator mPositionExtrapolator = new PositionExtrapolator();
 
     private Uri mLocalVideoUri;
 
@@ -114,7 +111,6 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
      * Default and only constructor.
      */
     public DefaultMediaRouteController() {
-        mDebug = CommandLine.getInstance().hasSwitch(ChromeSwitches.ENABLE_CAST_DEBUG_LOGS);
         mIntentCategory = getContext().getPackageName();
     }
 
@@ -222,7 +218,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         // Update the last known position to the current one so that we don't
         // jump back in time discarding whatever we extrapolated from the last
         // time the position was updated.
-        mLastKnownStreamPosition = getPosition();
+        mPositionExtrapolator.onPaused();
         setDisplayedPlayerState(PlayerState.PAUSED);
     }
 
@@ -234,13 +230,13 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
      * @param startPositionMillis from which to start playing.
      */
     private void playUri(@Nullable final String preferredTitle, final long startPositionMillis) {
-        RecordCastAction.castMediaType(MediaUrlResolver.getMediaType(mLocalVideoUri.toString()));
+        RecordCastAction.castMediaType(MediaUrlResolver.getMediaType(mLocalVideoUri));
         installBroadcastReceivers();
 
         // If the session is already started (meaning we are casting a video already), we simply
         // load the new URL with one ACTION_PLAY intent.
         if (mCurrentSessionId != null) {
-            if (mDebug) Log.d(TAG, "Playing a new url: " + mLocalVideoUri);
+            Log.d(TAG, "Playing a new url: %s", mLocalVideoUri);
 
             // We keep the same session so only clear the playing item status.
             clearItemState();
@@ -248,10 +244,8 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
             return;
         }
 
-        if (mDebug) {
-            Log.d(TAG, "Sending stream to app: " + getCastReceiverId());
-            Log.d(TAG, "Url: " + mLocalVideoUri);
-        }
+        Log.d(TAG, "Sending stream to app: %s", getCastReceiverId());
+        Log.d(TAG, "Url: %s", mLocalVideoUri);
 
         startSession(true, null, new ResultBundleHandler() {
             @Override
@@ -259,6 +253,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
                 configureNewSession(data);
 
                 mPreferredTitle = preferredTitle;
+                updateTitle(mPreferredTitle);
                 mStartPositionMillis = startPositionMillis;
                 // Make sure we get a session status. If the session becomes active
                 // immediately then the broadcast session status can arrive before we have
@@ -292,9 +287,15 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         intent.putExtra(CastMediaControlIntent.EXTRA_CAST_RELAUNCH_APPLICATION, relaunch);
         if (sessionId != null) intent.putExtra(MediaControlIntent.EXTRA_SESSION_ID, sessionId);
 
-        if (mDebug) intent.putExtra(CastMediaControlIntent.EXTRA_DEBUG_LOGGING_ENABLED, true);
-
+        addIntentExtraForDebugLogging(intent);
         sendIntentToRoute(intent, resultBundleHandler);
+    }
+
+    @RemovableInRelease
+    private void addIntentExtraForDebugLogging(Intent intent) {
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            intent.putExtra(CastMediaControlIntent.EXTRA_DEBUG_LOGGING_ENABLED, true);
+        }
     }
 
     private void getSessionStatus(String sessionId) {
@@ -306,8 +307,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         sendIntentToRoute(intent, new ResultBundleHandler() {
             @Override
             public void onResult(Bundle data) {
-                if (mDebug) Log.d(TAG, "getSessionStatus result : " + bundleToString(data));
-
+                logBundle("getSessionStatus result :", data);
                 processSessionStatusBundle(data);
             }
 
@@ -353,23 +353,12 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
     @Override
     public long getPosition() {
-        boolean paused = (getDisplayedPlayerState() != PlayerState.PLAYING);
-        if ((mStreamPositionTimestamp != 0) && !mSeeking && !paused
-                && (mLastKnownStreamPosition < mStreamDuration)) {
-
-            long extrapolatedStreamPosition = mLastKnownStreamPosition
-                    + (SystemClock.uptimeMillis() - mStreamPositionTimestamp);
-            if (extrapolatedStreamPosition > mStreamDuration) {
-                extrapolatedStreamPosition = mStreamDuration;
-            }
-            return extrapolatedStreamPosition;
-        }
-        return mLastKnownStreamPosition;
+        return mPositionExtrapolator.getPosition();
     }
 
     @Override
     public long getDuration() {
-        return mStreamDuration;
+        return mPositionExtrapolator.getDuration();
     }
 
     @Override
@@ -378,7 +367,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         // Update the position now since the MRP will update it only once the video is playing
         // remotely. In particular, if the video is paused, the MRP doesn't send the command until
         // the video is resumed.
-        mLastKnownStreamPosition = msec;
+        mPositionExtrapolator.onSeek(msec);
         mSeeking = true;
         Intent intent = new Intent(MediaControlIntent.ACTION_SEEK);
         intent.addCategory(MediaControlIntent.CATEGORY_REMOTE_PLAYBACK);
@@ -438,12 +427,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         sendIntentToRoute(endSessionIntent, new ResultBundleHandler() {
             @Override
             public void onResult(Bundle data) {
-                if (mDebug) {
-                    MediaSessionStatus status = MediaSessionStatus.fromBundle(
-                            data.getBundle(MediaControlIntent.EXTRA_SESSION_STATUS));
-                    int sessionState = status.getSessionState();
-                    Log.d(TAG, "Session state after ending session: " + sessionState);
-                }
+                logMediaSessionStatus(data);
 
                 for (UiListener listener : getUiListeners()) {
                     listener.onPlaybackStateChanged(PlayerState.FINISHED);
@@ -452,8 +436,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
                 if (getMediaStateListener() != null) {
                     getMediaStateListener().onPlaybackStateChanged(PlayerState.FINISHED);
                 }
-                RecordCastAction.castEndedTimeRemaining(mStreamDuration,
-                        mStreamDuration - getPosition());
+                recordRemainingTimeUMA();
                 disconnect();
             }
 
@@ -488,7 +471,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
     @Override
     protected void onRouteSelectedEvent(MediaRouter router, RouteInfo route) {
-        if (mDebug) Log.d(TAG, "Selected route " + route);
+        Log.d(TAG, "Selected route %s", route);
         if (!route.isSelected()) return;
 
         RecordCastAction.castPlayRequested();
@@ -507,7 +490,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
             registerRoute(route);
             clearStreamState();
         }
-        mLastKnownStreamPosition = 0;
+        mPositionExtrapolator.clear();
 
         notifyRouteSelected(route);
     }
@@ -519,10 +502,10 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
      */
     @Override
     protected void onRouteUnselectedEvent(MediaRouter router, RouteInfo route) {
-        if (mDebug) Log.d(TAG, "Unselected route " + route);
+        Log.d(TAG, "Unselected route %s", route);
         // Preserve our best guess as to the final position; this is needed to reset the
         // local position while switching back to local playback.
-        mLastKnownStreamPosition = getPosition();
+        mPositionExtrapolator.onPaused();
         if (getCurrentRoute() != null && route.getId().equals(getCurrentRoute().getId())) {
             clearStreamState();
         }
@@ -533,9 +516,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
             mSessionStatusBroadcastReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (mDebug) {
-                        dumpIntentToLog("Got a session broadcast intent from the MRP: ", intent);
-                    }
+                    logIntent("Got a session broadcast intent from the MRP: ", intent);
                     Bundle statusBundle = intent.getExtras();
 
                     // Ignore null status bundles.
@@ -559,7 +540,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
             mMediaStatusBroadcastReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (mDebug) dumpIntentToLog("Got a broadcast intent from the MRP: ", intent);
+                    logIntent("Got a broadcast intent from the MRP: ", intent);
 
                     processMediaStatusBundle(intent.getExtras());
                 }
@@ -577,7 +558,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
      */
     protected void onActivitiesDestroyed() {
         ApplicationStatus.unregisterApplicationStateListener(mApplicationStateListener);
-        disconnect();
+        release();
     }
 
     /**
@@ -595,8 +576,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         // that we can reset the local stream position to match.
         super.clearItemState();
         mCurrentItemId = null;
-        mStreamPositionTimestamp = 0;
-        mStreamDuration = 0;
+        mPositionExtrapolator.clear();
         mSeeking = false;
     }
 
@@ -624,6 +604,9 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
                 if (getMediaStateListener() != null) {
                     getMediaStateListener().onPlaybackStateChanged(PlayerState.INVALIDATED);
                 }
+                // Record the remaining time UMA first, otherwise the playback state will be cleared
+                // in release().
+                recordRemainingTimeUMA();
                 // Set the current session id to null so we don't send the stop intent.
                 mCurrentSessionId = null;
                 release();
@@ -636,8 +619,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
     private void processMediaStatusBundle(Bundle statusBundle) {
         if (statusBundle == null) return;
-
-        if (mDebug) Log.d(TAG, "processMediaStatusBundle: " + bundleToString(statusBundle));
+        logBundle("processMediaStatusBundle: ", statusBundle);
 
         String itemId = statusBundle.getString(MediaControlIntent.EXTRA_ITEM_ID);
         if (itemId == null || !itemId.equals(mCurrentItemId)) return;
@@ -646,7 +628,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         if (statusBundle.containsKey(MediaControlIntent.EXTRA_ITEM_METADATA)) {
             Bundle metadataBundle =
                     (Bundle) statusBundle.getParcelable(MediaControlIntent.EXTRA_ITEM_METADATA);
-            updateTitle(metadataBundle.getString(MediaItemMetadata.KEY_TITLE));
+            updateTitle(metadataBundle.getString(MediaItemMetadata.KEY_TITLE, mPreferredTitle));
         }
 
         // Extract the item status, if available.
@@ -655,41 +637,47 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
                     (Bundle) statusBundle.getParcelable(MediaControlIntent.EXTRA_ITEM_STATUS);
             MediaItemStatus itemStatus = MediaItemStatus.fromBundle(itemStatusBundle);
 
-            if (mDebug) Log.d(TAG, "Received item status: " + bundleToString(itemStatusBundle));
+            logBundle("Received item status: ", itemStatusBundle);
 
             updateState(itemStatus.getPlaybackState());
+
+            // Update the PositionExtrapolator that the playback state has changed.
+            if (itemStatus.getPlaybackState() == MediaItemStatus.PLAYBACK_STATE_PLAYING) {
+                mPositionExtrapolator.onResumed();
+            } else if (itemStatus.getPlaybackState() == MediaItemStatus.PLAYBACK_STATE_FINISHED) {
+                mPositionExtrapolator.onFinished();
+            } else {
+                mPositionExtrapolator.onPaused();
+            }
 
             if ((getRemotePlayerState() == PlayerState.PAUSED)
                     || (getRemotePlayerState() == PlayerState.PLAYING)
                     || (getRemotePlayerState() == PlayerState.LOADING)) {
                 this.mCurrentItemId = itemId;
 
-                long duration = itemStatus.getContentDuration();
                 // duration can possibly be -1 if it's unknown, so cap to 0
-                updateDuration(Math.max(duration, 0));
-
+                long duration = Math.max(itemStatus.getContentDuration(), 0);
                 // update the position using the remote player's position
-                mLastKnownStreamPosition = itemStatus.getContentPosition();
-                mStreamPositionTimestamp = itemStatus.getTimestamp();
-                updatePosition();
+                // duration can possibly be -1 if it's unknown, so cap to 0
+                long position = Math.min(Math.max(itemStatus.getContentPosition(), 0), duration);
+                // TODO(zqzhang): The GMS core currently uses SystemClock.uptimeMillis() as
+                // timestamp, which does not conform to the MediaRouter support library docs. See
+                // b/28378525 and
+                // http://developer.android.com/reference/android/support/v7/media/MediaItemStatus.html#getTimestamp().
+                // Override the timestamp with elapsedRealtime() by assuming the delay between the
+                // GMS core produces the MediaItemStatus and the code reaches here is short enough.
+                // long timestamp = itemStatus.getTimestamp();
+                long timestamp = SystemClock.elapsedRealtime();
+                notifyDurationUpdated(duration);
+                notifyPositionUpdated(position);
+                mPositionExtrapolator.onPositionInfoUpdated(duration, position, timestamp);
 
                 if (mSeeking) {
                     mSeeking = false;
                     if (getMediaStateListener() != null) getMediaStateListener().onSeekCompleted();
                 }
             }
-
-            Bundle extras = itemStatus.getExtras();
-            if (mDebug && extras != null) {
-                if (extras.containsKey(MediaItemStatus.EXTRA_HTTP_STATUS_CODE)) {
-                    int httpStatus = extras.getInt(MediaItemStatus.EXTRA_HTTP_STATUS_CODE);
-                    Log.d(TAG, "HTTP status: " + httpStatus);
-                }
-                if (extras.containsKey(MediaItemStatus.EXTRA_HTTP_RESPONSE_HEADERS)) {
-                    Bundle headers = extras.getBundle(MediaItemStatus.EXTRA_HTTP_RESPONSE_HEADERS);
-                    Log.d(TAG, "HTTP headers: " + headers);
-                }
-            }
+            logExtraHttpInfo(itemStatus.getExtras());
         }
     }
 
@@ -703,19 +691,15 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
      */
     private void sendIntentToRoute(final Intent intent, final ResultBundleHandler bundleHandler) {
         if (getCurrentRoute() == null) {
-            if (mDebug) {
-                dumpIntentToLog("sendIntentToRoute ", intent);
-                Log.d(TAG, "The current route is null.");
-            }
+            logIntent("sendIntentToRoute ", intent);
+            Log.d(TAG, "The current route is null.");
             if (bundleHandler != null) bundleHandler.onError(null, null);
             return;
         }
 
         if (!getCurrentRoute().supportsControlRequest(intent)) {
-            if (mDebug) {
-                dumpIntentToLog("sendIntentToRoute ", intent);
-                Log.d(TAG, "The intent is not supported by the route: " + getCurrentRoute());
-            }
+            logIntent("sendIntentToRoute ", intent);
+            Log.d(TAG, "The intent is not supported by the route: %s", getCurrentRoute());
             if (bundleHandler != null) bundleHandler.onError(null, null);
             return;
         }
@@ -724,14 +708,11 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
     }
 
     private void sendControlIntent(final Intent intent, final ResultBundleHandler bundleHandler) {
-
-        if (mDebug) {
-            Log.d(TAG, "Sending intent to " + getCurrentRoute().getName() + " "
-                            + getCurrentRoute().getId());
-            dumpIntentToLog("sendControlIntent ", intent);
-        }
+        Log.d(TAG, "Sending intent to %s %s", getCurrentRoute().getName(),
+                getCurrentRoute().getId());
+        logIntent("sendControlIntent ", intent);
         if (getCurrentRoute().isDefault()) {
-            if (mDebug) Log.d(TAG, "Route is default, not sending");
+            Log.d(TAG, "Route is default, not sending");
             return;
         }
 
@@ -743,14 +724,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
             @Override
             public void onError(String message, Bundle data) {
-                if (mDebug) {
-                    // The intent may contain some PII so we don't want to log it in the released
-                    // version by default.
-                    Log.e(TAG, String.format(
-                            "Error sending control request %s %s. Data: %s Error: %s", intent,
-                            bundleToString(intent.getExtras()), bundleToString(data), message));
-                }
-
+                logControlRequestError(intent, message, data);
                 int errorCode = 0;
                 if (data != null) {
                     errorCode = data.getInt(CastMediaControlIntent.EXTRA_ERROR_CODE);
@@ -763,22 +737,24 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         });
     }
 
-    private void updateDuration(long durationMillis) {
-        mStreamDuration = durationMillis;
-
+    private void notifyDurationUpdated(long durationMillis) {
         for (UiListener listener : getUiListeners()) {
             listener.onDurationUpdated(durationMillis);
         }
     }
 
-    private void updatePosition() {
+    private void notifyPositionUpdated(long position) {
         for (UiListener listener : getUiListeners()) {
-            listener.onPositionChanged(getPosition());
+            listener.onPositionChanged(position);
         }
     }
 
-    private void dumpIntentToLog(String prefix, Intent intent) {
-        Log.d(TAG, prefix + intent + " extras: " + bundleToString(intent.getExtras()));
+    private void recordRemainingTimeUMA() {
+        long duration = getDuration();
+        long remainingTime = Math.max(0, duration - getPosition());
+        // Duration has already been cleared.
+        if (getDuration() <= 0) return;
+        RecordCastAction.castEndedTimeRemaining(duration, remainingTime);
     }
 
     private String bundleToString(Bundle bundle) {
@@ -803,7 +779,7 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
 
         String url = listener.getSourceUrl();
 
-        if (mDebug) Log.d(TAG, "startCastingVideo called, url = " + url);
+        Log.d(TAG, "startCastingVideo called, url = %s", url);
 
         // checkIfPlayableRemotely will have rejected null URLs.
         assert url != null;
@@ -815,15 +791,10 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
         playUri(listener.getTitle(), mStartPositionMillis);
     }
 
-    private void showMessageToast(String message) {
-        Toast toast = Toast.makeText(getContext(), message, Toast.LENGTH_SHORT);
-        toast.show();
-    }
-
     private void configureNewSession(Bundle data) {
         mCurrentSessionId = data.getString(MediaControlIntent.EXTRA_SESSION_ID);
         mSessionState = MediaSessionStatus.SESSION_STATE_INVALIDATED;
-        if (mDebug) Log.d(TAG, "Got a session id: " + mCurrentSessionId);
+        Log.d(TAG, "Got a session id: %s", mCurrentSessionId);
     }
 
     @Override
@@ -852,5 +823,46 @@ public class DefaultMediaRouteController extends AbstractMediaRouteController {
     public String getUriPlaying() {
         if (mLocalVideoUri == null) return null;
         return mLocalVideoUri.toString();
+    }
+
+    @RemovableInRelease
+    private void logBundle(String message, Bundle bundle) {
+        Log.d(TAG, message + bundleToString(bundle));
+    }
+
+    @RemovableInRelease
+    private void logControlRequestError(Intent intent, String message, Bundle data) {
+        // The intent may contain some PII so we don't want to log it in the released
+        // version by default.
+        Log.e(TAG, String.format(
+                "Error sending control request %s %s. Data: %s Error: %s", intent,
+                bundleToString(intent.getExtras()), bundleToString(data), message));
+    }
+
+    @RemovableInRelease
+    private void logExtraHttpInfo(Bundle extras) {
+        if (extras != null) {
+            if (extras.containsKey(MediaItemStatus.EXTRA_HTTP_STATUS_CODE)) {
+                int httpStatus = extras.getInt(MediaItemStatus.EXTRA_HTTP_STATUS_CODE);
+                Log.d(TAG, "HTTP status: %s", httpStatus);
+            }
+            if (extras.containsKey(MediaItemStatus.EXTRA_HTTP_RESPONSE_HEADERS)) {
+                Bundle headers = extras.getBundle(MediaItemStatus.EXTRA_HTTP_RESPONSE_HEADERS);
+                Log.d(TAG, "HTTP headers: %s", bundleToString(headers));
+            }
+        }
+    }
+
+    @RemovableInRelease
+    private void logIntent(String prefix, Intent intent) {
+        Log.d(TAG, prefix + intent + " extras: " + bundleToString(intent.getExtras()));
+    }
+
+    @RemovableInRelease
+    private void logMediaSessionStatus(Bundle data) {
+        MediaSessionStatus status = MediaSessionStatus.fromBundle(
+                data.getBundle(MediaControlIntent.EXTRA_SESSION_STATUS));
+        int sessionState = status.getSessionState();
+        Log.d(TAG, "Session state after ending session: %s", sessionState);
     }
 }

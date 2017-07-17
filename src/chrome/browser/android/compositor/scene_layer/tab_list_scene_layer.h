@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_TAB_LIST_SCENE_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_TAB_LIST_SCENE_LAYER_H_
 
-#include <vector>
+#include <map>
+#include <memory>
+#include <set>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/layers/layer.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 #include "chrome/browser/android/compositor/scene_layer/scene_layer.h"
@@ -33,19 +34,23 @@ class TabListSceneLayer : public SceneLayer {
   TabListSceneLayer(JNIEnv* env, jobject jobj);
   ~TabListSceneLayer() override;
 
-  // TODO(changwan): remove this once we have refactored
-  // ContextualSearchSupportedLayout into LayoutHelper.
-  void SetContentTree(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      const base::android::JavaParamRef<jobject>& jcontent_tree);
-
   void BeginBuildingFrame(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& jobj);
   void FinishBuildingFrame(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& jobj);
+  void UpdateLayer(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jobj,
+      jint background_color,
+      jfloat viewport_x,
+      jfloat viewport_y,
+      jfloat viewport_width,
+      jfloat viewport_height,
+      const base::android::JavaParamRef<jobject>& jlayer_title_cache,
+      const base::android::JavaParamRef<jobject>& jtab_content_manager,
+      const base::android::JavaParamRef<jobject>& jresource_manager);
   // TODO(dtrainor): This method is ridiculous.  Break this apart?
-  void PutLayer(
+  void PutTabLayer(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj,
       jint id,
@@ -58,7 +63,6 @@ class TabListSceneLayer : public SceneLayer {
       jint border_inner_shadow_resource_id,
       jboolean can_use_live_layer,
       jint tab_background_color,
-      jint background_color,
       jint back_logo_color,
       jboolean incognito,
       jboolean is_portrait,
@@ -69,10 +73,6 @@ class TabListSceneLayer : public SceneLayer {
       jfloat content_width,
       jfloat content_height,
       jfloat visible_content_height,
-      jfloat viewport_x,
-      jfloat viewport_y,
-      jfloat viewport_width,
-      jfloat viewport_height,
       jfloat shadow_x,
       jfloat shadow_y,
       jfloat shadow_width,
@@ -93,6 +93,7 @@ class TabListSceneLayer : public SceneLayer {
       jfloat saturation,
       jfloat brightness,
       jboolean show_toolbar,
+      jint default_theme_color,
       jint toolbar_background_color,
       jboolean anonymize_toolbar,
       jint toolbar_textbox_resource_id,
@@ -102,10 +103,7 @@ class TabListSceneLayer : public SceneLayer {
       jfloat toolbar_y_offset,
       jfloat side_border_scale,
       jboolean attach_content,
-      jboolean inset_border,
-      const base::android::JavaParamRef<jobject>& jlayer_title_cache,
-      const base::android::JavaParamRef<jobject>& jtab_content_manager,
-      const base::android::JavaParamRef<jobject>& jresource_manager);
+      jboolean inset_border);
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject(JNIEnv* env);
 
@@ -114,25 +112,18 @@ class TabListSceneLayer : public SceneLayer {
   SkColor GetBackgroundColor() override;
 
  private:
-  void RemoveAllRemainingTabLayers();
-  void RemoveTabLayersInRange(unsigned start_index, unsigned end_index);
-
-  typedef std::vector<scoped_refptr<TabLayer>> TabLayerList;
-
-  scoped_refptr<TabLayer> GetNextLayer(bool incognito);
+  typedef std::map<int, scoped_refptr<TabLayer>> TabMap;
+  TabMap tab_map_;
+  std::set<int> visible_tabs_this_frame_;
 
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;
   bool content_obscures_self_;
-  unsigned write_index_;
   ui::ResourceManager* resource_manager_;
   LayerTitleCache* layer_title_cache_;
   TabContentManager* tab_content_manager_;
-  TabLayerList layers_;
   SkColor background_color_;
 
-  // We need to make sure that content_tree_ is always in front of own_tree_.
   scoped_refptr<cc::Layer> own_tree_;
-  scoped_refptr<cc::Layer> content_tree_;
 
   DISALLOW_COPY_AND_ASSIGN(TabListSceneLayer);
 };

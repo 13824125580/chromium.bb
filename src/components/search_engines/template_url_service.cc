@@ -131,18 +131,18 @@ bool IsFromSync(const TemplateURL* turl, const SyncDataMap& sync_data) {
 // underscores, which could occur as the result of conflict resolution.
 void LogDuplicatesHistogram(
     const TemplateURLService::TemplateURLVector& template_urls) {
-  std::map<std::string, int> duplicates;
+  std::map<base::string16, int> duplicates;
   for (TemplateURLService::TemplateURLVector::const_iterator it =
       template_urls.begin(); it != template_urls.end(); ++it) {
-    std::string keyword = base::UTF16ToASCII((*it)->keyword());
-    base::TrimString(keyword, "_", &keyword);
+    base::string16 keyword = (*it)->keyword();
+    base::TrimString(keyword, base::ASCIIToUTF16("_"), &keyword);
     duplicates[keyword]++;
   }
 
   // Count the keywords with duplicates.
   int num_dupes = 0;
-  for (std::map<std::string, int>::const_iterator it = duplicates.begin();
-      it != duplicates.end(); ++it) {
+  for (std::map<base::string16, int>::const_iterator it = duplicates.begin();
+       it != duplicates.end(); ++it) {
     if (it->second > 1)
       num_dupes++;
   }
@@ -217,9 +217,9 @@ class TemplateURLService::LessWithPrefix {
 
 TemplateURLService::TemplateURLService(
     PrefService* prefs,
-    scoped_ptr<SearchTermsData> search_terms_data,
+    std::unique_ptr<SearchTermsData> search_terms_data,
     const scoped_refptr<KeywordWebDataService>& web_data_service,
-    scoped_ptr<TemplateURLServiceClient> client,
+    std::unique_ptr<TemplateURLServiceClient> client,
     GoogleURLTracker* google_url_tracker,
     rappor::RapporService* rappor_service,
     const base::Closure& dsp_change_callback)
@@ -456,7 +456,7 @@ void TemplateURLService::AddWithOverrides(TemplateURL* template_url,
 
 void TemplateURLService::AddExtensionControlledTURL(
     TemplateURL* template_url,
-    scoped_ptr<TemplateURL::AssociatedExtensionInfo> info) {
+    std::unique_ptr<TemplateURL::AssociatedExtensionInfo> info) {
   DCHECK(loaded_);
   DCHECK(template_url);
   DCHECK_EQ(kInvalidTemplateURLID, template_url->id());
@@ -547,7 +547,7 @@ void TemplateURLService::RegisterOmniboxKeyword(
   data.SetKeyword(base::UTF8ToUTF16(keyword));
   data.SetURL(template_url_string);
   TemplateURL* url = new TemplateURL(data);
-  scoped_ptr<TemplateURL::AssociatedExtensionInfo> info(
+  std::unique_ptr<TemplateURL::AssociatedExtensionInfo> info(
       new TemplateURL::AssociatedExtensionInfo(
           TemplateURL::OMNIBOX_API_EXTENSION, extension_id));
   AddExtensionControlledTURL(url, std::move(info));
@@ -716,12 +716,10 @@ void TemplateURLService::Load() {
     ChangeToLoadedState();
 }
 
-scoped_ptr<TemplateURLService::Subscription>
-    TemplateURLService::RegisterOnLoadedCallback(
-        const base::Closure& callback) {
-  return loaded_ ?
-      scoped_ptr<TemplateURLService::Subscription>() :
-      on_loaded_callbacks_.Add(callback);
+std::unique_ptr<TemplateURLService::Subscription>
+TemplateURLService::RegisterOnLoadedCallback(const base::Closure& callback) {
+  return loaded_ ? std::unique_ptr<TemplateURLService::Subscription>()
+                 : on_loaded_callbacks_.Add(callback);
 }
 
 void TemplateURLService::OnWebDataServiceRequestDone(
@@ -829,8 +827,7 @@ void TemplateURLService::OnWebDataServiceRequestDone(
 
     UMA_HISTOGRAM_ENUMERATION(
         "Search.DefaultSearchProviderType",
-        TemplateURLPrepopulateData::GetEngineType(
-            *default_search_provider_, search_terms_data()),
+        default_search_provider_->GetEngineType(search_terms_data()),
         SEARCH_ENGINE_MAX);
 
     if (rappor_service_) {
@@ -930,9 +927,10 @@ syncer::SyncError TemplateURLService::ProcessSyncChanges(
     std::string guid =
         iter->sync_data().GetSpecifics().search_engine().sync_guid();
     TemplateURL* existing_turl = GetTemplateURLForGUID(guid);
-    scoped_ptr<TemplateURL> turl(CreateTemplateURLFromTemplateURLAndSyncData(
-        client_.get(), prefs_, search_terms_data(), existing_turl,
-        iter->sync_data(), &new_changes));
+    std::unique_ptr<TemplateURL> turl(
+        CreateTemplateURLFromTemplateURLAndSyncData(
+            client_.get(), prefs_, search_terms_data(), existing_turl,
+            iter->sync_data(), &new_changes));
     if (!turl.get())
       continue;
 
@@ -1041,8 +1039,8 @@ syncer::SyncError TemplateURLService::ProcessSyncChanges(
 syncer::SyncMergeResult TemplateURLService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) {
   DCHECK(loaded_);
   DCHECK_EQ(type, syncer::SEARCH_ENGINES);
   DCHECK(!sync_processor_.get());
@@ -1084,7 +1082,7 @@ syncer::SyncMergeResult TemplateURLService::MergeDataAndStartSyncing(
   for (SyncDataMap::const_iterator iter = sync_data_map.begin();
       iter != sync_data_map.end(); ++iter) {
     TemplateURL* local_turl = GetTemplateURLForGUID(iter->first);
-    scoped_ptr<TemplateURL> sync_turl(
+    std::unique_ptr<TemplateURL> sync_turl(
         CreateTemplateURLFromTemplateURLAndSyncData(
             client_.get(), prefs_, search_terms_data(), local_turl,
             iter->second, &new_changes));
@@ -1252,7 +1250,7 @@ syncer::SyncData TemplateURLService::CreateSyncDataFromTemplateURL(
 }
 
 // static
-scoped_ptr<TemplateURL>
+std::unique_ptr<TemplateURL>
 TemplateURLService::CreateTemplateURLFromTemplateURLAndSyncData(
     TemplateURLServiceClient* client,
     PrefService* prefs,
@@ -1321,7 +1319,7 @@ TemplateURLService::CreateTemplateURLFromTemplateURLAndSyncData(
     data.alternate_urls.push_back(specifics.alternate_urls(i));
   data.search_terms_replacement_key = specifics.search_terms_replacement_key();
 
-  scoped_ptr<TemplateURL> turl(new TemplateURL(data));
+  std::unique_ptr<TemplateURL> turl(new TemplateURL(data));
   // If this TemplateURL matches a built-in prepopulated template URL, it's
   // possible that sync is trying to modify fields that should not be touched.
   // Revert these fields to the built-in values.
@@ -2185,8 +2183,7 @@ base::string16 TemplateURLService::UniquifyKeyword(const TemplateURL& turl,
     GURL gurl(turl.url());
     if (gurl.is_valid() &&
         (turl.GetType() != TemplateURL::OMNIBOX_API_EXTENSION)) {
-      base::string16 keyword_candidate = TemplateURL::GenerateKeyword(
-          gurl, search_terms_data().GetAcceptLanguages());
+      base::string16 keyword_candidate = TemplateURL::GenerateKeyword(gurl);
       if (!GetTemplateURLForKeyword(keyword_candidate))
         return keyword_candidate;
     }
@@ -2203,13 +2200,13 @@ base::string16 TemplateURLService::UniquifyKeyword(const TemplateURL& turl,
   return keyword_candidate;
 }
 
-bool TemplateURLService::IsLocalTemplateURLBetter(
-    const TemplateURL* local_turl,
-    const TemplateURL* sync_turl) {
+bool TemplateURLService::IsLocalTemplateURLBetter(const TemplateURL* local_turl,
+                                                  const TemplateURL* sync_turl,
+                                                  bool prefer_local_default) {
   DCHECK(GetTemplateURLForGUID(local_turl->sync_guid()));
   return local_turl->last_modified() > sync_turl->last_modified() ||
          local_turl->created_by_policy() ||
-         local_turl== GetDefaultSearchProvider();
+         (prefer_local_default && local_turl == GetDefaultSearchProvider());
 }
 
 void TemplateURLService::ResolveSyncKeywordConflict(
@@ -2266,11 +2263,9 @@ void TemplateURLService::MergeInSyncTemplateURL(
       FindNonExtensionTemplateURLForKeyword(sync_turl->keyword());
   bool should_add_sync_turl = true;
 
-  // If there was no TemplateURL in the local model that conflicts with
-  // |sync_turl|, skip the following preparation steps and just add |sync_turl|
-  // directly. Otherwise, modify |conflicting_turl| to make room for
-  // |sync_turl|.
+  // Resolve conflicts with local TemplateURLs.
   if (conflicting_turl) {
+    // Modify |conflicting_turl| to make room for |sync_turl|.
     if (IsFromSync(conflicting_turl, sync_data)) {
       // |conflicting_turl| is already known to Sync, so we're not allowed to
       // remove it. In this case, we want to uniquify the worse one and send an
@@ -2306,6 +2301,43 @@ void TemplateURLService::MergeInSyncTemplateURL(
       }
       // This TemplateURL was either removed or overwritten in the local model.
       // Remove the entry from the local data so it isn't pushed up to Sync.
+      local_data->erase(guid);
+    }
+  } else {
+    // Check for a turl with a conflicting prepopulate_id. This detects the case
+    // where the user changes a prepopulated engine's keyword on one client,
+    // then begins syncing on another client.  We want to reflect this keyword
+    // change to that prepopulated URL on other clients instead of assuming that
+    // the modified TemplateURL is a new entity.
+    TemplateURL* conflicting_prepopulated_turl =
+        FindPrepopulatedTemplateURL(sync_turl->prepopulate_id());
+
+    // If we found a conflict, and the sync entity is better, apply the remote
+    // changes locally. We consider |sync_turl| better if it's been modified
+    // more recently and the local TemplateURL isn't yet known to sync. We will
+    // consider the sync entity better even if the local TemplateURL is the
+    // current default, since in this case being default does not necessarily
+    // mean the user explicitly set this TemplateURL as default. If we didn't do
+    // this, changes to the keywords of prepopulated default engines would never
+    // be applied to other clients.
+    // If we can't safely replace the local entry with the synced one, or merge
+    // the relevant changes in, we give up and leave both intact.
+    if (conflicting_prepopulated_turl &&
+        !IsFromSync(conflicting_prepopulated_turl, sync_data) &&
+        !IsLocalTemplateURLBetter(conflicting_prepopulated_turl, sync_turl,
+                                  false)) {
+      std::string guid = conflicting_prepopulated_turl->sync_guid();
+      if (conflicting_prepopulated_turl == default_search_provider_) {
+        ApplyDefaultSearchChange(&sync_turl->data(),
+                                 DefaultSearchManager::FROM_USER);
+        merge_result->set_num_items_modified(
+            merge_result->num_items_modified() + 1);
+      } else {
+        Remove(conflicting_prepopulated_turl);
+        merge_result->set_num_items_deleted(merge_result->num_items_deleted() +
+                                            1);
+      }
+      // Remove the local data so it isn't written to sync.
       local_data->erase(guid);
     }
   }

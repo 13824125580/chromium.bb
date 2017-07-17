@@ -7,10 +7,10 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "ui/base/touch/selection_bound.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
+#include "ui/gfx/selection_bound.h"
 #include "ui/touch_selection/longpress_drag_selector.h"
 #include "ui/touch_selection/selection_event_type.h"
 #include "ui/touch_selection/touch_handle.h"
@@ -33,7 +33,7 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionControllerClient {
   virtual void SelectBetweenCoordinates(const gfx::PointF& base,
                                         const gfx::PointF& extent) = 0;
   virtual void OnSelectionEvent(SelectionEventType event) = 0;
-  virtual scoped_ptr<TouchHandleDrawable> CreateDrawable() = 0;
+  virtual std::unique_ptr<TouchHandleDrawable> CreateDrawable() = 0;
 };
 
 // Controller for manipulating text selection via touch input.
@@ -79,8 +79,8 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   // To be called when the selection bounds have changed.
   // Note that such updates will trigger handle updates only if preceded
   // by an appropriate call to allow automatic showing.
-  void OnSelectionBoundsChanged(const SelectionBound& start,
-                                const SelectionBound& end);
+  void OnSelectionBoundsChanged(const gfx::SelectionBound& start,
+                                const gfx::SelectionBound& end);
 
   // To be called when the viewport rect has been changed. This is used for
   // setting the state of the handles.
@@ -142,8 +142,8 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   const gfx::PointF& GetStartPosition() const;
   const gfx::PointF& GetEndPosition() const;
 
-  const SelectionBound& start() const { return start_; }
-  const SelectionBound& end() const { return end_; }
+  const gfx::SelectionBound& start() const { return start_; }
+  const gfx::SelectionBound& end() const { return end_; }
 
   ActiveStatus active_status() const { return active_status_; }
 
@@ -161,7 +161,7 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   bool IsWithinTapSlop(const gfx::Vector2dF& delta) const override;
   void OnHandleTapped(const TouchHandle& handle) override;
   void SetNeedsAnimate() override;
-  scoped_ptr<TouchHandleDrawable> CreateDrawable() override;
+  std::unique_ptr<TouchHandleDrawable> CreateDrawable() override;
   base::TimeDelta GetMaxTapDuration() const override;
   bool IsAdaptiveHandleOrientationEnabled() const override;
 
@@ -207,18 +207,18 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
 
   InputEventType response_pending_input_event_;
 
-  SelectionBound start_;
-  SelectionBound end_;
+  gfx::SelectionBound start_;
+  gfx::SelectionBound end_;
   TouchHandleOrientation start_orientation_;
   TouchHandleOrientation end_orientation_;
 
   ActiveStatus active_status_;
 
-  scoped_ptr<TouchHandle> insertion_handle_;
+  std::unique_ptr<TouchHandle> insertion_handle_;
   bool activate_insertion_automatically_;
 
-  scoped_ptr<TouchHandle> start_selection_handle_;
-  scoped_ptr<TouchHandle> end_selection_handle_;
+  std::unique_ptr<TouchHandle> start_selection_handle_;
+  std::unique_ptr<TouchHandle> end_selection_handle_;
   bool activate_selection_automatically_;
 
   bool selection_empty_;

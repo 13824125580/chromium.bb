@@ -5,9 +5,10 @@
 #include <stdint.h>
 
 #include "base/location.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -41,7 +42,7 @@ class ActivityLogPrerenderTest : public ExtensionApiTest {
   static void Prerender_Arguments(
       const std::string& extension_id,
       uint16_t port,
-      scoped_ptr<std::vector<scoped_refptr<Action>>> i) {
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> i) {
     // This is to exit RunLoop (base::MessageLoop::current()->Run()) below
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
@@ -77,6 +78,7 @@ IN_PROC_BROWSER_TEST_F(ActivityLogPrerenderTest, TestScriptInjected) {
   ASSERT_TRUE(ext);
 
   ActivityLog* activity_log = ActivityLog::GetInstance(profile());
+  activity_log->SetWatchdogAppActiveForTesting(true);
   ASSERT_TRUE(activity_log);
 
   // Disable rate limiting in PrerenderManager
@@ -105,7 +107,7 @@ IN_PROC_BROWSER_TEST_F(ActivityLogPrerenderTest, TestScriptInjected) {
       port));
 
   const gfx::Size kSize(640, 480);
-  scoped_ptr<prerender::PrerenderHandle> prerender_handle(
+  std::unique_ptr<prerender::PrerenderHandle> prerender_handle(
       prerender_manager->AddPrerenderFromOmnibox(
           url,
           web_contents->GetController().GetDefaultSessionStorageNamespace(),
@@ -124,7 +126,7 @@ IN_PROC_BROWSER_TEST_F(ActivityLogPrerenderTest, TestScriptInjected) {
           ActivityLogPrerenderTest::Prerender_Arguments, ext->id(), port));
 
   // Allow invocation of Prerender_Arguments
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 }  // namespace extensions

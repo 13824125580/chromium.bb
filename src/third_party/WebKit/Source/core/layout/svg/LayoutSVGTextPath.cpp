@@ -23,8 +23,16 @@
 #include "core/svg/SVGPathElement.h"
 #include "core/svg/SVGTextPathElement.h"
 #include "platform/graphics/Path.h"
+#include <memory>
 
 namespace blink {
+
+TreeScope& treeScopeForIdResolution(const SVGElement& element)
+{
+    if (SVGElement* correspondingElement = element.correspondingElement())
+        return correspondingElement->treeScope();
+    return element.treeScope();
+}
 
 PathPositionMapper::PathPositionMapper(const Path& path)
     : m_positionCalculator(path)
@@ -57,11 +65,12 @@ bool LayoutSVGTextPath::isChildAllowed(LayoutObject* child, const ComputedStyle&
     return child->isSVGInline() && !child->isSVGTextPath();
 }
 
-PassOwnPtr<PathPositionMapper> LayoutSVGTextPath::layoutPath() const
+std::unique_ptr<PathPositionMapper> LayoutSVGTextPath::layoutPath() const
 {
     const SVGTextPathElement& textPathElement = toSVGTextPathElement(*node());
     Element* targetElement = SVGURIReference::targetElementFromIRIString(
-        textPathElement.hrefString(), textPathElement.treeScope());
+        textPathElement.hrefString(), treeScopeForIdResolution(textPathElement));
+
     if (!isSVGPathElement(targetElement))
         return nullptr;
 

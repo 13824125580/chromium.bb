@@ -42,6 +42,8 @@
 #include "public/web/WebSpeechRecognitionResult.h"
 #include "public/web/WebSpeechRecognizer.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -49,9 +51,9 @@ SpeechRecognitionClientProxy::~SpeechRecognitionClientProxy()
 {
 }
 
-PassOwnPtr<SpeechRecognitionClientProxy> SpeechRecognitionClientProxy::create(WebSpeechRecognizer* recognizer)
+std::unique_ptr<SpeechRecognitionClientProxy> SpeechRecognitionClientProxy::create(WebSpeechRecognizer* recognizer)
 {
-    return adoptPtr(new SpeechRecognitionClientProxy(recognizer));
+    return wrapUnique(new SpeechRecognitionClientProxy(recognizer));
 }
 
 void SpeechRecognitionClientProxy::start(SpeechRecognition* recognition, const SpeechGrammarList* grammarList, const String& lang, bool continuous, bool interimResults, unsigned long maxAlternatives, MediaStreamTrack* audioTrack)
@@ -64,7 +66,7 @@ void SpeechRecognitionClientProxy::start(SpeechRecognition* recognition, const S
     WebMediaStreamTrack track;
     if (RuntimeEnabledFeatures::mediaStreamSpeechEnabled() && audioTrack)
         track.assign(audioTrack->component());
-    WebSpeechRecognitionParams params(webSpeechGrammars, lang, continuous, interimResults, maxAlternatives, track, WebSecurityOrigin(recognition->executionContext()->securityOrigin()));
+    WebSpeechRecognitionParams params(webSpeechGrammars, lang, continuous, interimResults, maxAlternatives, track, WebSecurityOrigin(recognition->getExecutionContext()->getSecurityOrigin()));
     m_recognizer->start(recognition, params, this);
 }
 

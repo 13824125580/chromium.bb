@@ -24,51 +24,31 @@ BaseAutomationHandler = function(node) {
    */
   this.node_ = node;
 
-  /**
-   * Maps an automation event to its listener.
-   * @type {!Object<EventType, function(!AutomationEvent) : void>}
-   */
-  this.listenerMap_ = {
-    alert: this.onAlert,
-    focus: this.onFocus,
-    hover: this.onEventDefault,
-    loadComplete: this.onLoadComplete,
-    menuListItemSelected: this.onEventDefault,
-    menuStart: this.onMenuStart,
-    menuEnd: this.onMenuEnd,
-    selection: this.onEventDefault,
-    scrollPositionChanged: this.onScrollPositionChanged,
-    textChanged: this.onTextChanged,
-    textSelectionChanged: this.onTextSelectionChanged,
-    valueChanged: this.onValueChanged
-  };
-
-  /** @type {!Object<string, function(!AutomationEvent): void>} @private */
+  /** @type {!Object<EventType, function(!AutomationEvent): void>} @private */
   this.listeners_ = {};
-
-  this.register_();
 };
 
 BaseAutomationHandler.prototype = {
   /**
-   * Registers event listeners. Can be called repeatedly without duplicate
-   * listeners.
-   * @private
+   * Adds an event listener to this handler.
+   * @param {chrome.automation.EventType} eventType
+   * @param {!function(!AutomationEvent): void} eventCallback
+   * @protected
    */
-  register_: function() {
-    for (var eventType in this.listenerMap_) {
-      var listener =
-          this.makeListener_(this.listenerMap_[eventType].bind(this));
-      this.node_.addEventListener(eventType, listener, true);
-      this.listeners_[eventType] = listener;
-    }
+  addListener_: function(eventType, eventCallback) {
+    if (this.listeners_[eventType])
+      throw 'Listener already added: ' + eventType;
+
+    var listener = this.makeListener_(eventCallback.bind(this));
+    this.node_.addEventListener(eventType, listener, true);
+    this.listeners_[eventType] = listener;
   },
 
   /**
-   * Unregisters listeners.
+   * Removes all listeners from this handler.
    */
-  unregister: function() {
-    for (var eventType in this.listenerMap_) {
+  removeAllListeners: function() {
+    for (var eventType in this.listeners_) {
       this.node_.removeEventListener(
           eventType, this.listeners_[eventType], true);
     }
@@ -101,57 +81,7 @@ BaseAutomationHandler.prototype = {
    * @protected
    */
   didHandleEvent_: function(evt) {
-  },
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onAlert: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onFocus: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onLoadComplete: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onEventDefault: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onMenuStart: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onMenuEnd: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onScrollPositionChanged: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onTextChanged: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onTextSelectionChanged: function(evt) {},
-
-  /**
-   * @param {!AutomationEvent} evt
-   */
-  onValueChanged: function(evt) {}
+  }
 };
 
 });  // goog.scope

@@ -88,6 +88,11 @@ void DragData::asFilePaths(Vector<String>& result) const
     }
 }
 
+unsigned DragData::numberOfFiles() const
+{
+    return m_platformDragData->filenames().size();
+}
+
 bool DragData::containsPlainText() const
 {
     return m_platformDragData->types().contains(mimeTypeTextPlain);
@@ -116,7 +121,7 @@ bool DragData::containsCompatibleContent() const
         || containsFiles();
 }
 
-PassRefPtrWillBeRawPtr<DocumentFragment> DragData::asFragment(LocalFrame* frame) const
+DocumentFragment* DragData::asFragment(LocalFrame* frame) const
 {
     /*
      * Order is richest format first. On OSX this is:
@@ -138,8 +143,8 @@ PassRefPtrWillBeRawPtr<DocumentFragment> DragData::asFragment(LocalFrame* frame)
         KURL baseURL;
         m_platformDragData->htmlAndBaseURL(html, baseURL);
         ASSERT(frame->document());
-        if (RefPtrWillBeRawPtr<DocumentFragment> fragment = createFragmentFromMarkup(*frame->document(), html, baseURL, DisallowScriptingAndPluginContent))
-            return fragment.release();
+        if (DocumentFragment* fragment = createFragmentFromMarkup(*frame->document(), html, baseURL, DisallowScriptingAndPluginContent))
+            return fragment;
     }
 
     return nullptr;

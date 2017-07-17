@@ -101,6 +101,9 @@ class NET_EXPORT_PRIVATE QuicUtils {
   // "0x0020:  7fe2 0800 6bcb 0bc6 806e                 ....k....n\n"
   static std::string StringToHexASCIIDump(base::StringPiece in_buffer);
 
+  // Returns PeerAddressChangeType as a std::string.
+  static std::string PeerAddressChangeTypeToString(PeerAddressChangeType type);
+
   static char* AsChars(unsigned char* data) {
     return reinterpret_cast<char*>(data);
   }
@@ -129,6 +132,20 @@ class NET_EXPORT_PRIVATE QuicUtils {
   static PeerAddressChangeType DetermineAddressChangeType(
       const IPEndPoint& old_address,
       const IPEndPoint& new_address);
+
+  // This converts 'num' bytes of binary to a 2*'num'-character hexadecimal
+  // representation. Return value: 2*'num' characters of ascii std::string.
+  static std::string HexEncode(const char* data, size_t length);
+  static std::string HexEncode(base::StringPiece data);
+
+  // This converts 2*'num' hexadecimal characters to 'num' binary data.
+  // Return value: 'num' bytes of binary data (via the 'to' argument).
+  static std::string HexDecode(const char* data, size_t length);
+  static std::string HexDecode(base::StringPiece data);
+
+  // Converts binary data into an ASCII string. Each character in the resulting
+  // string is preceeded by a space, and replaced with a '.' if not printable.
+  static std::string BinaryToAscii(base::StringPiece binary);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuicUtils);

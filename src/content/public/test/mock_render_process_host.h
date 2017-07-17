@@ -11,11 +11,13 @@
 
 #include "base/macros.h"
 #include "base/memory/scoped_vector.h"
+#include "base/metrics/persistent_memory_allocator.h"
 #include "base/observer_list.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_factory.h"
-#include "content/public/common/service_registry.h"
 #include "ipc/ipc_test_sink.h"
+#include "services/shell/public/cpp/interface_provider.h"
+#include "services/shell/public/cpp/interface_registry.h"
 
 class StoragePartition;
 
@@ -84,6 +86,7 @@ class MockRenderProcessHost : public RenderProcessHost {
   void DisableEventLogRecordings() override;
   void SetWebRtcLogMessageCallback(
       base::Callback<void(const std::string&)> callback) override;
+  void ClearWebRtcLogMessageCallback() override;
   WebRtcStopRtpDumpCallback StartRtpDump(
       bool incoming,
       bool outgoing,
@@ -91,13 +94,12 @@ class MockRenderProcessHost : public RenderProcessHost {
 #endif
   void ResumeDeferredNavigation(const GlobalRequestID& request_id) override;
   void NotifyTimezoneChange(const std::string& zone_id) override;
-  ServiceRegistry* GetServiceRegistry() override;
+  shell::InterfaceRegistry* GetInterfaceRegistry() override;
+  shell::InterfaceProvider* GetRemoteInterfaces() override;
+  shell::Connection* GetChildConnection() override;
+  std::unique_ptr<base::SharedPersistentMemoryAllocator> TakeMetricsAllocator()
+      override;
   const base::TimeTicks& GetInitTimeForNavigationMetrics() const override;
-  bool SubscribeUniformEnabled() const override;
-  void OnAddSubscription(unsigned int target) override;
-  void OnRemoveSubscription(unsigned int target) override;
-  void SendUpdateValueState(
-      unsigned int target, const gpu::ValueState& state) override;
 #if defined(ENABLE_BROWSER_CDMS)
   scoped_refptr<media::MediaKeys> GetCdm(int render_frame_id,
                                          int cdm_id) const override;
@@ -105,6 +107,7 @@ class MockRenderProcessHost : public RenderProcessHost {
   bool IsProcessBackgrounded() const override;
   void IncrementWorkerRefCount() override;
   void DecrementWorkerRefCount() override;
+  void PurgeAndSuspend() override;
 
   // IPC::Sender via RenderProcessHost.
   bool Send(IPC::Message* msg) override;
@@ -127,7 +130,7 @@ class MockRenderProcessHost : public RenderProcessHost {
     is_process_backgrounded_ = is_process_backgrounded;
   }
 
-  void SetProcessHandle(scoped_ptr<base::ProcessHandle> new_handle) {
+  void SetProcessHandle(std::unique_ptr<base::ProcessHandle> new_handle) {
     process_handle = std::move(new_handle);
   }
 
@@ -136,8 +139,13 @@ class MockRenderProcessHost : public RenderProcessHost {
 
   int worker_ref_count() const { return worker_ref_count_; }
 
-  void SetServiceRegistry(scoped_ptr<ServiceRegistry> service_registry) {
-    service_registry_ = std::move(service_registry);
+  void SetInterfaceRegistry(
+      std::unique_ptr<shell::InterfaceRegistry> interface_registry) {
+    interface_registry_ = std::move(interface_registry);
+  }
+  void SetRemoteInterfaces(
+      std::unique_ptr<shell::InterfaceProvider> remote_interfaces) {
+    remote_interfaces_ = std::move(remote_interfaces);
   }
 
  private:
@@ -157,9 +165,10 @@ class MockRenderProcessHost : public RenderProcessHost {
   bool deletion_callback_called_;
   bool is_for_guests_only_;
   bool is_process_backgrounded_;
-  scoped_ptr<base::ProcessHandle> process_handle;
+  std::unique_ptr<base::ProcessHandle> process_handle;
   int worker_ref_count_;
-  scoped_ptr<ServiceRegistry> service_registry_;
+  std::unique_ptr<shell::InterfaceRegistry> interface_registry_;
+  std::unique_ptr<shell::InterfaceProvider> remote_interfaces_;
 
   DISALLOW_COPY_AND_ASSIGN(MockRenderProcessHost);
 };

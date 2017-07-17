@@ -14,12 +14,13 @@
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/discardable_memory.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -40,7 +41,8 @@ namespace {
 
 class DiscardableMemoryImpl : public base::DiscardableMemory {
  public:
-  DiscardableMemoryImpl(scoped_ptr<base::DiscardableSharedMemory> shared_memory,
+  DiscardableMemoryImpl(
+      std::unique_ptr<base::DiscardableSharedMemory> shared_memory,
                         const base::Closure& deleted_callback)
       : shared_memory_(std::move(shared_memory)),
         deleted_callback_(deleted_callback),
@@ -88,7 +90,7 @@ class DiscardableMemoryImpl : public base::DiscardableMemory {
   }
 
  private:
-  scoped_ptr<base::DiscardableSharedMemory> shared_memory_;
+  std::unique_ptr<base::DiscardableSharedMemory> shared_memory_;
   const base::Closure deleted_callback_;
   bool is_locked_;
 
@@ -154,7 +156,7 @@ base::StaticAtomicSequenceNumber g_next_discardable_shared_memory_id;
 }  // namespace
 
 HostDiscardableSharedMemoryManager::MemorySegment::MemorySegment(
-    scoped_ptr<base::DiscardableSharedMemory> memory)
+    std::unique_ptr<base::DiscardableSharedMemory> memory)
     : memory_(std::move(memory)) {}
 
 HostDiscardableSharedMemoryManager::MemorySegment::~MemorySegment() {
@@ -188,7 +190,7 @@ HostDiscardableSharedMemoryManager::current() {
   return g_discardable_shared_memory_manager.Pointer();
 }
 
-scoped_ptr<base::DiscardableMemory>
+std::unique_ptr<base::DiscardableMemory>
 HostDiscardableSharedMemoryManager::AllocateLockedDiscardableMemory(
     size_t size) {
   // TODO(reveman): Temporary diagnostics for http://crbug.com/577786.
@@ -204,13 +206,13 @@ HostDiscardableSharedMemoryManager::AllocateLockedDiscardableMemory(
   AllocateLockedDiscardableSharedMemory(current_process_handle,
                                         ChildProcessHost::kInvalidUniqueID,
                                         size, new_id, &handle);
-  scoped_ptr<base::DiscardableSharedMemory> memory(
+  std::unique_ptr<base::DiscardableSharedMemory> memory(
       new base::DiscardableSharedMemory(handle));
   if (!memory->Map(size))
     base::TerminateBecauseOutOfMemory(size);
   // Close file descriptor to avoid running out.
   memory->Close();
-  return make_scoped_ptr(new DiscardableMemoryImpl(
+  return base::WrapUnique(new DiscardableMemoryImpl(
       std::move(memory),
       base::Bind(
           &HostDiscardableSharedMemoryManager::DeletedDiscardableSharedMemory,
@@ -220,6 +222,16 @@ HostDiscardableSharedMemoryManager::AllocateLockedDiscardableMemory(
 bool HostDiscardableSharedMemoryManager::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
+  if (args.level_of_detail ==
+      base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND) {
+    base::trace_event::MemoryAllocatorDump* total_dump =
+        pmd->CreateAllocatorDump("discardable");
+    total_dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                          base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                          GetBytesAllocated());
+    return true;
+  }
+
   base::AutoLock lock(lock_);
   for (const auto& process_entry : processes_) {
     const int child_process_id = process_entry.first;
@@ -367,7 +379,7 @@ void HostDiscardableSharedMemoryManager::AllocateLockedDiscardableSharedMemory(
   if (bytes_allocated_ > limit)
     ReduceMemoryUsageUntilWithinLimit(limit);
 
-  scoped_ptr<base::DiscardableSharedMemory> memory(
+  std::unique_ptr<base::DiscardableSharedMemory> memory(
       new base::DiscardableSharedMemory);
   if (!memory->CreateAndMap(size)) {
     LOG(ERROR) << "Cannot create and map discardable memory segment"

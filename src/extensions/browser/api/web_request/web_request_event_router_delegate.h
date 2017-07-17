@@ -7,61 +7,18 @@
 
 #include <string>
 
-#include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-
-class GURL;
-
-namespace base {
-class DictionaryValue;
-}  // namespace base
-
-namespace content {
-class BrowserContext;
-}  // namespace content
-
-namespace net {
-class URLRequest;
-}  // namespace net
-
 namespace extensions {
-
-class WebRequestEventDetails;
 
 // A delegate class of WebRequestApi that are not a part of chrome.
 class WebRequestEventRouterDelegate {
  public:
-  WebRequestEventRouterDelegate();
-  virtual ~WebRequestEventRouterDelegate();
-
-  // Looks up the tab and window ID for a given request.
-  // Called on the IO thread.
-  virtual void ExtractExtraRequestDetails(const net::URLRequest* request,
-                                          WebRequestEventDetails* out);
-
-  // Called to check extra parameters (e.g., tab_id, windown_id) when filtering
-  // event listeners.
-  virtual bool OnGetMatchingListenersImplCheck(int tab_id,
-                                               int window_id,
-                                               const net::URLRequest* request);
-
-  // Logs an extension action.
-  virtual void LogExtensionActivity(content::BrowserContext* browser_context,
-                                    bool is_incognito,
-                                    const std::string& extension_id,
-                                    const GURL& url,
-                                    const std::string& api_call,
-                                    scoped_ptr<base::DictionaryValue> details) {
-  }
+  virtual ~WebRequestEventRouterDelegate() {}
 
   // Notifies that a webRequest event that normally would be forwarded to a
   // listener was instead blocked because of withheld permissions.
   virtual void NotifyWebRequestWithheld(int render_process_id,
                                         int render_frame_id,
-                                        const std::string& extension_id) {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WebRequestEventRouterDelegate);
+                                        const std::string& extension_id) = 0;
 };
 
 }  // namespace extensions

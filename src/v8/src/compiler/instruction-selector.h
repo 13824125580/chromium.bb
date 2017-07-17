@@ -100,6 +100,17 @@ class InstructionSelector final {
   Instruction* Emit(Instruction* instr);
 
   // ===========================================================================
+  // ===== Architecture-independent deoptimization exit emission methods. ======
+  // ===========================================================================
+
+  Instruction* EmitDeoptimize(InstructionCode opcode, InstructionOperand output,
+                              InstructionOperand a, InstructionOperand b,
+                              Node* frame_state);
+  Instruction* EmitDeoptimize(InstructionCode opcode, size_t output_count,
+                              InstructionOperand* outputs, size_t input_count,
+                              InstructionOperand* inputs, Node* frame_state);
+
+  // ===========================================================================
   // ============== Architecture-independent CPU feature methods. ==============
   // ===========================================================================
 
@@ -127,6 +138,8 @@ class InstructionSelector final {
 
   // TODO(sigurds) This should take a CpuFeatures argument.
   static MachineOperatorBuilder::Flags SupportedMachineOperatorFlags();
+
+  static MachineOperatorBuilder::AlignmentRequirements AlignmentRequirements();
 
   // ===========================================================================
   // ============ Architecture-independent graph covering methods. =============
@@ -213,6 +226,7 @@ class InstructionSelector final {
   void InitializeCallBuffer(Node* call, CallBuffer* buffer,
                             CallBufferFlags flags, int stack_param_delta = 0);
   bool IsTailCallAddressImmediate();
+  int GetTempsCountForTailCallFromJSFunction();
 
   FrameStateDescriptor* GetFrameStateDescriptor(Node* node);
 
@@ -230,12 +244,15 @@ class InstructionSelector final {
   // Visit the node and generate code, if any.
   void VisitNode(Node* node);
 
+  // Visit the node and generate code for IEEE 754 functions.
+  void VisitFloat64Ieee754Binop(Node*, InstructionCode code);
+  void VisitFloat64Ieee754Unop(Node*, InstructionCode code);
+
 #define DECLARE_GENERATOR(x) void Visit##x(Node* node);
   MACHINE_OP_LIST(DECLARE_GENERATOR)
 #undef DECLARE_GENERATOR
 
   void VisitFinishRegion(Node* node);
-  void VisitGuard(Node* node);
   void VisitParameter(Node* node);
   void VisitIfException(Node* node);
   void VisitOsrValue(Node* node);
@@ -243,6 +260,8 @@ class InstructionSelector final {
   void VisitProjection(Node* node);
   void VisitConstant(Node* node);
   void VisitCall(Node* call, BasicBlock* handler = nullptr);
+  void VisitDeoptimizeIf(Node* node);
+  void VisitDeoptimizeUnless(Node* node);
   void VisitTailCall(Node* call);
   void VisitGoto(BasicBlock* target);
   void VisitBranch(Node* input, BasicBlock* tbranch, BasicBlock* fbranch);
@@ -253,6 +272,9 @@ class InstructionSelector final {
 
   void EmitPrepareArguments(ZoneVector<compiler::PushParameter>* arguments,
                             const CallDescriptor* descriptor, Node* node);
+
+  void EmitIdentity(Node* node);
+  bool CanProduceSignalingNaN(Node* node);
 
   // ===========================================================================
 

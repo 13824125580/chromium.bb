@@ -5,6 +5,7 @@
 #ifndef MediaRecorder_h
 #define MediaRecorder_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ActiveDOMObject.h"
 #include "core/events/EventTarget.h"
 #include "modules/EventTargetModules.h"
@@ -14,6 +15,7 @@
 #include "platform/AsyncMethodRunner.h"
 #include "public/platform/WebMediaRecorderHandler.h"
 #include "public/platform/WebMediaRecorderHandlerClient.h"
+#include <memory>
 
 namespace blink {
 
@@ -22,11 +24,11 @@ class BlobData;
 class ExceptionState;
 
 class MODULES_EXPORT MediaRecorder final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<MediaRecorder>
+    : public EventTargetWithInlineData
     , public WebMediaRecorderHandlerClient
+    , public ActiveScriptWrappable
     , public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(MediaRecorder);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MediaRecorder);
+    USING_GARBAGE_COLLECTED_MIXIN(MediaRecorder);
     DEFINE_WRAPPERTYPEINFO();
 public:
     enum class State {
@@ -66,13 +68,15 @@ public:
 
     // EventTarget
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+    ExecutionContext* getExecutionContext() const override;
 
     // ActiveDOMObject
     void suspend() override;
     void resume() override;
     void stop() override;
-    bool hasPendingActivity() const override { return !m_stopped; }
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final { return !m_stopped; }
 
     // WebMediaRecorderHandlerClient
     void writeData(const char* data, size_t length, bool lastInSlice) override;
@@ -86,7 +90,7 @@ private:
     void createBlobEvent(Blob*);
 
     void stopRecording();
-    void scheduleDispatchEvent(PassRefPtrWillBeRawPtr<Event>);
+    void scheduleDispatchEvent(Event*);
     void dispatchScheduledEvent();
 
     Member<MediaStream> m_stream;
@@ -99,12 +103,12 @@ private:
 
     State m_state;
 
-    OwnPtr<BlobData> m_blobData;
+    std::unique_ptr<BlobData> m_blobData;
 
-    OwnPtr<WebMediaRecorderHandler> m_recorderHandler;
+    std::unique_ptr<WebMediaRecorderHandler> m_recorderHandler;
 
     Member<AsyncMethodRunner<MediaRecorder>> m_dispatchScheduledEventRunner;
-    WillBeHeapVector<RefPtrWillBeMember<Event>> m_scheduledEvents;
+    HeapVector<Member<Event>> m_scheduledEvents;
 };
 
 } // namespace blink

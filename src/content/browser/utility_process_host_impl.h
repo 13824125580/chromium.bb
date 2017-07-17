@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_UTILITY_PROCESS_HOST_IMPL_H_
 #define CONTENT_BROWSER_UTILITY_PROCESS_HOST_IMPL_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,11 +13,11 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/utility_process_host.h"
+#include "services/shell/public/cpp/interface_provider.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -26,7 +27,7 @@ class Thread;
 namespace content {
 class BrowserChildProcessHostImpl;
 class InProcessChildThreadParams;
-class MojoApplicationHost;
+class MojoChildConnection;
 
 typedef base::Thread* (*UtilityMainThreadFactoryFunction)(
     const InProcessChildThreadParams&);
@@ -57,8 +58,9 @@ class CONTENT_EXPORT UtilityProcessHostImpl
 #if defined(OS_POSIX)
   void SetEnv(const base::EnvironmentMap& env) override;
 #endif
-  bool StartMojoMode() override;
-  ServiceRegistry* GetServiceRegistry() override;
+  bool Start() override;
+  shell::InterfaceRegistry* GetInterfaceRegistry() override;
+  shell::InterfaceProvider* GetRemoteInterfaces() override;
   void SetName(const base::string16& name) override;
 
   void set_child_flags(int flags) { child_flags_ = flags; }
@@ -75,9 +77,16 @@ class CONTENT_EXPORT UtilityProcessHostImpl
 
   // BrowserChildProcessHost:
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnProcessLaunchFailed() override;
+  void OnProcessLaunchFailed(int error_code) override;
   void OnProcessCrashed(int exit_code) override;
-  void OnProcessLaunched() override;
+
+  // Cleans up |this| as a result of a failed Start().
+  void NotifyAndDelete(int error_code);
+
+  // Notifies the client that the launch failed and deletes |host|.
+  static void NotifyLaunchFailedAndDelete(
+      base::WeakPtr<UtilityProcessHostImpl> host,
+      int error_code);
 
   // A pointer to our client interface, who will be informed of progress.
   scoped_refptr<UtilityProcessHostClient> client_;
@@ -105,14 +114,19 @@ class CONTENT_EXPORT UtilityProcessHostImpl
   // process in the task manager.
   base::string16 name_;
 
-  scoped_ptr<BrowserChildProcessHostImpl> process_;
+  std::unique_ptr<BrowserChildProcessHostImpl> process_;
 
   // Used in single-process mode instead of process_.
-  scoped_ptr<base::Thread> in_process_thread_;
+  std::unique_ptr<base::Thread> in_process_thread_;
 
   // Browser-side Mojo endpoint which sets up a Mojo channel with the child
-  // process and contains the browser's ServiceRegistry.
-  scoped_ptr<MojoApplicationHost> mojo_application_host_;
+  // process and contains the browser's shell::InterfaceRegistry.
+  const std::string child_token_;
+  std::unique_ptr<MojoChildConnection> mojo_child_connection_;
+
+  // An InterfaceProvider instance used to service requests after the browser's
+  // shell connection has been torn down.
+  shell::InterfaceProvider unbound_remote_interfaces_;
 
   // Used to vend weak pointers, and should always be declared last.
   base::WeakPtrFactory<UtilityProcessHostImpl> weak_ptr_factory_;

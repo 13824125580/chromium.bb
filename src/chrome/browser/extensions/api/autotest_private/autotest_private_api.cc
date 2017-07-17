@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/api/autotest_private/autotest_private_api.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
@@ -29,6 +32,8 @@
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/message_center/message_center.h"
+#include "ui/message_center/notification.h"
 #endif
 
 namespace extensions {
@@ -44,7 +49,7 @@ base::ListValue* GetHostPermissions(const Extension* ext, bool effective_perm) {
   for (URLPatternSet::const_iterator perm = pattern_set.begin();
        perm != pattern_set.end();
        ++perm) {
-    permissions->Append(new base::StringValue(perm->GetAsString()));
+    permissions->AppendString(perm->GetAsString());
   }
 
   return permissions;
@@ -56,7 +61,7 @@ base::ListValue* GetAPIPermissions(const Extension* ext) {
       ext->permissions_data()->active_permissions().GetAPIsAsStrings();
   for (std::set<std::string>::const_iterator perm = perm_list.begin();
        perm != perm_list.end(); ++perm) {
-    permissions->Append(new base::StringValue(perm->c_str()));
+    permissions->AppendString(perm->c_str());
   }
   return permissions;
 }
@@ -82,7 +87,7 @@ bool AutotestPrivateRestartFunction::RunSync() {
 }
 
 bool AutotestPrivateShutdownFunction::RunSync() {
-  scoped_ptr<api::autotest_private::Shutdown::Params> params(
+  std::unique_ptr<api::autotest_private::Shutdown::Params> params(
       api::autotest_private::Shutdown::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -96,7 +101,7 @@ bool AutotestPrivateShutdownFunction::RunSync() {
 bool AutotestPrivateLoginStatusFunction::RunSync() {
   DVLOG(1) << "AutotestPrivateLoginStatusFunction";
 
-  base::DictionaryValue* result(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
 #if defined(OS_CHROMEOS)
   const user_manager::UserManager* user_manager =
       user_manager::UserManager::Get();
@@ -136,7 +141,7 @@ bool AutotestPrivateLoginStatusFunction::RunSync() {
   }
 #endif
 
-  SetResult(result);
+  SetResult(std::move(result));
   return true;
 }
 
@@ -168,7 +173,8 @@ bool AutotestPrivateGetExtensionsInfoFunction::RunSync() {
        it != all.end(); ++it) {
     const Extension* extension = it->get();
     std::string id = extension->id();
-    base::DictionaryValue* extension_value = new base::DictionaryValue;
+    std::unique_ptr<base::DictionaryValue> extension_value(
+        new base::DictionaryValue);
     extension_value->SetString("id", id);
     extension_value->SetString("version", extension->VersionString());
     extension_value->SetString("name", extension->name());
@@ -200,12 +206,13 @@ bool AutotestPrivateGetExtensionsInfoFunction::RunSync() {
         "hasPageAction",
         extension_action_manager->GetPageAction(*extension) != NULL);
 
-    extensions_values->Append(extension_value);
+    extensions_values->Append(std::move(extension_value));
   }
 
-  base::DictionaryValue* return_value(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> return_value(
+      new base::DictionaryValue);
   return_value->Set("extensions", extensions_values);
-  SetResult(return_value);
+  SetResult(std::move(return_value));
   return true;
 }
 
@@ -227,7 +234,7 @@ bool AutotestPrivateSimulateAsanMemoryBugFunction::RunSync() {
 }
 
 bool AutotestPrivateSetTouchpadSensitivityFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetTouchpadSensitivity::Params> params(
+  std::unique_ptr<api::autotest_private::SetTouchpadSensitivity::Params> params(
       api::autotest_private::SetTouchpadSensitivity::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -241,7 +248,7 @@ bool AutotestPrivateSetTouchpadSensitivityFunction::RunSync() {
 }
 
 bool AutotestPrivateSetTapToClickFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetTapToClick::Params> params(
+  std::unique_ptr<api::autotest_private::SetTapToClick::Params> params(
       api::autotest_private::SetTapToClick::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -254,7 +261,7 @@ bool AutotestPrivateSetTapToClickFunction::RunSync() {
 }
 
 bool AutotestPrivateSetThreeFingerClickFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetThreeFingerClick::Params> params(
+  std::unique_ptr<api::autotest_private::SetThreeFingerClick::Params> params(
       api::autotest_private::SetThreeFingerClick::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -268,7 +275,7 @@ bool AutotestPrivateSetThreeFingerClickFunction::RunSync() {
 }
 
 bool AutotestPrivateSetTapDraggingFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetTapDragging::Params> params(
+  std::unique_ptr<api::autotest_private::SetTapDragging::Params> params(
       api::autotest_private::SetTapDragging::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -281,7 +288,7 @@ bool AutotestPrivateSetTapDraggingFunction::RunSync() {
 }
 
 bool AutotestPrivateSetNaturalScrollFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetNaturalScroll::Params> params(
+  std::unique_ptr<api::autotest_private::SetNaturalScroll::Params> params(
       api::autotest_private::SetNaturalScroll::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -295,7 +302,7 @@ bool AutotestPrivateSetNaturalScrollFunction::RunSync() {
 }
 
 bool AutotestPrivateSetMouseSensitivityFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetMouseSensitivity::Params> params(
+  std::unique_ptr<api::autotest_private::SetMouseSensitivity::Params> params(
       api::autotest_private::SetMouseSensitivity::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -309,7 +316,7 @@ bool AutotestPrivateSetMouseSensitivityFunction::RunSync() {
 }
 
 bool AutotestPrivateSetPrimaryButtonRightFunction::RunSync() {
-  scoped_ptr<api::autotest_private::SetPrimaryButtonRight::Params> params(
+  std::unique_ptr<api::autotest_private::SetPrimaryButtonRight::Params> params(
       api::autotest_private::SetPrimaryButtonRight::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -319,6 +326,49 @@ bool AutotestPrivateSetPrimaryButtonRightFunction::RunSync() {
   chromeos::system::InputDeviceSettings::Get()->SetPrimaryButtonRight(
       params->right);
 #endif
+  return true;
+}
+
+// static
+std::string AutotestPrivateGetVisibleNotificationsFunction::ConvertToString(
+    message_center::NotificationType type) {
+#if defined(OS_CHROMEOS)
+  switch (type) {
+    case message_center::NOTIFICATION_TYPE_SIMPLE:
+      return "simple";
+    case message_center::NOTIFICATION_TYPE_BASE_FORMAT:
+      return "base_format";
+    case message_center::NOTIFICATION_TYPE_IMAGE:
+      return "image";
+    case message_center::NOTIFICATION_TYPE_MULTIPLE:
+      return "multiple";
+    case message_center::NOTIFICATION_TYPE_PROGRESS:
+      return "progress";
+    case message_center::NOTIFICATION_TYPE_CUSTOM:
+      return "custom";
+  }
+#endif
+  return "unknown";
+}
+
+bool AutotestPrivateGetVisibleNotificationsFunction::RunSync() {
+  DVLOG(1) << "AutotestPrivateGetVisibleNotificationsFunction";
+  std::unique_ptr<base::ListValue> values(new base::ListValue);
+#if defined(OS_CHROMEOS)
+  for (auto* notification :
+       message_center::MessageCenter::Get()->GetVisibleNotifications()) {
+    base::DictionaryValue* result(new base::DictionaryValue);
+    result->SetString("id", notification->id());
+    result->SetString("type", ConvertToString(notification->type()));
+    result->SetString("title", notification->title());
+    result->SetString("message", notification->message());
+    result->SetInteger("priority", notification->priority());
+    result->SetInteger("progress", notification->progress());
+    values->Append(result);
+  }
+
+#endif
+  SetResult(std::move(values));
   return true;
 }
 

@@ -26,28 +26,24 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import optparse
-import sys
 import tempfile
 import unittest
 
-from webkitpy.common.system.executive import Executive, ScriptError
+from webkitpy.common.system.executive import ScriptError
 from webkitpy.common.system import executive_mock
 from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.system.outputcapture import OutputCapture
-from webkitpy.common.system.path import abspath_to_uri
-from webkitpy.tool.mocktool import MockOptions
-from webkitpy.common.system.executive_mock import MockExecutive, MockExecutive2
+from webkitpy.common.system.executive_mock import MockExecutive2
 from webkitpy.common.system.systemhost import SystemHost
 from webkitpy.common.system.systemhost_mock import MockSystemHost
 
-from webkitpy.layout_tests.port import Port, Driver, DriverOutput
-from webkitpy.layout_tests.port.base import VirtualTestSuite
+from webkitpy.layout_tests.port.base import Port, VirtualTestSuite
 from webkitpy.layout_tests.port.test import add_unit_tests_to_mock_filesystem, TestPort
 
 
 class PortTest(unittest.TestCase):
+
     def make_port(self, executive=None, with_tests=False, port_name=None, **kwargs):
         host = MockSystemHost()
         if executive:
@@ -143,7 +139,7 @@ class PortTest(unittest.TestCase):
         # Test for missing newline at end of file diff output.
         content_a = "Hello\n\nWorld"
         content_b = "Hello\n\nWorld\n\n\n"
-        expected = "--- exp.txt\n+++ act.txt\n@@ -1,3 +1,5 @@\n Hello\n \n-World\n\ No newline at end of file\n+World\n+\n+\n"
+        expected = "--- exp.txt\n+++ act.txt\n@@ -1,3 +1,5 @@\n Hello\n \n-World\n\\ No newline at end of file\n+World\n+\n+\n"
         self.assertEqual(expected, port.diff_text(content_a, content_b, 'exp.txt', 'act.txt'))
 
     def test_setup_test_run(self):
@@ -176,7 +172,7 @@ class PortTest(unittest.TestCase):
         self.assertEqual(port.skipped_perf_tests(), ['Layout', 'SunSpider', 'Supported/some-test.html'])
 
     def test_get_option__set(self):
-        options, args = optparse.OptionParser().parse_args([])
+        options, _ = optparse.OptionParser().parse_args([])
         options.foo = 'bar'
         port = self.make_port(options=options)
         self.assertEqual(port.get_option('foo'), 'bar')
@@ -192,7 +188,6 @@ class PortTest(unittest.TestCase):
     def test_additional_platform_directory(self):
         port = self.make_port(port_name='foo')
         port.default_baseline_search_path = lambda: ['LayoutTests/platform/foo']
-        layout_test_dir = port.layout_tests_dir()
         test_file = 'fast/test.html'
 
         # No additional platform directory
@@ -218,9 +213,11 @@ class PortTest(unittest.TestCase):
 
     def test_nonexistant_expectations(self):
         port = self.make_port(port_name='foo')
-        port.expectations_files = lambda: ['/mock-checkout/third_party/WebKit/LayoutTests/platform/exists/TestExpectations', '/mock-checkout/third_party/WebKit/LayoutTests/platform/nonexistant/TestExpectations']
+        port.expectations_files = lambda: ['/mock-checkout/third_party/WebKit/LayoutTests/platform/exists/TestExpectations',
+                                           '/mock-checkout/third_party/WebKit/LayoutTests/platform/nonexistant/TestExpectations']
         port._filesystem.write_text_file('/mock-checkout/third_party/WebKit/LayoutTests/platform/exists/TestExpectations', '')
-        self.assertEqual('\n'.join(port.expectations_dict().keys()), '/mock-checkout/third_party/WebKit/LayoutTests/platform/exists/TestExpectations')
+        self.assertEqual('\n'.join(port.expectations_dict().keys()),
+                         '/mock-checkout/third_party/WebKit/LayoutTests/platform/exists/TestExpectations')
 
     def test_additional_expectations(self):
         port = self.make_port(port_name='foo')
@@ -259,7 +256,6 @@ class PortTest(unittest.TestCase):
 
     def test_find_no_paths_specified(self):
         port = self.make_port(with_tests=True)
-        layout_tests_dir = port.layout_tests_dir()
         tests = port.tests([])
         self.assertNotEqual(len(tests), 0)
 
@@ -305,26 +301,29 @@ class PortTest(unittest.TestCase):
     def test_parse_reftest_list(self):
         port = self.make_port(with_tests=True)
         port.host.filesystem.files['bar/reftest.list'] = "\n".join(["== test.html test-ref.html",
-        "",
-        "# some comment",
-        "!= test-2.html test-notref.html # more comments",
-        "== test-3.html test-ref.html",
-        "== test-3.html test-ref2.html",
-        "!= test-3.html test-notref.html",
-        "fuzzy(80,500) == test-3 test-ref.html"])
+                                                                    "",
+                                                                    "# some comment",
+                                                                    "!= test-2.html test-notref.html # more comments",
+                                                                    "== test-3.html test-ref.html",
+                                                                    "== test-3.html test-ref2.html",
+                                                                    "!= test-3.html test-notref.html",
+                                                                    "fuzzy(80,500) == test-3 test-ref.html"])
 
         # Note that we don't support the syntax in the last line; the code should ignore it, rather than crashing.
 
         reftest_list = Port._parse_reftest_list(port.host.filesystem, 'bar')
         self.assertEqual(reftest_list, {'bar/test.html': [('==', 'bar/test-ref.html')],
-            'bar/test-2.html': [('!=', 'bar/test-notref.html')],
-            'bar/test-3.html': [('==', 'bar/test-ref.html'), ('==', 'bar/test-ref2.html'), ('!=', 'bar/test-notref.html')]})
+                                        'bar/test-2.html': [('!=', 'bar/test-notref.html')],
+                                        'bar/test-3.html': [('==', 'bar/test-ref.html'), ('==', 'bar/test-ref2.html'), ('!=', 'bar/test-notref.html')]})
 
     def test_reference_files(self):
         port = self.make_port(with_tests=True)
-        self.assertEqual(port.reference_files('passes/svgreftest.svg'), [('==', port.layout_tests_dir() + '/passes/svgreftest-expected.svg')])
-        self.assertEqual(port.reference_files('passes/xhtreftest.svg'), [('==', port.layout_tests_dir() + '/passes/xhtreftest-expected.html')])
-        self.assertEqual(port.reference_files('passes/phpreftest.php'), [('!=', port.layout_tests_dir() + '/passes/phpreftest-expected-mismatch.svg')])
+        self.assertEqual(port.reference_files('passes/svgreftest.svg'),
+                         [('==', port.layout_tests_dir() + '/passes/svgreftest-expected.svg')])
+        self.assertEqual(port.reference_files('passes/xhtreftest.svg'),
+                         [('==', port.layout_tests_dir() + '/passes/xhtreftest-expected.html')])
+        self.assertEqual(port.reference_files('passes/phpreftest.php'),
+                         [('!=', port.layout_tests_dir() + '/passes/phpreftest-expected-mismatch.svg')])
 
     def test_operating_system(self):
         self.assertEqual('mac', self.make_port().operating_system())
@@ -439,8 +438,25 @@ class PortTest(unittest.TestCase):
         port = self.make_port()
         self.assertRaises(AssertionError, port.virtual_test_suites)
 
+    def test_is_wptserve_test(self):
+        port = self.make_port()
+        self.assertTrue(port.is_wptserve_test('imported/wpt/foo/bar.html'))
+        self.assertFalse(port.is_wptserve_test('http/wpt/foo.html'))
+
+    def test_default_results_directory(self):
+        port = self.make_port(options=optparse.Values({'target': 'Default', 'configuration': 'Release'}))
+        # By default the results directory is in the build directory: out/<target>.
+        self.assertEqual(port.default_results_directory(), '/mock-checkout/out/Default/layout-test-results')
+
+    def test_results_directory(self):
+        port = self.make_port(options=optparse.Values({'results_directory': 'some-directory/results'}))
+        # A results directory can be given as an option, and it is relative to current working directory.
+        self.assertEqual(port._filesystem.cwd, '/')
+        self.assertEqual(port.results_directory(), '/some-directory/results')
+
 
 class NaturalCompareTest(unittest.TestCase):
+
     def setUp(self):
         self._port = TestPort(MockSystemHost())
 
@@ -466,6 +482,7 @@ class NaturalCompareTest(unittest.TestCase):
 
 
 class KeyCompareTest(unittest.TestCase):
+
     def setUp(self):
         self._port = TestPort(MockSystemHost())
 
@@ -484,6 +501,7 @@ class KeyCompareTest(unittest.TestCase):
 
 
 class VirtualTestSuiteTest(unittest.TestCase):
+
     def test_basic(self):
         suite = VirtualTestSuite(prefix='suite', base='base/foo', args=['--args'])
         self.assertEqual(suite.name, 'virtual/suite/base/foo')

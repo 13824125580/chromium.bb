@@ -1,38 +1,92 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [53, 53, 10, 10],
-        [53, 53, 10, 10],
-        [53, 53, 10, 10],
-        [53, 53, 10, 10],
-        [33, 33, 50, 50],
-        [33, 33, 50, 50],
-        [33, 33, 50, 50],
-        [33, 33, 50, 50],
-        [8, 113, 784, 100],
-        [8, 8, 784, 204],
-        [8, 8, 25, 25],
-        [8, 8, 5, 5]
-      ],
-      "paintInvalidationClients": [
-        "LayoutSVGEllipse svg:circle id='circle'",
-        "LayoutSVGViewportContainer svg id='symbol'",
-        "InlineBox",
-        "RootInlineBox",
-        "LayoutBlockFlow body",
-        "LayoutBlockFlow body",
-        "RootInlineBox",
-        "LayoutSVGRoot svg:svg id='svg'",
-        "LayoutSVGEllipse svg:circle id='circle'",
-        "LayoutSVGContainer svg:use id='use'",
-        "LayoutSVGViewportContainer svg id='symbol'",
-        "LayoutSVGEllipse svg:circle id='circle'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow body",
+          "rect": [8, 8, 784, 205],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutSVGContainer svg:use id='use'",
+          "rect": [33, 33, 50, 50],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGEllipse svg:circle id='circle'",
+          "rect": [33, 33, 50, 50],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutSVGRoot svg:svg id='svg'",
+          "rect": [33, 33, 50, 50],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGViewportContainer svg id='symbol'",
+          "rect": [33, 33, 50, 50],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutSVGEllipse svg:circle id='circle'",
+          "rect": [8, 8, 25, 25],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGEllipse svg:circle id='circle'",
+          "rect": [53, 53, 10, 10],
+          "reason": "layoutObject removal"
+        },
+        {
+          "object": "LayoutSVGViewportContainer svg id='symbol'",
+          "rect": [53, 53, 10, 10],
+          "reason": "layoutObject removal"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGEllipse svg:circle id='circle'",
+      "reason": "layoutObject removal"
+    },
+    {
+      "object": "LayoutSVGViewportContainer svg id='symbol'",
+      "reason": "layoutObject removal"
+    },
+    {
+      "object": "LayoutBlockFlow body",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutSVGRoot svg:svg id='svg'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGEllipse svg:circle id='circle'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGContainer svg:use id='use'",
+      "reason": "full"
+    },
+    {
+      "object": "LayoutSVGViewportContainer svg id='symbol'",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutSVGEllipse svg:circle id='circle'",
+      "reason": "layoutObject insertion"
     }
   ]
 }

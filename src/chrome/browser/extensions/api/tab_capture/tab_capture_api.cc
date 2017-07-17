@@ -7,8 +7,10 @@
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_api.h"
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
@@ -17,7 +19,6 @@
 #include "base/values.h"
 #include "chrome/browser/extensions/api/tab_capture/offscreen_tab.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
-#include "chrome/browser/extensions/extension_renderer_state.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
@@ -90,7 +91,7 @@ void FilterDeprecatedGoogConstraints(TabCapture::CaptureOptions* options) {
         bad_keys.push_back(it.key());
     }
     for (const std::string& k : bad_keys) {
-      scoped_ptr<base::Value> ignored;
+      std::unique_ptr<base::Value> ignored;
       dict->RemoveWithoutPathExpansion(k, &ignored);
     }
   };
@@ -199,7 +200,7 @@ const char* const kMediaRouterExtensionIds[] = {
 };
 
 bool TabCaptureCaptureFunction::RunSync() {
-  scoped_ptr<api::tab_capture::Capture::Params> params =
+  std::unique_ptr<api::tab_capture::Capture::Params> params =
       TabCapture::Capture::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -258,23 +259,23 @@ bool TabCaptureCaptureFunction::RunSync() {
   // virtual audio/video capture devices and set up all the data flows.  The
   // custom JS bindings can be found here:
   // chrome/renderer/resources/extensions/tab_capture_custom_bindings.js
-  base::DictionaryValue* result = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->MergeDictionary(params->options.ToValue().get());
-  SetResult(result);
+  SetResult(std::move(result));
   return true;
 }
 
 bool TabCaptureGetCapturedTabsFunction::RunSync() {
   TabCaptureRegistry* registry = TabCaptureRegistry::Get(GetProfile());
-  base::ListValue* const list = new base::ListValue();
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   if (registry)
-    registry->GetCapturedTabs(extension()->id(), list);
-  SetResult(list);
+    registry->GetCapturedTabs(extension()->id(), list.get());
+  SetResult(std::move(list));
   return true;
 }
 
 bool TabCaptureCaptureOffscreenTabFunction::RunSync() {
-  scoped_ptr<TabCapture::CaptureOffscreenTab::Params> params =
+  std::unique_ptr<TabCapture::CaptureOffscreenTab::Params> params =
       TabCapture::CaptureOffscreenTab::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -334,9 +335,9 @@ bool TabCaptureCaptureOffscreenTabFunction::RunSync() {
   // the custom JS bindings in the extension's render process to complete the
   // request.  See the comment at end of TabCaptureCaptureFunction::RunSync()
   // for more details.
-  base::DictionaryValue* const result = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->MergeDictionary(params->options.ToValue().get());
-  SetResult(result);
+  SetResult(std::move(result));
   return true;
 }
 

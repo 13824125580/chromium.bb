@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/location.h"
-#include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "chrome/browser/printing/cloud_print/privet_url_fetcher.h"
+
+#include <memory>
+
+#include "base/location.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -82,7 +86,7 @@ class MockPrivetURLFetcherDelegate : public PrivetURLFetcher::Delegate {
   }
 
  private:
-  scoped_ptr<base::DictionaryValue> saved_value_;
+  std::unique_ptr<base::DictionaryValue> saved_value_;
   bool raw_mode_;
 };
 
@@ -109,7 +113,7 @@ class PrivetURLFetcherTest : public ::testing::Test {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, callback.callback(), time_period);
 
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     callback.Cancel();
   }
 
@@ -119,7 +123,7 @@ class PrivetURLFetcherTest : public ::testing::Test {
   base::MessageLoop loop_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory fetcher_factory_;
-  scoped_ptr<PrivetURLFetcher> privet_urlfetcher_;
+  std::unique_ptr<PrivetURLFetcher> privet_urlfetcher_;
   StrictMock<MockPrivetURLFetcherDelegate> delegate_;
 };
 

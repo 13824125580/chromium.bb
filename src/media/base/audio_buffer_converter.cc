@@ -91,7 +91,7 @@ void AudioBufferConverter::ResetTimestampState() {
 }
 
 double AudioBufferConverter::ProvideInput(AudioBus* audio_bus,
-                                          base::TimeDelta buffer_delay) {
+                                          uint32_t frames_delayed) {
   DCHECK(is_flushing_ || input_frames_ >= audio_bus->frames());
 
   int requested_frames_left = audio_bus->frames();
@@ -193,7 +193,7 @@ void AudioBufferConverter::ConvertIfPossible() {
                                 output_params_.channels(),
                                 output_params_.sample_rate(),
                                 request_frames);
-  scoped_ptr<AudioBus> output_bus =
+  std::unique_ptr<AudioBus> output_bus =
       AudioBus::CreateWrapper(output_buffer->channel_count());
 
   int frames_remaining = request_frames;

@@ -17,9 +17,10 @@ namespace {
 
 TEST(ScrollOffsetAnimationCurveTest, DeltaBasedDuration) {
   gfx::ScrollOffset target_value(100.f, 200.f);
-  scoped_ptr<ScrollOffsetAnimationCurve> curve(
-      ScrollOffsetAnimationCurve::Create(target_value,
-                                         EaseInOutTimingFunction::Create()));
+  std::unique_ptr<ScrollOffsetAnimationCurve> curve(
+      ScrollOffsetAnimationCurve::Create(
+          target_value, CubicBezierTimingFunction::CreatePreset(
+                            CubicBezierTimingFunction::EaseType::EASE_IN_OUT)));
 
   curve->SetInitialValue(target_value);
   EXPECT_DOUBLE_EQ(0.0, curve->Duration().InSecondsF());
@@ -60,9 +61,10 @@ TEST(ScrollOffsetAnimationCurveTest, DeltaBasedDuration) {
 TEST(ScrollOffsetAnimationCurveTest, GetValue) {
   gfx::ScrollOffset initial_value(2.f, 40.f);
   gfx::ScrollOffset target_value(10.f, 20.f);
-  scoped_ptr<ScrollOffsetAnimationCurve> curve(
-      ScrollOffsetAnimationCurve::Create(target_value,
-                                         EaseInOutTimingFunction::Create()));
+  std::unique_ptr<ScrollOffsetAnimationCurve> curve(
+      ScrollOffsetAnimationCurve::Create(
+          target_value, CubicBezierTimingFunction::CreatePreset(
+                            CubicBezierTimingFunction::EaseType::EASE_IN_OUT)));
   curve->SetInitialValue(initial_value);
 
   base::TimeDelta duration = curve->Duration();
@@ -93,13 +95,14 @@ TEST(ScrollOffsetAnimationCurveTest, GetValue) {
 TEST(ScrollOffsetAnimationCurveTest, Clone) {
   gfx::ScrollOffset initial_value(2.f, 40.f);
   gfx::ScrollOffset target_value(10.f, 20.f);
-  scoped_ptr<ScrollOffsetAnimationCurve> curve(
-      ScrollOffsetAnimationCurve::Create(target_value,
-                                         EaseInOutTimingFunction::Create()));
+  std::unique_ptr<ScrollOffsetAnimationCurve> curve(
+      ScrollOffsetAnimationCurve::Create(
+          target_value, CubicBezierTimingFunction::CreatePreset(
+                            CubicBezierTimingFunction::EaseType::EASE_IN_OUT)));
   curve->SetInitialValue(initial_value);
   base::TimeDelta duration = curve->Duration();
 
-  scoped_ptr<AnimationCurve> clone(curve->Clone());
+  std::unique_ptr<AnimationCurve> clone(curve->Clone());
 
   EXPECT_EQ(AnimationCurve::SCROLL_OFFSET, clone->Type());
   EXPECT_EQ(duration, clone->Duration());
@@ -131,9 +134,10 @@ TEST(ScrollOffsetAnimationCurveTest, UpdateTarget) {
   gfx::ScrollOffset initial_value(0.f, 0.f);
   gfx::ScrollOffset target_value(0.f, 3600.f);
   double duration = kConstantDuration / kDurationDivisor;
-  scoped_ptr<ScrollOffsetAnimationCurve> curve(
+  std::unique_ptr<ScrollOffsetAnimationCurve> curve(
       ScrollOffsetAnimationCurve::Create(
-          target_value, EaseInOutTimingFunction::Create(),
+          target_value, CubicBezierTimingFunction::CreatePreset(
+                            CubicBezierTimingFunction::EaseType::EASE_IN_OUT),
           ScrollOffsetAnimationCurve::DurationBehavior::CONSTANT));
   curve->SetInitialValue(initial_value);
   EXPECT_NEAR(duration, curve->Duration().InSecondsF(), 0.0002f);
@@ -174,9 +178,11 @@ TEST(ScrollOffsetAnimationCurveTest, UpdateTarget) {
 }
 
 TEST(ScrollOffsetAnimationCurveTest, InverseDeltaDuration) {
-  scoped_ptr<ScrollOffsetAnimationCurve> curve(
+  std::unique_ptr<ScrollOffsetAnimationCurve> curve(
       ScrollOffsetAnimationCurve::Create(
-          gfx::ScrollOffset(0.f, 100.f), EaseInOutTimingFunction::Create(),
+          gfx::ScrollOffset(0.f, 100.f),
+          CubicBezierTimingFunction::CreatePreset(
+              CubicBezierTimingFunction::EaseType::EASE_IN_OUT),
           ScrollOffsetAnimationCurve::DurationBehavior::INVERSE_DELTA));
 
   curve->SetInitialValue(gfx::ScrollOffset());

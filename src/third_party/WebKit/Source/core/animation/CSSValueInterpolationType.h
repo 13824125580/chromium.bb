@@ -29,7 +29,13 @@ public:
         return nullptr;
     }
 
-    void composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value) const final
+    // As we override CSSInterpolationType::maybeConvertSingle, these are never called.
+    InterpolationValue maybeConvertNeutral(const InterpolationValue& underlying, ConversionCheckers&) const final { NOTREACHED(); return nullptr; }
+    InterpolationValue maybeConvertInitial(const StyleResolverState&, ConversionCheckers&) const final { NOTREACHED(); return nullptr; }
+    InterpolationValue maybeConvertInherit(const StyleResolverState&, ConversionCheckers&) const final { NOTREACHED(); return nullptr; }
+    InterpolationValue maybeConvertValue(const CSSValue& value, const StyleResolverState&, ConversionCheckers&) const final { NOTREACHED(); return nullptr; }
+
+    void composite(UnderlyingValueOwner& underlyingValueOwner, double underlyingFraction, const InterpolationValue& value, double interpolationFraction) const final
     {
         underlyingValueOwner.set(*this, value);
     }

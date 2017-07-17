@@ -13,8 +13,11 @@
 #include "content/browser/accessibility/browser_accessibility_manager_android.h"
 #include "content/common/accessibility_messages.h"
 #include "content/public/common/content_client.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 namespace {
+
+const base::char16 kSecurePasswordBullet = 0x2022;
 
 // These are enums from android.text.InputType in Java:
 enum {
@@ -62,7 +65,26 @@ bool BrowserAccessibilityAndroid::IsNative() const {
 }
 
 void BrowserAccessibilityAndroid::OnLocationChanged() {
-  manager()->NotifyAccessibilityEvent(ui::AX_EVENT_LOCATION_CHANGED, this);
+  manager()->NotifyAccessibilityEvent(
+      BrowserAccessibilityEvent::FromTreeChange,
+      ui::AX_EVENT_LOCATION_CHANGED,
+      this);
+}
+
+base::string16 BrowserAccessibilityAndroid::GetValue() const {
+  base::string16 value = BrowserAccessibility::GetValue();
+
+  // Optionally replace entered password text with bullet characters
+  // based on a user preference.
+  if (IsPassword()) {
+    bool should_expose = static_cast<BrowserAccessibilityManagerAndroid*>(
+        manager())->ShouldExposePasswordText();
+    if (!should_expose) {
+      value = base::string16(value.size(), kSecurePasswordBullet);
+    }
+  }
+
+  return value;
 }
 
 bool BrowserAccessibilityAndroid::PlatformIsLeaf() const {
@@ -135,6 +157,8 @@ bool BrowserAccessibilityAndroid::IsClickable() const {
   if (!PlatformIsLeaf())
     return false;
 
+  // We are very aggressive about returning true with IsClickable on Android
+  // because there is no way to know for sure what might have a click handler.
   return IsFocusable() || !GetText().empty();
 }
 
@@ -303,7 +327,10 @@ const char* BrowserAccessibilityAndroid::GetClassName() const {
       class_name = "android.app.Dialog";
       break;
     case ui::AX_ROLE_ROOT_WEB_AREA:
-      class_name = "android.webkit.WebView";
+      if (GetParent() == nullptr)
+        class_name = "android.webkit.WebView";
+      else
+        class_name = "android.view.View";
       break;
     case ui::AX_ROLE_MENU_ITEM:
     case ui::AX_ROLE_MENU_ITEM_CHECK_BOX:
@@ -357,10 +384,11 @@ base::string16 BrowserAccessibilityAndroid::GetText() const {
   // For color wells, the color is stored in separate attributes.
   // Perhaps we could return color names in the future?
   if (GetRole() == ui::AX_ROLE_COLOR_WELL) {
-    int color = GetIntAttribute(ui::AX_ATTR_COLOR_VALUE);
-    int red = (color >> 16) & 0xFF;
-    int green = (color >> 8) & 0xFF;
-    int blue = color & 0xFF;
+    unsigned int color =
+        static_cast<unsigned int>(GetIntAttribute(ui::AX_ATTR_COLOR_VALUE));
+    unsigned int red = SkColorGetR(color);
+    unsigned int green = SkColorGetG(color);
+    unsigned int blue = SkColorGetB(color);
     return base::UTF8ToUTF16(
         base::StringPrintf("#%02X%02X%02X", red, green, blue));
   }
@@ -935,13 +963,13 @@ bool BrowserAccessibilityAndroid::Scroll(int direction) const {
   // Figure out the bounding box of the visible portion of this scrollable
   // view so we know how much to scroll by.
   gfx::Rect bounds;
-  if (GetRole() == ui::AX_ROLE_ROOT_WEB_AREA) {
+  if (GetRole() == ui::AX_ROLE_ROOT_WEB_AREA && !GetParent()) {
     // If this is the root web area, use the bounds of the view to determine
     // how big one page is.
     if (!manager()->delegate())
       return false;
     bounds = manager()->delegate()->AccessibilityGetViewBounds();
-  } else if (GetRole() == ui::AX_ROLE_WEB_AREA) {
+  } else if (GetRole() == ui::AX_ROLE_ROOT_WEB_AREA && GetParent()) {
     // If this is a web area inside of an iframe, try to use the bounds of
     // the containing element.
     BrowserAccessibility* parent = GetParent();
@@ -1348,8 +1376,12 @@ void BrowserAccessibilityAndroid::OnDataChanged() {
     }
   }
 
-  if (GetRole() == ui::AX_ROLE_ALERT && first_time_)
-    manager()->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, this);
+  if (GetRole() == ui::AX_ROLE_ALERT && first_time_) {
+    manager()->NotifyAccessibilityEvent(
+        BrowserAccessibilityEvent::FromTreeChange,
+        ui::AX_EVENT_ALERT,
+        this);
+  }
 
   base::string16 live;
   if (GetString16Attribute(
@@ -1369,8 +1401,10 @@ void BrowserAccessibilityAndroid::NotifyLiveRegionUpdate(
   base::string16 text = GetText();
   if (cached_text_ != text) {
     if (!text.empty()) {
-      manager()->NotifyAccessibilityEvent(ui::AX_EVENT_SHOW,
-                                         this);
+      manager()->NotifyAccessibilityEvent(
+          BrowserAccessibilityEvent::FromTreeChange,
+          ui::AX_EVENT_SHOW,
+          this);
     }
     cached_text_ = text;
   }

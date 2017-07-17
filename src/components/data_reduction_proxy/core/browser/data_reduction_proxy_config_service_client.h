@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -41,6 +41,7 @@ namespace data_reduction_proxy {
 class ClientConfig;
 class DataReductionProxyConfig;
 class DataReductionProxyEventCreator;
+class DataReductionProxyIOData;
 class DataReductionProxyMutableConfigValues;
 class DataReductionProxyParams;
 class DataReductionProxyRequestOptions;
@@ -89,12 +90,13 @@ class DataReductionProxyConfigServiceClient
   // the |DataReductionProxyConfigClient|, with the exception of |params|
   // which this instance will own.
   DataReductionProxyConfigServiceClient(
-      scoped_ptr<DataReductionProxyParams> params,
+      std::unique_ptr<DataReductionProxyParams> params,
       const net::BackoffEntry::Policy& backoff_policy,
       DataReductionProxyRequestOptions* request_options,
       DataReductionProxyMutableConfigValues* config_values,
       DataReductionProxyConfig* config,
       DataReductionProxyEventCreator* event_creator,
+      DataReductionProxyIOData* io_data,
       net::NetLog* net_log,
       ConfigStorer config_storer);
 
@@ -171,7 +173,7 @@ class DataReductionProxyConfigServiceClient
   // Returns a fetcher to retrieve the Data Reduction Proxy configuration.
   // |secure_proxy_check_url| is the url from which to retrieve the config.
   // |request_body| is the request body sent to the configuration service.
-  scoped_ptr<net::URLFetcher> GetURLFetcherForConfig(
+  std::unique_ptr<net::URLFetcher> GetURLFetcherForConfig(
       const GURL& secure_proxy_check_url,
       const std::string& request_body);
 
@@ -195,7 +197,7 @@ class DataReductionProxyConfigServiceClient
   void OnApplicationStateChange(base::android::ApplicationState new_state);
 #endif
 
-  scoped_ptr<DataReductionProxyParams> params_;
+  std::unique_ptr<DataReductionProxyParams> params_;
 
   // The caller must ensure that the |request_options_| outlives this instance.
   DataReductionProxyRequestOptions* request_options_;
@@ -208,6 +210,9 @@ class DataReductionProxyConfigServiceClient
 
   // The caller must ensure that the |event_creator_| outlives this instance.
   DataReductionProxyEventCreator* event_creator_;
+
+  // The caller must ensure that the |io_data_| outlives this instance.
+  DataReductionProxyIOData* io_data_;
 
   // The caller must ensure that the |net_log_| outlives this instance.
   net::NetLog* net_log_;
@@ -236,7 +241,7 @@ class DataReductionProxyConfigServiceClient
   base::OneShotTimer config_refresh_timer_;
 
   // A |net::URLFetcher| to retrieve the Data Reduction Proxy configuration.
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   // Used to correlate the start and end of requests.
   net::BoundNetLog bound_net_log_;
@@ -248,7 +253,8 @@ class DataReductionProxyConfigServiceClient
 #if defined(OS_ANDROID)
   // Listens to the application transitions from foreground to background or
   // vice versa.
-  scoped_ptr<base::android::ApplicationStatusListener> app_status_listener_;
+  std::unique_ptr<base::android::ApplicationStatusListener>
+      app_status_listener_;
 
   // True if config needs to be fetched when the application comes to
   // foreground.
@@ -269,6 +275,9 @@ class DataReductionProxyConfigServiceClient
 
   // Time when the IP address last changed.
   base::TimeTicks last_ip_address_change_;
+
+  // True if QUIC can be used to connect to data reduction proxy server.
+  bool quic_enabled_;
 
   // Enforce usage on the IO thread.
   base::ThreadChecker thread_checker_;

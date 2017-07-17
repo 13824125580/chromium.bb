@@ -17,6 +17,13 @@ struct Options {
   // This is needed during the migration from ASTConsumer approach to the
   // RecursiveASTVisitor approach. See https://crbug.com/436357 for details.
   bool check_implicit_copy_ctors = false;
+  // This is needed for some distributed build-sytems to respect banned
+  // paths. See https://crbug.com/583454 for details.
+  bool no_realpath = false;
+  bool check_ipc = false;
+  // Enforce that auto doesn't deduce to a raw pointer. See
+  // https://crbug.com/554600 for details.
+  bool check_auto_raw_pointer = false;
 };
 
 }  // namespace chrome_checker

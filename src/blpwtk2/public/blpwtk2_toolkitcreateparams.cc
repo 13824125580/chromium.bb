@@ -46,7 +46,6 @@ struct ToolkitCreateParamsImpl {
     int d_maxSocketsPerProxy;
     int d_inputHandlingTimeThrottlingThresholdMicroseconds;
     std::vector<std::string> d_commandLineSwitches;
-    std::vector<std::string> d_sideLoadedFonts;
     ResourceLoader* d_inProcessResourceLoader;
     std::string d_dictionaryPath;
     std::string d_userAgent;
@@ -175,13 +174,6 @@ void ToolkitCreateParams::appendCommandLineSwitch(const StringRef& switchString)
     d_impl->d_commandLineSwitches.push_back(std::string());
     d_impl->d_commandLineSwitches.back().assign(switchString.data(),
                                                 switchString.length());
-}
-
-void ToolkitCreateParams::appendSideLoadedFontInProcess(const StringRef& fontFile)
-{
-    d_impl->d_sideLoadedFonts.push_back(std::string());
-    d_impl->d_sideLoadedFonts.back().assign(fontFile.data(),
-                                            fontFile.length());
 }
 
 void ToolkitCreateParams::disablePluginDiscovery()
@@ -355,17 +347,6 @@ StringRef ToolkitCreateParams::commandLineSwitchAt(size_t index) const
 {
     DCHECK(index < d_impl->d_commandLineSwitches.size());
     return d_impl->d_commandLineSwitches[index];
-}
-
-size_t ToolkitCreateParams::numSideLoadedFonts() const
-{
-    return d_impl->d_sideLoadedFonts.size();
-}
-
-StringRef ToolkitCreateParams::sideLoadedFontAt(size_t index) const
-{
-    DCHECK(index < d_impl->d_sideLoadedFonts.size());
-    return d_impl->d_sideLoadedFonts[index];
 }
 
 ResourceLoader* ToolkitCreateParams::inProcessResourceLoader() const

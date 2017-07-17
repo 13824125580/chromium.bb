@@ -56,13 +56,14 @@ ExtensionBuilder& ExtensionBuilder::SetLocation(Manifest::Location location) {
 }
 
 ExtensionBuilder& ExtensionBuilder::SetManifest(
-    scoped_ptr<base::DictionaryValue> manifest) {
+    std::unique_ptr<base::DictionaryValue> manifest) {
   manifest_ = std::move(manifest);
   return *this;
 }
 
-ExtensionBuilder& ExtensionBuilder::MergeManifest(DictionaryBuilder& builder) {
-  manifest_->MergeDictionary(builder.Build().get());
+ExtensionBuilder& ExtensionBuilder::MergeManifest(
+    std::unique_ptr<base::DictionaryValue> manifest) {
+  manifest_->MergeDictionary(manifest.get());
   return *this;
 }
 

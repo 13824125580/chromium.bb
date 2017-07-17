@@ -36,7 +36,7 @@
 
 namespace blink {
 
-SVGTransformTearOff::SVGTransformTearOff(PassRefPtrWillBeRawPtr<SVGTransform> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
+SVGTransformTearOff::SVGTransformTearOff(SVGTransform* target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName)
     : SVGPropertyTearOff<SVGTransform>(target, contextElement, propertyIsAnimVal, attributeName)
 {
 }
@@ -60,7 +60,7 @@ SVGMatrixTearOff* SVGTransformTearOff::matrix()
     return m_matrixTearoff.get();
 }
 
-void SVGTransformTearOff::setMatrix(PassRefPtrWillBeRawPtr<SVGMatrixTearOff> matrix, ExceptionState& exceptionState)
+void SVGTransformTearOff::setMatrix(SVGMatrixTearOff* matrix, ExceptionState& exceptionState)
 {
     if (isImmutable()) {
         exceptionState.throwDOMException(NoModificationAllowedError, "The attribute is read-only.");
@@ -124,6 +124,11 @@ void SVGTransformTearOff::setSkewY(float y, ExceptionState& exceptionState)
 
     target()->setSkewY(y);
     commitChange();
+}
+
+DEFINE_TRACE_WRAPPERS(SVGTransformTearOff)
+{
+    visitor->traceWrappers(contextElement());
 }
 
 } // namespace blink

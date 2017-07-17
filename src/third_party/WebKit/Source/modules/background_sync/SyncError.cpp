@@ -6,7 +6,6 @@
 
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
-#include "wtf/OwnPtr.h"
 
 namespace blink {
 
@@ -19,6 +18,8 @@ DOMException* SyncError::take(ScriptPromiseResolver*, const WebSyncError& webErr
         return DOMException::create(InvalidAccessError, webError.message);
     case WebSyncError::ErrorTypeNotFound:
         return DOMException::create(NotFoundError, webError.message);
+    case WebSyncError::ErrorTypePermissionDenied:
+        return DOMException::create(PermissionDeniedError, webError.message);
     case WebSyncError::ErrorTypeUnknown:
         return DOMException::create(UnknownError, webError.message);
     }

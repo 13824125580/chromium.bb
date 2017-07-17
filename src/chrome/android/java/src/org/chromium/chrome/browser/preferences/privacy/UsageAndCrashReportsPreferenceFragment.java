@@ -33,23 +33,21 @@ public class UsageAndCrashReportsPreferenceFragment extends PreferenceFragment {
     private void initUsageAndCrashReportsSwitch() {
         ChromeSwitchPreference usageAndCrashReportsSwitch =
                 (ChromeSwitchPreference) findPreference(PREF_USAGE_AND_CRASH_REPORTS_SWITCH);
-        boolean enabled = PrivacyPreferencesManager.getInstance(getActivity())
-                                  .isUsageAndCrashReportingEnabled();
+        boolean enabled = PrivacyPreferencesManager.getInstance().isUsageAndCrashReportingEnabled();
         usageAndCrashReportsSwitch.setChecked(enabled);
 
         usageAndCrashReportsSwitch.setOnPreferenceChangeListener(new OnPreferenceChangeListener() {
             @Override
             public boolean onPreferenceChange(Preference preference, Object newValue) {
                 boolean enabled = (boolean) newValue;
-                PrivacyPreferencesManager privacyManager =
-                        PrivacyPreferencesManager.getInstance(getActivity());
+                PrivacyPreferencesManager privacyManager = PrivacyPreferencesManager.getInstance();
 
                 // Update new two-choice android and chromium preferences.
                 PrefServiceBridge.getInstance().setMetricsReportingEnabled(enabled);
                 privacyManager.setUsageAndCrashReporting(enabled);
 
                 // Update old three-choice android and chromium preference.
-                PrefServiceBridge.getInstance().setCrashReporting(enabled);
+                PrefServiceBridge.getInstance().setCrashReportingEnabled(enabled);
                 privacyManager.initCrashUploadPreference(enabled);
                 return true;
             }

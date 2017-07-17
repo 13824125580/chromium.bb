@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -49,7 +51,7 @@ class SyncBackendRegistrar : public syncer::SyncManager::ChangeDelegate,
   SyncBackendRegistrar(
       const std::string& name,
       sync_driver::SyncClient* sync_client,
-      scoped_ptr<base::Thread> sync_thread,
+      std::unique_ptr<base::Thread> sync_thread,
       const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
       const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
       const scoped_refptr<base::SingleThreadTaskRunner>& file_thread);
@@ -67,10 +69,21 @@ class SyncBackendRegistrar : public syncer::SyncManager::ChangeDelegate,
   //      released.
   ~SyncBackendRegistrar() override;
 
+  // Adds |type| to set of non-blocking types. These types are assigned to
+  // GROUP_NON_BLOCKING model safe group and will be treated differently in
+  // ModelTypeRegistry. Unlike directory types, non-blocking types always stay
+  // assigned to GROUP_NON_BLOCKING group.
+  void RegisterNonBlockingType(syncer::ModelType type);
+
   // Informs the SyncBackendRegistrar of the currently enabled set of types.
   // These types will be placed in the passive group.  This function should be
   // called exactly once during startup.
   void SetInitialTypes(syncer::ModelTypeSet initial_types);
+
+  // Informs SyncBackendRegistrar about non-blocking type loaded from local
+  // storage. Initial sync was already performed for this type, therefore its
+  // data shouldn't be downloaded as part of configuration.
+  void AddRestoredNonBlockingType(syncer::ModelType type);
 
   // Returns whether or not we are currently syncing encryption keys.
   // Must be called on the UI thread.
@@ -125,7 +138,7 @@ class SyncBackendRegistrar : public syncer::SyncManager::ChangeDelegate,
   void OnWorkerLoopDestroyed(syncer::ModelSafeGroup group) override;
 
   // Release ownership of |sync_thread_|. Called when sync is disabled.
-  scoped_ptr<base::Thread> ReleaseSyncThread();
+  std::unique_ptr<base::Thread> ReleaseSyncThread();
 
   // Unregister workers from loop destruction observation.
   void Shutdown();
@@ -165,6 +178,11 @@ class SyncBackendRegistrar : public syncer::SyncManager::ChangeDelegate,
   // given group (or if it is undeterminable).
   bool IsOnThreadForGroup(syncer::ModelType type,
                           syncer::ModelSafeGroup group) const;
+
+  // Returns model safe group that should be assigned to type when it is first
+  // configured (before activation). Returns GROUP_PASSIVE for directory types
+  // and GROUP_NON_BLOCKING for non-blocking types.
+  syncer::ModelSafeGroup GetInitialGroupForType(syncer::ModelType type) const;
 
   // Name used for debugging.
   const std::string name_;
@@ -207,7 +225,11 @@ class SyncBackendRegistrar : public syncer::SyncManager::ChangeDelegate,
   // objects above because tasks on sync thread depend on those objects,
   // e.g. Shutdown() depends on |lock_|, SyncManager::Init() depends on
   // workers, etc.
-  scoped_ptr<base::Thread> sync_thread_;
+  std::unique_ptr<base::Thread> sync_thread_;
+
+  // Set of types with non-blocking implementation (as opposed to directory
+  // based).
+  syncer::ModelTypeSet non_blocking_types_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncBackendRegistrar);
 };

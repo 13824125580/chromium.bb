@@ -58,6 +58,11 @@
              "--enable-prefer-compositing-to-lcd-text"]
   },
   {
+    "prefix": "gpu-rasterization",
+    "base": "fast/images",
+    "args": ["--force-gpu-rasterization"]
+  },
+  {
     "prefix": "stable",
     "base": "webexposed",
     "args": ["--stable-release-mode"]
@@ -78,11 +83,6 @@
     "args": ["--stable-release-mode"]
   },
   {
-    "prefix": "stable",
-    "base": "fast/events/eventlisteneroptions",
-    "args": ["--stable-release-mode"]
-  },
-  {
     "prefix": "android",
     "base": "fullscreen",
     "args": ["--enable-threaded-compositing",
@@ -91,6 +91,11 @@
              "--force-overlay-fullscreen-video", "--enable-overlay-scrollbars", "--enable-overscroll-notifications",
              "--enable-fixed-layout", "--enable-viewport", "--disable-canvas-aa",
              "--disable-composited-antialiasing"]
+  },
+  {
+    "prefix": "android",
+    "base": "media/mediadocument",
+    "args": ["--enable-features=MediaDocumentDownloadButton"]
   },
   {
     "prefix": "stable",
@@ -153,16 +158,6 @@
     "args": ["--enable-smooth-scrolling"]
   },
   {
-    "prefix": "pointerevent",
-    "base": "fast/events",
-    "args": ["--enable-blink-features=PointerEvent"]
-  },
-  {
-    "prefix": "pointerevent",
-    "base": "imported/web-platform-tests/pointerevents",
-    "args": ["--enable-blink-features=PointerEvent"]
-  },
-  {
     "prefix": "mediasession",
     "base": "media/mediasession",
     "args": ["--enable-blink-features=MediaSession"]
@@ -172,11 +167,6 @@
     "base": "fast/workers",
     "args": ["--js-flags=--harmony-sharedarraybuffer",
              "--enable-blink-features=SharedArrayBuffer"]
-  },
-  {
-    "prefix": "trustedeventsdefaultaction",
-    "base": "fast/events",
-    "args": ["--enable-blink-features=TrustedEventsDefaultAction"]
   },
   {
     "prefix": "threaded",
@@ -205,7 +195,27 @@
   },
   {
     "prefix": "spv2",
+    "base": "fast/clip",
+    "args": ["--enable-slimming-paint-v2"]
+  },
+  {
+    "prefix": "spv2",
+    "base": "fast/css",
+    "args": ["--enable-slimming-paint-v2"]
+  },
+  {
+    "prefix": "spv2",
+    "base": "fast/overflow",
+    "args": ["--enable-slimming-paint-v2"]
+  },
+  {
+    "prefix": "spv2",
     "base": "paint",
+    "args": ["--enable-slimming-paint-v2"]
+  },
+  {
+    "prefix": "spv2",
+    "base": "fast/repaint",
     "args": ["--enable-slimming-paint-v2"]
   },
   {
@@ -227,5 +237,15 @@
     "prefix": "scalefactor200withzoom",
     "base": "fast/hidpi/static",
     "args": ["--force-device-scale-factor=2", "--enable-use-zoom-for-dsf"]
+  },
+  {
+    "prefix": "documentwriteevaluator",
+    "base": "http/tests/preload/document-write",
+    "args": ["--enable-blink-features=DocumentWriteEvaluator"]
+  },
+  {
+    "prefix": "asyncawait",
+    "base": "inspector/sources/debugger-async/async-await",
+    "args": ["--js-flags=--harmony-async-await"]
   }
 ]

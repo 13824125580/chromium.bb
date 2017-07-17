@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
@@ -241,8 +241,8 @@ FaviconCache::~FaviconCache() {}
 syncer::SyncMergeResult FaviconCache::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> error_handler) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
   DCHECK(type == syncer::FAVICON_IMAGES || type == syncer::FAVICON_TRACKING);
   if (type == syncer::FAVICON_IMAGES)
     favicon_images_sync_processor_ = std::move(sync_processor);
@@ -280,8 +280,6 @@ syncer::SyncMergeResult FaviconCache::MergeDataAndStartSyncing(
   // they'll be re-added and the appropriate synced favicons will be evicted.
   // TODO(zea): implement a smarter ordering of the which favicons to drop.
   int available_favicons = max_sync_favicon_limit_ - initial_sync_data.size();
-  UMA_HISTOGRAM_BOOLEAN("Sync.FaviconsAvailableAtMerge",
-                        available_favicons > 0);
   for (std::set<GURL>::const_iterator iter = unsynced_favicon_urls.begin();
        iter != unsynced_favicon_urls.end(); ++iter) {
     if (available_favicons > 0) {
@@ -298,7 +296,6 @@ syncer::SyncMergeResult FaviconCache::MergeDataAndStartSyncing(
       merge_result.set_num_items_deleted(merge_result.num_items_deleted() + 1);
     }
   }
-  UMA_HISTOGRAM_COUNTS_10000("Sync.FaviconCount", synced_favicons_.size());
   merge_result.set_num_items_after_association(synced_favicons_.size());
 
   if (type == syncer::FAVICON_IMAGES) {
@@ -621,11 +618,6 @@ void FaviconCache::OnFaviconDataAvailable(
     // TODO(zea): support multiple favicon urls per page.
     page_favicon_map_[page_url] = favicon_url;
 
-    if (!favicon_info->last_visit_time.is_null()) {
-      UMA_HISTOGRAM_COUNTS_10000(
-          "Sync.FaviconVisitPeriod",
-          (now - favicon_info->last_visit_time).InHours());
-    }
     favicon_info->received_local_update = true;
     UpdateFaviconVisitTime(favicon_url, now);
 

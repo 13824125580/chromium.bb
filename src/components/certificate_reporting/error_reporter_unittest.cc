@@ -13,9 +13,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "components/certificate_reporting/encrypted_cert_logger.pb.h"
 #include "crypto/curve25519.h"
-#include "net/url_request/certificate_report_sender.h"
+#include "net/url_request/report_sender.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace certificate_reporting {
@@ -27,12 +28,12 @@ const char kDummyHttpsReportUri[] = "https://example.test";
 const char kDummyReport[] = "a dummy report";
 const uint32_t kServerPublicKeyTestVersion = 16;
 
-// A mock CertificateReportSender that keeps track of the last report
+// A mock ReportSender that keeps track of the last report
 // sent.
-class MockCertificateReportSender : public net::CertificateReportSender {
+class MockCertificateReportSender : public net::ReportSender {
  public:
   MockCertificateReportSender()
-      : net::CertificateReportSender(nullptr, DO_NOT_SEND_COOKIES) {}
+      : net::ReportSender(nullptr, DO_NOT_SEND_COOKIES) {}
   ~MockCertificateReportSender() override {}
 
   void Send(const GURL& report_uri, const std::string& report) override {
@@ -74,7 +75,7 @@ TEST_F(ErrorReporterTest, ExtendedReportingSendReport) {
   GURL https_url(kDummyHttpsReportUri);
   ErrorReporter https_reporter(https_url, server_public_key_,
                                kServerPublicKeyTestVersion,
-                               make_scoped_ptr(mock_report_sender));
+                               base::WrapUnique(mock_report_sender));
   https_reporter.SendExtendedReportingReport(kDummyReport);
   EXPECT_EQ(mock_report_sender->latest_report_uri(), https_url);
   EXPECT_EQ(mock_report_sender->latest_report(), kDummyReport);
@@ -86,13 +87,12 @@ TEST_F(ErrorReporterTest, ExtendedReportingSendReport) {
     GURL http_url(kDummyHttpReportUri);
     ErrorReporter http_reporter(http_url, server_public_key_,
                                 kServerPublicKeyTestVersion,
-                                make_scoped_ptr(http_mock_report_sender));
+                                base::WrapUnique(http_mock_report_sender));
     http_reporter.SendExtendedReportingReport(kDummyReport);
 
     EXPECT_EQ(http_mock_report_sender->latest_report_uri(), http_url);
 
     std::string uploaded_report;
-#if defined(USE_OPENSSL)
     EncryptedCertLoggerRequest encrypted_request;
     ASSERT_TRUE(encrypted_request.ParseFromString(
         http_mock_report_sender->latest_report()));
@@ -102,15 +102,11 @@ TEST_F(ErrorReporterTest, ExtendedReportingSendReport) {
               encrypted_request.algorithm());
     ASSERT_TRUE(ErrorReporter::DecryptErrorReport(
         server_private_key_, encrypted_request, &uploaded_report));
-#else
-    ADD_FAILURE() << "Only supported in OpenSSL ports";
-#endif
 
     EXPECT_EQ(kDummyReport, uploaded_report);
   }
 }
 
-#if defined(USE_OPENSSL)
 // This test decrypts a "known gold" report. It's intentionally brittle
 // in order to catch changes in report encryption that could cause the
 // server to no longer be able to decrypt reports that it receives from
@@ -270,7 +266,6 @@ TEST_F(ErrorReporterTest, DecryptExampleReport) {
   ASSERT_TRUE(ErrorReporter::DecryptErrorReport(
       server_private_key_, encrypted_request, &decrypted_serialized_report));
 }
-#endif
 
 }  // namespace
 

@@ -26,7 +26,6 @@
 
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
-#include "wtf/WeakPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -40,14 +39,9 @@ class HTMLFormElement;
 class Node;
 class ValidityState;
 
-class CORE_EXPORT FormAssociatedElement : public WillBeGarbageCollectedMixin {
+class CORE_EXPORT FormAssociatedElement : public GarbageCollectedMixin {
 public:
     virtual ~FormAssociatedElement();
-
-#if !ENABLE(OILPAN)
-    void ref() { refFormAssociatedElement(); }
-    void deref() { derefFormAssociatedElement(); }
-#endif
 
     static HTMLFormElement* findAssociatedForm(const HTMLElement*);
     HTMLFormElement* form() const { return m_form.get(); }
@@ -56,7 +50,6 @@ public:
     virtual bool isFormControlElement() const = 0;
     virtual bool isFormControlElementWithState() const;
     virtual bool isEnumeratable() const = 0;
-    virtual bool isLabelElement() const { return false; }
 
     // Returns the 'name' attribute value. If this element has no name
     // attribute, it returns an empty string instead of null string.
@@ -92,7 +85,7 @@ public:
 
     void formAttributeTargetChanged();
 
-    typedef WillBeHeapVector<RawPtrWillBeMember<FormAssociatedElement>> List;
+    typedef HeapVector<Member<FormAssociatedElement>> List;
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -118,29 +111,21 @@ protected:
     String customValidationMessage() const;
 
 private:
-#if !ENABLE(OILPAN)
-    virtual void refFormAssociatedElement() = 0;
-    virtual void derefFormAssociatedElement() = 0;
-#endif
-
-    void setFormAttributeTargetObserver(PassOwnPtrWillBeRawPtr<FormAttributeTargetObserver>);
+    void setFormAttributeTargetObserver(FormAttributeTargetObserver*);
     void resetFormAttributeTargetObserver();
 
-    OwnPtrWillBeMember<FormAttributeTargetObserver> m_formAttributeTargetObserver;
-    WeakPtrWillBeMember<HTMLFormElement> m_form;
-    OwnPtrWillBeMember<ValidityState> m_validityState;
+    Member<FormAttributeTargetObserver> m_formAttributeTargetObserver;
+    Member<HTMLFormElement> m_form;
+    Member<ValidityState> m_validityState;
     String m_customValidationMessage;
-    // Non-Oilpan: Even if m_formWasSetByParser is true, m_form can be null
-    // because parentNode is not a strong reference and |this| and m_form don't
-    // die together.
-    // Oilpan: If m_formWasSetByParser is true, m_form is always non-null.
+    // If m_formWasSetByParser is true, m_form is always non-null.
     bool m_formWasSetByParser;
 };
 
-HTMLElement* toHTMLElement(FormAssociatedElement*);
-HTMLElement& toHTMLElement(FormAssociatedElement&);
-const HTMLElement* toHTMLElement(const FormAssociatedElement*);
-const HTMLElement& toHTMLElement(const FormAssociatedElement&);
+CORE_EXPORT HTMLElement* toHTMLElement(FormAssociatedElement*);
+CORE_EXPORT HTMLElement& toHTMLElement(FormAssociatedElement&);
+CORE_EXPORT const HTMLElement* toHTMLElement(const FormAssociatedElement*);
+CORE_EXPORT const HTMLElement& toHTMLElement(const FormAssociatedElement&);
 
 } // namespace blink
 

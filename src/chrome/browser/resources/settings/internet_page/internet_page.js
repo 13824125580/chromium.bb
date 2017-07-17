@@ -6,17 +6,6 @@
  * @fileoverview
  * 'settings-internet-page' is the settings page containing internet
  * settings.
- *
- * Example:
- *
- *    <core-animated-pages>
- *      <settings-internet-page prefs='{{prefs}}'>
- *      </settings-internet-page>
- *      ... other pages ...
- *    </core-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-internet-page
  */
 Polymer({
   is: 'settings-internet-page',

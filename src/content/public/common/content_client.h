@@ -19,7 +19,7 @@
 class GURL;
 
 namespace base {
-class RefCountedStaticMemory;
+class RefCountedMemory;
 }
 
 namespace IPC {
@@ -34,6 +34,10 @@ namespace gpu {
 struct GPUInfo;
 }
 
+namespace media {
+class MediaClientAndroid;
+}
+
 namespace sandbox {
 class TargetPolicy;
 }
@@ -43,9 +47,10 @@ namespace content {
 class ContentBrowserClient;
 class ContentClient;
 class ContentGpuClient;
-class ContentPluginClient;
 class ContentRendererClient;
 class ContentUtilityClient;
+class OriginTrialPolicy;
+struct CdmInfo;
 struct PepperPluginInfo;
 
 // Setter and getter for the client.  The client should be set early, before any
@@ -74,7 +79,6 @@ class CONTENT_EXPORT ContentClient {
 
   ContentBrowserClient* browser() { return browser_; }
   ContentGpuClient* gpu() { return gpu_; }
-  ContentPluginClient* plugin() { return plugin_; }
   ContentRendererClient* renderer() { return renderer_; }
   ContentUtilityClient* utility() { return utility_; }
 
@@ -87,6 +91,11 @@ class CONTENT_EXPORT ContentClient {
   // Gives the embedder a chance to register its own pepper plugins.
   virtual void AddPepperPlugins(
       std::vector<content::PepperPluginInfo>* plugins) {}
+
+  // Gives the embedder a chance to register the content decryption
+  // modules it supports.
+  virtual void AddContentDecryptionModules(
+      std::vector<content::CdmInfo>* cdms) {}
 
   // Gives the embedder a chance to register its own standard, referrer and
   // saveable url schemes early on in the startup sequence.
@@ -115,7 +124,7 @@ class CONTENT_EXPORT ContentClient {
       ui::ScaleFactor scale_factor) const;
 
   // Returns the raw bytes of a scale independent data resource.
-  virtual base::RefCountedStaticMemory* GetDataResourceBytes(
+  virtual base::RefCountedMemory* GetDataResourceBytes(
       int resource_id) const;
 
   // Returns a native image given its id.
@@ -125,7 +134,7 @@ class CONTENT_EXPORT ContentClient {
   // doesn't know about because they're from the embedder.
   virtual std::string GetProcessTypeNameInEnglish(int type);
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
   // Allows the embedder to define a new |sandbox_type| by mapping it to the
   // resource ID corresponding to the sandbox profile to use. The legal values
   // for |sandbox_type| are defined by the embedder and should start with
@@ -149,12 +158,30 @@ class CONTENT_EXPORT ContentClient {
   // trustworthy schemes should be added.
   virtual void AddServiceWorkerSchemes(std::set<std::string>* schemes) {}
 
+  // Returns whether or not V8 script extensions should be allowed for a
+  // service worker.
+  virtual bool AllowScriptExtensionForServiceWorker(const GURL& script_url);
+
   // Returns true if the embedder wishes to supplement the site isolation policy
   // used by the content layer. Returning true enables the infrastructure for
   // out-of-process iframes, and causes the content layer to consult
   // ContentBrowserClient::DoesSiteRequireDedicatedProcess() when making process
   // model decisions.
   virtual bool IsSupplementarySiteIsolationModeEnabled();
+
+  // Returns the origin trial policy, or nullptr if origin trials are not
+  // supported by the embedder.
+  virtual OriginTrialPolicy* GetOriginTrialPolicy();
+
+#if defined(OS_ANDROID)
+  // Returns true for clients like Android WebView that uses synchronous
+  // compositor. Note setting this to true will permit synchronous IPCs from
+  // the browser UI thread.
+  virtual bool UsingSynchronousCompositing();
+
+  // Returns the MediaClientAndroid to be used by media code on Android.
+  virtual media::MediaClientAndroid* GetMediaClientAndroid();
+#endif  // OS_ANDROID
 
  private:
   friend class ContentClientInitializer;  // To set these pointers.
@@ -164,8 +191,6 @@ class CONTENT_EXPORT ContentClient {
   ContentBrowserClient* browser_;
   // The embedder API for participating in gpu logic.
   ContentGpuClient* gpu_;
-  // The embedder API for participating in plugin logic.
-  ContentPluginClient* plugin_;
   // The embedder API for participating in renderer logic.
   ContentRendererClient* renderer_;
   // The embedder API for participating in utility logic.

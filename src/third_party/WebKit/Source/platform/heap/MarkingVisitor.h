@@ -15,8 +15,8 @@ public:
     using Impl = MarkingVisitorImpl<MarkingVisitor<Mode>>;
     friend class MarkingVisitorImpl<MarkingVisitor<Mode>>;
 
-    MarkingVisitor()
-        : Visitor(Mode)
+    explicit MarkingVisitor(ThreadState* state)
+        : Visitor(state, Mode)
     {
     }
 
@@ -57,13 +57,13 @@ public:
         return Impl::ensureMarked(objectPointer);
     }
 
-protected:
     void registerWeakCellWithCallback(void** cell, WeakCallback callback) override
     {
         Impl::registerWeakCellWithCallback(cell, callback);
     }
 
-    inline bool shouldMarkObject(const void* objectPointer)
+protected:
+    inline bool shouldMarkObject(const void* objectPointer) const
     {
         if (Mode != ThreadLocalMarking)
             return true;

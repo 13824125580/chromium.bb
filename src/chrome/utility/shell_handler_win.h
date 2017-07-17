@@ -7,20 +7,20 @@
 
 #include <Windows.h>
 
+#include <tuple>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "base/tuple.h"
 #include "chrome/utility/utility_message_handler.h"
 
 namespace base {
 class FilePath;
 }  // namespace base
 
-typedef std::vector<base::Tuple<base::string16, base::string16>>
-    GetOpenFileNameFilter;
+using GetOpenFileNameFilter =
+    std::vector<std::tuple<base::string16, base::string16>>;
 
 struct ChromeUtilityMsg_GetSaveFileName_Params;
 
@@ -36,9 +36,6 @@ class ShellHandler : public UtilityMessageHandler {
   bool OnMessageReceived(const IPC::Message& message) override;
 
  private:
-  void OnOpenFileViaShell(const base::FilePath& full_path);
-  void OnOpenFolderViaShell(const base::FilePath& full_path);
-
   void OnGetOpenFileName(
     HWND owner,
     DWORD flags,

@@ -29,7 +29,9 @@
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/AtomicString.h"
+#include <memory>
 
 namespace blink {
 
@@ -39,7 +41,7 @@ class ExecutionContext;
 class EventFactoryBase {
     USING_FAST_MALLOC(EventFactoryBase);
 public:
-    virtual PassRefPtrWillBeRawPtr<Event> create(ExecutionContext*, const String& eventType) = 0;
+    virtual Event* create(ExecutionContext*, const String& eventType) = 0;
     virtual ~EventFactoryBase() { }
 
 protected:
@@ -48,12 +50,12 @@ protected:
 
 class EventFactory final : public EventFactoryBase {
 public:
-    static PassOwnPtr<EventFactory> create()
+    static std::unique_ptr<EventFactory> create()
     {
-        return adoptPtr(new EventFactory());
+        return wrapUnique(new EventFactory());
     }
 
-    PassRefPtrWillBeRawPtr<Event> create(ExecutionContext*, const String& eventType) override;
+    Event* create(ExecutionContext*, const String& eventType) override;
 };
 
 } // namespace blink

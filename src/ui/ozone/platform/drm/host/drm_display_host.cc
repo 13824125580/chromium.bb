@@ -4,8 +4,10 @@
 
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
 
+#include "base/bind.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/ozone/common/display_snapshot_proxy.h"
 #include "ui/ozone/common/display_util.h"
 #include "ui/ozone/platform/drm/host/gpu_thread_adapter.h"
@@ -28,7 +30,7 @@ DrmDisplayHost::~DrmDisplayHost() {
 
 void DrmDisplayHost::UpdateDisplaySnapshot(
     const DisplaySnapshot_Params& params) {
-  snapshot_ = make_scoped_ptr(new DisplaySnapshotProxy(params));
+  snapshot_ = base::WrapUnique(new DisplaySnapshotProxy(params));
 }
 
 void DrmDisplayHost::Configure(const DisplayMode* mode,
@@ -101,8 +103,12 @@ void DrmDisplayHost::OnHDCPStateUpdated(bool status) {
   set_hdcp_callback_.Reset();
 }
 
-void DrmDisplayHost::SetGammaRamp(const std::vector<GammaRampRGBEntry>& lut) {
-  sender_->GpuSetGammaRamp(snapshot_->display_id(), lut);
+void DrmDisplayHost::SetColorCorrection(
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
+  sender_->GpuSetColorCorrection(snapshot_->display_id(), degamma_lut,
+                                 gamma_lut, correction_matrix);
 }
 
 void DrmDisplayHost::OnGpuThreadReady() {

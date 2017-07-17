@@ -12,30 +12,32 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/views/animation/button_ink_drop_delegate.h"
-#include "ui/views/animation/ink_drop_hover.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/animation/ink_drop_highlight.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 
 BubbleIconView::BubbleIconView(CommandUpdater* command_updater, int command_id)
     : image_(new views::ImageView()),
       command_updater_(command_updater),
       command_id_(command_id),
       active_(false),
-      suppress_mouse_released_action_(false),
-      ink_drop_delegate_(new views::ButtonInkDropDelegate(this, this)) {
+      suppress_mouse_released_action_(false) {
   AddChildView(image_);
   image_->set_interactive(false);
   image_->EnableCanvasFlippingForRTLUI(true);
-  image_->SetAccessibilityFocusable(true);
+  if (ui::MaterialDesignController::IsModeMaterial()) {
+    SetHasInkDrop(true);
+    SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
+  } else {
+    image_->SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
+  }
 }
 
-BubbleIconView::~BubbleIconView() {
-}
+BubbleIconView::~BubbleIconView() {}
 
 bool BubbleIconView::IsBubbleShowing() const {
   // If the bubble is being destroyed, it's considered showing though it may be
   // already invisible currently.
-  return GetBubble() != NULL;
+  return GetBubble() != nullptr;
 }
 
 void BubbleIconView::SetImage(const gfx::ImageSkia* image_skia) {
@@ -73,7 +75,7 @@ bool BubbleIconView::OnMousePressed(const ui::MouseEvent& event) {
   // If the bubble is showing then don't reshow it when the mouse is released.
   suppress_mouse_released_action_ = IsBubbleShowing();
   if (!suppress_mouse_released_action_ && event.IsOnlyLeftMouseButton())
-    ink_drop_delegate_->OnAction(views::InkDropState::ACTION_PENDING);
+    AnimateInkDrop(views::InkDropState::ACTION_PENDING, &event);
 
   // We want to show the bubble on mouse release; that is the standard behavior
   // for buttons.
@@ -86,23 +88,37 @@ void BubbleIconView::OnMouseReleased(const ui::MouseEvent& event) {
   // doing nothing here.
   if (suppress_mouse_released_action_) {
     suppress_mouse_released_action_ = false;
+    OnPressed(false);
     return;
   }
   if (!event.IsLeftMouseButton())
     return;
 
   const bool activated = HitTestPoint(event.location());
-  ink_drop_delegate_->OnAction(
-      activated ? views::InkDropState::ACTIVATED : views::InkDropState::HIDDEN);
+  AnimateInkDrop(
+      activated ? views::InkDropState::ACTIVATED : views::InkDropState::HIDDEN,
+      &event);
   if (activated)
     ExecuteCommand(EXECUTE_SOURCE_MOUSE);
+  OnPressed(activated);
 }
 
 bool BubbleIconView::OnKeyPressed(const ui::KeyEvent& event) {
-  if (event.key_code() != ui::VKEY_SPACE && event.key_code() != ui::VKEY_RETURN)
+  if (event.key_code() != ui::VKEY_RETURN && event.key_code() != ui::VKEY_SPACE)
     return false;
 
-  ink_drop_delegate_->OnAction(views::InkDropState::ACTIVATED);
+  AnimateInkDrop(views::InkDropState::ACTIVATED, nullptr /* &event */);
+  // As with CustomButton, return activates on key down and space activates on
+  // key up.
+  if (event.key_code() == ui::VKEY_RETURN)
+    ExecuteCommand(EXECUTE_SOURCE_KEYBOARD);
+  return true;
+}
+
+bool BubbleIconView::OnKeyReleased(const ui::KeyEvent& event) {
+  if (event.key_code() != ui::VKEY_SPACE)
+    return false;
+
   ExecuteCommand(EXECUTE_SOURCE_KEYBOARD);
   return true;
 }
@@ -120,7 +136,7 @@ void BubbleIconView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
 
 void BubbleIconView::AddInkDropLayer(ui::Layer* ink_drop_layer) {
   image_->SetPaintToLayer(true);
-  image_->SetFillsBoundsOpaquely(false);
+  image_->layer()->SetFillsBoundsOpaquely(false);
   views::InkDropHostView::AddInkDropLayer(ink_drop_layer);
 }
 
@@ -129,19 +145,18 @@ void BubbleIconView::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
   image_->SetPaintToLayer(false);
 }
 
-scoped_ptr<views::InkDropHover> BubbleIconView::CreateInkDropHover() const {
-  // BubbleIconView views don't show hover effect.
-  return nullptr;
-}
-
 SkColor BubbleIconView::GetInkDropBaseColor() const {
   return color_utils::DeriveDefaultIconColor(GetNativeTheme()->GetSystemColor(
       ui::NativeTheme::kColorId_TextfieldDefaultColor));
 }
 
+bool BubbleIconView::ShouldShowInkDropForFocus() const {
+  return true;
+}
+
 void BubbleIconView::OnGestureEvent(ui::GestureEvent* event) {
   if (event->type() == ui::ET_GESTURE_TAP) {
-    ink_drop_delegate_->OnAction(views::InkDropState::ACTIVATED);
+    AnimateInkDrop(views::InkDropState::ACTIVATED, event);
     ExecuteCommand(EXECUTE_SOURCE_GESTURE);
     event->SetHandled();
   }
@@ -155,7 +170,7 @@ void BubbleIconView::OnWidgetVisibilityChanged(views::Widget* widget,
                                                bool visible) {
   // |widget| is a bubble that has just got shown / hidden.
   if (!visible)
-    ink_drop_delegate_->OnAction(views::InkDropState::DEACTIVATED);
+    AnimateInkDrop(views::InkDropState::DEACTIVATED, nullptr /* event */);
 }
 
 void BubbleIconView::ExecuteCommand(ExecuteSource source) {
@@ -173,7 +188,7 @@ bool BubbleIconView::SetRasterIcon() {
 }
 
 void BubbleIconView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
-  views::BubbleDelegateView* bubble = GetBubble();
+  views::BubbleDialogDelegateView* bubble = GetBubble();
   if (bubble)
     bubble->OnAnchorBoundsChanged();
 }

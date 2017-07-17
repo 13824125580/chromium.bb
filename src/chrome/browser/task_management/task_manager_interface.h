@@ -7,11 +7,13 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
+#include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -19,6 +21,8 @@
 #include "chrome/browser/task_management/task_manager_observer.h"
 #include "third_party/WebKit/public/web/WebCache.h"
 #include "ui/gfx/image/image_skia.h"
+
+class PrefRegistrySimple;
 
 namespace net {
 class URLRequest;
@@ -31,6 +35,17 @@ namespace task_management {
 // enabled calculations of the usage of the various resources.
 class TaskManagerInterface {
  public:
+  // Registers the task manager related prefs.
+  static void RegisterPrefs(PrefRegistrySimple* registry);
+
+  // Returns true if the user is allowed to end processes.
+  static bool IsEndProcessEnabled();
+
+#if defined(OS_MACOSX)
+  // On Mac OS, the old task manager is still being used on cocoa.
+  static bool IsNewTaskManagerEnabled();
+#endif  // defined(OS_MACOSX)
+
   // Gets the existing instance of the task manager if any, otherwise it will
   // create it first. Must be called on the UI thread.
   static TaskManagerInterface* GetTaskManager();
@@ -47,6 +62,9 @@ class TaskManagerInterface {
   // possible.
   virtual void ActivateTask(TaskId task_id) = 0;
 
+  // Returns if the task is killable.
+  virtual bool IsTaskKillable(TaskId task_id) = 0;
+
   // Kills the task with |task_id|.
   virtual void KillTask(TaskId task_id) = 0;
 
@@ -60,6 +78,7 @@ class TaskManagerInterface {
   virtual int64_t GetPhysicalMemoryUsage(TaskId task_id) const = 0;
   virtual int64_t GetPrivateMemoryUsage(TaskId task_id) const = 0;
   virtual int64_t GetSharedMemoryUsage(TaskId task_id) const = 0;
+  virtual int64_t GetSwappedMemoryUsage(TaskId task_id) const = 0;
 
   // Returns the GPU memory usage of the task with |task_id| in bytes. A value
   // of -1 means no valid value is currently available.
@@ -118,6 +137,28 @@ class TaskManagerInterface {
   // Returns the type of the task with |task_id|.
   virtual Task::Type GetType(TaskId task_id) const = 0;
 
+  // Gets the unique ID of the tab if the task with |task_id| represents a
+  // WebContents of a tab. Returns -1 otherwise.
+  virtual int GetTabId(TaskId task_id) const = 0;
+
+  // Returns the unique ID of the BrowserChildProcessHost/RenderProcessHost on
+  // which the task with |task_id| is running. It is not the PID nor the handle
+  // of the process.
+  // For a task that represents the browser process, the return value is 0.
+  // For a task that doesn't have a host on the browser process, the return
+  // value is also 0. For other tasks that represent renderers and other child
+  // processes, the return value is whatever unique IDs of their hosts in the
+  // browser process.
+  virtual int GetChildProcessUniqueId(TaskId task_id) const = 0;
+
+  // If the process, in which the task with |task_id| is running, is terminated
+  // this gets the termination status. Currently implemented only for Renderer
+  // processes. The values will only be valid if the process has actually
+  // terminated.
+  virtual void GetTerminationStatus(TaskId task_id,
+                                    base::TerminationStatus* out_status,
+                                    int* out_error_code) const = 0;
+
   // Returns the network usage (in bytes per second) during the current refresh
   // cycle for the task with |task_id|. A value of -1 means no valid value is
   // currently available or that task has never been notified of any network
@@ -148,11 +189,17 @@ class TaskManagerInterface {
       TaskId task_id,
       blink::WebCache::ResourceTypeStats* stats) const = 0;
 
-  // Gets the list of task IDs currently tracked by the task manager. The list
-  // will be sorted such that the task representing the browser process is at
-  // the top of the list and the rest of the IDs will be sorted by the process
-  // IDs on which the tasks are running, then by the task IDs themselves.
+  // Gets the list of task IDs currently tracked by the task manager. Tasks that
+  // share the same process id will always be consecutive. The list will be
+  // sorted in a way that reflects the process tree: the browser process will be
+  // first, followed by the gpu process if it exists. Related processes (e.g., a
+  // subframe process and its parent) will be kept together if possible. Callers
+  // can expect this ordering to be stable when a process is added or removed.
   virtual const TaskIdList& GetTaskIdsList() const = 0;
+
+  // Gets the list of task IDs of the tasks that run on the same process as the
+  // task with |task_id|. The returned list will at least include |task_id|.
+  virtual TaskIdList GetIdsOfTasksSharingSameProcess(TaskId task_id) const = 0;
 
   // Gets the number of task-manager tasks running on the same process on which
   // the Task with |task_id| is running.
@@ -161,7 +208,7 @@ class TaskManagerInterface {
   // Returns true if the resource |type| usage calculation is enabled and
   // the implementation should refresh its value (this means that at least one
   // of the observers require this value). False otherwise.
-  bool IsResourceRefreshEnabled(RefreshType type);
+  bool IsResourceRefreshEnabled(RefreshType type) const;
 
  protected:
   TaskManagerInterface();
@@ -171,6 +218,9 @@ class TaskManagerInterface {
   void NotifyObserversOnTaskAdded(TaskId id);
   void NotifyObserversOnTaskToBeRemoved(TaskId id);
   void NotifyObserversOnRefresh(const TaskIdList& task_ids);
+  void NotifyObserversOnRefreshWithBackgroundCalculations(
+      const TaskIdList& task_ids);
+  void NotifyObserversOnTaskUnresponsive(TaskId id);
 
   // Refresh all the enabled resources usage of all the available tasks.
   virtual void Refresh() = 0;
@@ -186,7 +236,7 @@ class TaskManagerInterface {
 
   int64_t enabled_resources_flags() const { return enabled_resources_flags_; }
 
-  void set_timer_for_testing(scoped_ptr<base::Timer> timer) {
+  void set_timer_for_testing(std::unique_ptr<base::Timer> timer) {
     refresh_timer_ = std::move(timer);
   }
 
@@ -211,7 +261,7 @@ class TaskManagerInterface {
   base::ObserverList<TaskManagerObserver> observers_;
 
   // The timer that will be used to schedule the successive refreshes.
-  scoped_ptr<base::Timer> refresh_timer_;
+  std::unique_ptr<base::Timer> refresh_timer_;
 
   // The flags containing the enabled resources types calculations.
   int64_t enabled_resources_flags_;

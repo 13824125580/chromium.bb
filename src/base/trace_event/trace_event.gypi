@@ -4,7 +4,10 @@
 {
   'variables': {
     'trace_event_sources' : [
+      'trace_event/blame_context.cc',
+      'trace_event/blame_context.h',
       'trace_event/common/trace_event_common.h',
+      'trace_event/heap_profiler.h',
       'trace_event/heap_profiler_allocation_context.cc',
       'trace_event/heap_profiler_allocation_context.h',
       'trace_event/heap_profiler_allocation_context_tracker.cc',
@@ -32,6 +35,8 @@
       'trace_event/memory_dump_request_args.h',
       'trace_event/memory_dump_session_state.cc',
       'trace_event/memory_dump_session_state.h',
+      'trace_event/memory_infra_background_whitelist.cc',
+      'trace_event/memory_infra_background_whitelist.h',
       'trace_event/process_memory_dump.cc',
       'trace_event/process_memory_dump.h',
       'trace_event/process_memory_maps.cc',
@@ -67,6 +72,7 @@
       'trace_event/winheap_dump_provider_win.h',
     ],
     'trace_event_test_sources' : [
+      'trace_event/blame_context_unittest.cc',
       'trace_event/heap_profiler_allocation_context_tracker_unittest.cc',
       'trace_event/heap_profiler_allocation_register_unittest.cc',
       'trace_event/heap_profiler_heap_dump_writer_unittest.cc',

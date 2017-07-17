@@ -34,7 +34,9 @@
 #include "core/css/MediaValuesCached.h"
 #include "core/css/parser/SizesAttributeParser.h"
 #include "core/dom/Document.h"
+#include "core/dom/ScriptLoader.h"
 #include "core/fetch/IntegrityMetadata.h"
+#include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
 #include "core/frame/SubresourceIntegrity.h"
 #include "core/html/CrossOriginAttribute.h"
@@ -46,12 +48,34 @@
 #include "core/html/parser/HTMLTokenizer.h"
 #include "core/loader/LinkLoader.h"
 #include "platform/ContentType.h"
+#include "platform/Histogram.h"
 #include "platform/MIMETypeRegistry.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/TraceEvent.h"
-#include "wtf/MainThread.h"
+#include <memory>
 
 namespace blink {
+
+namespace {
+
+// When adding values to this enum, update histograms.xml as well.
+enum DocumentWriteGatedEvaluation {
+    GatedEvaluationScriptTooLong,
+    GatedEvaluationNoLikelyScript,
+    GatedEvaluationLooping,
+    GatedEvaluationPopularLibrary,
+    GatedEvaluationNondeterminism,
+
+    // Add new values before this last value.
+    GatedEvaluationLastValue
+};
+
+void LogGatedEvaluation(DocumentWriteGatedEvaluation reason)
+{
+    DEFINE_STATIC_LOCAL(EnumerationHistogram, gatedEvaluationHistogram, ("PreloadScanner.DocumentWrite.GatedEvaluation", GatedEvaluationLastValue));
+    gatedEvaluationHistogram.count(reason);
+}
+
+} // namespace
 
 using namespace HTMLNames;
 
@@ -107,22 +131,21 @@ static String initiatorFor(const StringImpl* tagImpl)
 
 static bool mediaAttributeMatches(const MediaValuesCached& mediaValues, const String& attributeValue)
 {
-    RefPtrWillBeRawPtr<MediaQuerySet> mediaQueries = MediaQuerySet::createOffMainThread(attributeValue);
+    MediaQuerySet* mediaQueries = MediaQuerySet::createOffMainThread(attributeValue);
     MediaQueryEvaluator mediaQueryEvaluator(mediaValues);
-    return mediaQueryEvaluator.eval(mediaQueries.get());
+    return mediaQueryEvaluator.eval(mediaQueries);
 }
 
 class TokenPreloadScanner::StartTagScanner {
     STACK_ALLOCATED();
 public:
-    StartTagScanner(const StringImpl* tagImpl, PassRefPtrWillBeRawPtr<MediaValuesCached> mediaValues)
+    StartTagScanner(const StringImpl* tagImpl, MediaValuesCached* mediaValues)
         : m_tagImpl(tagImpl)
         , m_linkIsStyleSheet(false)
-        , m_linkTypeIsMissingOrSupportedStyleSheet(true)
         , m_linkIsPreconnect(false)
         , m_linkIsPreload(false)
         , m_linkIsImport(false)
-        , m_matchedMediaAttribute(true)
+        , m_matched(true)
         , m_inputIsImage(false)
         , m_sourceSize(0)
         , m_sourceSizeSet(false)
@@ -171,8 +194,12 @@ public:
 
     void handlePictureSourceURL(PictureData& pictureData)
     {
-        if (match(m_tagImpl, sourceTag) && m_matchedMediaAttribute && pictureData.sourceURL.isEmpty()) {
-            pictureData.sourceURL = m_srcsetImageCandidate.toString();
+        if (match(m_tagImpl, sourceTag) && m_matched && pictureData.sourceURL.isEmpty()) {
+            // Must create an isolatedCopy() since the srcset attribute value will
+            // get sent back to the main thread between when we set this, and when we
+            // process the closing tag which would clear m_pictureData. Having any
+            // ref to a string we're going to send will fail isSafeToSendToAnotherThread().
+            pictureData.sourceURL = m_srcsetImageCandidate.toString().isolatedCopy();
             pictureData.sourceSizeSet = m_sourceSizeSet;
             pictureData.sourceSize = m_sourceSize;
             pictureData.picked = true;
@@ -181,15 +208,19 @@ public:
         }
     }
 
-    PassOwnPtr<PreloadRequest> createPreloadRequest(const KURL& predictedBaseURL, const SegmentedString& source, const ClientHintsPreferences& clientHintsPreferences, const PictureData& pictureData, const ReferrerPolicy documentReferrerPolicy)
+    std::unique_ptr<PreloadRequest> createPreloadRequest(const KURL& predictedBaseURL, const SegmentedString& source, const ClientHintsPreferences& clientHintsPreferences, const PictureData& pictureData, const ReferrerPolicy documentReferrerPolicy)
     {
         PreloadRequest::RequestType requestType = PreloadRequest::RequestTypePreload;
-        if (shouldPreconnect())
+        if (shouldPreconnect()) {
             requestType = PreloadRequest::RequestTypePreconnect;
-        else if (isLinkRelPreload())
-            requestType = PreloadRequest::RequestTypeLinkRelPreload;
-        else if (!shouldPreload() || !m_matchedMediaAttribute)
-            return nullptr;
+        } else {
+            if (isLinkRelPreload()) {
+                requestType = PreloadRequest::RequestTypeLinkRelPreload;
+            }
+            if (!shouldPreload()) {
+                return nullptr;
+            }
+        }
 
         TextPosition position = TextPosition(source.currentLine(), source.currentColumn());
         FetchRequest::ResourceWidth resourceWidth;
@@ -209,13 +240,14 @@ public:
             return nullptr;
 
         // The element's 'referrerpolicy' attribute (if present) takes precedence over the document's referrer policy.
-        ReferrerPolicy referrerPolicy = (m_referrerPolicy != ReferrerPolicyDefault && RuntimeEnabledFeatures::referrerPolicyAttributeEnabled()) ? m_referrerPolicy : documentReferrerPolicy;
-        OwnPtr<PreloadRequest> request = PreloadRequest::create(initiatorFor(m_tagImpl), position, m_urlToLoad, predictedBaseURL, type, referrerPolicy, resourceWidth, clientHintsPreferences, requestType);
+        ReferrerPolicy referrerPolicy = (m_referrerPolicy != ReferrerPolicyDefault) ? m_referrerPolicy : documentReferrerPolicy;
+        std::unique_ptr<PreloadRequest> request = PreloadRequest::create(initiatorFor(m_tagImpl), position, m_urlToLoad, predictedBaseURL, type, referrerPolicy, resourceWidth, clientHintsPreferences, requestType);
         request->setCrossOrigin(m_crossOrigin);
+        request->setNonce(m_nonce);
         request->setCharset(charset());
         request->setDefer(m_defer);
         request->setIntegrityMetadata(m_integrityMetadata);
-        return request.release();
+        return request;
     }
 
 private:
@@ -227,6 +259,8 @@ private:
             setUrlToLoad(attributeValue, DisallowURLReplacement);
         else if (match(attributeName, crossoriginAttr))
             setCrossOrigin(attributeValue);
+        else if (match(attributeName, nonceAttr))
+            setNonce(attributeValue);
         else if (match(attributeName, asyncAttr))
             setDefer(FetchRequest::LazyLoad);
         else if (match(attributeName, deferAttr))
@@ -241,6 +275,10 @@ private:
         // explanation.
         else if (match(attributeName, integrityAttr))
             SubresourceIntegrity::parseIntegrityAttribute(attributeValue, m_integrityMetadata);
+        else if (match(attributeName, typeAttr))
+            m_typeAttributeValue = attributeValue;
+        else if (match(attributeName, languageAttr))
+            m_languageAttributeValue = attributeValue;
     }
 
     template<typename NameType>
@@ -262,7 +300,7 @@ private:
                 m_srcsetImageCandidate = bestFitSourceForSrcsetAttribute(m_mediaValues->devicePixelRatio(), m_sourceSize, m_srcsetAttributeValue);
                 setUrlToLoad(bestFitSourceForImageAttributes(m_mediaValues->devicePixelRatio(), m_sourceSize, m_imgSrcUrl, m_srcsetImageCandidate), AllowURLReplacement);
             }
-        } else if (!m_referrerPolicySet && RuntimeEnabledFeatures::referrerPolicyAttributeEnabled() && match(attributeName, referrerpolicyAttr) && !attributeValue.isNull()) {
+        } else if (!m_referrerPolicySet && match(attributeName, referrerpolicyAttr) && !attributeValue.isNull()) {
             m_referrerPolicySet = true;
             SecurityPolicy::referrerPolicyFromString(attributeValue, &m_referrerPolicy);
         }
@@ -281,13 +319,15 @@ private:
             m_linkIsPreload = rel.isLinkPreload();
             m_linkIsImport = rel.isImport();
         } else if (match(attributeName, mediaAttr)) {
-            m_matchedMediaAttribute = mediaAttributeMatches(*m_mediaValues, attributeValue);
+            m_matched &= mediaAttributeMatches(*m_mediaValues, attributeValue);
         } else if (match(attributeName, crossoriginAttr)) {
             setCrossOrigin(attributeValue);
+        } else if (match(attributeName, nonceAttr)) {
+            setNonce(attributeValue);
         } else if (match(attributeName, asAttr)) {
             m_asAttributeValue = attributeValue;
         } else if (match(attributeName, typeAttr)) {
-            m_linkTypeIsMissingOrSupportedStyleSheet = MIMETypeRegistry::isSupportedStyleSheetMIMEType(ContentType(attributeValue).type());
+            m_matched &= MIMETypeRegistry::isSupportedStyleSheetMIMEType(ContentType(attributeValue).type());
         }
     }
 
@@ -315,7 +355,9 @@ private:
             }
         } else if (match(attributeName, mediaAttr)) {
             // FIXME - Don't match media multiple times.
-            m_matchedMediaAttribute = mediaAttributeMatches(*m_mediaValues, attributeValue);
+            m_matched &= mediaAttributeMatches(*m_mediaValues, attributeValue);
+        } else if (match(attributeName, typeAttr)) {
+            m_matched &= MIMETypeRegistry::isSupportedImagePrefixedMIMEType(ContentType(attributeValue).type());
         }
     }
 
@@ -401,11 +443,13 @@ private:
     {
         if (m_urlToLoad.isEmpty())
             return false;
+        if (!m_matched)
+            return false;
         if (match(m_tagImpl, linkTag) && !m_linkIsStyleSheet && !m_linkIsImport && !m_linkIsPreload)
             return false;
-        if (match(m_tagImpl, linkTag) && m_linkIsStyleSheet && !m_linkTypeIsMissingOrSupportedStyleSheet)
-            return false;
         if (match(m_tagImpl, inputTag) && !m_inputIsImage)
+            return false;
+        if (match(m_tagImpl, scriptTag) && !ScriptLoader::isValidScriptTypeAndLanguage(m_typeAttributeValue, m_languageAttributeValue, ScriptLoader::AllowLegacyTypeInTypeAttribute))
             return false;
         return true;
     }
@@ -413,6 +457,11 @@ private:
     void setCrossOrigin(const String& corsSetting)
     {
         m_crossOrigin = crossOriginAttributeValue(corsSetting);
+    }
+
+    void setNonce(const String& nonce)
+    {
+        m_nonce = nonce;
     }
 
     void setDefer(FetchRequest::DeferOption defer)
@@ -430,37 +479,42 @@ private:
     ImageCandidate m_srcsetImageCandidate;
     String m_charset;
     bool m_linkIsStyleSheet;
-    bool m_linkTypeIsMissingOrSupportedStyleSheet;
     bool m_linkIsPreconnect;
     bool m_linkIsPreload;
     bool m_linkIsImport;
-    bool m_matchedMediaAttribute;
+    bool m_matched;
     bool m_inputIsImage;
     String m_imgSrcUrl;
     String m_srcsetAttributeValue;
     String m_asAttributeValue;
+    String m_typeAttributeValue;
+    String m_languageAttributeValue;
     float m_sourceSize;
     bool m_sourceSizeSet;
     FetchRequest::DeferOption m_defer;
     CrossOriginAttributeValue m_crossOrigin;
-    RefPtrWillBeMember<MediaValuesCached> m_mediaValues;
+    String m_nonce;
+    Member<MediaValuesCached> m_mediaValues;
     bool m_referrerPolicySet;
     ReferrerPolicy m_referrerPolicy;
     IntegrityMetadataSet m_integrityMetadata;
 };
 
-TokenPreloadScanner::TokenPreloadScanner(const KURL& documentURL, PassOwnPtr<CachedDocumentParameters> documentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData)
+TokenPreloadScanner::TokenPreloadScanner(const KURL& documentURL, std::unique_ptr<CachedDocumentParameters> documentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData)
     : m_documentURL(documentURL)
     , m_inStyle(false)
     , m_inPicture(false)
+    , m_inScript(false)
     , m_isAppCacheEnabled(false)
     , m_isCSPEnabled(false)
     , m_templateCount(0)
-    , m_documentParameters(documentParameters)
+    , m_documentParameters(std::move(documentParameters))
     , m_mediaValues(MediaValuesCached::create(mediaValuesCachedData))
+    , m_didRewind(false)
 {
     ASSERT(m_documentParameters.get());
     ASSERT(m_mediaValues.get());
+    m_cssScanner.setReferrerPolicy(m_documentParameters->referrerPolicy);
 }
 
 TokenPreloadScanner::~TokenPreloadScanner()
@@ -470,7 +524,7 @@ TokenPreloadScanner::~TokenPreloadScanner()
 TokenPreloadScannerCheckpoint TokenPreloadScanner::createCheckpoint()
 {
     TokenPreloadScannerCheckpoint checkpoint = m_checkpoints.size();
-    m_checkpoints.append(Checkpoint(m_predictedBaseElementURL, m_inStyle, m_isAppCacheEnabled, m_isCSPEnabled, m_templateCount));
+    m_checkpoints.append(Checkpoint(m_predictedBaseElementURL, m_inStyle, m_inScript, m_isAppCacheEnabled, m_isCSPEnabled, m_templateCount));
     return checkpoint;
 }
 
@@ -483,42 +537,50 @@ void TokenPreloadScanner::rewindTo(TokenPreloadScannerCheckpoint checkpointIndex
     m_isAppCacheEnabled = checkpoint.isAppCacheEnabled;
     m_isCSPEnabled = checkpoint.isCSPEnabled;
     m_templateCount = checkpoint.templateCount;
+
+    m_didRewind = true;
+    m_inScript = checkpoint.inScript;
+
     m_cssScanner.reset();
     m_checkpoints.clear();
 }
 
-void TokenPreloadScanner::scan(const HTMLToken& token, const SegmentedString& source, PreloadRequestStream& requests)
+void TokenPreloadScanner::scan(const HTMLToken& token, const SegmentedString& source, PreloadRequestStream& requests, ViewportDescriptionWrapper* viewport)
 {
-    scanCommon(token, source, requests);
+    scanCommon(token, source, requests, viewport, nullptr);
 }
 
-void TokenPreloadScanner::scan(const CompactHTMLToken& token, const SegmentedString& source, PreloadRequestStream& requests)
+void TokenPreloadScanner::scan(const CompactHTMLToken& token, const SegmentedString& source, PreloadRequestStream& requests, ViewportDescriptionWrapper* viewport, bool* likelyDocumentWriteScript)
 {
-    scanCommon(token, source, requests);
+    scanCommon(token, source, requests, viewport, likelyDocumentWriteScript);
 }
 
-static void handleMetaViewport(const String& attributeValue, const CachedDocumentParameters* documentParameters, MediaValuesCached* mediaValues)
+static void handleMetaViewport(const String& attributeValue, const CachedDocumentParameters* documentParameters, MediaValuesCached* mediaValues, ViewportDescriptionWrapper* viewport)
 {
     if (!documentParameters->viewportMetaEnabled)
         return;
     ViewportDescription description(ViewportDescription::ViewportMeta);
     HTMLMetaElement::getViewportDescriptionFromContentAttribute(attributeValue, description, nullptr, documentParameters->viewportMetaZeroValuesQuirk);
+    if (viewport) {
+        viewport->description = description;
+        viewport->set = true;
+    }
     FloatSize initialViewport(mediaValues->deviceWidth(), mediaValues->deviceHeight());
     PageScaleConstraints constraints = description.resolve(initialViewport, documentParameters->defaultViewportMinWidth);
-    mediaValues->setViewportHeight(constraints.layoutSize.height());
-    mediaValues->setViewportWidth(constraints.layoutSize.width());
+    mediaValues->overrideViewportDimensions(constraints.layoutSize.width(), constraints.layoutSize.height());
 }
 
 static void handleMetaReferrer(const String& attributeValue, CachedDocumentParameters* documentParameters, CSSPreloadScanner* cssScanner)
 {
-    if (attributeValue.isEmpty() || attributeValue.isNull() || !SecurityPolicy::referrerPolicyFromString(attributeValue, &documentParameters->referrerPolicy)) {
-        documentParameters->referrerPolicy = ReferrerPolicyDefault;
+    ReferrerPolicy metaReferrerPolicy = ReferrerPolicyDefault;
+    if (!attributeValue.isEmpty() && !attributeValue.isNull() && SecurityPolicy::referrerPolicyFromString(attributeValue, &metaReferrerPolicy)) {
+        documentParameters->referrerPolicy = metaReferrerPolicy;
     }
     cssScanner->setReferrerPolicy(documentParameters->referrerPolicy);
 }
 
 template <typename Token>
-static void handleMetaNameAttribute(const Token& token, CachedDocumentParameters* documentParameters, MediaValuesCached* mediaValues, CSSPreloadScanner* cssScanner)
+static void handleMetaNameAttribute(const Token& token, CachedDocumentParameters* documentParameters, MediaValuesCached* mediaValues, CSSPreloadScanner* cssScanner, ViewportDescriptionWrapper* viewport)
 {
     const typename Token::Attribute* nameAttribute = token.getAttributeItem(nameAttr);
     if (!nameAttribute)
@@ -531,7 +593,7 @@ static void handleMetaNameAttribute(const Token& token, CachedDocumentParameters
 
     String contentAttributeValue(contentAttribute->value());
     if (equalIgnoringCase(nameAttributeValue, "viewport")) {
-        handleMetaViewport(contentAttributeValue, documentParameters, mediaValues);
+        handleMetaViewport(contentAttributeValue, documentParameters, mediaValues, viewport);
         return;
     }
 
@@ -540,8 +602,66 @@ static void handleMetaNameAttribute(const Token& token, CachedDocumentParameters
     }
 }
 
+// This method returns true for script source strings which will likely use
+// document.write to insert an external script. These scripts will be flagged
+// for evaluation via the DocumentWriteEvaluator, so it also dismisses scripts
+// that will likely fail evaluation. These includes scripts that are too long,
+// have looping constructs, or use non-determinism. Note that flagging occurs
+// even when the experiment is off, to ensure fair comparison between experiment
+// and control groups.
+bool TokenPreloadScanner::shouldEvaluateForDocumentWrite(const String& source)
+{
+    // The maximum length script source that will be marked for evaluation to
+    // preload document.written external scripts.
+    const int kMaxLengthForEvaluating = 1024;
+    if (!m_documentParameters->doDocumentWritePreloadScanning)
+        return false;
+
+    // Log inline script length counts, which will help tune
+    // kMaxLengthForEvaluating. The 50,000 limit was found experimentally.
+    DEFINE_STATIC_LOCAL(CustomCountHistogram, scriptLengthHistogram, ("PreloadScanner.DocumentWrite.ScriptLength", 0, 50000, 50));
+    scriptLengthHistogram.count(source.length());
+
+    // Script length is already logged, but include a count for script length
+    // for easy comparison with the rest of the reasons.
+    if (source.length() > kMaxLengthForEvaluating) {
+        LogGatedEvaluation(GatedEvaluationScriptTooLong);
+        return false;
+    }
+    if (source.find("document.write") == WTF::kNotFound
+        || source.findIgnoringASCIICase("src") == WTF::kNotFound) {
+        LogGatedEvaluation(GatedEvaluationNoLikelyScript);
+        return false;
+    }
+    if (source.findIgnoringASCIICase("<sc") == WTF::kNotFound
+        && source.findIgnoringASCIICase("%3Csc") == WTF::kNotFound) {
+        LogGatedEvaluation(GatedEvaluationNoLikelyScript);
+        return false;
+    }
+    if (source.find("while") != WTF::kNotFound
+        || source.find("for(") != WTF::kNotFound
+        || source.find("for ") != WTF::kNotFound) {
+        LogGatedEvaluation(GatedEvaluationLooping);
+        return false;
+    }
+    // This check is mostly for "window.jQuery" for false positives fetches,
+    // though it include $ calls to avoid evaluations which will quickly fail.
+    if (source.find("jQuery") != WTF::kNotFound
+        || source.find("$.") != WTF::kNotFound
+        || source.find("$(") != WTF::kNotFound) {
+        LogGatedEvaluation(GatedEvaluationPopularLibrary);
+        return false;
+    }
+    if (source.find("Math.random") != WTF::kNotFound
+        || source.find("Date") != WTF::kNotFound) {
+        LogGatedEvaluation(GatedEvaluationNondeterminism);
+        return false;
+    }
+    return true;
+}
+
 template <typename Token>
-void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& source, PreloadRequestStream& requests)
+void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& source, PreloadRequestStream& requests, ViewportDescriptionWrapper* viewport, bool* likelyDocumentWriteScript)
 {
     if (!m_documentParameters->doHtmlPreloadScanning)
         return;
@@ -556,9 +676,16 @@ void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& 
 
     switch (token.type()) {
     case HTMLToken::Character: {
-        if (!m_inStyle)
-            return;
-        m_cssScanner.scan(token.data(), source, requests, m_predictedBaseElementURL);
+        if (m_inStyle) {
+            m_cssScanner.scan(token.data(), source, requests, m_predictedBaseElementURL);
+        } else if (m_inScript && likelyDocumentWriteScript && !m_didRewind) {
+            // Don't mark scripts for evaluation if the preloader rewound to a
+            // previous checkpoint. This could cause re-evaluation of scripts if
+            // care isn't given.
+            // TODO(csharrison): Revisit this if rewinds are low hanging fruit for the
+            // document.write evaluator.
+            *likelyDocumentWriteScript = shouldEvaluateForDocumentWrite(token.data());
+        }
         return;
     }
     case HTMLToken::EndTag: {
@@ -572,6 +699,10 @@ void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& 
             if (m_inStyle)
                 m_cssScanner.reset();
             m_inStyle = false;
+            return;
+        }
+        if (match(tagImpl, scriptTag)) {
+            m_inScript = false;
             return;
         }
         if (match(tagImpl, pictureTag))
@@ -589,6 +720,11 @@ void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& 
         if (match(tagImpl, styleTag)) {
             m_inStyle = true;
             return;
+        }
+        // Don't early return, because the StartTagScanner needs to look at
+        // these too.
+        if (match(tagImpl, scriptTag)) {
+            m_inScript = true;
         }
         if (match(tagImpl, baseTag)) {
             // The first <base> element is the one that wins.
@@ -615,7 +751,7 @@ void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& 
                 return;
             }
 
-            handleMetaNameAttribute(token, m_documentParameters.get(), m_mediaValues.get(), &m_cssScanner);
+            handleMetaNameAttribute(token, m_documentParameters.get(), m_mediaValues.get(), &m_cssScanner, viewport);
         }
 
         if (match(tagImpl, pictureTag)) {
@@ -628,9 +764,9 @@ void TokenPreloadScanner::scanCommon(const Token& token, const SegmentedString& 
         scanner.processAttributes(token.attributes());
         if (m_inPicture)
             scanner.handlePictureSourceURL(m_pictureData);
-        OwnPtr<PreloadRequest> request = scanner.createPreloadRequest(m_predictedBaseElementURL, source, m_clientHintsPreferences, m_pictureData, m_documentParameters->referrerPolicy);
+        std::unique_ptr<PreloadRequest> request = scanner.createPreloadRequest(m_predictedBaseElementURL, source, m_clientHintsPreferences, m_pictureData, m_documentParameters->referrerPolicy);
         if (request)
-            requests.append(request.release());
+            requests.append(std::move(request));
         return;
     }
     default: {
@@ -649,8 +785,8 @@ void TokenPreloadScanner::updatePredictedBaseURL(const Token& token)
     }
 }
 
-HTMLPreloadScanner::HTMLPreloadScanner(const HTMLParserOptions& options, const KURL& documentURL, PassOwnPtr<CachedDocumentParameters> documentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData)
-    : m_scanner(documentURL, documentParameters, mediaValuesCachedData)
+HTMLPreloadScanner::HTMLPreloadScanner(const HTMLParserOptions& options, const KURL& documentURL, std::unique_ptr<CachedDocumentParameters> documentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData)
+    : m_scanner(documentURL, std::move(documentParameters), mediaValuesCachedData)
     , m_tokenizer(HTMLTokenizer::create(options))
 {
 }
@@ -664,7 +800,7 @@ void HTMLPreloadScanner::appendToEnd(const SegmentedString& source)
     m_source.append(source);
 }
 
-void HTMLPreloadScanner::scan(ResourcePreloader* preloader, const KURL& startingBaseElementURL)
+void HTMLPreloadScanner::scanAndPreload(ResourcePreloader* preloader, const KURL& startingBaseElementURL, ViewportDescriptionWrapper* viewport)
 {
     ASSERT(isMainThread()); // HTMLTokenizer::updateStateFor only works on the main thread.
 
@@ -679,7 +815,7 @@ void HTMLPreloadScanner::scan(ResourcePreloader* preloader, const KURL& starting
     while (m_tokenizer->nextToken(m_source, m_token)) {
         if (m_token.type() == HTMLToken::StartTag)
             m_tokenizer->updateStateFor(attemptStaticStringCreation(m_token.name(), Likely8Bit));
-        m_scanner.scan(m_token, m_source, requests);
+        m_scanner.scan(m_token, m_source, requests, viewport);
         m_token.clear();
     }
 
@@ -691,10 +827,11 @@ CachedDocumentParameters::CachedDocumentParameters(Document* document)
     ASSERT(isMainThread());
     ASSERT(document);
     doHtmlPreloadScanning = !document->settings() || document->settings()->doHtmlPreloadScanning();
+    doDocumentWritePreloadScanning = doHtmlPreloadScanning && document->frame() && document->frame()->isMainFrame();
     defaultViewportMinWidth = document->viewportDefaultMinWidth();
     viewportMetaZeroValuesQuirk = document->settings() && document->settings()->viewportMetaZeroValuesQuirk();
     viewportMetaEnabled = document->settings() && document->settings()->viewportMetaEnabled();
-    referrerPolicy = ReferrerPolicyDefault;
+    referrerPolicy = document->getReferrerPolicy();
 }
 
 } // namespace blink

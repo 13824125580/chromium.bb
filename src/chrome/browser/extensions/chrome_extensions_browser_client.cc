@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
 #include "chrome/browser/extensions/chrome_component_extension_resource_manager.h"
+#include "chrome/browser/extensions/chrome_extension_api_frame_id_map_helper.h"
 #include "chrome/browser/extensions/chrome_extension_host_delegate.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/chrome_mojo_service_registration.h"
@@ -35,6 +37,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/task_management/web_contents_tags.h"
+#include "chrome/browser/ui/bluetooth/chrome_extension_bluetooth_chooser.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -188,21 +191,22 @@ ChromeExtensionsBrowserClient::GetProcessManagerDelegate() const {
   return process_manager_delegate_.get();
 }
 
-scoped_ptr<ExtensionHostDelegate>
+std::unique_ptr<ExtensionHostDelegate>
 ChromeExtensionsBrowserClient::CreateExtensionHostDelegate() {
-  return scoped_ptr<ExtensionHostDelegate>(new ChromeExtensionHostDelegate);
+  return std::unique_ptr<ExtensionHostDelegate>(
+      new ChromeExtensionHostDelegate);
 }
 
 bool ChromeExtensionsBrowserClient::DidVersionUpdate(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
 
-  // Unit tests may not provide prefs; assume everything is up-to-date.
+  // Unit tests may not provide prefs; assume everything is up to date.
   ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile);
   if (!extension_prefs)
     return false;
 
-  // If we're inside a browser test, then assume prefs are all up-to-date.
+  // If we're inside a browser test, then assume prefs are all up to date.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType))
     return false;
 
@@ -244,12 +248,6 @@ bool ChromeExtensionsBrowserClient::IsLoggedInAsPublicAccount() {
 #endif
 }
 
-ApiActivityMonitor* ChromeExtensionsBrowserClient::GetApiActivityMonitor(
-    content::BrowserContext* context) {
-  // The ActivityLog monitors and records function calls and events.
-  return ActivityLog::GetInstance(context);
-}
-
 ExtensionSystemProvider*
 ChromeExtensionsBrowserClient::GetExtensionSystemFactory() {
   return ExtensionSystemFactory::GetInstance();
@@ -281,10 +279,11 @@ void ChromeExtensionsBrowserClient::RegisterMojoServices(
   RegisterChromeServicesForFrame(render_frame_host, extension);
 }
 
-scoped_ptr<RuntimeAPIDelegate>
+std::unique_ptr<RuntimeAPIDelegate>
 ChromeExtensionsBrowserClient::CreateRuntimeAPIDelegate(
     content::BrowserContext* context) const {
-  return scoped_ptr<RuntimeAPIDelegate>(new ChromeRuntimeAPIDelegate(context));
+  return std::unique_ptr<RuntimeAPIDelegate>(
+      new ChromeRuntimeAPIDelegate(context));
 }
 
 const ComponentExtensionResourceManager*
@@ -295,7 +294,7 @@ ChromeExtensionsBrowserClient::GetComponentExtensionResourceManager() {
 void ChromeExtensionsBrowserClient::BroadcastEventToRenderers(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    scoped_ptr<base::ListValue> args) {
+    std::unique_ptr<base::ListValue> args) {
   g_browser_process->extension_event_router_forwarder()
       ->BroadcastEventToRenderers(histogram_value, event_name, std::move(args),
                                   GURL());
@@ -309,7 +308,7 @@ ExtensionCache* ChromeExtensionsBrowserClient::GetExtensionCache() {
   if (!extension_cache_.get()) {
 #if defined(OS_CHROMEOS)
     extension_cache_.reset(new ExtensionCacheImpl(
-        make_scoped_ptr(new ChromeOSExtensionCacheDelegate())));
+        base::WrapUnique(new ChromeOSExtensionCacheDelegate())));
 #else
     extension_cache_.reset(new NullExtensionCache());
 #endif
@@ -342,7 +341,7 @@ ChromeExtensionsBrowserClient::GetExtensionWebContentsObserver(
 
 void ChromeExtensionsBrowserClient::ReportError(
     content::BrowserContext* context,
-    scoped_ptr<ExtensionError> error) {
+    std::unique_ptr<ExtensionError> error) {
   ErrorConsole::Get(context)->ReportError(std::move(error));
 }
 
@@ -398,9 +397,24 @@ ChromeExtensionsBrowserClient::CreateUpdateClient(
       make_scoped_refptr(new ChromeUpdateClientConfig(context)));
 }
 
-int ChromeExtensionsBrowserClient::GetTabIdForWebContents(
-    content::WebContents* web_contents) {
-  return SessionTabHelper::IdForTab(web_contents);
+std::unique_ptr<ExtensionApiFrameIdMapHelper>
+ChromeExtensionsBrowserClient::CreateExtensionApiFrameIdMapHelper(
+    ExtensionApiFrameIdMap* map) {
+  return base::WrapUnique(new ChromeExtensionApiFrameIdMapHelper(map));
+}
+
+std::unique_ptr<content::BluetoothChooser>
+ChromeExtensionsBrowserClient::CreateBluetoothChooser(
+    content::RenderFrameHost* frame,
+    const content::BluetoothChooser::EventHandler& event_handler) {
+  return base::WrapUnique(
+      new ChromeExtensionBluetoothChooser(frame, event_handler));
+}
+
+bool ChromeExtensionsBrowserClient::IsActivityLoggingEnabled(
+    content::BrowserContext* context) {
+  ActivityLog* activity_log = ActivityLog::GetInstance(context);
+  return activity_log && activity_log->is_active();
 }
 
 }  // namespace extensions

@@ -7,14 +7,16 @@
 #include <stddef.h>
 
 #include <list>
+#include <memory>
 #include <utility>
 
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_type.h"
@@ -362,7 +364,7 @@ TEST_F(AutofillDownloadManagerTest, BackoffLogic_Query) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       base::TimeDelta::FromMilliseconds(1100));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // Get the retried request.
   fetcher = factory.GetFetcherByID(1);
@@ -401,7 +403,7 @@ TEST_F(AutofillDownloadManagerTest, BackoffLogic_Upload) {
   field.form_control_type = "submit";
   form.fields.push_back(field);
 
-  scoped_ptr<FormStructure> form_structure(new FormStructure(form));
+  std::unique_ptr<FormStructure> form_structure(new FormStructure(form));
 
   // Request with id 0.
   EXPECT_TRUE(download_manager_.StartUploadRequest(
@@ -418,7 +420,7 @@ TEST_F(AutofillDownloadManagerTest, BackoffLogic_Upload) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       base::TimeDelta::FromMilliseconds(1100));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // Check that it was a failure.
   EXPECT_EQ(AutofillDownloadManagerTest::REQUEST_UPLOAD_FAILED,

@@ -7,13 +7,14 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
@@ -76,26 +77,31 @@ class TestURLRequestContext : public URLRequestContext {
   }
 
   void set_http_network_session_params(
-      scoped_ptr<HttpNetworkSession::Params> params) {
+      std::unique_ptr<HttpNetworkSession::Params> params) {
     http_network_session_params_ = std::move(params);
   }
 
-  void SetSdchManager(scoped_ptr<SdchManager> sdch_manager) {
+  void SetSdchManager(std::unique_ptr<SdchManager> sdch_manager) {
     context_storage_.set_sdch_manager(std::move(sdch_manager));
   }
 
+  void SetCTPolicyEnforcer(
+      std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer) {
+    context_storage_.set_ct_policy_enforcer(std::move(ct_policy_enforcer));
+  }
+
  private:
-  bool initialized_;
+  bool initialized_ = false;
 
   // Optional parameters to override default values.  Note that values that
   // point to other objects the TestURLRequestContext creates will be
   // overwritten.
-  scoped_ptr<HttpNetworkSession::Params> http_network_session_params_;
+  std::unique_ptr<HttpNetworkSession::Params> http_network_session_params_;
 
   // Not owned:
-  ClientSocketFactory* client_socket_factory_;
+  ClientSocketFactory* client_socket_factory_ = nullptr;
 
-  ProxyDelegate* proxy_delegate_;
+  ProxyDelegate* proxy_delegate_ = nullptr;
 
  protected:
   URLRequestContextStorage context_storage_;
@@ -114,7 +120,7 @@ class TestURLRequestContextGetter : public URLRequestContextGetter {
   // Use to pass a pre-initialized |context|.
   TestURLRequestContextGetter(
       const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner,
-      scoped_ptr<TestURLRequestContext> context);
+      std::unique_ptr<TestURLRequestContext> context);
 
   // URLRequestContextGetter implementation.
   TestURLRequestContext* GetURLRequestContext() override;
@@ -126,7 +132,7 @@ class TestURLRequestContextGetter : public URLRequestContextGetter {
 
  private:
   const scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
-  scoped_ptr<TestURLRequestContext> context_;
+  std::unique_ptr<TestURLRequestContext> context_;
 };
 
 //-----------------------------------------------------------------------------
@@ -288,10 +294,13 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
     cancel_request_with_policy_violating_referrer_ = val;
   }
 
-  int observed_before_proxy_headers_sent_callbacks() const {
-    return observed_before_proxy_headers_sent_callbacks_;
+  int before_send_headers_with_proxy_count() const {
+    return before_send_headers_with_proxy_count_;
   }
-  int before_send_headers_count() const { return before_send_headers_count_; }
+  int before_start_transaction_count() const {
+    return before_start_transaction_count_;
+  }
+
   int headers_received_count() const { return headers_received_count_; }
   int64_t total_network_bytes_received() const {
     return total_network_bytes_received_;
@@ -312,14 +321,15 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   int OnBeforeURLRequest(URLRequest* request,
                          const CompletionCallback& callback,
                          GURL* new_url) override;
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override;
-  void OnBeforeSendProxyHeaders(URLRequest* request,
-                                const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* headers) override;
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override;
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override;
+  void OnBeforeSendHeaders(URLRequest* request,
+                           const ProxyInfo& proxy_info,
+                           const ProxyRetryInfoMap& proxy_retry_info,
+                           HttpRequestHeaders* headers) override;
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override;
   int OnHeadersReceived(
       URLRequest* request,
       const CompletionCallback& callback,
@@ -369,8 +379,8 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   int blocked_get_cookies_count_;
   int blocked_set_cookie_count_;
   int set_cookie_count_;
-  int observed_before_proxy_headers_sent_callbacks_;
-  int before_send_headers_count_;
+  int before_send_headers_with_proxy_count_;
+  int before_start_transaction_count_;
   int headers_received_count_;
   int64_t total_network_bytes_received_;
   int64_t total_network_bytes_sent_;
@@ -378,7 +388,7 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   HostPortPair last_observed_proxy_;
 
   // NetworkDelegate callbacks happen in a particular order (e.g.
-  // OnBeforeURLRequest is always called before OnBeforeSendHeaders).
+  // OnBeforeURLRequest is always called before OnBeforeStartTransaction).
   // This bit-set indicates for each request id (key) what events may be sent
   // next.
   std::map<int, int> next_states_;
@@ -410,10 +420,10 @@ class TestJobInterceptor : public URLRequestJobFactory::ProtocolHandler {
   URLRequestJob* MaybeCreateJob(
       URLRequest* request,
       NetworkDelegate* network_delegate) const override;
-  void set_main_intercept_job(scoped_ptr<URLRequestJob> job);
+  void set_main_intercept_job(std::unique_ptr<URLRequestJob> job);
 
  private:
-  mutable scoped_ptr<URLRequestJob> main_intercept_job_;
+  mutable std::unique_ptr<URLRequestJob> main_intercept_job_;
 };
 
 }  // namespace net

@@ -5,41 +5,49 @@
 #include "chrome/browser/ui/ash/ash_init.h"
 
 #include "ash/accelerators/accelerator_controller.h"
-#include "ash/ash_switches.h"
+#include "ash/autoclick/autoclick_controller.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/ash_switches.h"
 #include "ash/high_contrast/high_contrast_controller.h"
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/magnifier/partial_magnification_controller.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
 #include "base/command_line.h"
+#include "base/sys_info.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/browser_shutdown.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
+#include "chrome/browser/chromeos/accessibility/magnification_manager.h"
+#include "chrome/browser/chromeos/ui/autoclick_ring_handler.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/ash/chrome_screenshot_grabber.h"
 #include "chrome/browser/ui/ash/chrome_shell_content_state.h"
 #include "chrome/browser/ui/ash/chrome_shell_delegate.h"
+#include "chrome/browser/ui/ash/ime_controller_chromeos.h"
+#include "chrome/browser/ui/ash/volume_controller_chromeos.h"
 #include "chrome/common/chrome_switches.h"
+#include "chromeos/accelerometer/accelerometer_reader.h"
+#include "chromeos/chromeos_switches.h"
+#include "chromeos/login/login_state.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
 
-#if defined(OS_CHROMEOS)
-#include "base/sys_info.h"
-#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
-#include "chrome/browser/chromeos/accessibility/magnification_manager.h"
-#include "chrome/browser/ui/ash/ime_controller_chromeos.h"
-#include "chrome/browser/ui/ash/volume_controller_chromeos.h"
-#include "chromeos/accelerometer/accelerometer_reader.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/login/login_state.h"
+#if defined(USE_X11)
 #include "ui/base/x/x11_util.h"
+#endif
+
+#if defined(MOJO_SHELL_CLIENT)
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_mus.h"
 #endif
 
 namespace chrome {
 
 void OpenAsh(gfx::AcceleratedWidget remote_window) {
-#if defined(OS_CHROMEOS)
 #if defined(USE_X11)
   if (base::SysInfo::IsRunningOnChromeOS()) {
     // Hides the cursor outside of the Aura root window. The cursor will be
@@ -52,7 +60,6 @@ void OpenAsh(gfx::AcceleratedWidget remote_window) {
   // Hide the mouse cursor completely at boot.
   if (!chromeos::LoginState::Get()->IsUserLoggedIn())
     ash::Shell::set_initially_hide_cursor(true);
-#endif
 
   // Balanced by a call to DestroyInstance() in CloseAsh() below.
   ash::ShellContentState::SetInstance(new ChromeShellContentState);
@@ -62,14 +69,12 @@ void OpenAsh(gfx::AcceleratedWidget remote_window) {
   shell_init_params.delegate = new ChromeShellDelegate;
   shell_init_params.context_factory = content::GetContextFactory();
   shell_init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
-#if defined(OS_WIN)
-  shell_init_params.remote_hwnd = remote_window;
-#endif
 
   ash::Shell* shell = ash::Shell::CreateInstance(shell_init_params);
   shell->accelerator_controller()->SetScreenshotDelegate(
-      scoped_ptr<ash::ScreenshotDelegate>(new ChromeScreenshotGrabber));
-#if defined(OS_CHROMEOS)
+      std::unique_ptr<ash::ScreenshotDelegate>(new ChromeScreenshotGrabber));
+  shell->autoclick_controller()->SetDelegate(
+      base::WrapUnique(new chromeos::AutoclickRingHandler()));
   // TODO(flackr): Investigate exposing a blocking pool task runner to chromeos.
   chromeos::AccelerometerReader::GetInstance()->Initialize(
       content::BrowserThread::GetBlockingPool()
@@ -77,26 +82,32 @@ void OpenAsh(gfx::AcceleratedWidget remote_window) {
               content::BrowserThread::GetBlockingPool()->GetSequenceToken(),
               base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
   shell->accelerator_controller()->SetImeControlDelegate(
-      scoped_ptr<ash::ImeControlDelegate>(new ImeController));
+      std::unique_ptr<ash::ImeControlDelegate>(new ImeController));
   shell->high_contrast_controller()->SetEnabled(
       chromeos::AccessibilityManager::Get()->IsHighContrastEnabled());
 
   DCHECK(chromeos::MagnificationManager::Get());
   bool magnifier_enabled =
       chromeos::MagnificationManager::Get()->IsMagnifierEnabled();
-  ui::MagnifierType magnifier_type =
+  ash::MagnifierType magnifier_type =
       chromeos::MagnificationManager::Get()->GetMagnifierType();
-  shell->magnification_controller()->
-      SetEnabled(magnifier_enabled && magnifier_type == ui::MAGNIFIER_FULL);
-  shell->partial_magnification_controller()->
-      SetEnabled(magnifier_enabled && magnifier_type == ui::MAGNIFIER_PARTIAL);
+  shell->magnification_controller()->SetEnabled(
+      magnifier_enabled && magnifier_type == ash::MAGNIFIER_FULL);
+  shell->partial_magnification_controller()->SetEnabled(
+      magnifier_enabled && magnifier_type == ash::MAGNIFIER_PARTIAL);
 
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableZeroBrowsersOpenForTests)) {
-    chrome::IncrementKeepAliveCount();
+    g_browser_process->platform_part()->RegisterKeepAlive();
   }
-#endif
   ash::Shell::GetPrimaryRootWindow()->GetHost()->Show();
+}
+
+void InitializeMash() {
+#if defined(MOJO_SHELL_CLIENT)
+  DCHECK(!ash::Shell::HasInstance());
+  ChromeLauncherControllerMus::CreateInstance()->Init();
+#endif
 }
 
 void CloseAsh() {

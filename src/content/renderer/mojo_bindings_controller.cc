@@ -21,7 +21,7 @@ namespace {
 const char kMojoContextStateKey[] = "MojoContextState";
 
 struct MojoContextStateData : public base::SupportsUserData::Data {
-  scoped_ptr<MojoContextState> state;
+  std::unique_ptr<MojoContextState> state;
 };
 
 }  // namespace
@@ -96,6 +96,10 @@ void MojoBindingsController::DidClearWindowObject() {
 
   v8::HandleScope handle_scope(blink::mainThreadIsolate());
   DestroyContextState(render_frame()->GetWebFrame()->mainWorldScriptContext());
+}
+
+void MojoBindingsController::OnDestruct() {
+  delete this;
 }
 
 }  // namespace content

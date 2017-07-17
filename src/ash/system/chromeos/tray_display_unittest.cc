@@ -4,11 +4,11 @@
 
 #include "ash/system/chromeos/tray_display.h"
 
+#include "ash/common/system/chromeos/devicetype_utils.h"
 #include "ash/display/display_manager.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
-#include "ash/system/chromeos/devicetype_utils.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/display_manager_test_api.h"
@@ -19,7 +19,7 @@
 #include "grit/ash_strings.h"
 #include "ui/accessibility/ax_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification.h"
 #include "ui/message_center/notification_list.h"
@@ -37,14 +37,14 @@ base::string16 GetTooltipText(const base::string16& headline,
   if (data1.empty()) {
     lines.push_back(name1);
   } else {
-    lines.push_back(l10n_util::GetStringFUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
-        name1, base::UTF8ToUTF16(data1)));
+    lines.push_back(
+        l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
+                                   name1, base::UTF8ToUTF16(data1)));
   }
   if (!name2.empty()) {
-    lines.push_back(l10n_util::GetStringFUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
-        name2, base::UTF8ToUTF16(data2)));
+    lines.push_back(
+        l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
+                                   name2, base::UTF8ToUTF16(data2)));
   }
   return base::JoinString(lines, base::ASCIIToUTF16("\n"));
 }
@@ -105,11 +105,9 @@ class TrayDisplayTest : public ash::test::AshTestBase {
   DISALLOW_COPY_AND_ASSIGN(TrayDisplayTest);
 };
 
-TrayDisplayTest::TrayDisplayTest() : tray_(NULL), tray_display_(NULL) {
-}
+TrayDisplayTest::TrayDisplayTest() : tray_(NULL), tray_display_(NULL) {}
 
-TrayDisplayTest::~TrayDisplayTest() {
-}
+TrayDisplayTest::~TrayDisplayTest() {}
 
 void TrayDisplayTest::SetUp() {
   ash::test::AshTestBase::SetUp();
@@ -144,9 +142,8 @@ void TrayDisplayTest::CloseNotification() {
 }
 
 bool TrayDisplayTest::IsDisplayVisibleInTray() const {
-  return tray_->HasSystemBubble() &&
-      tray_display_->default_view() &&
-      tray_display_->default_view()->visible();
+  return tray_->HasSystemBubble() && tray_display_->default_view() &&
+         tray_display_->default_view()->visible();
 }
 
 base::string16 TrayDisplayTest::GetTrayDisplayText() const {
@@ -186,7 +183,8 @@ const message_center::Notification* TrayDisplayTest::GetDisplayNotification()
   const message_center::NotificationList::Notifications notifications =
       message_center::MessageCenter::Get()->GetVisibleNotifications();
   for (message_center::NotificationList::Notifications::const_iterator iter =
-           notifications.begin(); iter != notifications.end(); ++iter) {
+           notifications.begin();
+       iter != notifications.end(); ++iter) {
     if ((*iter)->id() == TrayDisplay::kNotificationId)
       return *iter;
   }
@@ -227,7 +225,7 @@ TEST_F(TrayDisplayTest, NoInternalDisplay) {
 TEST_F(TrayDisplayTest, InternalDisplay) {
   UpdateDisplay("400x400");
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  gfx::Display::SetInternalDisplayId(display_manager->first_display_id());
+  display::Display::SetInternalDisplayId(display_manager->first_display_id());
 
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
   EXPECT_FALSE(IsDisplayVisibleInTray());
@@ -261,14 +259,14 @@ TEST_F(TrayDisplayTest, InternalDisplay) {
 TEST_F(TrayDisplayTest, InternalDisplayResized) {
   UpdateDisplay("400x400@1.5");
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  gfx::Display::SetInternalDisplayId(display_manager->first_display_id());
+  display::Display::SetInternalDisplayId(display_manager->first_display_id());
 
   // Shows the tray_display even though there's a single-display.
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
   EXPECT_TRUE(IsDisplayVisibleInTray());
   base::string16 internal_info = l10n_util::GetStringFUTF16(
-      IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
-      GetFirstDisplayName(), base::UTF8ToUTF16("600x600"));
+      IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY, GetFirstDisplayName(),
+      base::UTF8ToUTF16("600x600"));
   EXPECT_EQ(internal_info, GetTrayDisplayText());
   EXPECT_EQ(GetTooltipText(base::string16(), GetFirstDisplayName(), "600x600",
                            base::string16(), std::string()),
@@ -302,16 +300,16 @@ TEST_F(TrayDisplayTest, InternalDisplayResized) {
   // Closed lid mode.
   display_manager->SetSoftwareMirroring(false);
   UpdateDisplay("400x400@1.5,200x200");
-  gfx::Display::SetInternalDisplayId(ScreenUtil::GetSecondaryDisplay().id());
+  display::Display::SetInternalDisplayId(
+      ScreenUtil::GetSecondaryDisplay().id());
   UpdateDisplay("400x400@1.5");
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
   EXPECT_TRUE(IsDisplayVisibleInTray());
   expected = l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED);
   EXPECT_EQ(expected, GetTrayDisplayText());
-  EXPECT_EQ(
-      GetTooltipText(
-          expected, GetFirstDisplayName(), "600x600", base::string16(), ""),
-      GetTrayDisplayTooltipText());
+  EXPECT_EQ(GetTooltipText(expected, GetFirstDisplayName(), "600x600",
+                           base::string16(), ""),
+            GetTrayDisplayTooltipText());
   CheckAccessibleName();
 
   // Unified mode
@@ -327,7 +325,7 @@ TEST_F(TrayDisplayTest, InternalDisplayResized) {
 TEST_F(TrayDisplayTest, ExternalDisplayResized) {
   UpdateDisplay("400x400");
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  gfx::Display::SetInternalDisplayId(display_manager->first_display_id());
+  display::Display::SetInternalDisplayId(display_manager->first_display_id());
 
   // Shows the tray_display even though there's a single-display.
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
@@ -335,15 +333,14 @@ TEST_F(TrayDisplayTest, ExternalDisplayResized) {
 
   // Extended
   UpdateDisplay("400x400,200x200@1.5");
-  const gfx::Display& secondary_display = ScreenUtil::GetSecondaryDisplay();
+  const display::Display& secondary_display = ScreenUtil::GetSecondaryDisplay();
 
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
   EXPECT_TRUE(IsDisplayVisibleInTray());
   base::string16 expected = l10n_util::GetStringFUTF16(
       IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED,
       l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
-          GetSecondDisplayName(),
+          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME, GetSecondDisplayName(),
           base::UTF8ToUTF16(secondary_display.size().ToString())));
   EXPECT_EQ(expected, GetTrayDisplayText());
   EXPECT_EQ(GetTooltipText(expected, GetFirstDisplayName(), "400x400",
@@ -367,7 +364,7 @@ TEST_F(TrayDisplayTest, ExternalDisplayResized) {
 TEST_F(TrayDisplayTest, OverscanDisplay) {
   UpdateDisplay("400x400,300x300/o");
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  gfx::Display::SetInternalDisplayId(display_manager->first_display_id());
+  display::Display::SetInternalDisplayId(display_manager->first_display_id());
 
   GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
   EXPECT_TRUE(IsDisplayVisibleInTray());
@@ -378,27 +375,26 @@ TEST_F(TrayDisplayTest, OverscanDisplay) {
       IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION_OVERSCAN);
   base::string16 headline = l10n_util::GetStringFUTF16(
       IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED,
-      l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
-          GetSecondDisplayName(), base::UTF8ToUTF16("286x286")));
-  std::string second_data = l10n_util::GetStringFUTF8(
-      IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION,
-      base::UTF8ToUTF16("286x286"), overscan);
+      l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
+                                 GetSecondDisplayName(),
+                                 base::UTF8ToUTF16("286x286")));
+  std::string second_data =
+      l10n_util::GetStringFUTF8(IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION,
+                                base::UTF8ToUTF16("286x286"), overscan);
   EXPECT_EQ(GetTooltipText(headline, GetFirstDisplayName(), "400x400",
                            GetSecondDisplayName(), second_data),
             GetTrayDisplayTooltipText());
 
   // reset the overscan.
-  display_manager->SetOverscanInsets(
-      ScreenUtil::GetSecondaryDisplay().id(), gfx::Insets());
+  display_manager->SetOverscanInsets(ScreenUtil::GetSecondaryDisplay().id(),
+                                     gfx::Insets());
   headline = l10n_util::GetStringFUTF16(
       IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED,
-      l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
-          GetSecondDisplayName(), overscan));
-  second_data = l10n_util::GetStringFUTF8(
-      IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION,
-      base::UTF8ToUTF16("300x300"), overscan);
+      l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
+                                 GetSecondDisplayName(), overscan));
+  second_data =
+      l10n_util::GetStringFUTF8(IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION,
+                                base::UTF8ToUTF16("300x300"), overscan);
   EXPECT_EQ(GetTooltipText(headline, GetFirstDisplayName(), "400x400",
                            GetSecondDisplayName(), second_data),
             GetTrayDisplayTooltipText());
@@ -412,8 +408,8 @@ TEST_F(TrayDisplayTest, UpdateDuringDisplayConfigurationChange) {
   EXPECT_TRUE(GetTray()->HasSystemBubble());
   EXPECT_TRUE(IsDisplayVisibleInTray());
   base::string16 internal_info = l10n_util::GetStringFUTF16(
-      IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY,
-      GetFirstDisplayName(), base::UTF8ToUTF16("600x600"));
+      IDS_ASH_STATUS_TRAY_DISPLAY_SINGLE_DISPLAY, GetFirstDisplayName(),
+      base::UTF8ToUTF16("600x600"));
   EXPECT_EQ(internal_info, GetTrayDisplayText());
   EXPECT_EQ(GetTooltipText(base::string16(), GetFirstDisplayName(), "600x600",
                            base::string16(), std::string()),
@@ -442,14 +438,12 @@ TEST_F(TrayDisplayTest, UpdateDuringDisplayConfigurationChange) {
 }
 
 TEST_F(TrayDisplayTest, DisplayNotifications) {
-  test::TestSystemTrayDelegate* tray_delegate =
-      static_cast<test::TestSystemTrayDelegate*>(
-          Shell::GetInstance()->system_tray_delegate());
+  test::TestSystemTrayDelegate* tray_delegate = GetSystemTrayDelegate();
   tray_delegate->set_should_show_display_notification(true);
 
   UpdateDisplay("400x400");
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  gfx::Display::SetInternalDisplayId(display_manager->first_display_id());
+  display::Display::SetInternalDisplayId(display_manager->first_display_id());
   EXPECT_TRUE(GetDisplayNotificationText().empty());
 
   // rotation.
@@ -497,10 +491,9 @@ TEST_F(TrayDisplayTest, DisplayNotifications) {
   // Extended.
   CloseNotification();
   UpdateDisplay("400x400,200x200");
-  EXPECT_EQ(
-      l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED, GetSecondDisplayName()),
-      GetDisplayNotificationText());
+  EXPECT_EQ(l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED,
+                                       GetSecondDisplayName()),
+            GetDisplayNotificationText());
   EXPECT_TRUE(GetDisplayNotificationAdditionalText().empty());
 
   // Mirroring.
@@ -516,10 +509,9 @@ TEST_F(TrayDisplayTest, DisplayNotifications) {
   CloseNotification();
   display_manager->SetSoftwareMirroring(false);
   UpdateDisplay("400x400,200x200");
-  EXPECT_EQ(
-      l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED, GetSecondDisplayName()),
-      GetDisplayNotificationText());
+  EXPECT_EQ(l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED,
+                                       GetSecondDisplayName()),
+            GetDisplayNotificationText());
   EXPECT_TRUE(GetDisplayNotificationAdditionalText().empty());
 
   // Resize the first display.
@@ -541,36 +533,32 @@ TEST_F(TrayDisplayTest, DisplayNotifications) {
 
   // Enters closed lid mode.
   UpdateDisplay("400x400@1.5,200x200");
-  gfx::Display::SetInternalDisplayId(ScreenUtil::GetSecondaryDisplay().id());
+  display::Display::SetInternalDisplayId(
+      ScreenUtil::GetSecondaryDisplay().id());
   UpdateDisplay("400x400@1.5");
   EXPECT_EQ(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED),
             GetDisplayNotificationText());
-  EXPECT_EQ(
-      ash::SubstituteChromeOSDeviceType(
-        IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED_DESCRIPTION),
-      GetDisplayNotificationAdditionalText());
+  EXPECT_EQ(ash::SubstituteChromeOSDeviceType(
+                IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED_DESCRIPTION),
+            GetDisplayNotificationAdditionalText());
 }
 
 TEST_F(TrayDisplayTest, DisplayConfigurationChangedTwice) {
-  test::TestSystemTrayDelegate* tray_delegate =
-      static_cast<test::TestSystemTrayDelegate*>(
-          Shell::GetInstance()->system_tray_delegate());
+  test::TestSystemTrayDelegate* tray_delegate = GetSystemTrayDelegate();
   tray_delegate->set_should_show_display_notification(true);
 
   UpdateDisplay("400x400,200x200");
-  EXPECT_EQ(
-      l10n_util::GetStringUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL),
-      GetDisplayNotificationText());
+  EXPECT_EQ(l10n_util::GetStringUTF16(
+                IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL),
+            GetDisplayNotificationText());
 
   // OnDisplayConfigurationChanged() may be called more than once for a single
   // update display in case of primary is swapped or recovered from dock mode.
   // Should not remove the notification in such case.
   GetTrayDisplay()->OnDisplayConfigurationChanged();
-  EXPECT_EQ(
-      l10n_util::GetStringUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL),
-      GetDisplayNotificationText());
+  EXPECT_EQ(l10n_util::GetStringUTF16(
+                IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL),
+            GetDisplayNotificationText());
 
   // Back to the single display. It SHOULD remove the notification since the
   // information is stale.
@@ -581,9 +569,7 @@ TEST_F(TrayDisplayTest, DisplayConfigurationChangedTwice) {
 TEST_F(TrayDisplayTest, UpdateAfterSuppressDisplayNotification) {
   UpdateDisplay("400x400,200x200");
 
-  test::TestSystemTrayDelegate* tray_delegate =
-      static_cast<test::TestSystemTrayDelegate*>(
-          Shell::GetInstance()->system_tray_delegate());
+  test::TestSystemTrayDelegate* tray_delegate = GetSystemTrayDelegate();
   tray_delegate->set_should_show_display_notification(true);
 
   // rotate the second.
@@ -593,6 +579,41 @@ TEST_F(TrayDisplayTest, UpdateAfterSuppressDisplayNotification) {
                 l10n_util::GetStringUTF16(
                     IDS_ASH_STATUS_TRAY_DISPLAY_ORIENTATION_90)),
             GetDisplayNotificationAdditionalText());
+}
+
+// Tests that when the only change is rotation, that it is only displayed when
+// caused by user changes, and not by accelerometers.
+TEST_F(TrayDisplayTest, RotationOnInternalDisplay) {
+  UpdateDisplay("400x400");
+  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
+  const int64_t display_id = display_manager->first_display_id();
+  display::Display::SetInternalDisplayId(display_id);
+
+  GetTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+  EXPECT_FALSE(IsDisplayVisibleInTray());
+
+  // Accelerometer change does not display.
+  display_manager->SetDisplayRotation(
+      display_id, display::Display::ROTATE_90,
+      display::Display::ROTATION_SOURCE_ACCELEROMETER);
+  EXPECT_FALSE(IsDisplayVisibleInTray());
+
+  // User change does.
+  display_manager->SetDisplayRotation(display_id, display::Display::ROTATE_180,
+                                      display::Display::ROTATION_SOURCE_USER);
+  EXPECT_TRUE(IsDisplayVisibleInTray());
+
+  // If a user setting matches the accelerometer, do not display if caused by
+  // the accelerometer.
+  display_manager->SetDisplayRotation(
+      display_id, display::Display::ROTATE_180,
+      display::Display::ROTATION_SOURCE_ACCELEROMETER);
+  EXPECT_FALSE(IsDisplayVisibleInTray());
+
+  // If a non-rotation setting is changed, display regardless of the source of
+  // rotation so that the full message is shown.
+  UpdateDisplay("400x400@1.5");
+  EXPECT_TRUE(IsDisplayVisibleInTray());
 }
 
 }  // namespace ash

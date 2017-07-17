@@ -6,8 +6,10 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "cc/test/ordered_simple_task_runner.h"
+#include "components/scheduler/base/lazy_now.h"
 #include "components/scheduler/base/task_queue.h"
 #include "components/scheduler/base/test_time_source.h"
 #include "components/scheduler/child/scheduler_tqm_delegate_for_test.h"
@@ -49,7 +51,7 @@ class SchedulerHelperTest : public testing::Test {
         mock_task_runner_(new cc::OrderedSimpleTaskRunner(clock_.get(), false)),
         main_task_runner_(SchedulerTqmDelegateForTest::Create(
             mock_task_runner_,
-            make_scoped_ptr(new TestTimeSource(clock_.get())))),
+            base::WrapUnique(new TestTimeSource(clock_.get())))),
         scheduler_helper_(new SchedulerHelper(
             main_task_runner_,
             "test.scheduler",
@@ -81,11 +83,11 @@ class SchedulerHelperTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<base::SimpleTestTickClock> clock_;
+  std::unique_ptr<base::SimpleTestTickClock> clock_;
   scoped_refptr<cc::OrderedSimpleTaskRunner> mock_task_runner_;
 
   scoped_refptr<SchedulerTqmDelegateForTest> main_task_runner_;
-  scoped_ptr<SchedulerHelper> scheduler_helper_;
+  std::unique_ptr<SchedulerHelper> scheduler_helper_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerHelperTest);
@@ -112,8 +114,9 @@ TEST_F(SchedulerHelperTest, TestRentrantTask) {
   int count = 0;
   std::vector<int> run_order;
   default_task_runner_->PostTask(
-      FROM_HERE, base::Bind(AppendToVectorReentrantTask, default_task_runner_,
-                            &run_order, &count, 5));
+      FROM_HERE, base::Bind(AppendToVectorReentrantTask,
+                            base::RetainedRef(default_task_runner_), &run_order,
+                            &count, 5));
   RunUntilIdle();
 
   EXPECT_THAT(run_order, testing::ElementsAre(0, 1, 2, 3, 4));
@@ -177,7 +180,8 @@ TEST_F(SchedulerHelperTest,
 
   EXPECT_CALL(observer, WillProcessTask(_)).Times(0);
   EXPECT_CALL(observer, DidProcessTask(_)).Times(0);
-  scheduler_helper_->ControlAfterWakeUpTaskRunner()->PumpQueue(true);
+  LazyNow lazy_now(clock_.get());
+  scheduler_helper_->ControlAfterWakeUpTaskRunner()->PumpQueue(&lazy_now, true);
   RunUntilIdle();
 }
 

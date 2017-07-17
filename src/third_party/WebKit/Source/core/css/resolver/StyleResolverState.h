@@ -25,6 +25,7 @@
 #include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
 #include "core/animation/css/CSSAnimationUpdate.h"
+#include "core/css/CSSPendingSubstitutionValue.h"
 #include "core/css/CSSSVGDocumentValue.h"
 #include "core/css/CSSToLengthConversionData.h"
 #include "core/css/resolver/CSSToStyleMap.h"
@@ -33,9 +34,11 @@
 #include "core/css/resolver/FontBuilder.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/style/CachedUAStyle.h"
 #include "core/style/ComputedStyle.h"
 #include "core/style/StyleInheritedData.h"
+#include <memory>
 
 namespace blink {
 
@@ -65,7 +68,7 @@ public:
     {
         // FIXME: Improve RAII of StyleResolverState to remove this function.
         m_style = style;
-        m_cssToLengthConversionData = CSSToLengthConversionData(m_style.get(), rootElementStyle(), document().layoutView(), m_style->effectiveZoom());
+        m_cssToLengthConversionData = CSSToLengthConversionData(m_style.get(), rootElementStyle(), document().layoutViewItem(), m_style->effectiveZoom());
     }
     const ComputedStyle* style() const { return m_style.get(); }
     ComputedStyle* style() { return m_style.get(); }
@@ -75,6 +78,7 @@ public:
     const ComputedStyle& styleRef() const { return mutableStyleRef(); }
 
     const CSSToLengthConversionData& cssToLengthConversionData() const { return m_cssToLengthConversionData; }
+    CSSToLengthConversionData fontSizeConversionData() const;
 
     void setConversionFontSizes(const CSSToLengthConversionData::FontSizes& fontSizes) { m_cssToLengthConversionData.setFontSizes(fontSizes); }
     void setConversionZoom(float zoom) { m_cssToLengthConversionData.setZoom(zoom); }
@@ -112,21 +116,24 @@ public:
 
     ElementStyleResources& elementStyleResources() { return m_elementStyleResources; }
 
+    void loadPendingResources();
+
     // FIXME: Once styleImage can be made to not take a StyleResolverState
     // this convenience function should be removed. As-is, without this, call
     // sites are extremely verbose.
-    PassRefPtrWillBeRawPtr<StyleImage> styleImage(CSSPropertyID propertyId, const CSSValue& value)
+    StyleImage* styleImage(CSSPropertyID propertyId, const CSSValue& value)
     {
         return m_elementStyleResources.styleImage(propertyId, value);
     }
 
     FontBuilder& fontBuilder() { return m_fontBuilder; }
+    const FontBuilder& fontBuilder() const { return m_fontBuilder; }
     // FIXME: These exist as a primitive way to track mutations to font-related properties
     // on a ComputedStyle. As designed, these are very error-prone, as some callers
     // set these directly on the ComputedStyle w/o telling us. Presumably we'll
     // want to design a better wrapper around ComputedStyle for tracking these mutations
     // and separate it from StyleResolverState.
-    const FontDescription& parentFontDescription() { return m_parentStyle->fontDescription(); }
+    const FontDescription& parentFontDescription() const { return m_parentStyle->getFontDescription(); }
 
     void setZoom(float f)
     {
@@ -152,9 +159,14 @@ public:
     void setHasDirAutoAttribute(bool value) { m_hasDirAutoAttribute = value; }
     bool hasDirAutoAttribute() const { return m_hasDirAutoAttribute; }
 
+    void setCustomPropertySetForApplyAtRule(const String&, StylePropertySet*);
+    StylePropertySet* customPropertySetForApplyAtRule(const String&);
+
+    HeapHashMap<CSSPropertyID, Member<const CSSValue>>& parsedPropertiesForPendingSubstitution(const CSSPendingSubstitutionValue&);
+
 private:
     ElementResolveContext m_elementContext;
-    RawPtrWillBeMember<Document> m_document;
+    Member<Document> m_document;
 
     // m_style is the primary output for each element's style resolve.
     RefPtr<ComputedStyle> m_style;
@@ -173,9 +185,14 @@ private:
 
     FontBuilder m_fontBuilder;
 
-    OwnPtr<CachedUAStyle> m_cachedUAStyle;
+    std::unique_ptr<CachedUAStyle> m_cachedUAStyle;
 
     ElementStyleResources m_elementStyleResources;
+
+    HeapHashMap<String, Member<StylePropertySet>> m_customPropertySetsForApplyAtRule;
+
+    HeapHashMap<Member<const CSSPendingSubstitutionValue>, Member<HeapHashMap<CSSPropertyID, Member<const CSSValue>>>> m_parsedPropertiesForPendingSubstitution;
+
 };
 
 } // namespace blink

@@ -21,8 +21,12 @@ namespace {
 
 class MessageImpl : public WebDevToolsAgent::MessageDescriptor {
  public:
-  MessageImpl(const std::string& message, int routing_id)
-      : msg_(message),
+  MessageImpl(
+      const std::string& method,
+      const std::string& message,
+      int routing_id)
+      : method_(method),
+        msg_(message),
         routing_id_(routing_id) {
   }
   ~MessageImpl() override {}
@@ -33,8 +37,10 @@ class MessageImpl : public WebDevToolsAgent::MessageDescriptor {
     return agent->GetWebAgent();
   }
   WebString message() override { return WebString::fromUTF8(msg_); }
+  WebString method() override { return WebString::fromUTF8(method_); }
 
  private:
+  std::string method_;
   std::string msg_;
   int routing_id_;
 };
@@ -61,18 +67,19 @@ DevToolsAgentFilter::~DevToolsAgentFilter() {}
 
 void DevToolsAgentFilter::OnDispatchOnInspectorBackend(
     int session_id,
+    int call_id,
+    const std::string& method,
     const std::string& message) {
   if (embedded_worker_routes_.find(current_routing_id_) !=
       embedded_worker_routes_.end()) {
     return;
   }
 
-  if (WebDevToolsAgent::shouldInterruptForMessage(
-          WebString::fromUTF8(message))) {
+  if (WebDevToolsAgent::shouldInterruptForMethod(
+          WebString::fromUTF8(method))) {
     WebDevToolsAgent::interruptAndDispatch(
-        session_id, new MessageImpl(message, current_routing_id_));
+        session_id, new MessageImpl(method, message, current_routing_id_));
   }
-
 }
 
 void DevToolsAgentFilter::AddEmbeddedWorkerRouteOnMainThread(

@@ -31,6 +31,7 @@
 #ifndef MIDIAccess_h
 #define MIDIAccess_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "core/dom/ActiveDOMObject.h"
 #include "modules/EventTargetModules.h"
@@ -39,6 +40,7 @@
 #include "modules/webmidi/MIDIAccessorClient.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -48,14 +50,14 @@ class MIDIInputMap;
 class MIDIOutput;
 class MIDIOutputMap;
 
-class MIDIAccess final : public RefCountedGarbageCollectedEventTargetWithInlineData<MIDIAccess>, public ActiveDOMObject, public MIDIAccessorClient {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(MIDIAccess);
+class MIDIAccess final : public EventTargetWithInlineData, public ActiveScriptWrappable, public ActiveDOMObject, public MIDIAccessorClient {
     DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MIDIAccess);
+    USING_GARBAGE_COLLECTED_MIXIN(MIDIAccess);
+    USING_PRE_FINALIZER(MIDIAccess, dispose);
 public:
-    static MIDIAccess* create(PassOwnPtr<MIDIAccessor> accessor, bool sysexEnabled, const Vector<MIDIAccessInitializer::PortDescriptor>& ports, ExecutionContext* executionContext)
+    static MIDIAccess* create(std::unique_ptr<MIDIAccessor> accessor, bool sysexEnabled, const Vector<MIDIAccessInitializer::PortDescriptor>& ports, ExecutionContext* executionContext)
     {
-        MIDIAccess* access = new MIDIAccess(accessor, sysexEnabled, ports, executionContext);
+        MIDIAccess* access = new MIDIAccess(std::move(accessor), sysexEnabled, ports, executionContext);
         access->suspendIfNeeded();
         return access;
     }
@@ -65,16 +67,18 @@ public:
     MIDIOutputMap* outputs() const;
 
     EventListener* onstatechange();
-    void setOnstatechange(PassRefPtrWillBeRawPtr<EventListener>);
+    void setOnstatechange(EventListener*);
 
     bool sysexEnabled() const { return m_sysexEnabled; }
 
     // EventTarget
     const AtomicString& interfaceName() const override { return EventTargetNames::MIDIAccess; }
-    ExecutionContext* executionContext() const override { return ActiveDOMObject::executionContext(); }
+    ExecutionContext* getExecutionContext() const override { return ActiveDOMObject::getExecutionContext(); }
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final;
 
     // ActiveDOMObject
-    bool hasPendingActivity() const override;
     void stop() override;
 
     // MIDIAccessorClient
@@ -86,7 +90,7 @@ public:
     {
         // This method is for MIDIAccess initialization: MIDIAccessInitializer
         // has the implementation.
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
     }
     void didReceiveMIDIData(unsigned portIndex, const unsigned char* data, size_t length, double timeStamp) override;
 
@@ -96,13 +100,13 @@ public:
     // Eager finalization needed to promptly release m_accessor. Otherwise
     // its client back reference could end up being unsafely used during
     // the lazy sweeping phase.
-    EAGERLY_FINALIZE();
     DECLARE_VIRTUAL_TRACE();
 
 private:
-    MIDIAccess(PassOwnPtr<MIDIAccessor>, bool sysexEnabled, const Vector<MIDIAccessInitializer::PortDescriptor>&, ExecutionContext*);
+    MIDIAccess(std::unique_ptr<MIDIAccessor>, bool sysexEnabled, const Vector<MIDIAccessInitializer::PortDescriptor>&, ExecutionContext*);
+    void dispose();
 
-    OwnPtr<MIDIAccessor> m_accessor;
+    std::unique_ptr<MIDIAccessor> m_accessor;
     bool m_sysexEnabled;
     bool m_hasPendingActivity;
     HeapVector<Member<MIDIInput>> m_inputs;

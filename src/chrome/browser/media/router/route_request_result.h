@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_MEDIA_ROUTER_ROUTE_REQUEST_RESULT_H_
 #define CHROME_BROWSER_MEDIA_ROUTER_ROUTE_REQUEST_RESULT_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace media_router {
 
@@ -30,13 +30,29 @@ class MediaRoute;
 // |result_code|: A value from RouteRequestResult describing the error.
 class RouteRequestResult {
  public:
-  enum ResultCode { UNKNOWN_ERROR, OK, TIMED_OUT, INVALID_ORIGIN };
+  // Keep in sync with:
+  // - RouteRequestResultCode in media_router.mojom
+  // - MediaRouteProviderResult enum in tools/metrics/histograms.xml
+  // - mr.RouteRequestResultCode in route_request_error.js
+  enum ResultCode {
+    UNKNOWN_ERROR = 0,
+    OK = 1,
+    TIMED_OUT = 2,
+    ROUTE_NOT_FOUND = 3,
+    SINK_NOT_FOUND = 4,
+    INVALID_ORIGIN = 5,
+    OFF_THE_RECORD_MISMATCH = 6,
+    NO_SUPPORTED_PROVIDER = 7,
+    // New values must be added here.
 
-  static scoped_ptr<RouteRequestResult> FromSuccess(
-      scoped_ptr<MediaRoute> route,
+    TOTAL_COUNT = 8 // The total number of values.
+  };
+
+  static std::unique_ptr<RouteRequestResult> FromSuccess(
+      std::unique_ptr<MediaRoute> route,
       const std::string& presentation_id);
-  static scoped_ptr<RouteRequestResult> FromError(const std::string& error,
-                                                  ResultCode result_code);
+  static std::unique_ptr<RouteRequestResult> FromError(const std::string& error,
+                                                       ResultCode result_code);
 
   ~RouteRequestResult();
 
@@ -48,12 +64,12 @@ class RouteRequestResult {
   ResultCode result_code() const { return result_code_; }
 
  private:
-  RouteRequestResult(scoped_ptr<MediaRoute> route,
+  RouteRequestResult(std::unique_ptr<MediaRoute> route,
                      const std::string& presentation_id,
                      const std::string& error,
                      ResultCode result_code);
 
-  scoped_ptr<MediaRoute> route_;
+  std::unique_ptr<MediaRoute> route_;
   std::string presentation_id_;
   std::string error_;
   ResultCode result_code_;

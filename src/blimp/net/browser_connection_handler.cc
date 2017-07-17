@@ -33,15 +33,16 @@ BrowserConnectionHandler::BrowserConnectionHandler()
 
 BrowserConnectionHandler::~BrowserConnectionHandler() {}
 
-scoped_ptr<BlimpMessageProcessor> BrowserConnectionHandler::RegisterFeature(
-    BlimpMessage::Type type,
+std::unique_ptr<BlimpMessageProcessor>
+BrowserConnectionHandler::RegisterFeature(
+    BlimpMessage::FeatureCase feature_case,
     BlimpMessageProcessor* incoming_processor) {
-  demultiplexer_->AddProcessor(type, incoming_processor);
-  return multiplexer_->CreateSenderForType(type);
+  demultiplexer_->AddProcessor(feature_case, incoming_processor);
+  return multiplexer_->CreateSender(feature_case);
 }
 
 void BrowserConnectionHandler::HandleConnection(
-    scoped_ptr<BlimpConnection> connection) {
+    std::unique_ptr<BlimpConnection> connection) {
   DCHECK(connection);
   VLOG(1) << "HandleConnection " << connection.get();
 
@@ -62,7 +63,10 @@ void BrowserConnectionHandler::OnConnectionError(int error) {
 }
 
 void BrowserConnectionHandler::DropCurrentConnection() {
-  DCHECK(connection_);
+  if (!connection_) {
+    return;
+  }
+
   output_buffer_->SetOutputProcessor(nullptr);
   connection_.reset();
 }

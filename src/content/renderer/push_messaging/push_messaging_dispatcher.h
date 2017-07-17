@@ -29,6 +29,8 @@ class Message;
 namespace content {
 
 struct Manifest;
+struct ManifestDebugInfo;
+struct PushSubscriptionOptions;
 
 class PushMessagingDispatcher : public RenderFrameObserver,
                                 public blink::WebPushClient {
@@ -37,8 +39,9 @@ class PushMessagingDispatcher : public RenderFrameObserver,
   ~PushMessagingDispatcher() override;
 
  private:
-  // RenderFrame::Observer implementation.
+  // RenderFrameObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   // WebPushClient implementation.
   void subscribe(
@@ -46,11 +49,17 @@ class PushMessagingDispatcher : public RenderFrameObserver,
       const blink::WebPushSubscriptionOptions& options,
       blink::WebPushSubscriptionCallbacks* callbacks) override;
 
-  void DoSubscribe(
+  void DidGetManifest(
       blink::WebServiceWorkerRegistration* service_worker_registration,
       const blink::WebPushSubscriptionOptions& options,
       blink::WebPushSubscriptionCallbacks* callbacks,
-      const Manifest& manifest);
+      const Manifest& manifest,
+      const ManifestDebugInfo&);
+
+  void DoSubscribe(
+      blink::WebServiceWorkerRegistration* service_worker_registration,
+      const PushSubscriptionOptions& options,
+      blink::WebPushSubscriptionCallbacks* callbacks);
 
   void OnSubscribeFromDocumentSuccess(int32_t request_id,
                                       const GURL& endpoint,

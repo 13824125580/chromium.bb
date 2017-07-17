@@ -12,11 +12,11 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
@@ -25,6 +25,7 @@ class BackgroundModeManager;
 class CRLSetFetcher;
 class IOThread;
 class MHTMLGenerationManager;
+class NotificationPlatformBridge;
 class NotificationUIManager;
 class PrefService;
 class WatchDogThread;
@@ -69,7 +70,6 @@ class TestingBrowserProcess : public BrowserProcess {
   ProfileManager* profile_manager() override;
   PrefService* local_state() override;
   variations::VariationsService* variations_service() override;
-  web_resource::PromoResourceService* promo_resource_service() override;
   policy::BrowserPolicyConnector* browser_policy_connector() override;
   policy::PolicyService* policy_service() override;
   IconManager* icon_manager() override;
@@ -77,23 +77,24 @@ class TestingBrowserProcess : public BrowserProcess {
   GpuModeManager* gpu_mode_manager() override;
   BackgroundModeManager* background_mode_manager() override;
   void set_background_mode_manager_for_test(
-      scoped_ptr<BackgroundModeManager> manager) override;
+      std::unique_ptr<BackgroundModeManager> manager) override;
   StatusTray* status_tray() override;
   safe_browsing::SafeBrowsingService* safe_browsing_service() override;
   safe_browsing::ClientSideDetectionService* safe_browsing_detection_service()
+      override;
+  subresource_filter::RulesetService* subresource_filter_ruleset_service()
       override;
   net::URLRequestContextGetter* system_request_context() override;
   BrowserProcessPlatformPart* platform_part() override;
 
   extensions::EventRouterForwarder* extension_event_router_forwarder() override;
   NotificationUIManager* notification_ui_manager() override;
+  NotificationPlatformBridge* notification_platform_bridge() override;
   message_center::MessageCenter* message_center() override;
   IntranetRedirectDetector* intranet_redirect_detector() override;
   void CreateDevToolsHttpProtocolHandler(const std::string& ip,
                                          uint16_t port) override;
   void CreateDevToolsAutoOpener() override;
-  unsigned int AddRefModule() override;
-  unsigned int ReleaseModule() override;
   bool IsShuttingDown() override;
   printing::PrintJobManager* print_job_manager() override;
   printing::PrintPreviewDialogController* print_preview_dialog_controller()
@@ -135,10 +136,15 @@ class TestingBrowserProcess : public BrowserProcess {
   void SetProfileManager(ProfileManager* profile_manager);
   void SetIOThread(IOThread* io_thread);
   void SetSafeBrowsingService(safe_browsing::SafeBrowsingService* sb_service);
+  void SetRulesetService(
+      std::unique_ptr<subresource_filter::RulesetService> ruleset_service);
   void SetSystemRequestContext(net::URLRequestContextGetter* context_getter);
   void SetNotificationUIManager(
-      scoped_ptr<NotificationUIManager> notification_ui_manager);
+      std::unique_ptr<NotificationUIManager> notification_ui_manager);
+  void SetNotificationPlatformBridge(
+      std::unique_ptr<NotificationPlatformBridge> notification_platform_bridge);
   void SetRapporService(rappor::RapporService* rappor_service);
+  void SetShuttingDown(bool is_shutting_down);
   void ShutdownBrowserPolicyConnector();
 
  private:
@@ -146,32 +152,32 @@ class TestingBrowserProcess : public BrowserProcess {
   TestingBrowserProcess();
   ~TestingBrowserProcess() override;
 
-  scoped_ptr<content::NotificationService> notification_service_;
-  unsigned int module_ref_count_;
+  std::unique_ptr<content::NotificationService> notification_service_;
   std::string app_locale_;
+  bool is_shutting_down_;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
-  scoped_ptr<policy::BrowserPolicyConnector> browser_policy_connector_;
+  std::unique_ptr<policy::BrowserPolicyConnector> browser_policy_connector_;
   bool created_browser_policy_connector_ = false;
-#else
-  scoped_ptr<policy::PolicyService> policy_service_;
-#endif
-  scoped_ptr<ProfileManager> profile_manager_;
-  scoped_ptr<NotificationUIManager> notification_ui_manager_;
+  std::unique_ptr<ProfileManager> profile_manager_;
+  std::unique_ptr<NotificationUIManager> notification_ui_manager_;
+  std::unique_ptr<NotificationPlatformBridge> notification_platform_bridge_;
 
 #if defined(ENABLE_PRINTING)
-  scoped_ptr<printing::PrintJobManager> print_job_manager_;
+  std::unique_ptr<printing::PrintJobManager> print_job_manager_;
 #endif
 
 #if defined(ENABLE_PRINT_PREVIEW)
-  scoped_ptr<printing::BackgroundPrintingManager> background_printing_manager_;
+  std::unique_ptr<printing::BackgroundPrintingManager>
+      background_printing_manager_;
   scoped_refptr<printing::PrintPreviewDialogController>
       print_preview_dialog_controller_;
 #endif
 
   scoped_refptr<safe_browsing::SafeBrowsingService> sb_service_;
+  std::unique_ptr<subresource_filter::RulesetService>
+      subresource_filter_ruleset_service_;
 
-  scoped_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
+  std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
 
   // The following objects are not owned by TestingBrowserProcess:
   PrefService* local_state_;
@@ -179,12 +185,13 @@ class TestingBrowserProcess : public BrowserProcess {
   net::URLRequestContextGetter* system_request_context_;
   rappor::RapporService* rappor_service_;
 
-  scoped_ptr<BrowserProcessPlatformPart> platform_part_;
+  std::unique_ptr<BrowserProcessPlatformPart> platform_part_;
 
 #if defined(ENABLE_EXTENSIONS)
-  scoped_ptr<MediaFileSystemRegistry> media_file_system_registry_;
+  std::unique_ptr<MediaFileSystemRegistry> media_file_system_registry_;
 
-  scoped_ptr<extensions::ExtensionsBrowserClient> extensions_browser_client_;
+  std::unique_ptr<extensions::ExtensionsBrowserClient>
+      extensions_browser_client_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(TestingBrowserProcess);

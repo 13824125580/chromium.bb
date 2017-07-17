@@ -17,6 +17,8 @@
       'hard_dependency': 1,
       'dependencies': [
         '../../base/base.gyp:base',
+        '../../base/base.gyp:base_i18n',
+        '../../skia/skia.gyp:skia',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'ax_gen',
@@ -36,6 +38,8 @@
         'ax_text_utils.h',
         'ax_tree.cc',
         'ax_tree.h',
+        'ax_tree_combiner.cc',
+        'ax_tree_combiner.h',
         'ax_tree_data.cc',
         'ax_tree_data.h',
         'ax_tree_serializer.cc',
@@ -116,6 +120,7 @@
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/base.gyp:run_all_unittests',
+        '../../skia/skia.gyp:skia',
         '../gfx/gfx.gyp:gfx',
         '../gfx/gfx.gyp:gfx_geometry',
         'accessibility',
@@ -125,6 +130,7 @@
       'sources': [
         'ax_generated_tree_unittest.cc',
         'ax_text_utils_unittest.cc',
+        'ax_tree_combiner_unittest.cc',
         'ax_tree_serializer_unittest.cc',
         'ax_tree_unittest.cc',
         'platform/ax_platform_node_win_unittest.cc'
@@ -188,6 +194,31 @@
               ],
             }],
           ],
+        },
+      ],
+    }],
+    ['OS == "android"', {
+      'targets': [
+        {
+          'target_name': 'ui_accessibility_java',
+          'type': 'none',
+          'variables': {
+            'java_in_dir': '<(DEPTH)/build/android/empty',
+            'has_java_resources': 0,
+            'never_lint': 1,
+          },
+          'dependencies': [
+            'ax_enumerations_java',
+          ],
+          'includes': [ '../../build/java.gypi' ],
+        },
+        {
+          'target_name': 'ax_enumerations_java',
+          'type': 'none',
+          'variables': {
+            'source_file': 'ax_enums.idl',
+          },
+          'includes': [ '../../build/android/java_cpp_enum.gypi' ],
         },
       ],
     }],

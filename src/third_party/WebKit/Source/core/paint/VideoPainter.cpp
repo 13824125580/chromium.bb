@@ -33,17 +33,16 @@ void VideoPainter::paintReplaced(const PaintInfo& paintInfo, const LayoutPoint& 
     contentRect.moveBy(paintOffset);
 
     Optional<ClipRecorder> clipRecorder;
-    if (!contentRect.contains(rect)) {
-        clipRecorder.emplace(context, m_layoutVideo, paintInfo.displayItemTypeForClipping(), contentRect);
-    }
+    if (!contentRect.contains(rect))
+        clipRecorder.emplace(context, m_layoutVideo, paintInfo.displayItemTypeForClipping(), pixelSnappedIntRect(contentRect));
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutVideo, paintInfo.phase, paintOffset))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(context, m_layoutVideo, paintInfo.phase))
         return;
 
-    LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutVideo, paintInfo.phase, contentRect, paintOffset);
+    LayoutObjectDrawingRecorder drawingRecorder(context, m_layoutVideo, paintInfo.phase, contentRect);
 
     // Video frames are only painted in software for printing or capturing node images via web APIs.
-    bool forceSoftwareVideoPaint = paintInfo.globalPaintFlags() & GlobalPaintFlattenCompositingLayers;
+    bool forceSoftwareVideoPaint = paintInfo.getGlobalPaintFlags() & GlobalPaintFlattenCompositingLayers;
 
     if (displayingPoster || !forceSoftwareVideoPaint) {
         // This will display the poster image, if one is present, and otherwise paint nothing.

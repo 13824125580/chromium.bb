@@ -6,145 +6,115 @@
 
 #include "bindings/core/v8/V8GCController.h"
 #include "bindings/core/v8/V8Initializer.h"
-#include "core/workers/WorkerObjectProxy.h"
+#include "core/workers/InProcessWorkerObjectProxy.h"
+#include "core/workers/WorkerBackingThread.h"
 #include "core/workers/WorkerThreadStartupData.h"
 #include "modules/compositorworker/CompositorWorkerGlobalScope.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
 #include "platform/TraceEvent.h"
+#include "platform/WaitableEvent.h"
+#include "platform/WebThreadSupportingGC.h"
 #include "public/platform/Platform.h"
+#include "wtf/Assertions.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 namespace {
 
-void destroyThread(WebThreadSupportingGC* thread)
-{
-    ASSERT(isMainThread());
-    // The destructor for |thread| will block until all tasks have completed.
-    // This guarantees that shutdown will finish before the thread is destroyed.
-    delete thread;
-}
-
-class CompositorWorkerSharedState {
+// This is a singleton class holding the compositor worker thread in this
+// renderer process. BackingThreadHolder::m_thread is cleared by
+// ModulesInitializer::shutdown.
+// See WorkerThread::terminateAndWaitForAllWorkers for the process shutdown
+// case.
+class BackingThreadHolder {
 public:
-    static CompositorWorkerSharedState& instance()
+    static BackingThreadHolder& instance()
     {
-        DEFINE_THREAD_SAFE_STATIC_LOCAL(CompositorWorkerSharedState, compositorWorkerSharedState, (new CompositorWorkerSharedState()));
-        return compositorWorkerSharedState;
+        MutexLocker locker(holderInstanceMutex());
+        return *s_instance;
     }
 
-    WebThreadSupportingGC* compositorWorkerThread()
+    static void ensureInstance()
     {
-        MutexLocker lock(m_mutex);
-        if (!m_thread && isMainThread()) {
-            ASSERT(!m_workerCount);
-            WebThread* platformThread = Platform::current()->compositorThread();
-            m_thread = WebThreadSupportingGC::createForThread(platformThread);
-        }
-        return m_thread.get();
+        if (!s_instance)
+            s_instance = new BackingThreadHolder;
     }
 
-    void initializeBackingThread()
+    static void clear()
     {
-        MutexLocker lock(m_mutex);
-        ASSERT(m_thread->isCurrentThread());
-        ++m_workerCount;
-        if (m_workerCount > 1)
-            return;
-
-        m_thread->initialize();
-
-        // Initialize the isolate at the same time.
-        ASSERT(!m_isolate);
-        m_isolate = V8PerIsolateData::initialize();
-        V8Initializer::initializeWorker(m_isolate);
-
-        OwnPtr<V8IsolateInterruptor> interruptor = adoptPtr(new V8IsolateInterruptor(m_isolate));
-        ThreadState::current()->addInterruptor(interruptor.release());
-        ThreadState::current()->registerTraceDOMWrappers(m_isolate, V8GCController::traceDOMWrappers);
-    }
-
-    void shutdownBackingThread()
-    {
-        MutexLocker lock(m_mutex);
-        ASSERT(m_thread->isCurrentThread());
-        ASSERT(m_workerCount > 0);
-        --m_workerCount;
-        if (m_workerCount == 0) {
-            m_thread->shutdown();
-            Platform::current()->mainThread()->taskRunner()->postTask(
-                BLINK_FROM_HERE, threadSafeBind(destroyThread, AllowCrossThreadAccess(m_thread.leakPtr())));
+        MutexLocker locker(holderInstanceMutex());
+        if (s_instance) {
+            s_instance->shutdownAndWait();
+            delete s_instance;
+            s_instance = nullptr;
         }
     }
 
-    v8::Isolate* initializeIsolate()
+    static void createForTest()
     {
-        MutexLocker lock(m_mutex);
-        ASSERT(m_thread->isCurrentThread());
-        ASSERT(m_isolate);
-        // It is safe to use the existing isolate even if TerminateExecution() has been
-        // called on it, without calling CancelTerminateExecution().
-        return m_isolate;
+        MutexLocker locker(holderInstanceMutex());
+        DCHECK_EQ(nullptr, s_instance);
+        s_instance = new BackingThreadHolder(WorkerBackingThread::createForTest(Platform::current()->compositorThread()));
     }
 
-    void willDestroyIsolate()
-    {
-        MutexLocker lock(m_mutex);
-        ASSERT(m_thread->isCurrentThread());
-        if (m_workerCount == 1)
-            V8PerIsolateData::willBeDestroyed(m_isolate);
-    }
-
-    void destroyIsolate()
-    {
-        MutexLocker lock(m_mutex);
-        if (!m_thread) {
-            ASSERT(m_workerCount == 0);
-            V8PerIsolateData::destroy(m_isolate);
-            m_isolate = nullptr;
-        }
-    }
-
-    void terminateV8Execution()
-    {
-        MutexLocker lock(m_mutex);
-        ASSERT(isMainThread());
-        if (m_workerCount > 1)
-            return;
-
-        m_isolate->TerminateExecution();
-    }
-
-    bool hasThreadForTest()
-    {
-        return m_thread;
-    }
-
-    bool hasIsolateForTest()
-    {
-        return m_isolate;
-    }
+    WorkerBackingThread* thread() { return m_thread.get(); }
 
 private:
-    CompositorWorkerSharedState() {}
-    ~CompositorWorkerSharedState() {}
+    BackingThreadHolder(std::unique_ptr<WorkerBackingThread> useBackingThread = nullptr)
+        : m_thread(useBackingThread ? std::move(useBackingThread) : WorkerBackingThread::create(Platform::current()->compositorThread()))
+    {
+        DCHECK(isMainThread());
+        m_thread->backingThread().postTask(BLINK_FROM_HERE, crossThreadBind(&BackingThreadHolder::initializeOnThread, crossThreadUnretained(this)));
+    }
 
-    Mutex m_mutex;
-    OwnPtr<WebThreadSupportingGC> m_thread;
-    int m_workerCount = 0;
-    v8::Isolate* m_isolate = nullptr;
+    static Mutex& holderInstanceMutex()
+    {
+        DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, holderMutex, new Mutex);
+        return holderMutex;
+    }
+
+    void initializeOnThread()
+    {
+        MutexLocker locker(holderInstanceMutex());
+        DCHECK(!m_initialized);
+        m_thread->initialize();
+        m_initialized = true;
+    }
+
+    void shutdownAndWait()
+    {
+        DCHECK(isMainThread());
+        WaitableEvent doneEvent;
+        m_thread->backingThread().postTask(BLINK_FROM_HERE, crossThreadBind(&BackingThreadHolder::shutdownOnThread, crossThreadUnretained(this), crossThreadUnretained(&doneEvent)));
+        doneEvent.wait();
+    }
+
+    void shutdownOnThread(WaitableEvent* doneEvent)
+    {
+        m_thread->shutdown();
+        doneEvent->signal();
+    }
+
+    std::unique_ptr<WorkerBackingThread> m_thread;
+    bool m_initialized = false;
+
+    static BackingThreadHolder* s_instance;
 };
+
+BackingThreadHolder* BackingThreadHolder::s_instance = nullptr;
 
 } // namespace
 
-PassRefPtr<CompositorWorkerThread> CompositorWorkerThread::create(PassRefPtr<WorkerLoaderProxy> workerLoaderProxy, WorkerObjectProxy& workerObjectProxy, double timeOrigin)
+std::unique_ptr<CompositorWorkerThread> CompositorWorkerThread::create(PassRefPtr<WorkerLoaderProxy> workerLoaderProxy, InProcessWorkerObjectProxy& workerObjectProxy, double timeOrigin)
 {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::create");
     ASSERT(isMainThread());
-    return adoptRef(new CompositorWorkerThread(workerLoaderProxy, workerObjectProxy, timeOrigin));
+    return wrapUnique(new CompositorWorkerThread(workerLoaderProxy, workerObjectProxy, timeOrigin));
 }
 
-CompositorWorkerThread::CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy> workerLoaderProxy, WorkerObjectProxy& workerObjectProxy, double timeOrigin)
+CompositorWorkerThread::CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy> workerLoaderProxy, InProcessWorkerObjectProxy& workerObjectProxy, double timeOrigin)
     : WorkerThread(workerLoaderProxy, workerObjectProxy)
     , m_workerObjectProxy(workerObjectProxy)
     , m_timeOrigin(timeOrigin)
@@ -155,65 +125,32 @@ CompositorWorkerThread::~CompositorWorkerThread()
 {
 }
 
-WebThreadSupportingGC* CompositorWorkerThread::sharedBackingThread()
+WorkerBackingThread& CompositorWorkerThread::workerBackingThread()
 {
-    return CompositorWorkerSharedState::instance().compositorWorkerThread();
+    return *BackingThreadHolder::instance().thread();
 }
 
-PassRefPtrWillBeRawPtr<WorkerGlobalScope> CompositorWorkerThread::createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData> startupData)
+WorkerGlobalScope*CompositorWorkerThread::createWorkerGlobalScope(std::unique_ptr<WorkerThreadStartupData> startupData)
 {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::createWorkerGlobalScope");
-    return CompositorWorkerGlobalScope::create(this, startupData, m_timeOrigin);
+    return CompositorWorkerGlobalScope::create(this, std::move(startupData), m_timeOrigin);
 }
 
-WebThreadSupportingGC& CompositorWorkerThread::backingThread()
+void CompositorWorkerThread::ensureSharedBackingThread()
 {
-    return *CompositorWorkerSharedState::instance().compositorWorkerThread();
+    DCHECK(isMainThread());
+    BackingThreadHolder::ensureInstance();
 }
 
-void CompositorWorkerThread::initializeBackingThread()
+void CompositorWorkerThread::clearSharedBackingThread()
 {
-    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::initializeBackingThread");
-    CompositorWorkerSharedState::instance().initializeBackingThread();
+    DCHECK(isMainThread());
+    BackingThreadHolder::clear();
 }
 
-void CompositorWorkerThread::shutdownBackingThread()
+void CompositorWorkerThread::createSharedBackingThreadForTest()
 {
-    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::shutdownBackingThread");
-    CompositorWorkerSharedState::instance().shutdownBackingThread();
-}
-
-v8::Isolate* CompositorWorkerThread::initializeIsolate()
-{
-    return CompositorWorkerSharedState::instance().initializeIsolate();
-}
-
-void CompositorWorkerThread::willDestroyIsolate()
-{
-    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::willDestroyIsolate");
-    CompositorWorkerSharedState::instance().willDestroyIsolate();
-}
-
-void CompositorWorkerThread::destroyIsolate()
-{
-    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::destroyIsolate");
-    CompositorWorkerSharedState::instance().destroyIsolate();
-}
-
-void CompositorWorkerThread::terminateV8Execution()
-{
-    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("compositor-worker"), "CompositorWorkerThread::terminateV8Execution");
-    CompositorWorkerSharedState::instance().terminateV8Execution();
-}
-
-bool CompositorWorkerThread::hasThreadForTest()
-{
-    return CompositorWorkerSharedState::instance().hasThreadForTest();
-}
-
-bool CompositorWorkerThread::hasIsolateForTest()
-{
-    return CompositorWorkerSharedState::instance().hasIsolateForTest();
+    BackingThreadHolder::createForTest();
 }
 
 } // namespace blink

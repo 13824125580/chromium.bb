@@ -8,11 +8,13 @@
 #include "core/css/StylePropertySet.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/StyleEngine.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLVideoElement.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/heap/Handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -72,12 +74,19 @@ protected:
         m_mediaControls->mediaElement().remoteRouteAvailabilityChanged(true);
     }
 
+    void ensureLayout()
+    {
+        // Force a relayout, so that the controls know the width.  Otherwise,
+        // they don't know if, for example, the cast button will fit.
+        m_mediaControls->mediaElement().clientWidth();
+    }
+
     MediaControls& mediaControls() { return *m_mediaControls; }
     Document& document() { return m_pageHolder->document(); }
 
 private:
-    OwnPtr<DummyPageHolder> m_pageHolder;
-    RawPtrWillBePersistent<MediaControls> m_mediaControls;
+    std::unique_ptr<DummyPageHolder> m_pageHolder;
+    Persistent<MediaControls> m_mediaControls;
 };
 
 TEST_F(MediaControlsTest, HideAndShow)
@@ -133,6 +142,7 @@ TEST_F(MediaControlsTest, ResetDoesNotTriggerInitialLayout)
 
 TEST_F(MediaControlsTest, CastButtonRequiresRoute)
 {
+    ensureLayout();
     mediaControls().mediaElement().setBooleanAttribute(HTMLNames::controlsAttr, true);
 
     Element* castButton = getElementByShadowPseudoId(mediaControls(), "-internal-media-controls-cast-button");
@@ -146,6 +156,7 @@ TEST_F(MediaControlsTest, CastButtonRequiresRoute)
 
 TEST_F(MediaControlsTest, CastButtonDisableRemotePlaybackAttr)
 {
+    ensureLayout();
     mediaControls().mediaElement().setBooleanAttribute(HTMLNames::controlsAttr, true);
 
     Element* castButton = getElementByShadowPseudoId(mediaControls(), "-internal-media-controls-cast-button");

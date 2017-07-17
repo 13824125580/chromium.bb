@@ -97,13 +97,6 @@
         ['OS!="ios" and (target_arch=="ia32" or target_arch=="x64")', {
           'defines': [ 'WEBP_HAVE_SSE2', 'WEBP_HAVE_SSE41' ],
         }],
-        ['order_profiling != 0', {
-          'target_conditions' : [
-            ['_toolset=="target"', {
-              'cflags!': [ '-finstrument-functions' ],
-            }],
-          ],
-        }],
       ],
     },
     {
@@ -131,13 +124,6 @@
           'cflags': [ '-msse2', ],
           'xcode_settings': { 'OTHER_CFLAGS': [ '-msse2' ] },
         }],
-        ['order_profiling != 0', {
-          'target_conditions' : [
-            ['_toolset=="target"', {
-              'cflags!': [ '-finstrument-functions' ],
-            }],
-          ],
-        }],
       ],
     },
     {
@@ -164,13 +150,6 @@
         ['OS!="ios" and (target_arch=="ia32" or target_arch=="x64") and msan==0', {
           'cflags': [ '-msse4.1', ],
           'xcode_settings': { 'OTHER_CFLAGS': [ '-msse4.1' ] },
-        }],
-        ['order_profiling != 0', {
-          'target_conditions' : [
-            ['_toolset=="target"', {
-              'cflags!': [ '-finstrument-functions' ],
-            }],
-          ],
         }],
       ],
     },
@@ -201,20 +180,13 @@
               'cflags!': [ '-mfpu=vfpv3-d16' ],
               'cflags': [ '-mfpu=neon' ],
             }],
-            ['target_arch == "arm64"', {
+            ['target_arch == "arm64" and clang != 1', {
               # avoid an ICE with gcc-4.9: b/15574841
               'cflags': [ '-frename-registers' ],
             }],
           ]
         }, {
           'type': 'none',
-        }],
-        ['order_profiling != 0', {
-          'target_conditions' : [
-            ['_toolset=="target"', {
-              'cflags!': [ '-finstrument-functions' ],
-            }],
-          ],
         }],
       ],
     },

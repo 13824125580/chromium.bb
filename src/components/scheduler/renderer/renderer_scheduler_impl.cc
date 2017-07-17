@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/debug/stack_trace.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/output/begin_frame_args.h"
@@ -29,7 +30,10 @@ const int kTimerTaskEstimationSampleCount = 1000;
 const double kTimerTaskEstimationPercentile = 99;
 const int kShortIdlePeriodDurationSampleCount = 10;
 const double kShortIdlePeriodDurationPercentile = 50;
-}
+// Amount of idle time left in a frame (as a ratio of the vsync interval) above
+// which main thread compositing can be considered fast.
+const double kFastCompositingIdleTimeThreshold = .2;
+}  // namespace
 
 RendererSchedulerImpl::RendererSchedulerImpl(
     scoped_refptr<SchedulerTqmDelegate> main_task_runner)
@@ -112,8 +116,10 @@ RendererSchedulerImpl::MainThreadOnly::MainThreadOnly(
       current_use_case(UseCase::NONE),
       timer_queue_suspend_count(0),
       navigation_task_expected_count(0),
+      expensive_task_policy(ExpensiveTaskPolicy::RUN),
       renderer_hidden(false),
       renderer_backgrounded(false),
+      renderer_suspended(false),
       timer_queue_suspension_when_backgrounded_enabled(false),
       timer_queue_suspended_when_backgrounded(false),
       was_shutdown(false),
@@ -125,7 +131,9 @@ RendererSchedulerImpl::MainThreadOnly::MainThreadOnly(
       have_reported_blocking_intervention_since_navigation(false),
       has_visible_render_widget_with_touch_handler(false),
       begin_frame_not_expected_soon(false),
-      expensive_task_blocking_allowed(true) {}
+      expensive_task_blocking_allowed(true),
+      in_idle_period_for_testing(false),
+      rail_mode_observer(nullptr) {}
 
 RendererSchedulerImpl::MainThreadOnly::~MainThreadOnly() {}
 
@@ -134,6 +142,7 @@ RendererSchedulerImpl::AnyThread::AnyThread()
       in_idle_period(false),
       begin_main_frame_on_critical_path(false),
       last_gesture_was_compositor_driven(false),
+      default_gesture_prevented(true),
       have_seen_touchstart(false) {}
 
 RendererSchedulerImpl::AnyThread::~AnyThread() {}
@@ -147,10 +156,11 @@ void RendererSchedulerImpl::Shutdown() {
   throttling_helper_.reset();
   helper_.Shutdown();
   MainThreadOnly().was_shutdown = true;
+  MainThreadOnly().rail_mode_observer = nullptr;
 }
 
-scoped_ptr<blink::WebThread> RendererSchedulerImpl::CreateMainThread() {
-  return make_scoped_ptr(new WebThreadImplForRendererScheduler(this));
+std::unique_ptr<blink::WebThread> RendererSchedulerImpl::CreateMainThread() {
+  return base::WrapUnique(new WebThreadImplForRendererScheduler(this));
 }
 
 scoped_refptr<TaskQueue> RendererSchedulerImpl::DefaultTaskRunner() {
@@ -192,6 +202,10 @@ scoped_refptr<TaskQueue> RendererSchedulerImpl::NewLoadingTaskRunner(
       MainThreadOnly().current_policy.loading_queue_policy.is_enabled);
   loading_task_queue->SetQueuePriority(
       MainThreadOnly().current_policy.loading_queue_policy.priority);
+  if (MainThreadOnly().current_policy.loading_queue_policy.time_domain_type ==
+      TimeDomainType::THROTTLED) {
+    throttling_helper_->IncreaseThrottleRefCount(loading_task_queue.get());
+  }
   loading_task_queue->AddTaskObserver(
       &MainThreadOnly().loading_task_cost_estimator);
   return loading_task_queue;
@@ -209,12 +223,16 @@ scoped_refptr<TaskQueue> RendererSchedulerImpl::NewTimerTaskRunner(
       MainThreadOnly().current_policy.timer_queue_policy.is_enabled);
   timer_task_queue->SetQueuePriority(
       MainThreadOnly().current_policy.timer_queue_policy.priority);
+  if (MainThreadOnly().current_policy.timer_queue_policy.time_domain_type ==
+      TimeDomainType::THROTTLED) {
+    throttling_helper_->IncreaseThrottleRefCount(timer_task_queue.get());
+  }
   timer_task_queue->AddTaskObserver(
       &MainThreadOnly().timer_task_cost_estimator);
   return timer_task_queue;
 }
 
-scoped_ptr<RenderWidgetSchedulingState>
+std::unique_ptr<RenderWidgetSchedulingState>
 RendererSchedulerImpl::NewRenderWidgetSchedulingState() {
   return render_widget_scheduler_signals_.NewRenderWidgetSchedulingState();
 }
@@ -377,15 +395,42 @@ void RendererSchedulerImpl::OnRendererForegrounded() {
     return;
 
   MainThreadOnly().renderer_backgrounded = false;
+  MainThreadOnly().renderer_suspended = false;
   suspend_timers_when_backgrounded_closure_.Cancel();
   ResumeTimerQueueWhenForegrounded();
 }
 
+void RendererSchedulerImpl::SuspendRenderer() {
+  helper_.CheckOnValidThread();
+  DCHECK(MainThreadOnly().renderer_backgrounded);
+  if (helper_.IsShutdown())
+    return;
+  suspend_timers_when_backgrounded_closure_.Cancel();
+  // TODO(hajimehoshi): We might need to suspend not only timer queue but also
+  // e.g. loading tasks or postMessage.
+  MainThreadOnly().renderer_suspended = true;
+  SuspendTimerQueueWhenBackgrounded();
+}
+
 void RendererSchedulerImpl::EndIdlePeriod() {
+  if (MainThreadOnly().in_idle_period_for_testing)
+    return;
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
                "RendererSchedulerImpl::EndIdlePeriod");
   helper_.CheckOnValidThread();
   idle_helper_.EndIdlePeriod();
+}
+
+void RendererSchedulerImpl::EndIdlePeriodForTesting(
+    const base::Closure& callback,
+    base::TimeTicks time_remaining) {
+  MainThreadOnly().in_idle_period_for_testing = false;
+  EndIdlePeriod();
+  callback.Run();
+}
+
+bool RendererSchedulerImpl::PolicyNeedsUpdateForTesting() {
+  return policy_may_need_update_.IsSet();
 }
 
 // static
@@ -442,7 +487,9 @@ void RendererSchedulerImpl::UpdateForInputEventOnCompositorThread(
                "type", static_cast<int>(type), "input_event_state",
                InputEventStateToString(input_event_state));
 
-  bool gesture_already_in_progress = InputSignalsSuggestGestureInProgress(now);
+  base::TimeDelta unused_policy_duration;
+  UseCase previous_use_case =
+      ComputeCurrentUseCase(now, &unused_policy_duration);
   bool was_awaiting_touch_start_response =
       AnyThread().awaiting_touch_start_response;
 
@@ -460,6 +507,9 @@ void RendererSchedulerImpl::UpdateForInputEventOnCompositorThread(
         // yet where the gesture will run.
         AnyThread().last_gesture_was_compositor_driven = false;
         AnyThread().have_seen_touchstart = true;
+        // Assume the default gesture is prevented until we see evidence
+        // otherwise.
+        AnyThread().default_gesture_prevented = true;
         break;
 
       case blink::WebInputEvent::TouchMove:
@@ -477,9 +527,12 @@ void RendererSchedulerImpl::UpdateForInputEventOnCompositorThread(
 
       case blink::WebInputEvent::GesturePinchUpdate:
       case blink::WebInputEvent::GestureScrollUpdate:
+        // If we see events for an established gesture, we can lock it to the
+        // appropriate thread as the gesture can no longer be cancelled.
         AnyThread().last_gesture_was_compositor_driven =
             input_event_state == InputEventState::EVENT_CONSUMED_BY_COMPOSITOR;
         AnyThread().awaiting_touch_start_response = false;
+        AnyThread().default_gesture_prevented = false;
         break;
 
       case blink::WebInputEvent::GestureFlingCancel:
@@ -499,8 +552,10 @@ void RendererSchedulerImpl::UpdateForInputEventOnCompositorThread(
     }
   }
 
-  // Avoid unnecessary policy updates, while a gesture is already in progress.
-  if (!gesture_already_in_progress ||
+  // Avoid unnecessary policy updates if the use case did not change.
+  UseCase use_case = ComputeCurrentUseCase(now, &unused_policy_duration);
+
+  if (use_case != previous_use_case ||
       was_awaiting_touch_start_response !=
           AnyThread().awaiting_touch_start_response) {
     EnsureUrgentPolicyUpdatePostedOnMainThread(FROM_HERE);
@@ -532,6 +587,7 @@ bool RendererSchedulerImpl::IsHighPriorityWorkAnticipated() {
   return MainThreadOnly().touchstart_expected_soon ||
          use_case == UseCase::TOUCHSTART ||
          use_case == UseCase::MAIN_THREAD_GESTURE ||
+         use_case == UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING ||
          use_case == UseCase::SYNCHRONIZED_GESTURE;
 }
 
@@ -552,6 +608,7 @@ bool RendererSchedulerImpl::ShouldYieldForHighPriorityWork() {
       return MainThreadOnly().touchstart_expected_soon;
 
     case UseCase::MAIN_THREAD_GESTURE:
+    case UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING:
     case UseCase::SYNCHRONIZED_GESTURE:
       return compositor_task_runner_->HasPendingImmediateWork() ||
              MainThreadOnly().touchstart_expected_soon;
@@ -571,6 +628,16 @@ bool RendererSchedulerImpl::ShouldYieldForHighPriorityWork() {
 base::TimeTicks RendererSchedulerImpl::CurrentIdleTaskDeadlineForTesting()
     const {
   return idle_helper_.CurrentIdleTaskDeadline();
+}
+
+void RendererSchedulerImpl::RunIdleTasksForTesting(
+    const base::Closure& callback) {
+  MainThreadOnly().in_idle_period_for_testing = true;
+  IdleTaskRunner()->PostIdleTask(
+      FROM_HERE,
+      base::Bind(&RendererSchedulerImpl::EndIdlePeriodForTesting,
+                 weak_factory_.GetWeakPtr(), callback));
+  idle_helper_.EnableLongIdlePeriod();
 }
 
 void RendererSchedulerImpl::MaybeUpdatePolicy() {
@@ -642,7 +709,7 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
   // and |touchstart_expected_flag_valid_for_duration| unless one is zero in
   // which case we choose the other.
   base::TimeDelta new_policy_duration = expected_use_case_duration;
-  if (new_policy_duration == base::TimeDelta() ||
+  if (new_policy_duration.is_zero() ||
       (touchstart_expected_flag_valid_for_duration > base::TimeDelta() &&
        new_policy_duration > touchstart_expected_flag_valid_for_duration)) {
     new_policy_duration = touchstart_expected_flag_valid_for_duration;
@@ -656,12 +723,22 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
     MainThreadOnly().current_policy_expiration_time = base::TimeTicks();
   }
 
+  // Avoid prioritizing main thread compositing (e.g., rAF) if it is extremely
+  // slow, because that can cause starvation in other task sources.
+  bool main_thread_compositing_is_fast =
+      MainThreadOnly().idle_time_estimator.GetExpectedIdleDuration(
+          MainThreadOnly().compositor_frame_interval) >
+      MainThreadOnly().compositor_frame_interval *
+          kFastCompositingIdleTimeThreshold;
+
   Policy new_policy;
-  enum class ExpensiveTaskPolicy { RUN, BLOCK, THROTTLE };
   ExpensiveTaskPolicy expensive_task_policy = ExpensiveTaskPolicy::RUN;
+  new_policy.rail_mode = v8::PERFORMANCE_ANIMATION;
+
   switch (use_case) {
     case UseCase::COMPOSITOR_GESTURE:
       if (touchstart_expected_soon) {
+        new_policy.rail_mode = v8::PERFORMANCE_RESPONSE;
         expensive_task_policy = ExpensiveTaskPolicy::BLOCK;
         new_policy.compositor_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
       } else {
@@ -675,23 +752,43 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
       break;
 
     case UseCase::SYNCHRONIZED_GESTURE:
-      new_policy.compositor_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
+      new_policy.compositor_queue_policy.priority =
+          main_thread_compositing_is_fast ? TaskQueue::HIGH_PRIORITY
+                                          : TaskQueue::NORMAL_PRIORITY;
       if (touchstart_expected_soon) {
+        new_policy.rail_mode = v8::PERFORMANCE_RESPONSE;
         expensive_task_policy = ExpensiveTaskPolicy::BLOCK;
       } else {
         expensive_task_policy = ExpensiveTaskPolicy::THROTTLE;
       }
       break;
 
+    case UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING:
+      // In main thread input handling scenarios we don't have perfect knowledge
+      // about which things we should be prioritizing, so we don't attempt to
+      // block expensive tasks because we don't know whether they were integral
+      // to the page's functionality or not.
+      new_policy.compositor_queue_policy.priority =
+          main_thread_compositing_is_fast ? TaskQueue::HIGH_PRIORITY
+                                          : TaskQueue::NORMAL_PRIORITY;
+      break;
+
     case UseCase::MAIN_THREAD_GESTURE:
-      // In main thread gestures we don't have perfect knowledge about which
-      // things we should be prioritizing, so we don't attempt to block
-      // expensive tasks because we don't know whether they were integral to the
-      // page's functionality or not.
+      // A main thread gesture is for example a scroll gesture which is handled
+      // by the main thread. Since we know the established gesture type, we can
+      // be a little more aggressive about prioritizing compositing and input
+      // handling over other tasks.
       new_policy.compositor_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
+      if (touchstart_expected_soon) {
+        new_policy.rail_mode = v8::PERFORMANCE_RESPONSE;
+        expensive_task_policy = ExpensiveTaskPolicy::BLOCK;
+      } else {
+        expensive_task_policy = ExpensiveTaskPolicy::THROTTLE;
+      }
       break;
 
     case UseCase::TOUCHSTART:
+      new_policy.rail_mode = v8::PERFORMANCE_RESPONSE;
       new_policy.compositor_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
       new_policy.loading_queue_policy.is_enabled = false;
       new_policy.timer_queue_policy.is_enabled = false;
@@ -704,11 +801,13 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
       // driven gesture.
       if (touchstart_expected_soon &&
           AnyThread().last_gesture_was_compositor_driven) {
+        new_policy.rail_mode = v8::PERFORMANCE_RESPONSE;
         expensive_task_policy = ExpensiveTaskPolicy::BLOCK;
       }
       break;
 
     case UseCase::LOADING:
+      new_policy.rail_mode = v8::PERFORMANCE_LOAD;
       new_policy.loading_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
       new_policy.default_queue_policy.priority = TaskQueue::HIGH_PRIORITY;
       break;
@@ -716,6 +815,10 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
     default:
       NOTREACHED();
   }
+
+  // TODO(skyostil): Add an idle state for foreground tabs too.
+  if (MainThreadOnly().renderer_hidden)
+    new_policy.rail_mode = v8::PERFORMANCE_IDLE;
 
   if (expensive_task_policy == ExpensiveTaskPolicy::BLOCK &&
       (!MainThreadOnly().expensive_task_blocking_allowed ||
@@ -747,9 +850,17 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
       break;
   }
 
+  MainThreadOnly().expensive_task_policy = expensive_task_policy;
+
   if (MainThreadOnly().timer_queue_suspend_count != 0 ||
       MainThreadOnly().timer_queue_suspended_when_backgrounded) {
     new_policy.timer_queue_policy.is_enabled = false;
+    new_policy.timer_queue_policy.time_domain_type = TimeDomainType::REAL;
+  }
+
+  if (MainThreadOnly().renderer_suspended) {
+    new_policy.loading_queue_policy.is_enabled = false;
+    DCHECK(!new_policy.timer_queue_policy.is_enabled);
   }
 
   // Tracing is done before the early out check, because it's quite possible we
@@ -759,6 +870,13 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
       this, AsValueLocked(now));
   TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"), "use_case",
                  use_case);
+  TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"), "rail_mode",
+                 new_policy.rail_mode);
+  TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
+                 "touchstart_expected_soon",
+                 MainThreadOnly().touchstart_expected_soon);
+  TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
+                 "expensive_task_policy", expensive_task_policy);
   TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
                  "RendererScheduler.loading_tasks_seem_expensive",
                  MainThreadOnly().loading_tasks_seem_expensive);
@@ -796,6 +914,11 @@ void RendererSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
   ApplyTaskQueuePolicy(helper_.DefaultTaskRunner().get(),
                        MainThreadOnly().current_policy.default_queue_policy,
                        new_policy.default_queue_policy);
+  if (MainThreadOnly().rail_mode_observer &&
+      new_policy.rail_mode != MainThreadOnly().current_policy.rail_mode) {
+    MainThreadOnly().rail_mode_observer->OnRAILModeChanged(
+        new_policy.rail_mode);
+  }
 
   DCHECK(compositor_task_runner_->IsQueueEnabled());
   MainThreadOnly().current_policy = new_policy;
@@ -805,7 +928,11 @@ void RendererSchedulerImpl::ApplyTaskQueuePolicy(
     TaskQueue* task_queue,
     const TaskQueuePolicy& old_task_queue_policy,
     const TaskQueuePolicy& new_task_queue_policy) const {
-  task_queue->SetQueueEnabled(new_task_queue_policy.is_enabled);
+  if (old_task_queue_policy.is_enabled != new_task_queue_policy.is_enabled) {
+    throttling_helper_->SetQueueEnabled(task_queue,
+                                        new_task_queue_policy.is_enabled);
+  }
+
   if (old_task_queue_policy.priority != new_task_queue_policy.priority)
     task_queue->SetQueuePriority(new_task_queue_policy.priority);
 
@@ -820,29 +947,14 @@ void RendererSchedulerImpl::ApplyTaskQueuePolicy(
   }
 }
 
-bool RendererSchedulerImpl::InputSignalsSuggestGestureInProgress(
-    base::TimeTicks now) const {
-  base::TimeDelta unused_policy_duration;
-  switch (ComputeCurrentUseCase(now, &unused_policy_duration)) {
-    case UseCase::COMPOSITOR_GESTURE:
-    case UseCase::MAIN_THREAD_GESTURE:
-    case UseCase::SYNCHRONIZED_GESTURE:
-    case UseCase::TOUCHSTART:
-      return true;
-
-    default:
-      break;
-  }
-  return false;
-}
-
 RendererSchedulerImpl::UseCase RendererSchedulerImpl::ComputeCurrentUseCase(
     base::TimeTicks now,
     base::TimeDelta* expected_use_case_duration) const {
   any_thread_lock_.AssertAcquired();
   // Special case for flings. This is needed because we don't get notification
   // of a fling ending (although we do for cancellation).
-  if (AnyThread().fling_compositor_escalation_deadline > now) {
+  if (AnyThread().fling_compositor_escalation_deadline > now &&
+      !AnyThread().awaiting_touch_start_response) {
     *expected_use_case_duration =
         AnyThread().fling_compositor_escalation_deadline - now;
     return UseCase::COMPOSITOR_GESTURE;
@@ -858,12 +970,15 @@ RendererSchedulerImpl::UseCase RendererSchedulerImpl::ComputeCurrentUseCase(
     }
 
     // Yes a gesture has been established.  Based on how the gesture is handled
-    // we need to choose between one of three use cases:
+    // we need to choose between one of four use cases:
     // 1. COMPOSITOR_GESTURE where the gesture is processed only on the
     //    compositor thread.
     // 2. MAIN_THREAD_GESTURE where the gesture is processed only on the main
     //    thread.
-    // 3. SYNCHRONIZED_GESTURE where the gesture is processed on both threads.
+    // 3. MAIN_THREAD_CUSTOM_INPUT_HANDLING where the main thread processes a
+    //    stream of input events and has prevented a default gesture from being
+    //    started.
+    // 4. SYNCHRONIZED_GESTURE where the gesture is processed on both threads.
     // TODO(skyostil): Consider removing in_idle_period_ and
     // HadAnIdlePeriodRecently() unless we need them here.
     if (AnyThread().last_gesture_was_compositor_driven) {
@@ -873,7 +988,11 @@ RendererSchedulerImpl::UseCase RendererSchedulerImpl::ComputeCurrentUseCase(
         return UseCase::COMPOSITOR_GESTURE;
       }
     }
-    return UseCase::MAIN_THREAD_GESTURE;
+    if (AnyThread().default_gesture_prevented) {
+      return UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING;
+    } else {
+      return UseCase::MAIN_THREAD_GESTURE;
+    }
   }
 
   // TODO(alexclarke): return UseCase::LOADING if signals suggest the system is
@@ -890,6 +1009,7 @@ base::TimeDelta RendererSchedulerImpl::EstimateLongestJankFreeTaskDuration()
     case UseCase::NONE:
       return base::TimeDelta::FromMilliseconds(kRailsResponseTimeMillis);
 
+    case UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING:
     case UseCase::MAIN_THREAD_GESTURE:
     case UseCase::SYNCHRONIZED_GESTURE:
       return MainThreadOnly().idle_time_estimator.GetExpectedIdleDuration(
@@ -942,7 +1062,7 @@ void RendererSchedulerImpl::SuspendTimerQueue() {
 #ifndef NDEBUG
   DCHECK(!default_timer_task_runner_->IsQueueEnabled());
   for (const auto& runner : timer_task_runners_) {
-    DCHECK(!runner->IsQueueEnabled());
+     DCHECK(!runner->IsQueueEnabled());
   }
 #endif
 }
@@ -959,27 +1079,46 @@ void RendererSchedulerImpl::SetTimerQueueSuspensionWhenBackgroundedEnabled(
   MainThreadOnly().timer_queue_suspension_when_backgrounded_enabled = enabled;
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 RendererSchedulerImpl::AsValue(base::TimeTicks optional_now) const {
   base::AutoLock lock(any_thread_lock_);
   return AsValueLocked(optional_now);
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+// static
+const char* RendererSchedulerImpl::ExpensiveTaskPolicyToString(
+    ExpensiveTaskPolicy expensive_task_policy) {
+  switch (expensive_task_policy) {
+    case ExpensiveTaskPolicy::RUN:
+      return "RUN";
+    case ExpensiveTaskPolicy::BLOCK:
+      return "BLOCK";
+    case ExpensiveTaskPolicy::THROTTLE:
+      return "THROTTLE";
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 RendererSchedulerImpl::AsValueLocked(base::TimeTicks optional_now) const {
   helper_.CheckOnValidThread();
   any_thread_lock_.AssertAcquired();
 
   if (optional_now.is_null())
     optional_now = helper_.scheduler_tqm_delegate()->NowTicks();
-  scoped_refptr<base::trace_event::TracedValue> state =
-      new base::trace_event::TracedValue();
-
+  std::unique_ptr<base::trace_event::TracedValue> state(
+      new base::trace_event::TracedValue());
   state->SetBoolean(
       "has_visible_render_widget_with_touch_handler",
       MainThreadOnly().has_visible_render_widget_with_touch_handler);
   state->SetString("current_use_case",
                    UseCaseToString(MainThreadOnly().current_use_case));
+  state->SetString("rail_mode",
+                   RAILModeToString(MainThreadOnly().current_policy.rail_mode));
+  state->SetBoolean("expensive_task_blocking_allowed",
+                    MainThreadOnly().expensive_task_blocking_allowed);
   state->SetBoolean("loading_tasks_seem_expensive",
                     MainThreadOnly().loading_tasks_seem_expensive);
   state->SetBoolean("timer_tasks_seem_expensive",
@@ -1026,6 +1165,8 @@ RendererSchedulerImpl::AsValueLocked(base::TimeTicks optional_now) const {
                     AnyThread().begin_main_frame_on_critical_path);
   state->SetBoolean("last_gesture_was_compositor_driven",
                     AnyThread().last_gesture_was_compositor_driven);
+  state->SetBoolean("default_gesture_prevented",
+                    AnyThread().default_gesture_prevented);
   state->SetDouble("expected_loading_task_duration",
                    MainThreadOnly()
                        .loading_task_cost_estimator.expected_task_duration()
@@ -1046,10 +1187,15 @@ RendererSchedulerImpl::AsValueLocked(base::TimeTicks optional_now) const {
       (MainThreadOnly().estimated_next_frame_begin - base::TimeTicks())
           .InMillisecondsF());
   state->SetBoolean("in_idle_period", AnyThread().in_idle_period);
+
+  state->SetString(
+      "expensive_task_policy",
+      ExpensiveTaskPolicyToString(MainThreadOnly().expensive_task_policy));
+
   AnyThread().user_model.AsValueInto(state.get());
   render_widget_scheduler_signals_.AsValueInto(state.get());
 
-  return state;
+  return std::move(state);
 }
 
 void RendererSchedulerImpl::OnIdlePeriodStarted() {
@@ -1066,18 +1212,24 @@ void RendererSchedulerImpl::OnIdlePeriodEnded() {
   UpdatePolicyLocked(UpdateType::MAY_EARLY_OUT_IF_POLICY_UNCHANGED);
 }
 
-void RendererSchedulerImpl::AddPendingNavigation() {
+void RendererSchedulerImpl::AddPendingNavigation(
+      blink::WebScheduler::NavigatingFrameType type) {
   helper_.CheckOnValidThread();
-  MainThreadOnly().navigation_task_expected_count++;
-  UpdatePolicy();
+  if (type == blink::WebScheduler::NavigatingFrameType::kMainFrame) {
+    MainThreadOnly().navigation_task_expected_count++;
+    UpdatePolicy();
+  }
 }
 
-void RendererSchedulerImpl::RemovePendingNavigation() {
+void RendererSchedulerImpl::RemovePendingNavigation(
+      blink::WebScheduler::NavigatingFrameType type) {
   helper_.CheckOnValidThread();
   DCHECK_GT(MainThreadOnly().navigation_task_expected_count, 0);
-  if (MainThreadOnly().navigation_task_expected_count > 0)
+  if (type == blink::WebScheduler::NavigatingFrameType::kMainFrame &&
+      MainThreadOnly().navigation_task_expected_count > 0) {
     MainThreadOnly().navigation_task_expected_count--;
-  UpdatePolicy();
+    UpdatePolicy();
+  }
 }
 
 void RendererSchedulerImpl::OnNavigationStarted() {
@@ -1128,6 +1280,26 @@ void RendererSchedulerImpl::ResetForNavigationLocked() {
   UpdatePolicyLocked(UpdateType::MAY_EARLY_OUT_IF_POLICY_UNCHANGED);
 }
 
+void RendererSchedulerImpl::SetTopLevelBlameContext(
+    base::trace_event::BlameContext* blame_context) {
+  // Any task that runs in the default task runners belongs to the context of
+  // all frames (as opposed to a particular frame). Note that the task itself
+  // may still enter a more specific blame context if necessary.
+  //
+  // Per-frame task runners (loading, timers, etc.) are configured with a more
+  // specific blame context by WebFrameSchedulerImpl.
+  control_task_runner_->SetBlameContext(blame_context);
+  DefaultTaskRunner()->SetBlameContext(blame_context);
+  default_loading_task_runner_->SetBlameContext(blame_context);
+  default_timer_task_runner_->SetBlameContext(blame_context);
+  compositor_task_runner_->SetBlameContext(blame_context);
+  idle_helper_.IdleTaskRunner()->SetBlameContext(blame_context);
+}
+
+void RendererSchedulerImpl::SetRAILModeObserver(RAILModeObserver* observer) {
+  MainThreadOnly().rail_mode_observer = observer;
+}
+
 void RendererSchedulerImpl::RegisterTimeDomain(TimeDomain* time_domain) {
   helper_.RegisterTimeDomain(time_domain);
 }
@@ -1146,30 +1318,44 @@ base::TickClock* RendererSchedulerImpl::tick_clock() const {
 
 void RendererSchedulerImpl::AddWebViewScheduler(
     WebViewSchedulerImpl* web_view_scheduler) {
-  MainThreadOnly().web_view_schedulers_.insert(web_view_scheduler);
+  MainThreadOnly().web_view_schedulers.insert(web_view_scheduler);
 }
 
 void RendererSchedulerImpl::RemoveWebViewScheduler(
     WebViewSchedulerImpl* web_view_scheduler) {
-  DCHECK(MainThreadOnly().web_view_schedulers_.find(web_view_scheduler) !=
-         MainThreadOnly().web_view_schedulers_.end());
-  MainThreadOnly().web_view_schedulers_.erase(web_view_scheduler);
+  DCHECK(MainThreadOnly().web_view_schedulers.find(web_view_scheduler) !=
+         MainThreadOnly().web_view_schedulers.end());
+  MainThreadOnly().web_view_schedulers.erase(web_view_scheduler);
 }
 
 void RendererSchedulerImpl::BroadcastConsoleWarning(
     const std::string& message) {
   helper_.CheckOnValidThread();
-  for (auto& web_view_scheduler : MainThreadOnly().web_view_schedulers_)
+  for (auto& web_view_scheduler : MainThreadOnly().web_view_schedulers)
     web_view_scheduler->AddConsoleWarning(message);
 }
 
 void RendererSchedulerImpl::OnTriedToExecuteBlockedTask(
     const TaskQueue& queue,
     const base::PendingTask& task) {
+  if (!MainThreadOnly().expensive_task_blocking_allowed ||
+      MainThreadOnly().current_use_case == UseCase::TOUCHSTART ||
+      MainThreadOnly().longest_jank_free_task_duration <
+          base::TimeDelta::FromMilliseconds(kRailsResponseTimeMillis) ||
+      MainThreadOnly().timer_queue_suspend_count ||
+      MainThreadOnly().timer_queue_suspended_when_backgrounded) {
+    return;
+  }
+  if (!MainThreadOnly().timer_tasks_seem_expensive &&
+      !MainThreadOnly().loading_tasks_seem_expensive) {
+    return;
+  }
   if (!MainThreadOnly().have_reported_blocking_intervention_in_current_policy) {
     MainThreadOnly().have_reported_blocking_intervention_in_current_policy =
         true;
-    TRACE_TASK_EXECUTION("RendererSchedulerImpl::TaskBlocked", task);
+    TRACE_EVENT_INSTANT0("renderer.scheduler",
+                         "RendererSchedulerImpl::TaskBlocked",
+                         TRACE_EVENT_SCOPE_THREAD);
   }
 
   if (!MainThreadOnly().have_reported_blocking_intervention_since_navigation) {
@@ -1181,8 +1367,51 @@ void RendererSchedulerImpl::OnTriedToExecuteBlockedTask(
     MainThreadOnly().have_reported_blocking_intervention_since_navigation =
         true;
     BroadcastConsoleWarning(
-        "Deferred long-running timer task(s) to improve scrolling smoothness. "
-        "See crbug.com/574343.");
+        "Blink deferred a task in order to make scrolling smoother. "
+        "Your timer and network tasks should take less than 50ms to run "
+        "to avoid this. Please see "
+        "https://developers.google.com/web/tools/chrome-devtools/profile/evaluate-performance/rail"
+        " and https://crbug.com/574343#c40 for more information.");
+  }
+}
+
+// static
+const char* RendererSchedulerImpl::UseCaseToString(UseCase use_case) {
+  switch (use_case) {
+    case UseCase::NONE:
+      return "none";
+    case UseCase::COMPOSITOR_GESTURE:
+      return "compositor_gesture";
+    case UseCase::MAIN_THREAD_CUSTOM_INPUT_HANDLING:
+      return "main_thread_custom_input_handling";
+    case UseCase::SYNCHRONIZED_GESTURE:
+      return "synchronized_gesture";
+    case UseCase::TOUCHSTART:
+      return "touchstart";
+    case UseCase::LOADING:
+      return "loading";
+    case UseCase::MAIN_THREAD_GESTURE:
+      return "main_thread_gesture";
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
+// static
+const char* RendererSchedulerImpl::RAILModeToString(v8::RAILMode rail_mode) {
+  switch (rail_mode) {
+    case v8::PERFORMANCE_RESPONSE:
+      return "response";
+    case v8::PERFORMANCE_ANIMATION:
+      return "animation";
+    case v8::PERFORMANCE_IDLE:
+      return "idle";
+    case v8::PERFORMANCE_LOAD:
+      return "load";
+    default:
+      NOTREACHED();
+      return nullptr;
   }
 }
 

@@ -32,7 +32,7 @@
 #define BMPImageDecoder_h
 
 #include "platform/image-decoders/bmp/BMPImageReader.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -43,7 +43,7 @@ public:
 
     // ImageDecoder:
     String filenameExtension() const override { return "bmp"; }
-    void onSetData(SharedBuffer*) override;
+    void onSetData(SegmentReader*) override;
     // CAUTION: setFailed() deletes |m_reader|.  Be careful to avoid
     // accessing deleted memory, especially when calling this from inside
     // BMPImageReader!
@@ -74,7 +74,7 @@ private:
     size_t m_decodedOffset;
 
     // The reader used to do most of the BMP decoding.
-    OwnPtr<BMPImageReader> m_reader;
+    std::unique_ptr<BMPImageReader> m_reader;
 };
 
 } // namespace blink

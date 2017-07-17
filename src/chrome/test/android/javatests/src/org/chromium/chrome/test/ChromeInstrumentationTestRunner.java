@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.test;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -13,15 +14,18 @@ import com.google.android.gms.common.GoogleApiAvailability;
 
 import junit.framework.TestCase;
 
-import org.chromium.base.test.BaseInstrumentationTestRunner;
+import org.chromium.base.test.BaseChromiumInstrumentationTestRunner;
 import org.chromium.base.test.BaseTestResult;
+import org.chromium.base.test.util.RestrictionSkipCheck;
 import org.chromium.base.test.util.SkipCheck;
+import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.DisableInTabbedMode;
 import org.chromium.policy.test.annotations.Policies;
 import org.chromium.ui.base.DeviceFormFactor;
 
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 
 /**
@@ -31,7 +35,7 @@ import java.lang.reflect.Method;
  *  TODO(jbudorick): remove uses of deprecated org.apache.* crbug.com/488192
  */
 @SuppressWarnings("deprecation")
-public class ChromeInstrumentationTestRunner extends BaseInstrumentationTestRunner {
+public class ChromeInstrumentationTestRunner extends BaseChromiumInstrumentationTestRunner {
 
     private static final String TAG = "ChromeInstrumentationTestRunner";
 
@@ -44,12 +48,16 @@ public class ChromeInstrumentationTestRunner extends BaseInstrumentationTestRunn
     protected void addTestHooks(BaseTestResult result) {
         super.addTestHooks(result);
         result.addSkipCheck(new DisableInTabbedModeSkipCheck());
-        result.addSkipCheck(new ChromeRestrictionSkipCheck());
+        result.addSkipCheck(new ChromeRestrictionSkipCheck(getTargetContext()));
 
         result.addPreTestHook(Policies.getRegistrationHook());
     }
 
     private class ChromeRestrictionSkipCheck extends RestrictionSkipCheck {
+
+        public ChromeRestrictionSkipCheck(Context targetContext) {
+            super(targetContext);
+        }
 
         @Override
         protected boolean restrictionApplies(String restriction) {
@@ -62,9 +70,14 @@ public class ChromeInstrumentationTestRunner extends BaseInstrumentationTestRunn
                 return true;
             }
             if (TextUtils.equals(restriction,
-                                 ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
+                    ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
                     && (ConnectionResult.SUCCESS != GoogleApiAvailability.getInstance()
-                            .isGooglePlayServicesAvailable(getTargetContext()))) {
+                    .isGooglePlayServicesAvailable(getTargetContext()))) {
+                return true;
+            }
+            if (TextUtils.equals(restriction,
+                    ChromeRestriction.RESTRICTION_TYPE_OFFICIAL_BUILD)
+                    && (!ChromeVersionInfo.isOfficialBuild())) {
                 return true;
             }
             return false;
@@ -90,7 +103,8 @@ public class ChromeInstrumentationTestRunner extends BaseInstrumentationTestRunn
             try {
                 if (!FeatureUtilities.isDocumentMode(getTargetContext())) {
                     Method testMethod = testClass.getMethod(testCase.getName());
-                    if (testMethod.isAnnotationPresent(DisableInTabbedMode.class)
+                    if (((AnnotatedElement) testMethod)
+                            .isAnnotationPresent(DisableInTabbedMode.class)
                             || testClass.isAnnotationPresent(DisableInTabbedMode.class)) {
                         Log.i(TAG, "Test " + testClass.getName() + "#" + testCase.getName()
                                 + " is disabled in non-document mode.");

@@ -31,15 +31,16 @@
 
 namespace blink {
 
+// See WebFrameLoadType in public/web/WebFrameLoadType.h for details.
 enum FrameLoadType {
     FrameLoadTypeStandard,
     FrameLoadTypeBackForward,
     FrameLoadTypeReload,
-    FrameLoadTypeSame, // user loads same URL again (but not reload button)
+    FrameLoadTypeReloadMainResource,
     FrameLoadTypeReplaceCurrentItem,
     FrameLoadTypeInitialInChildFrame,
     FrameLoadTypeInitialHistoryLoad,
-    FrameLoadTypeReloadFromOrigin,
+    FrameLoadTypeReloadBypassingCache,
 };
 
 enum NavigationType {
@@ -56,7 +57,6 @@ enum ObjectContentType {
     ObjectContentImage,
     ObjectContentFrame,
     ObjectContentNetscapePlugin,
-    ObjectContentOtherPlugin
 };
 
 enum ShouldSendReferrer {
@@ -99,6 +99,13 @@ enum HistoryCommitType {
 enum HistoryScrollRestorationType {
     ScrollRestorationAuto,
     ScrollRestorationManual
+};
+
+enum class ProgressBarCompletion {
+    LoadEvent,
+    ResourcesBeforeDCL,
+    DOMContentLoaded,
+    ResourcesBeforeDCLAndSameOriginIFrames
 };
 
 } // namespace blink

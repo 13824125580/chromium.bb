@@ -7,15 +7,16 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/controls/menu/menu_types.h"
 #include "ui/views/views_export.h"
 
 namespace base {
-class TimeDelta;
+class TimeTicks;
 }
 
 namespace gfx {
@@ -129,13 +130,13 @@ class VIEWS_EXPORT MenuRunner {
   void Cancel();
 
   // Returns the time from the event which closed the menu - or 0.
-  base::TimeDelta closing_event_time() const;
+  base::TimeTicks closing_event_time() const;
 
  private:
   friend class test::MenuRunnerTestAPI;
 
   // Sets an implementation of RunMenuAt. This is intended to be used at test.
-  void SetRunnerHandler(scoped_ptr<MenuRunnerHandler> runner_handler);
+  void SetRunnerHandler(std::unique_ptr<MenuRunnerHandler> runner_handler);
 
   const int32_t run_types_;
 
@@ -144,9 +145,9 @@ class VIEWS_EXPORT MenuRunner {
 
   // An implementation of RunMenuAt. This is usually NULL and ignored. If this
   // is not NULL, this implementation will be used.
-  scoped_ptr<MenuRunnerHandler> runner_handler_;
+  std::unique_ptr<MenuRunnerHandler> runner_handler_;
 
-  scoped_ptr<internal::DisplayChangeListener> display_change_listener_;
+  std::unique_ptr<internal::DisplayChangeListener> display_change_listener_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuRunner);
 };

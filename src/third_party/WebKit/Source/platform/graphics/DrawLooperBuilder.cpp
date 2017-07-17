@@ -39,7 +39,9 @@
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkXfermode.h"
 #include "third_party/skia/include/effects/SkBlurMaskFilter.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -47,14 +49,14 @@ DrawLooperBuilder::DrawLooperBuilder() { }
 
 DrawLooperBuilder::~DrawLooperBuilder() { }
 
-PassOwnPtr<DrawLooperBuilder> DrawLooperBuilder::create()
+std::unique_ptr<DrawLooperBuilder> DrawLooperBuilder::create()
 {
-    return adoptPtr(new DrawLooperBuilder);
+    return wrapUnique(new DrawLooperBuilder);
 }
 
 PassRefPtr<SkDrawLooper> DrawLooperBuilder::detachDrawLooper()
 {
-    return adoptRef(m_skDrawLooperBuilder.detachLooper());
+    return fromSkSp(m_skDrawLooperBuilder.detach());
 }
 
 void DrawLooperBuilder::addUnmodifiedContent()
@@ -100,12 +102,10 @@ void DrawLooperBuilder::addShadow(const FloatSize& offset, float blur, const Col
         uint32_t mfFlags = SkBlurMaskFilter::kHighQuality_BlurFlag;
         if (shadowTransformMode == ShadowIgnoresTransforms)
             mfFlags |= SkBlurMaskFilter::kIgnoreTransform_BlurFlag;
-        RefPtr<SkMaskFilter> mf = adoptRef(SkBlurMaskFilter::Create(kNormal_SkBlurStyle, sigma, mfFlags));
-        paint->setMaskFilter(mf.get());
+        paint->setMaskFilter(SkBlurMaskFilter::Make(kNormal_SkBlurStyle, sigma, mfFlags));
     }
 
-    RefPtr<SkColorFilter> cf = adoptRef(SkColorFilter::CreateModeFilter(skColor, SkXfermode::kSrcIn_Mode));
-    paint->setColorFilter(cf.get());
+    paint->setColorFilter(SkColorFilter::MakeModeFilter(skColor, SkXfermode::kSrcIn_Mode));
 }
 
 } // namespace blink

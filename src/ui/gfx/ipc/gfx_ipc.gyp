@@ -14,9 +14,10 @@
       'dependencies': [
         '../../../base/base.gyp:base',
         '../../../ipc/ipc.gyp:ipc',
-        '../../../skia/skia.gyp:skia',
         '../gfx.gyp:gfx',
         '../gfx.gyp:gfx_geometry',
+        '../gfx.gyp:gfx_range',
+        'geometry/gfx_ipc_geometry.gyp:gfx_ipc_geometry',
       ],
       'defines': [
         'GFX_IPC_IMPLEMENTATION',

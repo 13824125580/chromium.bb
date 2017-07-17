@@ -22,7 +22,7 @@ and library dependencies directly from Ubuntu:
 
 ### Installing the sysroot
 
-A prebuilt sysroot image is kept up-to-date on Cloud Storage. It will
+A prebuilt sysroot image is kept up to date on Cloud Storage. It will
 automatically be installed by gclient runhooks installed if you have
 `target_arch=arm` in your `GYP_DEFINES`.
 
@@ -37,11 +37,6 @@ To build for ARM, using the clang binary in the chrome tree, use the following
 gn args:
 
     target_cpu = "arm"
-
-Or the following gyp settings:
-
-    GYP_CROSSCOMPILE=1
-    GYP_DEFINES="target_arch=arm"
 
 ## Testing
 

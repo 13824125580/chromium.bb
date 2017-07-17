@@ -5,10 +5,12 @@
 #include "ui/display/chromeos/update_display_configuration_task.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -55,7 +57,7 @@ class TestDisplayLayoutManager : public DisplayLayoutManager {
   }
 
   void set_software_mirroring_controller(
-      scoped_ptr<DisplayConfigurator::SoftwareMirroringController>
+      std::unique_ptr<DisplayConfigurator::SoftwareMirroringController>
           software_mirroring_controller) {
     software_mirroring_controller_ = std::move(software_mirroring_controller);
   }
@@ -136,7 +138,7 @@ class TestDisplayLayoutManager : public DisplayLayoutManager {
 
   chromeos::DisplayPowerState power_state_;
 
-  scoped_ptr<DisplayConfigurator::SoftwareMirroringController>
+  std::unique_ptr<DisplayConfigurator::SoftwareMirroringController>
       software_mirroring_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(TestDisplayLayoutManager);
@@ -152,17 +154,19 @@ class UpdateDisplayConfigurationTaskTest : public testing::Test {
         configuration_status_(false),
         display_state_(MULTIPLE_DISPLAY_STATE_INVALID),
         power_state_(chromeos::DISPLAY_POWER_ALL_ON) {
-    std::vector<const DisplayMode*> modes;
-    modes.push_back(&small_mode_);
-    displays_[0].set_current_mode(&small_mode_);
-    displays_[0].set_native_mode(&small_mode_);
-    displays_[0].set_modes(modes);
+    std::vector<std::unique_ptr<const DisplayMode>> modes;
+    modes.push_back(small_mode_.Clone());
+    displays_[0].set_current_mode(modes[0].get());
+    displays_[0].set_native_mode(modes[0].get());
+    displays_[0].set_modes(std::move(modes));
     displays_[0].set_display_id(123);
 
-    modes.push_back(&big_mode_);
-    displays_[1].set_current_mode(&big_mode_);
-    displays_[1].set_native_mode(&big_mode_);
-    displays_[1].set_modes(modes);
+    modes.clear();
+    modes.push_back(small_mode_.Clone());
+    modes.push_back(big_mode_.Clone());
+    displays_[1].set_current_mode(modes[1].get());
+    displays_[1].set_native_mode(modes[1].get());
+    displays_[1].set_modes(std::move(modes));
     displays_[1].set_display_id(456);
   }
   ~UpdateDisplayConfigurationTaskTest() override {}
@@ -404,7 +408,7 @@ TEST_F(UpdateDisplayConfigurationTaskTest, SingleChangePowerConfiguration) {
 TEST_F(UpdateDisplayConfigurationTaskTest, NoopSoftwareMirrorConfiguration) {
   layout_manager_.set_should_mirror(false);
   layout_manager_.set_software_mirroring_controller(
-      make_scoped_ptr(new TestSoftwareMirroringController()));
+      base::WrapUnique(new TestSoftwareMirroringController()));
   UpdateDisplays(2);
 
   {
@@ -438,7 +442,7 @@ TEST_F(UpdateDisplayConfigurationTaskTest,
        ForceConfigurationWhileGoingToSoftwareMirror) {
   layout_manager_.set_should_mirror(false);
   layout_manager_.set_software_mirroring_controller(
-      make_scoped_ptr(new TestSoftwareMirroringController()));
+      base::WrapUnique(new TestSoftwareMirroringController()));
   UpdateDisplays(2);
 
   {

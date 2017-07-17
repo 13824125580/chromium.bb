@@ -8,6 +8,7 @@
 #include "core/CoreExport.h"
 #include "core/animation/Keyframe.h"
 #include "core/animation/animatable/AnimatableValue.h"
+#include "core/css/CSSPropertyIDTemplates.h"
 
 namespace blink {
 
@@ -40,7 +41,7 @@ public:
         const PassRefPtr<AnimatableValue> getAnimatableValue() const final { return m_value; }
 
         PassRefPtr<Keyframe::PropertySpecificKeyframe> neutralKeyframe(double offset, PassRefPtr<TimingFunction> easing) const final;
-        PassRefPtr<Interpolation> maybeCreateInterpolation(PropertyHandle, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle*) const final;
+        PassRefPtr<Interpolation> createInterpolation(PropertyHandle, const Keyframe::PropertySpecificKeyframe& end) const final;
 
     private:
         PropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, PassRefPtr<AnimatableValue> value, EffectModel::CompositeOperation composite)

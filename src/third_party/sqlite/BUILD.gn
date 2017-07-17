@@ -39,6 +39,9 @@ if (!use_system_sqlite) {
       "amalgamation/config.h",
       "amalgamation/sqlite3.c",
       "amalgamation/sqlite3.h",
+      "src/src/recover.c",
+      "src/src/recover.h",
+      "src/src/recover_varint.c",
     ]
 
     cflags = []
@@ -100,14 +103,6 @@ if (!use_system_sqlite) {
       } else {
         defines += [ "SQLITE_API=__attribute__((visibility(\"default\")))" ]
       }
-    }
-    if (is_chromeos) {
-      defines += [
-        # Despite obvious warnings about not using this flag in deployment, we
-        # are turning off sync in ChromeOS and relying on the underlying
-        # journaling filesystem to do error recovery properly. It's much faster.
-        "SQLITE_NO_SYNC",
-      ]
     }
     if (is_posix) {
       defines += [
@@ -221,6 +216,9 @@ if (use_system_sqlite) {
   source_set("sqlite") {
     public_configs = [ ":sqlite_config" ]
     if (is_ios) {
+      public_deps = [
+        ":sqlite_recover",
+      ]
       deps = [
         ":sqlite_regexp",
       ]
@@ -228,6 +226,15 @@ if (use_system_sqlite) {
   }
 
   if (is_ios) {
+    source_set("sqlite_recover") {
+      sources = [
+        # TODO(shess): Move out of the SQLite source tree, perhaps to ext/.
+        "src/src/recover.c",
+        "src/src/recover.h",
+        "src/src/recover_varint.c",
+      ]
+    }
+
     source_set("sqlite_regexp") {
       defines = [
         # Necessary to statically compile the extension.

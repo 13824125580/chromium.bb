@@ -20,6 +20,7 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/save_page_type.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/stop_find_action.h"
 #include "ipc/ipc_sender.h"
@@ -55,11 +56,11 @@ class RenderFrameHost;
 class RenderProcessHost;
 class RenderViewHost;
 class RenderWidgetHostView;
-class SiteInstance;
 class WebContentsDelegate;
 struct CustomContextMenuContext;
 struct DropData;
 struct Manifest;
+struct MHTMLGenerationParams;
 struct PageImportanceSignals;
 struct RendererPreferences;
 
@@ -67,7 +68,7 @@ struct RendererPreferences;
 // (usually HTML) in a rectangular area.
 //
 // Instantiating one is simple:
-//   scoped_ptr<content::WebContents> web_contents(
+//   std::unique_ptr<content::WebContents> web_contents(
 //       content::WebContents::Create(
 //           content::WebContents::CreateParams(browser_context)));
 //   gfx::NativeView view = web_contents->GetNativeView();
@@ -76,7 +77,8 @@ struct RendererPreferences;
 //
 // That's it; go to your kitchen, grab a scone, and chill. WebContents will do
 // all the multi-process stuff behind the scenes. More details are at
-// http://www.chromium.org/developers/design-documents/multi-process-architecture .
+// http://www.chromium.org/developers/design-documents/multi-process-architecture
+// .
 //
 // Each WebContents has exactly one NavigationController; each
 // NavigationController belongs to one WebContents. The NavigationController can
@@ -91,14 +93,14 @@ class WebContents : public PageNavigator,
     explicit CreateParams(BrowserContext* context);
     CreateParams(const CreateParams& other);
     ~CreateParams();
-    CreateParams(BrowserContext* context, SiteInstance* site);
+    CreateParams(BrowserContext* context, scoped_refptr<SiteInstance> site);
 
     BrowserContext* browser_context;
 
     // Specifying a SiteInstance here is optional.  It can be set to avoid an
     // extra process swap if the first navigation is expected to require a
     // privileged process.
-    SiteInstance* site_instance;
+    scoped_refptr<SiteInstance> site_instance;
 
     // The process id of the frame initiating the open.
     int opener_render_process_id;
@@ -148,6 +150,14 @@ class WebContents : public PageNavigator,
     // RenderFrame, have already been created on the renderer side, and
     // WebContents construction should take this into account.
     bool renderer_initiated_creation;
+
+    // True if the WebContents should create its renderer process and main
+    // RenderFrame before the first navigation. This is useful to reduce
+    // the latency of the first navigation in cases where it might
+    // not happen right away.
+    // Note that the pre-created renderer process may not be used if the first
+    // navigation requires a dedicated or privileged process, such as a WebUI.
+    bool initialize_renderer;
   };
 
   // Creates a new WebContents.
@@ -194,16 +204,20 @@ class WebContents : public PageNavigator,
   // |GetLastCommittedURL| as appropriate.
   virtual const GURL& GetURL() const = 0;
 
-  // Gets the URL currently being displayed in the URL bar, if there is one.
-  // This URL might be a pending navigation that hasn't committed yet, so it is
-  // not guaranteed to match the current page in this WebContents. A typical
-  // example of this is interstitials, which show the URL of the new/loading
-  // page (active) but the security context is of the old page (last committed).
+  // Gets the virtual URL currently being displayed in the URL bar, if there is
+  // one. This URL might be a pending navigation that hasn't committed yet, so
+  // it is not guaranteed to match the current page in this WebContents. A
+  // typical example of this is interstitials, which show the URL of the
+  // new/loading page (active) but the security context is of the old page (last
+  // committed).
   virtual const GURL& GetVisibleURL() const = 0;
 
-  // Gets the last committed URL. It represents the current page that is
-  // displayed in this WebContents. It represents the current security
-  // context.
+  // Gets the virtual URL of the last committed page in this WebContents.
+  // Virtual URLs are meant to be displayed to the user (e.g., they include the
+  // "view-source:" prefix for view source URLs, unlike NavigationEntry::GetURL
+  // and NavigationHandle::GetURL). The last committed page is the current
+  // security context and the content that is actually displayed within the tab.
+  // See also GetVisibleURL above, which may differ from this URL.
   virtual const GURL& GetLastCommittedURL() const = 0;
 
   // Return the currently active RenderProcessHost and RenderViewHost. Each of
@@ -234,9 +248,8 @@ class WebContents : public PageNavigator,
   // breadth-first traversal order.
   virtual std::vector<RenderFrameHost*> GetAllFrames() = 0;
 
-  // Sends the given IPC to all frames in the currently active view and returns
-  // the number of sent messages (i.e. the number of processed frames). This is
-  // a convenience method instead of calling ForEach.
+  // Sends the given IPC to all live frames in this WebContents and returns the
+  // number of sent messages (i.e. the number of processed frames).
   virtual int SendToAllFrames(IPC::Message* message) = 0;
 
   // Gets the current RenderViewHost for this tab.
@@ -249,6 +262,12 @@ class WebContents : public PageNavigator,
   // Returns the currently active RenderWidgetHostView. This may change over
   // time and can be nullptr (during setup and teardown).
   virtual RenderWidgetHostView* GetRenderWidgetHostView() const = 0;
+
+  // Returns the outermost RenderWidgetHostView. This will return the platform
+  // specific RenderWidgetHostView (as opposed to
+  // RenderWidgetHostViewChildFrame), which can be used to create context
+  // menus.
+  virtual RenderWidgetHostView* GetTopLevelRenderWidgetHostView() = 0;
 
   // Causes the current page to be closed, including running its onunload event
   // handler.
@@ -289,11 +308,6 @@ class WebContents : public PageNavigator,
   // Returns true only if complete accessibility mode is on, meaning there's
   // both renderer accessibility, and a native browser accessibility tree.
   virtual bool IsFullAccessibilityModeForTesting() const = 0;
-
-#if defined(OS_WIN)
-  virtual void SetParentNativeViewAccessible(
-      gfx::NativeViewAccessible accessible_parent) = 0;
-#endif
 
   virtual const PageImportanceSignals& GetPageImportanceSignals() const = 0;
 
@@ -364,12 +378,17 @@ class WebContents : public PageNavigator,
   virtual bool IsAudioMuted() const = 0;
   virtual void SetAudioMuted(bool mute) = 0;
 
+  // Indicates whether any frame in the WebContents is connected to a Bluetooth
+  // Device.
+  virtual bool IsConnectedToBluetoothDevice() const = 0;
+
   // Indicates whether this tab should be considered crashed. The setter will
   // also notify the delegate when the flag is changed.
   virtual bool IsCrashed() const  = 0;
   virtual void SetIsCrashed(base::TerminationStatus status, int error_code) = 0;
 
   virtual base::TerminationStatus GetCrashedStatus() const = 0;
+  virtual int GetCrashedErrorCode() const = 0;
 
   // Whether the tab is in the process of being destroyed.
   virtual bool IsBeingDestroyed() const = 0;
@@ -396,13 +415,9 @@ class WebContents : public PageNavigator,
   // Runs the beforeunload handler for the main frame. See also ClosePage and
   // SwapOut in RenderViewHost, which run the unload handler.
   //
-  // |for_cross_site_transition| indicates whether this call is for the current
-  // frame during a cross-process navigation. False means we're closing the
-  // entire tab.
-  //
   // TODO(creis): We should run the beforeunload handler for every frame that
   // has one.
-  virtual void DispatchBeforeUnload(bool for_cross_site_transition) = 0;
+  virtual void DispatchBeforeUnload() = 0;
 
   // Attaches this inner WebContents to its container frame
   // |outer_contents_frame| in |outer_web_contents|.
@@ -420,7 +435,7 @@ class WebContents : public PageNavigator,
   virtual WebContents* Clone() = 0;
 
   // Reloads the focused frame.
-  virtual void ReloadFocusedFrame(bool ignore_cache) = 0;
+  virtual void ReloadFocusedFrame(bool bypass_cache) = 0;
 
   // Reloads all the Lo-Fi images in this WebContents. Ignores the cache and
   // reloads from the network.
@@ -541,8 +556,12 @@ class WebContents : public PageNavigator,
                                     const std::string& headers) = 0;
 
   // Generate an MHTML representation of the current page in the given file.
+  // If |use_binary_encoding| is specified, a Content-Transfer-Encoding value of
+  // 'binary' will be used, instead of a combination of 'quoted-printable' and
+  // 'base64'.  Binary encoding is known to have interoperability issues and is
+  // not the recommended encoding for shareable content.
   virtual void GenerateMHTML(
-      const base::FilePath& file,
+      const MHTMLGenerationParams& params,
       const base::Callback<void(int64_t /* size of the file */)>& callback) = 0;
 
   // Returns the contents MIME type after a navigation.
@@ -698,7 +717,6 @@ class WebContents : public PageNavigator,
   // as soon as they are ready.
   virtual void ResumeLoadingCreatedWebContents() = 0;
 
-#if defined(OS_ANDROID)
   // Requests to resume the current media session.
   virtual void ResumeMediaSession() = 0;
   // Requests to suspend the current media session.
@@ -706,9 +724,24 @@ class WebContents : public PageNavigator,
   // Requests to stop the current media session.
   virtual void StopMediaSession() = 0;
 
+#if defined(OS_ANDROID)
   CONTENT_EXPORT static WebContents* FromJavaWebContents(
       jobject jweb_contents_android);
   virtual base::android::ScopedJavaLocalRef<jobject> GetJavaWebContents() = 0;
+
+  // Selects and zooms to the find result nearest to the point (x,y) defined in
+  // find-in-page coordinates.
+  virtual void ActivateNearestFindResult(float x, float y) = 0;
+
+  // Requests the rects of the current find matches from the renderer
+  // process. |current_version| is the version of find rects that the caller
+  // already knows about. This version will be compared to the current find
+  // rects version in the renderer process (which is updated whenever the rects
+  // change), to see which new rect data will need to be sent back.
+  //
+  // TODO(paulmeyer): This process will change slightly once multi-process
+  // find-in-page is implemented. This comment should be updated at that time.
+  virtual void RequestFindMatchRects(int current_version) = 0;
 #elif defined(OS_MACOSX)
   // Allowing other views disables optimizations which assume that only a single
   // WebContents is present.

@@ -30,16 +30,14 @@
 #include "platform/geometry/IntPoint.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/IntSize.h"
-#include "platform/graphics/paint/DisplayItemClient.h"
 #include "platform/scroll/ScrollTypes.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
 
 namespace blink {
 
 class Widget;
 
-class PLATFORM_EXPORT ScrollbarThemeClient : public DisplayItemClient {
+class PLATFORM_EXPORT ScrollbarThemeClient {
 public:
     virtual int x() const = 0;
     virtual int y() const = 0;
@@ -57,7 +55,7 @@ public:
     virtual void invalidate() = 0;
     virtual void invalidateRect(const IntRect&) = 0;
 
-    virtual ScrollbarOverlayStyle scrollbarOverlayStyle() const = 0;
+    virtual ScrollbarOverlayStyle getScrollbarOverlayStyle() const = 0;
     virtual void getTickmarks(Vector<IntRect>&) const = 0;
     virtual bool isScrollableAreaActive() const = 0;
 

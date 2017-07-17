@@ -41,8 +41,17 @@
       'type': 'static_library',
       'dependencies': [
         ':safe_browsing_db_shared',
+        ':v4_store_proto',
       ],
       'sources': [
+        'safe_browsing_db/v4_database.h',
+        'safe_browsing_db/v4_database.cc',
+        'safe_browsing_db/v4_local_database_manager.h',
+        'safe_browsing_db/v4_local_database_manager.cc',
+        'safe_browsing_db/v4_store.h',
+        'safe_browsing_db/v4_store.cc',
+        'safe_browsing_db/v4_update_protocol_manager.h',
+        'safe_browsing_db/v4_update_protocol_manager.cc',
       ],
       'include_dirs': [
         '..',
@@ -60,7 +69,7 @@
       ],
       'sources': [
         # Note: sources list duplicated in GN build.
-        'safe_browsing_db/remote_database_managerh',
+        'safe_browsing_db/remote_database_manager.h',
         'safe_browsing_db/remote_database_manager.cc',
         'safe_browsing_db/safe_browsing_api_handler.h',
         'safe_browsing_db/safe_browsing_api_handler.cc',
@@ -74,7 +83,7 @@
       'msvs_disabled_warnings': [4267, ],
     },
     {
-      # GN version: //components/safe_browsing_db:proto
+      # GN version: //components/safe_browsing_db:safebrowsing_proto
       # Protobuf compiler / generator for the Safe Browsing protocol buffer.
       'target_name': 'safebrowsing_proto',
       'type': 'static_library',
@@ -92,6 +101,22 @@
       'target_name': 'safe_browsing_metadata_proto',
       'type': 'static_library',
       'sources': [ 'safe_browsing_db/metadata.proto' ],
+      'variables': {
+        'proto_in_dir': 'safe_browsing_db',
+        'proto_out_dir': 'components/safe_browsing_db',
+      },
+      'includes': [ '../build/protoc.gypi' ]
+    },
+    {
+      # GN version: //components/safe_browsing_db:v4_store_proto
+      # Protobuf compiler / generator for the Safe Browsing protocol buffer for
+      # storing hash-prefixes on disk.
+      'target_name': 'v4_store_proto',
+      'type': 'static_library',
+      'dependencies': [
+        ':safebrowsing_proto',
+      ],
+      'sources': [ 'safe_browsing_db/v4_store.proto' ],
       'variables': {
         'proto_in_dir': 'safe_browsing_db',
         'proto_out_dir': 'components/safe_browsing_db',

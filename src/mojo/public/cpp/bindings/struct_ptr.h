@@ -8,8 +8,8 @@
 #include <new>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
-#include "mojo/public/cpp/system/macros.h"
 
 namespace mojo {
 namespace internal {
@@ -26,11 +26,10 @@ class StructHelper {
 }  // namespace internal
 
 // Smart pointer wrapping a mojom structure with move-only semantics.
-template <typename Struct>
+template <typename S>
 class StructPtr {
-  MOJO_MOVE_ONLY_TYPE(StructPtr)
-
  public:
+  using Struct = S;
 
   StructPtr() : ptr_(nullptr) {}
   StructPtr(decltype(nullptr)) : ptr_(nullptr) {}
@@ -86,6 +85,7 @@ class StructPtr {
   }
 
  private:
+  // TODO(dcheng): Use an explicit conversion operator.
   typedef Struct* StructPtr::*Testable;
 
  public:
@@ -112,14 +112,15 @@ class StructPtr {
   }
 
   Struct* ptr_;
+
+  DISALLOW_COPY_AND_ASSIGN(StructPtr);
 };
 
 // Designed to be used when Struct is small and copyable.
-template <typename Struct>
+template <typename S>
 class InlinedStructPtr {
-  MOJO_MOVE_ONLY_TYPE(InlinedStructPtr);
-
  public:
+  using Struct = S;
 
   InlinedStructPtr() : is_null_(true) {}
   InlinedStructPtr(decltype(nullptr)) : is_null_(true) {}
@@ -175,6 +176,7 @@ class InlinedStructPtr {
   }
 
  private:
+  // TODO(dcheng): Use an explicit conversion operator.
   typedef Struct InlinedStructPtr::*Testable;
 
  public:
@@ -199,6 +201,8 @@ class InlinedStructPtr {
 
   mutable Struct value_;
   bool is_null_;
+
+  DISALLOW_COPY_AND_ASSIGN(InlinedStructPtr);
 };
 
 }  // namespace mojo

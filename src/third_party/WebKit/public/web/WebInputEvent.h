@@ -139,7 +139,8 @@ public:
         TouchMove,
         TouchEnd,
         TouchCancel,
-        TouchTypeLast = TouchCancel,
+        TouchScrollStarted,
+        TouchTypeLast = TouchScrollStarted,
 
         TypeLast = TouchTypeLast
     };
@@ -182,11 +183,27 @@ public:
         IsComposing      = 1 << 14,
 
         AltGrKey         = 1 << 15,
-        OSKey            = 1 << 16,
-        FnKey            = 1 << 17,
-        SymbolKey        = 1 << 18,
+        FnKey            = 1 << 16,
+        SymbolKey        = 1 << 17,
 
-        ScrollLockOn     = 1 << 19,
+        ScrollLockOn     = 1 << 18,
+    };
+
+    // Indicates whether the browser needs to block on the ACK result for
+    // this event, and if not why note (for metrics/diagnostics purposes).
+    // These values are direct mappings of the values in PlatformEvent
+    // so the values can be cast between the enumerations. static_asserts
+    // checking this are in web/WebInputEventConversion.cpp.
+    enum DispatchType {
+        // Event can be canceled.
+        Blocking,
+        // Event can not be canceled.
+        EventNonBlocking,
+        // All listeners are passive; not cancelable.
+        ListenersNonBlockingPassive,
+        // This value represents a state which would have normally blocking
+        // but was forced to be non-blocking; not cancelable.
+        ListenersForcedNonBlockingPassive,
     };
 
     // The rail mode for a wheel event specifies the axis on which scrolling is
@@ -319,7 +336,7 @@ public:
 
     // Sets keyIdentifier based on the value of windowsKeyCode.  This is
     // handy for generating synthetic keyboard events.
-    BLINK_EXPORT void setKeyIdentifierFromWindowsKeyCode();
+    BLINK_COMMON_EXPORT void setKeyIdentifierFromWindowsKeyCode();
 };
 
 // WebMouseEvent --------------------------------------------------------------
@@ -428,13 +445,11 @@ public:
     bool scrollByPage;
     bool hasPreciseScrollingDeltas;
 
-    // When false, this wheel event should not trigger scrolling (or any other default
-    // action) if the event goes unhandled by JavaScript. This is used, for example,
-    // when the browser decides the default behavior for Ctrl+Wheel should be to zoom
-    // instead of scroll.
-    bool canScroll;
-
     RailsMode railsMode;
+
+    // Whether the event is blocking, non-blocking, all event
+    // listeners were passive or was forced to be non-blocking.
+    DispatchType dispatchType;
 
     WebMouseWheelEvent()
         : WebMouseEvent(sizeof(WebMouseWheelEvent))
@@ -451,8 +466,8 @@ public:
         , canRubberbandRight(true)
         , scrollByPage(false)
         , hasPreciseScrollingDeltas(false)
-        , canScroll(true)
         , railsMode(RailsModeFree)
+        , dispatchType(Blocking)
     {
     }
 };
@@ -467,11 +482,26 @@ public:
         Page // page (visible viewport) based scrolling.
     };
 
+    enum InertialPhaseState {
+        UnknownMomentumPhase = 0, // No phase information.
+        NonMomentumPhase, // Regular scrolling phase.
+        MomentumPhase, // Momentum phase.
+    };
+
     int x;
     int y;
     int globalX;
     int globalY;
     WebGestureDevice sourceDevice;
+
+    // If the WebGestureEvent has sourceDevice=WebGestureDeviceTouchscreen, this
+    // field contains the unique identifier for the touch event that released
+    // this event at TouchDispositionGestureFilter. If the WebGestureEvents was
+    // not released through a touch event (e.g. timer-released gesture events or
+    // gesture events with sourceDevice!=WebGestureDeviceTouchscreen), the field
+    // contains 0. See crbug.com/618738.
+    uint32_t uniqueTouchEventId;
+
     // This field exists to allow BrowserPlugin to mark GestureScroll events as
     // 'resent' to handle the case where an event is not consumed when first
     // encountered; it should be handled differently by the plugin when it is
@@ -518,6 +548,13 @@ public:
             // If true, this event will skip hit testing to find a scroll
             // target and instead just scroll the viewport.
             bool targetViewport;
+            // The state of inertial phase scrolling. OSX has unique phases for normal and
+            // momentum scroll events. Should always be UnknownMomentumPhase for touch based
+            // input as it generates GestureFlingStart instead.
+            InertialPhaseState inertialPhase;
+            // True if this event was synthesized in order to force a hit test; avoiding scroll
+            // latching behavior until crbug.com/526463 is fully implemented.
+            bool synthetic;
         } scrollBegin;
 
         struct {
@@ -532,7 +569,7 @@ public:
             // the entirety of the generative motion.
             bool previousUpdateInSequencePrevented;
             bool preventPropagation;
-            bool inertial;
+            InertialPhaseState inertialPhase;
             // Default initialized to ScrollUnits::PrecisePixels.
             ScrollUnits deltaUnits;
         } scrollUpdate;
@@ -541,6 +578,15 @@ public:
             // The original delta units the scrollBegin and scrollUpdates
             // were sent as.
             ScrollUnits deltaUnits;
+            // The state of inertial phase scrolling. OSX has unique phases for normal and
+            // momentum scroll events. Should always be UnknownMomentumPhase for touch based
+            // input as it generates GestureFlingStart instead.
+            InertialPhaseState inertialPhase;
+            // True if this event was synthesized in order to generate the proper
+            // GSB/GSU/GSE matching sequences. This is a temporary so that a future
+            // GSB will generate a hit test so latching behavior is avoided
+            // until crbug.com/526463 is fully implemented.
+            bool synthetic;
         } scrollEnd;
 
         struct {
@@ -589,23 +635,29 @@ public:
     // List of all touches, regardless of state.
     WebTouchPoint touches[touchesLengthCap];
 
-    // Whether the event can be canceled (with preventDefault). If true then the browser
-    // must wait for an ACK for this event. If false then no ACK IPC is expected.
-    bool cancelable;
+    // Whether the event is blocking, non-blocking, all event
+    // listeners were passive or was forced to be non-blocking.
+    DispatchType dispatchType;
 
     // For a single touch, this is true after the touch-point has moved beyond
     // the platform slop region. For a multitouch, this is true after any
     // touch-point has moved (by whatever amount).
     bool movedBeyondSlopRegion;
 
-    // A unique identifier for the touch event.
+    // Whether there was an active fling animation when the event was
+    // dispatched.
+    bool dispatchedDuringFling;
+
+    // A unique identifier for the touch event. Valid ids start at one and
+    // increase monotonically. Zero means an unknown id.
     uint32_t uniqueTouchEventId;
 
     WebTouchEvent()
         : WebInputEvent(sizeof(WebTouchEvent))
         , touchesLength(0)
-        , cancelable(true)
+        , dispatchType(Blocking)
         , movedBeyondSlopRegion(false)
+        , dispatchedDuringFling(false)
         , uniqueTouchEventId(0)
     {
     }

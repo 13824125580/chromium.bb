@@ -29,37 +29,51 @@ public:
     PointerEventFactory();
     ~PointerEventFactory();
 
-    PassRefPtrWillBeRawPtr<PointerEvent> create(
+    PointerEvent* create(
         const AtomicString& mouseEventName, const PlatformMouseEvent&,
-        PassRefPtrWillBeRawPtr<EventTarget> relatedTarget,
-        PassRefPtrWillBeRawPtr<AbstractView>);
+        EventTarget* relatedTarget,
+        LocalDOMWindow*);
 
-    PassRefPtrWillBeRawPtr<PointerEvent> create(const AtomicString& type,
+    PointerEvent* create(const AtomicString& type,
         const PlatformTouchPoint&, PlatformEvent::Modifiers,
-        const double width, const double height,
-        const double clientX, const double clientY);
+        const FloatSize& pointRadius,
+        const FloatPoint& clientPoint,
+        DOMWindow*);
 
-    PassRefPtrWillBeRawPtr<PointerEvent> createPointerCancel(
-        const PlatformTouchPoint&);
+    PointerEvent* createPointerCancelEvent(
+        const int pointerId, const WebPointerProperties::PointerType);
 
-    PassRefPtrWillBeRawPtr<PointerEvent> create(
-        PassRefPtrWillBeRawPtr<PointerEvent>,
-        const AtomicString& type,
-        PassRefPtrWillBeRawPtr<EventTarget>);
+    // For creating capture events (i.e got/lostpointercapture)
+    PointerEvent* createPointerCaptureEvent(
+        PointerEvent*,
+        const AtomicString&);
+
+    // For creating boundary events (i.e pointerout/leave/over/enter)
+    PointerEvent* createPointerBoundaryEvent(
+        PointerEvent*,
+        const AtomicString&,
+        EventTarget*);
 
     // Clear all the existing ids.
     void clear();
 
-    // When a pointerEvent with a particular id is removed that id is considered
-    // free even though there might have been other PointerEvents that were
-    // generated with the same id before.
-    void remove(const PassRefPtrWillBeRawPtr<PointerEvent>);
+    // When a particular pointerId is removed, the id is considered free even
+    // though there might have been other PointerEvents that were generated with
+    // the same id before.
+    bool remove(const int);
 
-    // Returns whether a pointer id exists and active
-    bool isActive(const int);
+    // Returns all ids of the given pointerType.
+    Vector<int> getPointerIdsOfType(WebPointerProperties::PointerType) const;
 
-    // Returns whether a pointer id exists and has at least one pressed button
-    bool isActiveButtonsState(const int);
+    // Returns whether a pointer id exists and active.
+    bool isActive(const int) const;
+
+    // Returns whether a pointer id exists and has at least one pressed button.
+    bool isActiveButtonsState(const int) const;
+
+    // Returns the id of the pointer event corresponding to the given pointer
+    // properties if exists otherwise s_invalidId.
+    int getPointerEventId(const WebPointerProperties&) const;
 
 private:
     typedef WTF::UnsignedWithZeroKeyHashTraits<int> UnsignedHash;
@@ -82,8 +96,10 @@ private:
 
     int addIdAndActiveButtons(const IncomingId, bool isActiveButtons);
     bool isPrimary(const int) const;
-    void setIdTypeButtons(PointerEventInit &, const WebPointerProperties &,
+    void setIdTypeButtons(PointerEventInit&, const WebPointerProperties&,
         unsigned buttons);
+    void setBubblesAndCancelable(PointerEventInit&, const AtomicString& type);
+
     static const int s_invalidId;
     static const int s_mouseId;
 

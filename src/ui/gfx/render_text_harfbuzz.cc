@@ -11,6 +11,7 @@
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/char_iterator.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,6 +29,7 @@
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/harfbuzz_font_skia.h"
 #include "ui/gfx/range/range_f.h"
+#include "ui/gfx/skia_util.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/gfx/utf16_indexing.h"
 
@@ -402,9 +404,10 @@ class HarfBuzzLineBreaker {
       // Merge segments that belong to the same run.
       if (last_segment.run == segment.run) {
         DCHECK_EQ(last_segment.char_range.end(), segment.char_range.start());
+        // Check there is less than a pixel between one run and the next.
         DCHECK_LE(
             std::abs(last_segment.x_range.end() - segment.x_range.start()),
-            std::numeric_limits<float>::epsilon());
+            1.0f);
         last_segment.char_range.set_end(segment.char_range.end());
         last_segment.x_range.set_end(SkScalarToFloat(text_x_) +
                                      segment.width());
@@ -419,7 +422,7 @@ class HarfBuzzLineBreaker {
     line->segments.push_back(segment);
 
     SkPaint paint;
-    paint.setTypeface(run.skia_face.get());
+    paint.setTypeface(run.skia_face);
     paint.setTextSize(SkIntToScalar(run.font_size));
     paint.setAntiAlias(run.render_params.antialiasing);
     SkPaint::FontMetrics metrics;
@@ -565,21 +568,34 @@ struct CaseInsensitiveCompare {
 
 namespace internal {
 
-TextRunHarfBuzz::TextRunHarfBuzz()
+#if !defined(OS_MACOSX)
+sk_sp<SkTypeface> CreateSkiaTypeface(const Font& font,
+                                     bool italic,
+                                     Font::Weight weight) {
+  SkFontStyle skia_style(
+      static_cast<int>(weight), SkFontStyle::kNormal_Width,
+      italic ? SkFontStyle::kItalic_Slant : SkFontStyle::kUpright_Slant);
+  return sk_sp<SkTypeface>(SkTypeface::MakeFromName(
+      font.GetFontName().c_str(), skia_style));
+}
+#endif
+
+TextRunHarfBuzz::TextRunHarfBuzz(const Font& template_font)
     : width(0.0f),
       preceding_run_widths(0.0f),
       is_rtl(false),
       level(0),
       script(USCRIPT_INVALID_CODE),
       glyph_count(static_cast<size_t>(-1)),
+      font(template_font),
       font_size(0),
       baseline_offset(0),
       baseline_type(0),
-      font_style(0),
+      italic(false),
+      weight(Font::Weight::NORMAL),
       strike(false),
       diagonal_strike(false),
-      underline(false) {
-}
+      underline(false) {}
 
 TextRunHarfBuzz::~TextRunHarfBuzz() {}
 
@@ -759,8 +775,9 @@ RenderTextHarfBuzz::RenderTextHarfBuzz()
 
 RenderTextHarfBuzz::~RenderTextHarfBuzz() {}
 
-scoped_ptr<RenderText> RenderTextHarfBuzz::CreateInstanceOfSameType() const {
-  return make_scoped_ptr(new RenderTextHarfBuzz);
+std::unique_ptr<RenderText> RenderTextHarfBuzz::CreateInstanceOfSameType()
+    const {
+  return base::WrapUnique(new RenderTextHarfBuzz);
 }
 
 bool RenderTextHarfBuzz::MultilineSupported() const {
@@ -768,11 +785,9 @@ bool RenderTextHarfBuzz::MultilineSupported() const {
 }
 
 const base::string16& RenderTextHarfBuzz::GetDisplayText() {
-  // TODO(oshima): Consider supporting eliding multi-line text.
-  // This requires max_line support first.
-  if (multiline() ||
-      elide_behavior() == NO_ELIDE ||
-      elide_behavior() == FADE_TAIL) {
+  // TODO(krb): Consider other elision modes for multiline.
+  if ((multiline() && (max_lines() == 0 || elide_behavior() != ELIDE_TAIL)) ||
+      elide_behavior() == NO_ELIDE || elide_behavior() == FADE_TAIL) {
     // Call UpdateDisplayText to clear |display_text_| and |text_elided_|
     // on the RenderText class.
     UpdateDisplayText(0);
@@ -1088,7 +1103,7 @@ void RenderTextHarfBuzz::EnsureLayout() {
   if (lines().empty()) {
     // TODO(ckocagil): Remove ScopedTracker below once crbug.com/441028 is
     // fixed.
-    scoped_ptr<tracked_objects::ScopedTracker> tracking_profile(
+    std::unique_ptr<tracked_objects::ScopedTracker> tracking_profile(
         new tracked_objects::ScopedTracker(
             FROM_HERE_WITH_EXPLICIT_FUNCTION("441028 HarfBuzzLineBreaker")));
 
@@ -1129,12 +1144,12 @@ void RenderTextHarfBuzz::DrawVisualText(internal::SkiaTextRenderer* renderer) {
     SkScalar preceding_segment_widths = 0;
     for (const internal::LineSegment& segment : line.segments) {
       const internal::TextRunHarfBuzz& run = *run_list->runs()[segment.run];
-      renderer->SetTypeface(run.skia_face.get());
+      renderer->SetTypeface(run.skia_face);
       renderer->SetTextSize(SkIntToScalar(run.font_size));
       renderer->SetFontRenderParams(run.render_params,
                                     subpixel_rendering_suppressed());
       Range glyphs_range = run.CharRangeToGlyphRange(segment.char_range);
-      scoped_ptr<SkPoint[]> positions(new SkPoint[glyphs_range.length()]);
+      std::unique_ptr<SkPoint[]> positions(new SkPoint[glyphs_range.length()]);
       SkScalar offset_x = preceding_segment_widths -
                           ((glyphs_range.GetMin() != 0)
                                ? run.positions[glyphs_range.GetMin()].x()
@@ -1242,7 +1257,8 @@ void RenderTextHarfBuzz::ItemizeTextToRuns(
   // to misbehave since they expect non-zero text metrics from a non-empty text.
   base::i18n::BiDiLineIterator bidi_iterator;
   if (!bidi_iterator.Open(text, GetTextDirection(text))) {
-    internal::TextRunHarfBuzz* run = new internal::TextRunHarfBuzz;
+    internal::TextRunHarfBuzz* run =
+        new internal::TextRunHarfBuzz(font_list().GetPrimaryFont());
     run->range = Range(0, text.length());
     run_list_out->add(run);
     run_list_out->InitIndexMap();
@@ -1255,21 +1271,22 @@ void RenderTextHarfBuzz::ItemizeTextToRuns(
   // Build the run list from the script items and ranged styles and baselines.
   // Use an empty color BreakList to avoid breaking runs at color boundaries.
   BreakList<SkColor> empty_colors;
-  empty_colors.SetMax(text.length());
+  empty_colors.SetMax(colors().max());
   DCHECK_LE(text.size(), baselines().max());
   for (const BreakList<bool>& style : styles())
     DCHECK_LE(text.size(), style.max());
-  internal::StyleIterator style(empty_colors, baselines(), styles());
+  internal::StyleIterator style(empty_colors, baselines(), weights(), styles());
 
   for (size_t run_break = 0; run_break < text.length();) {
-    internal::TextRunHarfBuzz* run = new internal::TextRunHarfBuzz;
+    internal::TextRunHarfBuzz* run =
+        new internal::TextRunHarfBuzz(font_list().GetPrimaryFont());
     run->range.set_start(run_break);
-    run->font_style = (style.style(BOLD) ? Font::BOLD : 0) |
-                      (style.style(ITALIC) ? Font::ITALIC : 0);
+    run->italic = style.style(ITALIC);
     run->baseline_type = style.baseline();
     run->strike = style.style(STRIKE);
     run->diagonal_strike = style.style(DIAGONAL_STRIKE);
     run->underline = style.style(UNDERLINE);
+    run->weight = style.weight();
     int32_t script_item_break = 0;
     bidi_iterator.GetLogicalRun(run_break, &script_item_break, &run->level);
     CHECK_GT(static_cast<size_t>(script_item_break), run_break);
@@ -1310,10 +1327,10 @@ void RenderTextHarfBuzz::ItemizeTextToRuns(
 bool RenderTextHarfBuzz::CompareFamily(
     const base::string16& text,
     const Font& font,
-    const gfx::FontRenderParams& render_params,
+    const FontRenderParams& render_params,
     internal::TextRunHarfBuzz* run,
     Font* best_font,
-    gfx::FontRenderParams* best_render_params,
+    FontRenderParams* best_render_params,
     size_t* best_missing_glyphs) {
   if (!ShapeRunWithFont(text, font, render_params, run))
     return false;
@@ -1344,7 +1361,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
     // Calculate a slightly smaller font. The ratio here is somewhat arbitrary.
     // Proportions from 5/9 to 5/7 all look pretty good.
     const float ratio = 5.0f / 9.0f;
-    run->font_size = gfx::ToRoundedInt(primary_font.GetFontSize() * ratio);
+    run->font_size = ToRoundedInt(primary_font.GetFontSize() * ratio);
     switch (run->baseline_type) {
       case SUPERSCRIPT:
         run->baseline_offset =
@@ -1352,7 +1369,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
         break;
       case SUPERIOR:
         run->baseline_offset =
-            gfx::ToRoundedInt(primary_font.GetCapHeight() * ratio) -
+            ToRoundedInt(primary_font.GetCapHeight() * ratio) -
             primary_font.GetCapHeight();
         break;
       case SUBSCRIPT:
@@ -1365,7 +1382,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
     }
   }
 
-  Font best_font;
+  Font best_font(primary_font);
   FontRenderParams best_render_params;
   size_t best_missing_glyphs = std::numeric_limits<size_t>::max();
 
@@ -1376,15 +1393,15 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
   }
 
 #if defined(OS_WIN)
-  Font uniscribe_font;
-  std::string uniscribe_family;
+  Font fallback_font(primary_font);
+  std::string fallback_family;
   const base::char16* run_text = &(text[run->range.start()]);
-  if (GetUniscribeFallbackFont(primary_font, run_text, run->range.length(),
-                               &uniscribe_font)) {
-    uniscribe_family = uniscribe_font.GetFontName();
-    if (CompareFamily(text, uniscribe_font,
-                      uniscribe_font.GetFontRenderParams(), run,
-                      &best_font, &best_render_params, &best_missing_glyphs))
+  if (GetFallbackFont(primary_font, run_text, run->range.length(),
+                      &fallback_font)) {
+    fallback_family = fallback_font.GetFontName();
+    if (CompareFamily(text, fallback_font, fallback_font.GetFontRenderParams(),
+                      run, &best_font, &best_render_params,
+                      &best_missing_glyphs))
       return;
   }
 #endif
@@ -1392,11 +1409,11 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
   std::vector<Font> fallback_font_list = GetFallbackFonts(primary_font);
 
 #if defined(OS_WIN)
-  // Append fonts in the fallback list of the Uniscribe font.
-  if (!uniscribe_family.empty()) {
-    std::vector<Font> uniscribe_fallbacks = GetFallbackFonts(uniscribe_font);
-    fallback_font_list.insert(fallback_font_list.end(),
-        uniscribe_fallbacks.begin(), uniscribe_fallbacks.end());
+  // Append fonts in the fallback list of the fallback font.
+  if (!fallback_family.empty()) {
+    std::vector<Font> fallback_fonts = GetFallbackFonts(fallback_font);
+    fallback_font_list.insert(fallback_font_list.end(), fallback_fonts.begin(),
+                              fallback_fonts.end());
   }
 
   // Add Segoe UI and its associated linked fonts to the fallback font list to
@@ -1405,7 +1422,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
   // could be a raster font like System, which would not give us a reasonable
   // fallback font list.
   if (!base::LowerCaseEqualsASCII(primary_font.GetFontName(), "segoe ui") &&
-      !base::LowerCaseEqualsASCII(uniscribe_family, "segoe ui")) {
+      !base::LowerCaseEqualsASCII(fallback_family, "segoe ui")) {
     std::vector<Font> default_fallback_families =
         GetFallbackFonts(Font("Segoe UI", 13));
     fallback_font_list.insert(fallback_font_list.end(),
@@ -1423,7 +1440,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
     if (font_name == primary_font.GetFontName())
       continue;
 #if defined(OS_WIN)
-    if (font_name == uniscribe_family)
+    if (font_name == fallback_family)
       continue;
 #endif
     if (fallback_fonts.find(font) != fallback_fonts.end())
@@ -1434,7 +1451,7 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
     FontRenderParamsQuery query;
     query.families.push_back(font_name);
     query.pixel_size = run->font_size;
-    query.style = run->font_style;
+    query.style = run->italic ? Font::ITALIC : 0;
     FontRenderParams fallback_render_params = GetFontRenderParams(query, NULL);
     if (CompareFamily(text, font, fallback_render_params, run, &best_font,
                       &best_render_params, &best_missing_glyphs))
@@ -1451,19 +1468,20 @@ void RenderTextHarfBuzz::ShapeRun(const base::string16& text,
 }
 
 bool RenderTextHarfBuzz::ShapeRunWithFont(const base::string16& text,
-                                          const gfx::Font& font,
+                                          const Font& font,
                                           const FontRenderParams& params,
                                           internal::TextRunHarfBuzz* run) {
-  skia::RefPtr<SkTypeface> skia_face =
-      internal::CreateSkiaTypeface(font, run->font_style);
-  if (skia_face == NULL)
+  sk_sp<SkTypeface> skia_face(
+      internal::CreateSkiaTypeface(font, run->italic, run->weight));
+  if (!skia_face)
     return false;
+
   run->skia_face = skia_face;
   run->font = font;
   run->render_params = params;
 
   hb_font_t* harfbuzz_font = CreateHarfBuzzFont(
-      run->skia_face.get(), SkIntToScalar(run->font_size), run->render_params,
+      run->skia_face, SkIntToScalar(run->font_size), run->render_params,
       subpixel_rendering_suppressed());
 
   // Create a HarfBuzz buffer and add the string to be shaped. The HarfBuzz
@@ -1503,12 +1521,14 @@ bool RenderTextHarfBuzz::ShapeRunWithFont(const base::string16& text,
     DCHECK_LE(infos[i].codepoint, std::numeric_limits<uint16_t>::max());
     run->glyphs[i] = static_cast<uint16_t>(infos[i].codepoint);
     run->glyph_to_char[i] = infos[i].cluster;
-    const SkScalar x_offset = SkFixedToScalar(hb_positions[i].x_offset);
-    const SkScalar y_offset = SkFixedToScalar(hb_positions[i].y_offset);
+    const SkScalar x_offset =
+        HarfBuzzUnitsToSkiaScalar(hb_positions[i].x_offset);
+    const SkScalar y_offset =
+        HarfBuzzUnitsToSkiaScalar(hb_positions[i].y_offset);
     run->positions[i].set(run->width + x_offset, -y_offset);
     run->width += (glyph_width_for_test_ > 0)
                       ? glyph_width_for_test_
-                      : SkFixedToFloat(hb_positions[i].x_advance);
+                      : HarfBuzzUnitsToFloat(hb_positions[i].x_advance);
     // Round run widths if subpixel positioning is off to match native behavior.
     if (!run->render_params.subpixel_positioning)
       run->width = std::floor(run->width + 0.5f);

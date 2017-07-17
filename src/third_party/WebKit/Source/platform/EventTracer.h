@@ -31,13 +31,10 @@
 #ifndef EventTracer_h
 #define EventTracer_h
 
-#include "base/memory/ref_counted.h"
 #include "platform/PlatformExport.h"
 #include "wtf/Allocator.h"
-#include "wtf/PassOwnPtr.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
-
+#include <memory>
 #include <stdint.h>
 
 namespace base {
@@ -79,8 +76,8 @@ public:
         const char* argNames[],
         const unsigned char argTypes[],
         const unsigned long long argValues[],
-        PassOwnPtr<TracedValue>,
-        PassOwnPtr<TracedValue>,
+        std::unique_ptr<TracedValue>,
+        std::unique_ptr<TracedValue>,
         unsigned flags);
     static TraceEvent::TraceEventHandle addTraceEvent(char phase,
         const unsigned char* categoryEnabledFlag,
@@ -109,7 +106,7 @@ private:
         const char* argNames[],
         const unsigned char argTypes[],
         const unsigned long long argValues[],
-        const scoped_refptr<base::trace_event::ConvertableToTraceFormat>* convertables,
+        std::unique_ptr<base::trace_event::ConvertableToTraceFormat>* convertables,
         unsigned flags);
 };
 

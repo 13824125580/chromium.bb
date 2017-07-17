@@ -5,6 +5,8 @@
 #include "chrome/browser/profiles/profile_impl.h"
 
 #include <stddef.h>
+
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -15,7 +17,7 @@
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
@@ -51,6 +53,8 @@
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chrome/browser/policy/schema_registry_service.h"
+#include "chrome/browser/policy/schema_registry_service_factory.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/chrome_pref_service_factory.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
@@ -58,8 +62,9 @@
 #include "chrome/browser/profiles/bookmark_model_loaded_observer.h"
 #include "chrome/browser/profiles/chrome_version_service.h"
 #include "chrome/browser/profiles/gaia_info_update_service_factory.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_destroyer.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/push_messaging/push_messaging_service_factory.h"
@@ -72,6 +77,7 @@
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate_factory.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/features.h"
@@ -87,6 +93,7 @@
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/metrics/metrics_service.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -95,10 +102,10 @@
 #include "components/signin/core/common/signin_pref_names.h"
 #include "components/ssl_config/ssl_config_service_manager.h"
 #include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/ui/zoom/zoom_event_manager.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/user_prefs/tracked/tracked_preference_validation_delegate.h"
 #include "components/user_prefs/user_prefs.h"
+#include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/notification_service.h"
@@ -109,11 +116,6 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/common/page_zoom.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if defined(OS_ANDROID)
-#include "chrome/browser/media/protected_media_identifier_permission_context.h"
-#include "chrome/browser/media/protected_media_identifier_permission_context_factory.h"
-#endif
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/locale_change_guard.h"
@@ -126,10 +128,6 @@
 #include "chrome/browser/background/background_mode_manager.h"
 #endif
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/policy/schema_registry_service.h"
-#include "chrome/browser/policy/schema_registry_service_factory.h"
-#include "components/policy/core/browser/browser_policy_connector.h"
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
@@ -137,7 +135,6 @@
 #else
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
-#endif
 #endif
 
 #if defined(ENABLE_EXTENSIONS)
@@ -227,7 +224,9 @@ void BlockFileThreadOnDirectoryCreate(base::WaitableEvent* done_creating) {
 void CreateProfileDirectory(base::SequencedTaskRunner* sequenced_task_runner,
                             const base::FilePath& path,
                             bool create_readme) {
-  base::WaitableEvent* done_creating = new base::WaitableEvent(false, false);
+  base::WaitableEvent* done_creating =
+      new base::WaitableEvent(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
   sequenced_task_runner->PostTask(
       FROM_HERE, base::Bind(&CreateDirectoryAndSignal, path, done_creating,
                             create_readme));
@@ -329,7 +328,22 @@ void ProfileImpl::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kAllowDeletingBrowserHistory, true);
   registry->RegisterBooleanPref(prefs::kForceGoogleSafeSearch, false);
   registry->RegisterBooleanPref(prefs::kForceYouTubeSafetyMode, false);
-  registry->RegisterBooleanPref(prefs::kRecordHistory, false);
+  registry->RegisterBooleanPref(prefs::kForceSessionSync, false);
+  registry->RegisterStringPref(prefs::kAllowedDomainsForApps, std::string());
+
+#if defined(OS_ANDROID)
+  // The following prefs don't need to be sync'd to mobile. This file isn't
+  // compiled on iOS so we only need to exclude them syncing from the Android
+  // build.
+  registry->RegisterIntegerPref(prefs::kProfileAvatarIndex, -1);
+  // Whether a profile is using an avatar without having explicitely chosen it
+  // (i.e. was assigned by default by legacy profile creation).
+  registry->RegisterBooleanPref(prefs::kProfileUsingDefaultAvatar, true);
+  registry->RegisterBooleanPref(prefs::kProfileUsingGAIAAvatar, false);
+  // Whether a profile is using a default avatar name (eg. Pickles or Person 1).
+  registry->RegisterBooleanPref(prefs::kProfileUsingDefaultName, true);
+  registry->RegisterStringPref(prefs::kProfileName, std::string());
+#else
   registry->RegisterIntegerPref(
       prefs::kProfileAvatarIndex,
       -1,
@@ -349,13 +363,20 @@ void ProfileImpl::RegisterProfilePrefs(
       prefs::kProfileUsingDefaultName,
       true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kSupervisedUserId, std::string());
   registry->RegisterStringPref(prefs::kProfileName,
                                std::string(),
                                user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+#endif
+
+  registry->RegisterStringPref(prefs::kSupervisedUserId, std::string());
+#if defined(OS_IOS) || defined(OS_ANDROID)
+  uint32_t home_page_flags = PrefRegistry::NO_REGISTRATION_FLAGS;
+#else
+  uint32_t home_page_flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
+#endif
   registry->RegisterStringPref(prefs::kHomePage,
                                std::string(),
-                               user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+                               home_page_flags);
 #if defined(ENABLE_PRINTING)
   registry->RegisterBooleanPref(prefs::kPrintingEnabled, true);
 #endif
@@ -363,7 +384,9 @@ void ProfileImpl::RegisterProfilePrefs(
   registry->RegisterStringPref(
       prefs::kPrintPreviewDefaultDestinationSelectionRules, std::string());
   registry->RegisterBooleanPref(prefs::kForceEphemeralProfiles, false);
-
+#if defined(ENABLE_MEDIA_ROUTER)
+  registry->RegisterBooleanPref(prefs::kEnableMediaRouter, true);
+#endif
   // Initialize the cache prefs.
   registry->RegisterFilePathPref(prefs::kDiskCacheDir, base::FilePath());
   registry->RegisterIntegerPref(prefs::kDiskCacheSize, 0);
@@ -407,7 +430,6 @@ ProfileImpl::ProfileImpl(
   // If we are creating the profile synchronously, then we should load the
   // policy data immediately.
   bool force_immediate_policy_load = (create_mode == CREATE_MODE_SYNCHRONOUS);
-#if defined(ENABLE_CONFIGURATION_POLICY)
   policy::BrowserPolicyConnector* connector =
       g_browser_process->browser_policy_connector();
   schema_registry_service_ =
@@ -425,7 +447,6 @@ ProfileImpl::ProfileImpl(
           sequenced_task_runner,
           BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE),
           BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO));
-#endif
 #endif
   profile_policy_connector_ =
       policy::ProfilePolicyConnectorFactory::CreateForBrowserContext(
@@ -460,6 +481,8 @@ ProfileImpl::ProfileImpl(
         safe_browsing_service->CreatePreferenceValidationDelegate(this);
   }
 
+  content::BrowserContext::Initialize(this, path_);
+
   {
     prefs_ = chrome_prefs::CreateProfilePrefs(
         path_, sequenced_task_runner, pref_validation_delegate_.get(),
@@ -490,36 +513,36 @@ void ProfileImpl::DoFinalInit() {
   pref_change_registrar_.Init(prefs);
   pref_change_registrar_.Add(
       prefs::kSupervisedUserId,
-      base::Bind(&ProfileImpl::UpdateProfileSupervisedUserIdCache,
+      base::Bind(&ProfileImpl::UpdateSupervisedUserIdInStorage,
                  base::Unretained(this)));
 
   // Changes in the profile avatar.
   pref_change_registrar_.Add(
       prefs::kProfileAvatarIndex,
-      base::Bind(&ProfileImpl::UpdateProfileAvatarCache,
+      base::Bind(&ProfileImpl::UpdateAvatarInStorage,
                  base::Unretained(this)));
   pref_change_registrar_.Add(
       prefs::kProfileUsingDefaultAvatar,
-      base::Bind(&ProfileImpl::UpdateProfileAvatarCache,
+      base::Bind(&ProfileImpl::UpdateAvatarInStorage,
                  base::Unretained(this)));
   pref_change_registrar_.Add(
       prefs::kProfileUsingGAIAAvatar,
-      base::Bind(&ProfileImpl::UpdateProfileAvatarCache,
+      base::Bind(&ProfileImpl::UpdateAvatarInStorage,
                  base::Unretained(this)));
 
   // Changes in the profile name.
   pref_change_registrar_.Add(
       prefs::kProfileUsingDefaultName,
-      base::Bind(&ProfileImpl::UpdateProfileNameCache,
+      base::Bind(&ProfileImpl::UpdateNameInStorage,
                  base::Unretained(this)));
   pref_change_registrar_.Add(
       prefs::kProfileName,
-      base::Bind(&ProfileImpl::UpdateProfileNameCache,
+      base::Bind(&ProfileImpl::UpdateNameInStorage,
                  base::Unretained(this)));
 
   pref_change_registrar_.Add(
       prefs::kForceEphemeralProfiles,
-      base::Bind(&ProfileImpl::UpdateProfileIsEphemeralCache,
+      base::Bind(&ProfileImpl::UpdateIsEphemeralInStorage,
                  base::Unretained(this)));
 
   // It would be nice to use PathService for fetching this directory, but
@@ -533,8 +556,8 @@ void ProfileImpl::DoFinalInit() {
   CreateProfileDirectory(sequenced_task_runner.get(), base_cache_path_, false);
 
   // Initialize components that depend on the current value.
-  UpdateProfileSupervisedUserIdCache();
-  UpdateProfileIsEphemeralCache();
+  UpdateSupervisedUserIdInStorage();
+  UpdateIsEphemeralInStorage();
   GAIAInfoUpdateServiceFactory::GetForProfile(this);
 
   PrefService* local_state = g_browser_process->local_state();
@@ -615,7 +638,7 @@ void ProfileImpl::DoFinalInit() {
 
   // The DomDistillerViewerSource is not a normal WebUI so it must be registered
   // as a URLDataSource early.
-  RegisterDomDistillerViewerSource(this);
+  dom_distiller::RegisterViewerSource(this);
 
 #if defined(OS_CHROMEOS)
   if (chromeos::UserSessionManager::GetInstance()
@@ -711,11 +734,11 @@ Profile::ProfileType ProfileImpl::GetProfileType() const {
   return REGULAR_PROFILE;
 }
 
-scoped_ptr<content::ZoomLevelDelegate> ProfileImpl::CreateZoomLevelDelegate(
-    const base::FilePath& partition_path) {
-  return make_scoped_ptr(new ChromeZoomLevelPrefs(
+std::unique_ptr<content::ZoomLevelDelegate>
+ProfileImpl::CreateZoomLevelDelegate(const base::FilePath& partition_path) {
+  return base::WrapUnique(new ChromeZoomLevelPrefs(
       GetPrefs(), GetPath(), partition_path,
-      ui_zoom::ZoomEventManager::GetForBrowserContext(this)->GetWeakPtr()));
+      zoom::ZoomEventManager::GetForBrowserContext(this)->GetWeakPtr()));
 }
 
 base::FilePath ProfileImpl::GetPath() const {
@@ -733,7 +756,7 @@ bool ProfileImpl::IsOffTheRecord() const {
 
 Profile* ProfileImpl::GetOffTheRecordProfile() {
   if (!off_the_record_profile_) {
-    scoped_ptr<Profile> p(CreateOffTheRecordProfile());
+    std::unique_ptr<Profile> p(CreateOffTheRecordProfile());
     off_the_record_profile_.swap(p);
 
     content::NotificationService::current()->Notify(
@@ -915,68 +938,16 @@ PrefService* ProfileImpl::GetOffTheRecordPrefs() {
   return otr_prefs_.get();
 }
 
-net::URLRequestContextGetter* ProfileImpl::CreateRequestContext(
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  return io_data_.CreateMainRequestContextGetter(
-                     protocol_handlers, std::move(request_interceptors),
-                     g_browser_process->io_thread())
-      .get();
+content::ResourceContext* ProfileImpl::GetResourceContext() {
+  return io_data_.GetResourceContext();
 }
 
 net::URLRequestContextGetter* ProfileImpl::GetRequestContext() {
   return GetDefaultStoragePartition(this)->GetURLRequestContext();
 }
 
-net::URLRequestContextGetter* ProfileImpl::GetRequestContextForRenderProcess(
-    int renderer_child_id) {
-  content::RenderProcessHost* rph = content::RenderProcessHost::FromID(
-      renderer_child_id);
-
-  return rph->GetStoragePartition()->GetURLRequestContext();
-}
-
-net::URLRequestContextGetter* ProfileImpl::GetMediaRequestContext() {
-  // Return the default media context.
-  return io_data_.GetMediaRequestContextGetter().get();
-}
-
-net::URLRequestContextGetter*
-ProfileImpl::GetMediaRequestContextForRenderProcess(
-    int renderer_child_id) {
-  content::RenderProcessHost* rph = content::RenderProcessHost::FromID(
-      renderer_child_id);
-  content::StoragePartition* storage_partition = rph->GetStoragePartition();
-
-  return storage_partition->GetMediaURLRequestContext();
-}
-
-net::URLRequestContextGetter*
-ProfileImpl::GetMediaRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory) {
-  return io_data_
-      .GetIsolatedMediaRequestContextGetter(partition_path, in_memory).get();
-}
-
-content::ResourceContext* ProfileImpl::GetResourceContext() {
-  return io_data_.GetResourceContext();
-}
-
 net::URLRequestContextGetter* ProfileImpl::GetRequestContextForExtensions() {
   return io_data_.GetExtensionsRequestContextGetter().get();
-}
-
-net::URLRequestContextGetter*
-ProfileImpl::CreateRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  return io_data_.CreateIsolatedAppRequestContextGetter(
-                     partition_path, in_memory, protocol_handlers,
-                     std::move(request_interceptors))
-      .get();
 }
 
 net::SSLConfigService* ProfileImpl::GetSSLConfigService() {
@@ -1027,6 +998,39 @@ content::PermissionManager* ProfileImpl::GetPermissionManager() {
 
 content::BackgroundSyncController* ProfileImpl::GetBackgroundSyncController() {
   return BackgroundSyncControllerFactory::GetForProfile(this);
+}
+
+net::URLRequestContextGetter* ProfileImpl::CreateRequestContext(
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  return io_data_.CreateMainRequestContextGetter(
+                     protocol_handlers, std::move(request_interceptors),
+                     g_browser_process->io_thread())
+      .get();
+}
+
+net::URLRequestContextGetter*
+ProfileImpl::CreateRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory,
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  return io_data_.CreateIsolatedAppRequestContextGetter(
+                     partition_path, in_memory, protocol_handlers,
+                     std::move(request_interceptors))
+      .get();
+}
+
+net::URLRequestContextGetter* ProfileImpl::CreateMediaRequestContext() {
+  return io_data_.GetMediaRequestContextGetter().get();
+}
+
+net::URLRequestContextGetter*
+ProfileImpl::CreateMediaRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory) {
+  return io_data_
+      .GetIsolatedMediaRequestContextGetter(partition_path, in_memory).get();
 }
 
 bool ProfileImpl::IsSameProfile(Profile* profile) {
@@ -1194,56 +1198,53 @@ GURL ProfileImpl::GetHomePage() {
   return home_page;
 }
 
-void ProfileImpl::UpdateProfileSupervisedUserIdCache() {
+void ProfileImpl::UpdateSupervisedUserIdInStorage() {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(GetPath());
-  if (index != std::string::npos) {
-    std::string supervised_user_id =
-        GetPrefs()->GetString(prefs::kSupervisedUserId);
-    cache.SetSupervisedUserIdOfProfileAtIndex(index, supervised_user_id);
+  ProfileAttributesEntry* entry;
+  bool has_entry = profile_manager->GetProfileAttributesStorage().
+                       GetProfileAttributesWithPath(GetPath(), &entry);
+  if (has_entry) {
+    entry->SetSupervisedUserId(GetPrefs()->GetString(prefs::kSupervisedUserId));
     ProfileMetrics::UpdateReportedProfilesStatistics(profile_manager);
   }
 }
 
-void ProfileImpl::UpdateProfileNameCache() {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(GetPath());
-  if (index != std::string::npos) {
-    std::string profile_name =
-        GetPrefs()->GetString(prefs::kProfileName);
-    cache.SetNameOfProfileAtIndex(index, base::UTF8ToUTF16(profile_name));
-    bool default_name =
-        GetPrefs()->GetBoolean(prefs::kProfileUsingDefaultName);
-    cache.SetProfileIsUsingDefaultNameAtIndex(index, default_name);
+void ProfileImpl::UpdateNameInStorage() {
+  ProfileAttributesEntry* entry;
+  bool has_entry =
+      g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(GetPath(), &entry);
+  if (has_entry) {
+    entry->SetName(
+        base::UTF8ToUTF16(GetPrefs()->GetString(prefs::kProfileName)));
+    entry->SetIsUsingDefaultName(
+        GetPrefs()->GetBoolean(prefs::kProfileUsingDefaultName));
   }
 }
 
-void ProfileImpl::UpdateProfileAvatarCache() {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(GetPath());
-  if (index != std::string::npos) {
-    size_t avatar_index =
-        GetPrefs()->GetInteger(prefs::kProfileAvatarIndex);
-    cache.SetAvatarIconOfProfileAtIndex(index, avatar_index);
-    bool default_avatar =
-        GetPrefs()->GetBoolean(prefs::kProfileUsingDefaultAvatar);
-    cache.SetProfileIsUsingDefaultAvatarAtIndex(index, default_avatar);
-    bool gaia_avatar =
-        GetPrefs()->GetBoolean(prefs::kProfileUsingGAIAAvatar);
-    cache.SetIsUsingGAIAPictureOfProfileAtIndex(index, gaia_avatar);
+void ProfileImpl::UpdateAvatarInStorage() {
+  ProfileAttributesEntry* entry;
+  bool has_entry =
+      g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(GetPath(), &entry);
+  if (has_entry) {
+    entry->SetAvatarIconIndex(
+        GetPrefs()->GetInteger(prefs::kProfileAvatarIndex));
+    entry->SetIsUsingDefaultAvatar(
+        GetPrefs()->GetBoolean(prefs::kProfileUsingDefaultAvatar));
+    entry->SetIsUsingGAIAPicture(
+        GetPrefs()->GetBoolean(prefs::kProfileUsingGAIAAvatar));
   }
 }
 
-void ProfileImpl::UpdateProfileIsEphemeralCache() {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(GetPath());
-  if (index != std::string::npos) {
-    bool is_ephemeral = GetPrefs()->GetBoolean(prefs::kForceEphemeralProfiles);
-    cache.SetProfileIsEphemeralAtIndex(index, is_ephemeral);
+void ProfileImpl::UpdateIsEphemeralInStorage() {
+  ProfileAttributesEntry* entry;
+  bool has_entry =
+      g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(GetPath(), &entry);
+  if (has_entry) {
+    entry->SetIsEphemeral(
+        GetPrefs()->GetBoolean(prefs::kForceEphemeralProfiles));
   }
 }
 
@@ -1257,9 +1258,11 @@ void ProfileImpl::GetCacheParameters(bool is_media_context,
                                      int* max_size) {
   DCHECK(cache_path);
   DCHECK(max_size);
+
   base::FilePath path(prefs_->GetFilePath(prefs::kDiskCacheDir));
   if (!path.empty())
-    *cache_path = path;
+    *cache_path = path.Append(cache_path->BaseName());
+
   *max_size = is_media_context ? prefs_->GetInteger(prefs::kMediaCacheSize) :
                                  prefs_->GetInteger(prefs::kDiskCacheSize);
 }
@@ -1275,13 +1278,13 @@ PrefProxyConfigTracker* ProfileImpl::CreateProxyConfigTracker() {
       GetPrefs(), g_browser_process->local_state());
 }
 
-scoped_ptr<domain_reliability::DomainReliabilityMonitor>
+std::unique_ptr<domain_reliability::DomainReliabilityMonitor>
 ProfileImpl::CreateDomainReliabilityMonitor(PrefService* local_state) {
   domain_reliability::DomainReliabilityService* service =
       domain_reliability::DomainReliabilityServiceFactory::GetInstance()->
           GetForBrowserContext(this);
   if (!service)
-    return scoped_ptr<domain_reliability::DomainReliabilityMonitor>();
+    return std::unique_ptr<domain_reliability::DomainReliabilityMonitor>();
 
   return service->CreateMonitor(
       BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO));

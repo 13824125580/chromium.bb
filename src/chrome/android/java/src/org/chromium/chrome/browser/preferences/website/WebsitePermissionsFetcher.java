@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.preferences.website;
 
+import org.chromium.base.Callback;
 import org.chromium.chrome.browser.ContentSettingsType;
 
 import java.util.ArrayList;
@@ -59,8 +60,8 @@ public class WebsitePermissionsFetcher {
         queue.add(new GeolocationInfoFetcher());
         // Midi sysex access permission is per-origin and per-embedder.
         queue.add(new MidiInfoFetcher());
-        // Cookies are stored per-origin.
-        queue.add(new CookieInfoFetcher());
+        // Cookies are stored per-host.
+        queue.add(new CookieExceptionInfoFetcher());
         // Fullscreen are stored per-origin.
         queue.add(new FullscreenInfoFetcher());
         // Keygen permissions are per-origin.
@@ -70,7 +71,7 @@ public class WebsitePermissionsFetcher {
         // Website storage is per-host.
         queue.add(new WebStorageInfoFetcher());
         // Popup exceptions are host-based patterns (unless we start
-        // synchronizing popup exceptions with desktop Chrome.)
+        // synchronizing popup exceptions with desktop Chrome).
         queue.add(new PopupExceptionInfoFetcher());
         // JavaScript exceptions are host-based patterns.
         queue.add(new JavaScriptExceptionInfoFetcher());
@@ -82,7 +83,13 @@ public class WebsitePermissionsFetcher {
         queue.add(new CameraCaptureInfoFetcher());
         // Micropohone capture permission is per-origin and per-embedder.
         queue.add(new MicrophoneCaptureInfoFetcher());
+        // Background sync permission is per-origin.
+        queue.add(new BackgroundSyncExceptionInfoFetcher());
+        // Autoplay permission is per-origin.
+        queue.add(new AutoplayExceptionInfoFetcher());
+
         queue.add(new PermissionsAvailableCallbackRunner());
+
         queue.next();
     }
 
@@ -103,8 +110,8 @@ public class WebsitePermissionsFetcher {
             // Geolocation lookup permission is per-origin and per-embedder.
             queue.add(new GeolocationInfoFetcher());
         } else if (category.showCookiesSites()) {
-            // Cookies are stored per-origin.
-            queue.add(new CookieInfoFetcher());
+            // Cookies exceptions are patterns.
+            queue.add(new CookieExceptionInfoFetcher());
         } else if (category.showStorageSites()) {
             // Local storage info is per-origin.
             queue.add(new LocalStorageInfoFetcher());
@@ -129,9 +136,15 @@ public class WebsitePermissionsFetcher {
         } else if (category.showNotificationsSites()) {
             // Push notification permission is per-origin.
             queue.add(new NotificationInfoFetcher());
+        } else if (category.showBackgroundSyncSites()) {
+            // Background sync info is per-origin.
+            queue.add(new BackgroundSyncExceptionInfoFetcher());
         } else if (category.showProtectedMediaSites()) {
             // Protected media identifier permission is per-origin and per-embedder.
             queue.add(new ProtectedMediaIdentifierInfoFetcher());
+        } else if (category.showAutoplaySites()) {
+            // Autoplay permission is per-origin.
+            queue.add(new AutoplayExceptionInfoFetcher());
         }
         queue.add(new PermissionsAvailableCallbackRunner());
         queue.next();
@@ -163,6 +176,40 @@ public class WebsitePermissionsFetcher {
         return mSitesByHost.get(host);
     }
 
+    private void setException(int contentSettingsType) {
+        for (ContentSettingException exception :
+                WebsitePreferenceBridge.getContentSettingsExceptions(contentSettingsType)) {
+            // The pattern "*" represents the default setting, not a specific website.
+            if (exception.getPattern().equals("*")) continue;
+            WebsiteAddress address = WebsiteAddress.create(exception.getPattern());
+            if (address == null) continue;
+            Set<Website> sites = findOrCreateSitesByHost(address);
+            for (Website site : sites) {
+                switch (contentSettingsType) {
+                    case ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY:
+                        site.setAutoplayException(exception);
+                        break;
+                    case ContentSettingsType.CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC:
+                        site.setBackgroundSyncException(exception);
+                        break;
+                    case ContentSettingsType.CONTENT_SETTINGS_TYPE_COOKIES:
+                        site.setCookieException(exception);
+                        break;
+                    case ContentSettingsType.CONTENT_SETTINGS_TYPE_JAVASCRIPT:
+                        site.setJavaScriptException(exception);
+                        break;
+                    case ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS:
+                        site.setPopupException(exception);
+                        break;
+                    default:
+                        assert false : "Unexpected content setting type received: "
+                                       + contentSettingsType;
+                        break;
+                }
+            }
+        }
+    }
+
     /**
      * A single task in the WebsitePermissionsFetcher task queue. We need fetching of features to be
      * serialized, as we need to have all the origins in place prior to populating the hosts.
@@ -191,6 +238,13 @@ public class WebsitePermissionsFetcher {
         }
     }
 
+    private class AutoplayExceptionInfoFetcher extends Task {
+        @Override
+        public void run() {
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY);
+        }
+    }
+
     private class GeolocationInfoFetcher extends Task {
         @Override
         public void run() {
@@ -216,37 +270,21 @@ public class WebsitePermissionsFetcher {
     private class PopupExceptionInfoFetcher extends Task {
         @Override
         public void run() {
-            for (ContentSettingException exception :
-                    WebsitePreferenceBridge.getContentSettingsExceptions(
-                            ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS)) {
-                // The pattern "*" represents the default setting, not a
-                // specific website.
-                if (exception.getPattern().equals("*")) continue;
-                WebsiteAddress address = WebsiteAddress.create(exception.getPattern());
-                if (address == null) continue;
-                Set<Website> sites = findOrCreateSitesByHost(address);
-                for (Website site : sites) {
-                    site.setPopupException(exception);
-                }
-            }
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS);
         }
     }
 
     private class JavaScriptExceptionInfoFetcher extends Task {
         @Override
         public void run() {
-            for (ContentSettingException exception
-                    : WebsitePreferenceBridge.getContentSettingsExceptions(
-                            ContentSettingsType.CONTENT_SETTINGS_TYPE_JAVASCRIPT)) {
-                // The pattern "*" represents the default setting, not a specific website.
-                if (exception.getPattern().equals("*")) continue;
-                WebsiteAddress address = WebsiteAddress.create(exception.getPattern());
-                if (address == null) continue;
-                Set<Website> sites = findOrCreateSitesByHost(address);
-                for (Website site : sites) {
-                    site.setJavaScriptException(exception);
-                }
-            }
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_JAVASCRIPT);
+        }
+    }
+
+    private class CookieExceptionInfoFetcher extends Task {
+        @Override
+        public void run() {
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_COOKIES);
         }
     }
 
@@ -257,17 +295,6 @@ public class WebsitePermissionsFetcher {
                 WebsiteAddress address = WebsiteAddress.create(info.getOrigin());
                 if (address == null) continue;
                 createSiteByOriginAndHost(address).setKeygenInfo(info);
-            }
-        }
-    }
-
-    private class CookieInfoFetcher extends Task {
-        @Override
-        public void run() {
-            for (CookieInfo info : WebsitePreferenceBridge.getCookieInfo()) {
-                WebsiteAddress address = WebsiteAddress.create(info.getOrigin());
-                if (address == null) continue;
-                createSiteByOriginAndHost(address).setCookieInfo(info);
             }
         }
     }
@@ -289,47 +316,46 @@ public class WebsitePermissionsFetcher {
     private class LocalStorageInfoFetcher extends Task {
         @Override
         public void runAsync(final TaskQueue queue) {
-            WebsitePreferenceBridge.fetchLocalStorageInfo(
-                    new WebsitePreferenceBridge.LocalStorageInfoReadyCallback() {
+            WebsitePreferenceBridge.fetchLocalStorageInfo(new Callback<HashMap>() {
+                @Override
+                public void onResult(HashMap result) {
+                    for (Object o : result.entrySet()) {
                         @SuppressWarnings("unchecked")
-                        @Override
-                        public void onLocalStorageInfoReady(HashMap map) {
-                            for (Object o : map.entrySet()) {
-                                Map.Entry<String, LocalStorageInfo> entry =
-                                        (Map.Entry<String, LocalStorageInfo>) o;
-                                WebsiteAddress address = WebsiteAddress.create(entry.getKey());
-                                if (address == null) continue;
-                                Set<Website> sites = findOrCreateSitesByOrigin(address);
-                                for (Website site : sites) {
-                                    site.setLocalStorageInfo(entry.getValue());
-                                }
-                            }
-                            queue.next();
+                        Map.Entry<String, LocalStorageInfo> entry =
+                                (Map.Entry<String, LocalStorageInfo>) o;
+                        WebsiteAddress address = WebsiteAddress.create(entry.getKey());
+                        if (address == null) continue;
+                        Set<Website> sites = findOrCreateSitesByOrigin(address);
+                        for (Website site : sites) {
+                            site.setLocalStorageInfo(entry.getValue());
                         }
-                    });
+                    }
+                    queue.next();
+                }
+            });
         }
     }
 
     private class WebStorageInfoFetcher extends Task {
         @Override
         public void runAsync(final TaskQueue queue) {
-            WebsitePreferenceBridge.fetchStorageInfo(
-                    new WebsitePreferenceBridge.StorageInfoReadyCallback() {
-                        @SuppressWarnings("unchecked")
-                        @Override
-                        public void onStorageInfoReady(ArrayList array) {
-                            ArrayList<StorageInfo> infoArray = array;
-                            for (StorageInfo info : infoArray) {
-                                WebsiteAddress address = WebsiteAddress.create(info.getHost());
-                                if (address == null) continue;
-                                Set<Website> sites = findOrCreateSitesByHost(address);
-                                for (Website site : sites) {
-                                    site.addStorageInfo(info);
-                                }
-                            }
-                            queue.next();
+            WebsitePreferenceBridge.fetchStorageInfo(new Callback<ArrayList>() {
+                @Override
+                public void onResult(ArrayList result) {
+                    @SuppressWarnings("unchecked")
+                    ArrayList<StorageInfo> infoArray = result;
+
+                    for (StorageInfo info : infoArray) {
+                        WebsiteAddress address = WebsiteAddress.create(info.getHost());
+                        if (address == null) continue;
+                        Set<Website> sites = findOrCreateSitesByHost(address);
+                        for (Website site : sites) {
+                            site.addStorageInfo(info);
                         }
-                    });
+                    }
+                    queue.next();
+                }
+            });
         }
     }
 
@@ -375,6 +401,13 @@ public class WebsitePermissionsFetcher {
                 if (address == null) continue;
                 createSiteByOriginAndHost(address).setMicrophoneInfo(info);
             }
+        }
+    }
+
+    private class BackgroundSyncExceptionInfoFetcher extends Task {
+        @Override
+        public void run() {
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC);
         }
     }
 

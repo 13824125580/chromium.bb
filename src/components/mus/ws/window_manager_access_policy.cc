@@ -8,18 +8,17 @@
 #include "components/mus/ws/server_window.h"
 
 namespace mus {
-
 namespace ws {
 
-// TODO(sky): document why this differs from default for each case. Maybe want
-// to subclass DefaultAccessPolicy.
-
-WindowManagerAccessPolicy::WindowManagerAccessPolicy(
-    ConnectionSpecificId connection_id,
-    AccessPolicyDelegate* delegate)
-    : connection_id_(connection_id), delegate_(delegate) {}
+WindowManagerAccessPolicy::WindowManagerAccessPolicy() {}
 
 WindowManagerAccessPolicy::~WindowManagerAccessPolicy() {}
+
+void WindowManagerAccessPolicy::Init(ClientSpecificId client_id,
+                                     AccessPolicyDelegate* delegate) {
+  client_id_ = client_id;
+  delegate_ = delegate;
+}
 
 bool WindowManagerAccessPolicy::CanRemoveWindowFromParent(
     const ServerWindow* window) const {
@@ -42,6 +41,11 @@ bool WindowManagerAccessPolicy::CanRemoveTransientWindowFromParent(
   return true;
 }
 
+bool WindowManagerAccessPolicy::CanSetModal(
+    const ServerWindow* window) const {
+  return true;
+}
+
 bool WindowManagerAccessPolicy::CanReorderWindow(
     const ServerWindow* window,
     const ServerWindow* relative_window,
@@ -51,7 +55,7 @@ bool WindowManagerAccessPolicy::CanReorderWindow(
 
 bool WindowManagerAccessPolicy::CanDeleteWindow(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_;
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanGetWindowTree(
@@ -64,48 +68,54 @@ bool WindowManagerAccessPolicy::CanDescendIntoWindowForWindowTree(
   return true;
 }
 
-bool WindowManagerAccessPolicy::CanEmbed(const ServerWindow* window,
-                                         uint32_t policy_bitmask) const {
+bool WindowManagerAccessPolicy::CanEmbed(const ServerWindow* window) const {
   return !delegate_->HasRootForAccessPolicy(window);
 }
 
 bool WindowManagerAccessPolicy::CanChangeWindowVisibility(
     const ServerWindow* window) const {
-  // The WindowManager can change the visibility of the root too.
-  return window->id().connection_id == connection_id_ ||
-         (window->GetRoot() == window);
+  if (WasCreatedByThisClient(window))
+    return true;
+  // The WindowManager can change the visibility of the WindowManager root.
+  const ServerWindow* root = window->GetRoot();
+  return root && window->parent() == root;
+}
+
+bool WindowManagerAccessPolicy::CanChangeWindowOpacity(
+    const ServerWindow* window) const {
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetWindowSurface(
     const ServerWindow* window,
     mus::mojom::SurfaceType surface_type) const {
   if (surface_type == mojom::SurfaceType::UNDERLAY)
-    return window->id().connection_id == connection_id_;
+    return WasCreatedByThisClient(window);
 
-  if (delegate_->IsWindowRootOfAnotherConnectionForAccessPolicy(window))
+  if (delegate_->IsWindowRootOfAnotherTreeForAccessPolicy(window))
     return false;
-  return window->id().connection_id == connection_id_ ||
+  return WasCreatedByThisClient(window) ||
          (delegate_->HasRootForAccessPolicy(window));
 }
 
 bool WindowManagerAccessPolicy::CanSetWindowBounds(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_;
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetWindowProperties(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_;
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetWindowTextInputState(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_;
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetCapture(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_;
+  return WasCreatedByThisClient(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetFocus(const ServerWindow* window) const {
@@ -114,13 +124,19 @@ bool WindowManagerAccessPolicy::CanSetFocus(const ServerWindow* window) const {
 
 bool WindowManagerAccessPolicy::CanSetClientArea(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_ ||
+  return WasCreatedByThisClient(window) ||
+         delegate_->HasRootForAccessPolicy(window);
+}
+
+bool WindowManagerAccessPolicy::CanSetHitTestMask(
+    const ServerWindow* window) const {
+  return WasCreatedByThisClient(window) ||
          delegate_->HasRootForAccessPolicy(window);
 }
 
 bool WindowManagerAccessPolicy::CanSetCursorProperties(
     const ServerWindow* window) const {
-  return window->id().connection_id == connection_id_ ||
+  return WasCreatedByThisClient(window) ||
          delegate_->HasRootForAccessPolicy(window);
 }
 
@@ -150,6 +166,19 @@ bool WindowManagerAccessPolicy::IsWindowKnown(
   return delegate_->IsWindowKnownForAccessPolicy(window);
 }
 
-}  // namespace ws
+bool WindowManagerAccessPolicy::IsValidIdForNewWindow(
+    const ClientWindowId& id) const {
+  // The WindowManager see windows created from other clients. If the WM doesn't
+  // use the client id when creating windows the WM could end up with two
+  // windows with the same id. Because of this the wm must use the same
+  // client id for all windows it creates.
+  return WindowIdFromTransportId(id.id).client_id == client_id_;
+}
 
+bool WindowManagerAccessPolicy::WasCreatedByThisClient(
+    const ServerWindow* window) const {
+  return window->id().client_id == client_id_;
+}
+
+}  // namespace ws
 }  // namespace mus

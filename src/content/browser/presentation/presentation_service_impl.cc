@@ -39,15 +39,15 @@ int GetNextRequestSessionId() {
 // |input|: The message to convert.
 // |pass_ownership|: If true, function may reuse strings or buffers from
 //     |input| without copying. |input| can be freely modified.
-presentation::SessionMessagePtr ToMojoSessionMessage(
+blink::mojom::SessionMessagePtr ToMojoSessionMessage(
     content::PresentationSessionMessage* input,
     bool pass_ownership) {
   DCHECK(input);
-  presentation::SessionMessagePtr output(presentation::SessionMessage::New());
+  blink::mojom::SessionMessagePtr output(blink::mojom::SessionMessage::New());
   if (input->is_binary()) {
     // binary data
     DCHECK(input->data);
-    output->type = presentation::PresentationMessageType::ARRAY_BUFFER;
+    output->type = blink::mojom::PresentationMessageType::ARRAY_BUFFER;
     if (pass_ownership) {
       output->data.Swap(input->data.get());
     } else {
@@ -55,7 +55,7 @@ presentation::SessionMessagePtr ToMojoSessionMessage(
     }
   } else {
     // string message
-    output->type = presentation::PresentationMessageType::TEXT;
+    output->type = blink::mojom::PresentationMessageType::TEXT;
     if (pass_ownership) {
       output->message.Swap(&input->message);
     } else {
@@ -65,12 +65,12 @@ presentation::SessionMessagePtr ToMojoSessionMessage(
   return output;
 }
 
-scoped_ptr<PresentationSessionMessage> GetPresentationSessionMessage(
-    presentation::SessionMessagePtr input) {
+std::unique_ptr<PresentationSessionMessage> GetPresentationSessionMessage(
+    blink::mojom::SessionMessagePtr input) {
   DCHECK(!input.is_null());
-  scoped_ptr<content::PresentationSessionMessage> output;
+  std::unique_ptr<content::PresentationSessionMessage> output;
   switch (input->type) {
-    case presentation::PresentationMessageType::TEXT: {
+    case blink::mojom::PresentationMessageType::TEXT: {
       DCHECK(!input->message.is_null());
       DCHECK(input->data.is_null());
       // Return null PresentationSessionMessage if size exceeds.
@@ -82,7 +82,7 @@ scoped_ptr<PresentationSessionMessage> GetPresentationSessionMessage(
       input->message.Swap(&output->message);
       return output;
     }
-    case presentation::PresentationMessageType::ARRAY_BUFFER: {
+    case blink::mojom::PresentationMessageType::ARRAY_BUFFER: {
       DCHECK(!input->data.is_null());
       DCHECK(input->message.is_null());
       if (input->data.size() > content::kMaxPresentationSessionMessageSize)
@@ -94,7 +94,7 @@ scoped_ptr<PresentationSessionMessage> GetPresentationSessionMessage(
       input->data.Swap(output->data.get());
       return output;
     }
-    case presentation::PresentationMessageType::BLOB: {
+    case blink::mojom::PresentationMessageType::BLOB: {
       DCHECK(!input->data.is_null());
       DCHECK(input->message.is_null());
       if (input->data.size() > content::kMaxPresentationSessionMessageSize)
@@ -112,12 +112,11 @@ scoped_ptr<PresentationSessionMessage> GetPresentationSessionMessage(
   return output;
 }
 
-void InvokeNewSessionMojoCallbackWithError(
-    const NewSessionMojoCallback& callback) {
-  callback.Run(
-        presentation::PresentationSessionInfoPtr(),
-        presentation::PresentationError::From(
-            PresentationError(PRESENTATION_ERROR_UNKNOWN, "Internal error")));
+void InvokeNewSessionCallbackWithError(
+    const PresentationServiceImpl::NewSessionCallback& callback) {
+  callback.Run(blink::mojom::PresentationSessionInfoPtr(),
+               blink::mojom::PresentationError::From(PresentationError(
+                   PRESENTATION_ERROR_UNKNOWN, "Internal error")));
 }
 
 }  // namespace
@@ -132,6 +131,7 @@ PresentationServiceImpl::PresentationServiceImpl(
       weak_factory_(this) {
   DCHECK(render_frame_host);
   DCHECK(web_contents);
+  CHECK(render_frame_host->IsRenderFrameLive());
 
   render_process_id_ = render_frame_host->GetProcess()->GetID();
   render_frame_id_ = render_frame_host->GetRoutingID();
@@ -149,15 +149,14 @@ PresentationServiceImpl::~PresentationServiceImpl() {
 // static
 void PresentationServiceImpl::CreateMojoService(
     RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<presentation::PresentationService> request) {
+    mojo::InterfaceRequest<blink::mojom::PresentationService> request) {
   DVLOG(2) << "CreateMojoService";
   WebContents* web_contents =
       WebContents::FromRenderFrameHost(render_frame_host);
   DCHECK(web_contents);
 
   // This object will be deleted when the RenderFrameHost is about to be
-  // deleted (RenderFrameDeleted) or if a connection error occurred
-  // (OnConnectionError).
+  // deleted (RenderFrameDeleted).
   PresentationServiceImpl* impl = new PresentationServiceImpl(
       render_frame_host,
       web_contents,
@@ -167,17 +166,13 @@ void PresentationServiceImpl::CreateMojoService(
 }
 
 void PresentationServiceImpl::Bind(
-    mojo::InterfaceRequest<presentation::PresentationService> request) {
-  binding_.reset(new mojo::Binding<presentation::PresentationService>(
+    mojo::InterfaceRequest<blink::mojom::PresentationService> request) {
+  binding_.reset(new mojo::Binding<blink::mojom::PresentationService>(
       this, std::move(request)));
-  binding_->set_connection_error_handler([this]() {
-    DVLOG(1) << "Connection error";
-    delete this;
-  });
 }
 
 void PresentationServiceImpl::SetClient(
-    presentation::PresentationServiceClientPtr client) {
+    blink::mojom::PresentationServiceClientPtr client) {
   DCHECK(!client_.get());
   // TODO(imcheng): Set ErrorHandler to listen for errors.
   client_ = std::move(client);
@@ -195,7 +190,7 @@ void PresentationServiceImpl::ListenForScreenAvailability(
   if (screen_availability_listeners_.count(availability_url))
     return;
 
-  scoped_ptr<ScreenAvailabilityListenerImpl> listener(
+  std::unique_ptr<ScreenAvailabilityListenerImpl> listener(
       new ScreenAvailabilityListenerImpl(availability_url, this));
   if (delegate_->AddScreenAvailabilityListener(
       render_process_id_,
@@ -223,28 +218,26 @@ void PresentationServiceImpl::StopListeningForScreenAvailability(
   screen_availability_listeners_.erase(listener_it);
 }
 
-void PresentationServiceImpl::StartSession(
-    const mojo::String& presentation_url,
-    const NewSessionMojoCallback& callback) {
+void PresentationServiceImpl::StartSession(const mojo::String& presentation_url,
+                                           const NewSessionCallback& callback) {
   DVLOG(2) << "StartSession";
   if (!delegate_) {
     callback.Run(
-          presentation::PresentationSessionInfoPtr(),
-          presentation::PresentationError::From(
-              PresentationError(PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
-                                "No screens found.")));
+        blink::mojom::PresentationSessionInfoPtr(),
+        blink::mojom::PresentationError::From(PresentationError(
+            PRESENTATION_ERROR_NO_AVAILABLE_SCREENS, "No screens found.")));
     return;
   }
 
   // There is a StartSession request in progress. To avoid queueing up
   // requests, the incoming request is rejected.
   if (start_session_request_id_ != kInvalidRequestSessionId) {
-    InvokeNewSessionMojoCallbackWithError(callback);
+    InvokeNewSessionCallbackWithError(callback);
     return;
   }
 
   start_session_request_id_ = GetNextRequestSessionId();
-  pending_start_session_cb_.reset(new NewSessionMojoCallbackWrapper(callback));
+  pending_start_session_cb_.reset(new NewSessionCallbackWrapper(callback));
   delegate_->StartSession(
       render_process_id_, render_frame_id_, presentation_url,
       base::Bind(&PresentationServiceImpl::OnStartSessionSucceeded,
@@ -256,20 +249,19 @@ void PresentationServiceImpl::StartSession(
 void PresentationServiceImpl::JoinSession(
     const mojo::String& presentation_url,
     const mojo::String& presentation_id,
-    const NewSessionMojoCallback& callback) {
+    const NewSessionCallback& callback) {
   DVLOG(2) << "JoinSession";
   if (!delegate_) {
-    callback.Run(
-          presentation::PresentationSessionInfoPtr(),
-          presentation::PresentationError::From(
-              PresentationError(PRESENTATION_ERROR_NO_PRESENTATION_FOUND,
-                                "Error joining route: No matching route")));
+    callback.Run(blink::mojom::PresentationSessionInfoPtr(),
+                 blink::mojom::PresentationError::From(PresentationError(
+                     PRESENTATION_ERROR_NO_PRESENTATION_FOUND,
+                     "Error joining route: No matching route")));
     return;
   }
 
   int request_session_id = RegisterJoinSessionCallback(callback);
   if (request_session_id == kInvalidRequestSessionId) {
-    InvokeNewSessionMojoCallbackWithError(callback);
+    InvokeNewSessionCallbackWithError(callback);
     return;
   }
   delegate_->JoinSession(
@@ -284,13 +276,13 @@ void PresentationServiceImpl::JoinSession(
 }
 
 int PresentationServiceImpl::RegisterJoinSessionCallback(
-    const NewSessionMojoCallback& callback) {
+    const NewSessionCallback& callback) {
   if (pending_join_session_cbs_.size() >= kMaxNumQueuedSessionRequests)
     return kInvalidRequestSessionId;
 
   int request_id = GetNextRequestSessionId();
   pending_join_session_cbs_[request_id].reset(
-      new NewSessionMojoCallbackWrapper(callback));
+      new NewSessionCallbackWrapper(callback));
   return request_id;
 }
 
@@ -312,8 +304,8 @@ void PresentationServiceImpl::OnStartSessionSucceeded(
 
   CHECK(pending_start_session_cb_.get());
   pending_start_session_cb_->Run(
-      presentation::PresentationSessionInfo::From(session_info),
-      presentation::PresentationErrorPtr());
+      blink::mojom::PresentationSessionInfo::From(session_info),
+      blink::mojom::PresentationErrorPtr());
   ListenForConnectionStateChange(session_info);
   pending_start_session_cb_.reset();
   start_session_request_id_ = kInvalidRequestSessionId;
@@ -326,8 +318,8 @@ void PresentationServiceImpl::OnStartSessionError(
     return;
 
   CHECK(pending_start_session_cb_.get());
-  pending_start_session_cb_->Run(presentation::PresentationSessionInfoPtr(),
-                                 presentation::PresentationError::From(error));
+  pending_start_session_cb_->Run(blink::mojom::PresentationSessionInfoPtr(),
+                                 blink::mojom::PresentationError::From(error));
   pending_start_session_cb_.reset();
   start_session_request_id_ = kInvalidRequestSessionId;
 }
@@ -337,8 +329,8 @@ void PresentationServiceImpl::OnJoinSessionSucceeded(
     const PresentationSessionInfo& session_info) {
   if (RunAndEraseJoinSessionMojoCallback(
           request_session_id,
-          presentation::PresentationSessionInfo::From(session_info),
-          presentation::PresentationErrorPtr())) {
+          blink::mojom::PresentationSessionInfo::From(session_info),
+          blink::mojom::PresentationErrorPtr())) {
     ListenForConnectionStateChange(session_info);
   }
 }
@@ -347,15 +339,14 @@ void PresentationServiceImpl::OnJoinSessionError(
     int request_session_id,
     const PresentationError& error) {
   RunAndEraseJoinSessionMojoCallback(
-      request_session_id,
-      presentation::PresentationSessionInfoPtr(),
-      presentation::PresentationError::From(error));
+      request_session_id, blink::mojom::PresentationSessionInfoPtr(),
+      blink::mojom::PresentationError::From(error));
 }
 
 bool PresentationServiceImpl::RunAndEraseJoinSessionMojoCallback(
     int request_session_id,
-    presentation::PresentationSessionInfoPtr session,
-    presentation::PresentationErrorPtr error) {
+    blink::mojom::PresentationSessionInfoPtr session,
+    blink::mojom::PresentationErrorPtr error) {
   auto it = pending_join_session_cbs_.find(request_session_id);
   if (it == pending_join_session_cbs_.end())
     return false;
@@ -384,9 +375,9 @@ void PresentationServiceImpl::SetDefaultPresentationURL(
 }
 
 void PresentationServiceImpl::SendSessionMessage(
-    presentation::PresentationSessionInfoPtr session,
-    presentation::SessionMessagePtr session_message,
-    const SendMessageMojoCallback& callback) {
+    blink::mojom::PresentationSessionInfoPtr session,
+    blink::mojom::SessionMessagePtr session_message,
+    const SendSessionMessageCallback& callback) {
   DVLOG(2) << "SendSessionMessage";
   DCHECK(!session_message.is_null());
   // send_message_callback_ should be null by now, otherwise resetting of
@@ -396,7 +387,7 @@ void PresentationServiceImpl::SendSessionMessage(
     return;
   }
 
-  send_message_callback_.reset(new SendMessageMojoCallback(callback));
+  send_message_callback_.reset(new SendSessionMessageCallback(callback));
   delegate_->SendMessage(
       render_process_id_, render_frame_id_,
       session.To<PresentationSessionInfo>(),
@@ -436,12 +427,12 @@ void PresentationServiceImpl::OnConnectionStateChanged(
   DCHECK(client_.get());
   if (info.state == PRESENTATION_CONNECTION_STATE_CLOSED) {
     client_->OnConnectionClosed(
-        presentation::PresentationSessionInfo::From(connection),
-        PresentationConnectionCloseReasonToMojo(info.close_reason),
+        blink::mojom::PresentationSessionInfo::From(connection),
+        content::PresentationConnectionCloseReasonToMojo(info.close_reason),
         info.message);
   } else {
     client_->OnConnectionStateChanged(
-        presentation::PresentationSessionInfo::From(connection),
+        blink::mojom::PresentationSessionInfo::From(connection),
         PresentationConnectionStateToMojo(info.state));
   }
 }
@@ -456,7 +447,7 @@ bool PresentationServiceImpl::FrameMatches(
 }
 
 void PresentationServiceImpl::ListenForSessionMessages(
-    presentation::PresentationSessionInfoPtr session) {
+    blink::mojom::PresentationSessionInfoPtr session) {
   DVLOG(2) << "ListenForSessionMessages";
   if (!delegate_)
     return;
@@ -475,12 +466,12 @@ void PresentationServiceImpl::OnSessionMessages(
   DCHECK(client_);
 
   DVLOG(2) << "OnSessionMessages";
-  mojo::Array<presentation::SessionMessagePtr> mojoMessages(messages.size());
+  mojo::Array<blink::mojom::SessionMessagePtr> mojoMessages(messages.size());
   for (size_t i = 0; i < messages.size(); ++i)
     mojoMessages[i] = ToMojoSessionMessage(messages[i], pass_ownership);
 
   client_->OnSessionMessagesReceived(
-      presentation::PresentationSessionInfo::From(session),
+      blink::mojom::PresentationSessionInfo::From(session),
       std::move(mojoMessages));
 }
 
@@ -519,6 +510,14 @@ void PresentationServiceImpl::RenderFrameDeleted(
   delete this;
 }
 
+void PresentationServiceImpl::WebContentsDestroyed() {
+  LOG(ERROR) << "PresentationServiceImpl is being deleted in "
+             << "WebContentsDestroyed()! This shouldn't happen since it "
+             << "should've been deleted during RenderFrameDeleted().";
+  Reset();
+  delete this;
+}
+
 void PresentationServiceImpl::Reset() {
   DVLOG(2) << "PresentationServiceImpl::Reset";
   if (delegate_)
@@ -535,7 +534,7 @@ void PresentationServiceImpl::Reset() {
 
   if (on_session_messages_callback_.get()) {
     on_session_messages_callback_->Run(
-        mojo::Array<presentation::SessionMessagePtr>());
+        mojo::Array<blink::mojom::SessionMessagePtr>());
     on_session_messages_callback_.reset();
   }
 
@@ -557,7 +556,7 @@ void PresentationServiceImpl::OnDefaultPresentationStarted(
     const PresentationSessionInfo& connection) {
   DCHECK(client_.get());
   client_->OnDefaultSessionStarted(
-      presentation::PresentationSessionInfo::From(connection));
+      blink::mojom::PresentationSessionInfo::From(connection));
   ListenForConnectionStateChange(connection);
 }
 
@@ -590,23 +589,23 @@ void PresentationServiceImpl::ScreenAvailabilityListenerImpl
   service_->client_->OnScreenAvailabilityNotSupported(availability_url_);
 }
 
-PresentationServiceImpl::NewSessionMojoCallbackWrapper
-::NewSessionMojoCallbackWrapper(const NewSessionMojoCallback& callback)
+PresentationServiceImpl::NewSessionCallbackWrapper
+::NewSessionCallbackWrapper(const NewSessionCallback& callback)
     : callback_(callback) {
 }
 
-PresentationServiceImpl::NewSessionMojoCallbackWrapper
-::~NewSessionMojoCallbackWrapper() {
+PresentationServiceImpl::NewSessionCallbackWrapper
+::~NewSessionCallbackWrapper() {
   if (!callback_.is_null())
-    InvokeNewSessionMojoCallbackWithError(callback_);
+    InvokeNewSessionCallbackWithError(callback_);
 }
 
-void PresentationServiceImpl::NewSessionMojoCallbackWrapper::Run(
-    presentation::PresentationSessionInfoPtr session,
-    presentation::PresentationErrorPtr error) {
+void PresentationServiceImpl::NewSessionCallbackWrapper::Run(
+    blink::mojom::PresentationSessionInfoPtr session,
+    blink::mojom::PresentationErrorPtr error) {
   DCHECK(!callback_.is_null());
   callback_.Run(std::move(session), std::move(error));
-  callback_.reset();
+  callback_.Reset();
 }
 
 }  // namespace content

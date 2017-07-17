@@ -5,30 +5,34 @@
 #ifndef UI_GL_GL_CONTEXT_H_
 #define UI_GL_GL_CONTEXT_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/cancellation_flag.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_state_restorer.h"
 #include "ui/gl/gpu_preference.h"
+
+namespace gl {
+class YUVToRGBConverter;
+}  // namespace gl
 
 namespace gpu {
 class GLContextVirtual;
 }  // namespace gpu
 
-namespace gfx {
+namespace gl {
 
 class GLSurface;
 class GPUTiming;
 class GPUTimingClient;
 class VirtualGLApi;
 struct GLVersionInfo;
-
 
 // Encapsulates an OpenGL context, hiding platform specific management.
 class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
@@ -56,7 +60,7 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   virtual void* GetHandle() = 0;
 
   // Creates a GPUTimingClient class which abstracts various GPU Timing exts.
-  virtual scoped_refptr<gfx::GPUTimingClient> CreateGPUTimingClient() = 0;
+  virtual scoped_refptr<GPUTimingClient> CreateGPUTimingClient() = 0;
 
   // Gets the GLStateRestorer for the context.
   GLStateRestorer* GetGLStateRestorer();
@@ -99,6 +103,7 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // Create a GL context that is compatible with the given surface.
   // |share_group|, if non-NULL, is a group of contexts which the
   // internally created OpenGL context shares textures and other resources.
+  // DEPRECATED(kylechar): Use gl::init::CreateGLContext from gl_factory.h.
   static scoped_refptr<GLContext> CreateGLContext(
       GLShareGroup* share_group,
       GLSurface* compatible_surface,
@@ -127,13 +132,8 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // Returns the GL renderer string. The context must be current.
   virtual std::string GetGLRenderer();
 
-  // Return a callback that, when called, indicates that the state the
-  // underlying context has been changed by code outside of the command buffer,
-  // and will need to be restored.
-  virtual base::Closure GetStateWasDirtiedExternallyCallback();
-
-  // Restore the context's state if it was dirtied by an external caller.
-  virtual void RestoreStateIfDirtiedExternally();
+  // Returns a helper structure to convert YUV textures to RGB textures.
+  virtual YUVToRGBConverter* GetYUVToRGBConverter();
 
  protected:
   virtual ~GLContext();
@@ -164,9 +164,6 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
 
   virtual void OnSetSwapInterval(int interval) = 0;
 
-  bool GetStateWasDirtiedExternally() const;
-  void SetStateWasDirtiedExternally(bool dirtied_externally);
-
  private:
   friend class base::RefCounted<GLContext>;
 
@@ -175,15 +172,13 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   friend class gpu::GLContextVirtual;
 
   scoped_refptr<GLShareGroup> share_group_;
-  scoped_ptr<VirtualGLApi> virtual_gl_api_;
+  std::unique_ptr<VirtualGLApi> virtual_gl_api_;
   bool state_dirtied_externally_;
-  scoped_ptr<GLStateRestorer> state_restorer_;
-  scoped_ptr<GLVersionInfo> version_info_;
+  std::unique_ptr<GLStateRestorer> state_restorer_;
+  std::unique_ptr<GLVersionInfo> version_info_;
 
   int swap_interval_;
   bool force_swap_interval_zero_;
-
-  base::CancelableCallback<void()> state_dirtied_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(GLContext);
 };
@@ -191,7 +186,7 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
 class GL_EXPORT GLContextReal : public GLContext {
  public:
   explicit GLContextReal(GLShareGroup* share_group);
-  scoped_refptr<gfx::GPUTimingClient> CreateGPUTimingClient() override;
+  scoped_refptr<GPUTimingClient> CreateGPUTimingClient() override;
 
  protected:
   ~GLContextReal() override;
@@ -199,10 +194,18 @@ class GL_EXPORT GLContextReal : public GLContext {
   void SetCurrent(GLSurface* surface) override;
 
  private:
-  scoped_ptr<gfx::GPUTiming> gpu_timing_;
+  std::unique_ptr<GPUTiming> gpu_timing_;
   DISALLOW_COPY_AND_ASSIGN(GLContextReal);
 };
 
-}  // namespace gfx
+// Wraps GLContext in scoped_refptr and tries to initializes it. Returns a
+// scoped_refptr containing the initialized GLContext or nullptr if
+// initialization fails.
+GL_EXPORT scoped_refptr<GLContext> InitializeGLContext(
+    scoped_refptr<GLContext> context,
+    GLSurface* compatible_surface,
+    GpuPreference gpu_preference);
+
+}  // namespace gl
 
 #endif  // UI_GL_GL_CONTEXT_H_

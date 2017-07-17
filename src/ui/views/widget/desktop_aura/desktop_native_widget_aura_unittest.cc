@@ -14,10 +14,11 @@
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/screen.h"
+#include "ui/views/test/native_widget_factory.h"
 #include "ui/views/test/test_views.h"
 #include "ui/views/test/test_views_delegate.h"
 #include "ui/views/test/views_test_base.h"
@@ -26,6 +27,8 @@
 #include "ui/views/window/dialog_delegate.h"
 
 #if defined(OS_WIN)
+#include "ui/base/view_prop.h"
+#include "ui/base/win/window_event_target.h"
 #include "ui/views/win/hwnd_util.h"
 #endif
 
@@ -37,7 +40,7 @@ typedef ViewsTestBase DesktopNativeWidgetAuraTest;
 // Verifies creating a Widget with a parent that is not in a RootWindow doesn't
 // crash.
 TEST_F(DesktopNativeWidgetAuraTest, CreateWithParentNotInRootWindow) {
-  scoped_ptr<aura::Window> window(new aura::Window(NULL));
+  std::unique_ptr<aura::Window> window(new aura::Window(NULL));
   window->Init(ui::LAYER_NOT_DRAWN);
   Widget widget;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
@@ -216,14 +219,14 @@ TEST_F(DesktopNativeWidgetAuraTest, DontAccessContentWindowDuringDestruction) {
   }
 }
 
-void QuitNestedLoopAndCloseWidget(scoped_ptr<Widget> widget,
+void QuitNestedLoopAndCloseWidget(std::unique_ptr<Widget> widget,
                                   base::Closure* quit_runloop) {
   quit_runloop->Run();
 }
 
 // Verifies that a widget can be destroyed when running a nested message-loop.
 TEST_F(DesktopNativeWidgetAuraTest, WidgetCanBeDestroyedFromNestedLoop) {
-  scoped_ptr<Widget> widget(new Widget);
+  std::unique_ptr<Widget> widget(new Widget);
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
   params.bounds = gfx::Rect(0, 0, 200, 200);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -429,7 +432,8 @@ TEST_F(DesktopAuraWidgetTest, TopLevelOwnedPopupRepositionTest) {
 
   gfx::Rect new_pos(10, 10, 400, 400);
   popup_window.owned_window()->SetBoundsInScreen(
-      new_pos, gfx::Screen::GetScreen()->GetDisplayNearestPoint(gfx::Point()));
+      new_pos,
+      display::Screen::GetScreen()->GetDisplayNearestPoint(gfx::Point()));
 
   EXPECT_EQ(new_pos,
             popup_window.top_level_widget()->GetWindowBoundsInScreen());
@@ -486,7 +490,8 @@ void RunCloseWidgetDuringDispatchTest(WidgetTest* test,
   Widget* widget = new Widget;
   Widget::InitParams params =
       test->CreateParams(Widget::InitParams::TYPE_POPUP);
-  params.native_widget = new PlatformDesktopNativeWidget(widget);
+  params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(params, widget, nullptr);
   params.bounds = gfx::Rect(0, 0, 50, 100);
   widget->Init(params);
   widget->SetContentsView(new CloseWidgetView(last_event_type));
@@ -528,8 +533,8 @@ TEST_F(WidgetTest, WindowMouseModalityTest) {
   gfx::Rect initial_bounds(0, 0, 500, 500);
   init_params.bounds = initial_bounds;
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  init_params.native_widget =
-      new PlatformDesktopNativeWidget(&top_level_widget);
+  init_params.native_widget = CreatePlatformDesktopNativeWidgetImpl(
+      init_params, &top_level_widget, nullptr);
   top_level_widget.Init(init_params);
   top_level_widget.Show();
   EXPECT_TRUE(top_level_widget.IsVisible());
@@ -592,7 +597,8 @@ TEST_F(WidgetTest, WindowMouseModalityTest) {
 #if defined(OS_WIN)
 // Tests whether we can activate the top level widget when a modal dialog is
 // active.
-TEST_F(WidgetTest, WindowModalityActivationTest) {
+// Flaky: crbug.com/613428
+TEST_F(WidgetTest, DISABLED_WindowModalityActivationTest) {
   TestDesktopWidgetDelegate widget_delegate;
   widget_delegate.InitWidget(CreateParams(Widget::InitParams::TYPE_WINDOW));
 
@@ -625,6 +631,32 @@ TEST_F(WidgetTest, WindowModalityActivationTest) {
 
   modal_dialog_widget->CloseNow();
 }
+
+// This test validates that sending WM_CHAR/WM_SYSCHAR/WM_SYSDEADCHAR
+// messages via the WindowEventTarget interface implemented by the
+// HWNDMessageHandler class does not cause a crash due to an unprocessed
+// event
+TEST_F(WidgetTest, CharMessagesAsKeyboardMessagesDoesNotCrash) {
+  Widget widget;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(params, &widget, nullptr);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget.Init(params);
+  widget.Show();
+
+  ui::WindowEventTarget* target =
+      reinterpret_cast<ui::WindowEventTarget*>(ui::ViewProp::GetValue(
+          widget.GetNativeWindow()->GetHost()->GetAcceleratedWidget(),
+          ui::WindowEventTarget::kWin32InputEventTarget));
+  ASSERT_NE(nullptr, target);
+  bool handled = false;
+  target->HandleKeyboardMessage(WM_CHAR, 0, 0, &handled);
+  target->HandleKeyboardMessage(WM_SYSCHAR, 0, 0, &handled);
+  target->HandleKeyboardMessage(WM_SYSDEADCHAR, 0, 0, &handled);
+  widget.CloseNow();
+}
+
 #endif  // defined(OS_WIN)
 
 }  // namespace test

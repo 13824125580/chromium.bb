@@ -51,13 +51,12 @@
 #ifndef WEBRTC_API_PEERCONNECTIONINTERFACE_H_
 #define WEBRTC_API_PEERCONNECTIONINTERFACE_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "webrtc/api/datachannelinterface.h"
-#include "webrtc/api/dtlsidentitystore.h"
-#include "webrtc/api/dtlsidentitystore.h"
 #include "webrtc/api/dtmfsenderinterface.h"
 #include "webrtc/api/jsep.h"
 #include "webrtc/api/mediastreaminterface.h"
@@ -68,8 +67,10 @@
 #include "webrtc/base/fileutils.h"
 #include "webrtc/base/network.h"
 #include "webrtc/base/rtccertificate.h"
+#include "webrtc/base/rtccertificategenerator.h"
 #include "webrtc/base/socketaddress.h"
 #include "webrtc/base/sslstreamadapter.h"
+#include "webrtc/media/base/mediachannel.h"
 #include "webrtc/p2p/base/portallocator.h"
 
 namespace rtc {
@@ -216,43 +217,89 @@ class PeerConnectionInterface : public rtc::RefCountInterface {
     kTcpCandidatePolicyDisabled
   };
 
+  enum CandidateNetworkPolicy {
+    kCandidateNetworkPolicyAll,
+    kCandidateNetworkPolicyLowCost
+  };
+
   enum ContinualGatheringPolicy {
     GATHER_ONCE,
     GATHER_CONTINUALLY
   };
 
   // TODO(hbos): Change into class with private data and public getters.
+  // TODO(nisse): In particular, accessing fields directly from an
+  // application is brittle, since the organization mirrors the
+  // organization of the implementation, which isn't stable. So we
+  // need getters and setters at least for fields which applications
+  // are interested in.
   struct RTCConfiguration {
+    // This struct is subject to reorganization, both for naming
+    // consistency, and to group settings to match where they are used
+    // in the implementation. To do that, we need getter and setter
+    // methods for all settings which are of interest to applications,
+    // Chrome in particular.
+
+    bool dscp() { return media_config.enable_dscp; }
+    void set_dscp(bool enable) { media_config.enable_dscp = enable; }
+
+    // TODO(nisse): The corresponding flag in MediaConfig and
+    // elsewhere should be renamed enable_cpu_adaptation.
+    bool cpu_adaptation() {
+      return media_config.video.enable_cpu_overuse_detection;
+    }
+    void set_cpu_adaptation(bool enable) {
+      media_config.video.enable_cpu_overuse_detection = enable;
+    }
+
+    bool suspend_below_min_bitrate() {
+      return media_config.video.suspend_below_min_bitrate;
+    }
+    void set_suspend_below_min_bitrate(bool enable) {
+      media_config.video.suspend_below_min_bitrate = enable;
+    }
+
+    // TODO(nisse): The negation in the corresponding MediaConfig
+    // attribute is inconsistent, and it should be renamed at some
+    // point.
+    bool prerenderer_smoothing() {
+      return !media_config.video.disable_prerenderer_smoothing;
+    }
+    void set_prerenderer_smoothing(bool enable) {
+      media_config.video.disable_prerenderer_smoothing = !enable;
+    }
+
     static const int kUndefined = -1;
     // Default maximum number of packets in the audio jitter buffer.
     static const int kAudioJitterBufferMaxPackets = 50;
     // TODO(pthatcher): Rename this ice_transport_type, but update
     // Chromium at the same time.
-    IceTransportsType type;
+    IceTransportsType type = kAll;
     // TODO(pthatcher): Rename this ice_servers, but update Chromium
     // at the same time.
     IceServers servers;
-    BundlePolicy bundle_policy;
-    RtcpMuxPolicy rtcp_mux_policy;
-    TcpCandidatePolicy tcp_candidate_policy;
-    int audio_jitter_buffer_max_packets;
-    bool audio_jitter_buffer_fast_accelerate;
-    int ice_connection_receiving_timeout;         // ms
-    int ice_backup_candidate_pair_ping_interval;  // ms
-    ContinualGatheringPolicy continual_gathering_policy;
+    BundlePolicy bundle_policy = kBundlePolicyBalanced;
+    RtcpMuxPolicy rtcp_mux_policy = kRtcpMuxPolicyNegotiate;
+    TcpCandidatePolicy tcp_candidate_policy = kTcpCandidatePolicyEnabled;
+    CandidateNetworkPolicy candidate_network_policy =
+        kCandidateNetworkPolicyAll;
+    int audio_jitter_buffer_max_packets = kAudioJitterBufferMaxPackets;
+    bool audio_jitter_buffer_fast_accelerate = false;
+    int ice_connection_receiving_timeout = kUndefined;         // ms
+    int ice_backup_candidate_pair_ping_interval = kUndefined;  // ms
+    ContinualGatheringPolicy continual_gathering_policy = GATHER_ONCE;
     std::vector<rtc::scoped_refptr<rtc::RTCCertificate>> certificates;
-    bool disable_prerenderer_smoothing;
-    RTCConfiguration()
-        : type(kAll),
-          bundle_policy(kBundlePolicyBalanced),
-          rtcp_mux_policy(kRtcpMuxPolicyNegotiate),
-          tcp_candidate_policy(kTcpCandidatePolicyEnabled),
-          audio_jitter_buffer_max_packets(kAudioJitterBufferMaxPackets),
-          audio_jitter_buffer_fast_accelerate(false),
-          ice_connection_receiving_timeout(kUndefined),
-          ice_backup_candidate_pair_ping_interval(kUndefined),
-          continual_gathering_policy(GATHER_ONCE),
-          disable_prerenderer_smoothing(false) {}
+    bool prioritize_most_likely_ice_candidate_pairs = false;
+    struct cricket::MediaConfig media_config;
+    // Flags corresponding to values set by constraint flags.
+    // rtc::Optional flags can be "missing", in which case the webrtc
+    // default applies.
+    bool disable_ipv6 = false;
+    bool enable_rtp_data_channel = false;
+    rtc::Optional<int> screencast_min_bitrate;
+    rtc::Optional<bool> combined_audio_video_bwe;
+    rtc::Optional<bool> enable_dtls_srtp;
+    int ice_candidate_pool_size = 0;
   };
 
   struct RTCOfferAnswerOptions {
@@ -380,7 +427,13 @@ class PeerConnectionInterface : public rtc::RefCountInterface {
   // Create an answer to an offer.
   // The CreateSessionDescriptionObserver callback will be called when done.
   virtual void CreateAnswer(CreateSessionDescriptionObserver* observer,
-                            const MediaConstraintsInterface* constraints) = 0;
+                            const RTCOfferAnswerOptions& options) {}
+  // Deprecated - use version above.
+  // TODO(hta): Remove and remove default implementations when all callers
+  // are updated.
+  virtual void CreateAnswer(CreateSessionDescriptionObserver* observer,
+                            const MediaConstraintsInterface* constraints) {}
+
   // Sets the local session description.
   // JsepInterface takes the ownership of |desc| even if it fails.
   // The |observer| callback will be called when done.
@@ -398,6 +451,7 @@ class PeerConnectionInterface : public rtc::RefCountInterface {
                          const MediaConstraintsInterface* constraints) {
     return false;
   }
+  virtual bool UpdateIce(const IceServers& configuration) { return false; }
   // Sets the PeerConnection's global configuration to |config|.
   // Any changes to STUN/TURN servers or ICE candidate policy will affect the
   // next gathering phase, and cause the next call to createOffer to generate
@@ -416,6 +470,12 @@ class PeerConnectionInterface : public rtc::RefCountInterface {
   // TODO(ronghuawu): Consider to change this so that the AddIceCandidate will
   // take the ownership of the |candidate|.
   virtual bool AddIceCandidate(const IceCandidateInterface* candidate) = 0;
+
+  // Removes a group of remote candidates from the ICE agent.
+  virtual bool RemoveIceCandidates(
+      const std::vector<cricket::Candidate>& candidates) {
+    return false;
+  }
 
   virtual void RegisterUMAObserver(UMAObserver* observer) = 0;
 
@@ -450,28 +510,47 @@ class PeerConnectionObserver {
   virtual void OnSignalingChange(
       PeerConnectionInterface::SignalingState new_state) = 0;
 
+  // TODO(deadbeef): Once all subclasses override the scoped_refptr versions
+  // of the below three methods, make them pure virtual and remove the raw
+  // pointer version.
+
   // Triggered when media is received on a new stream from remote peer.
-  virtual void OnAddStream(MediaStreamInterface* stream) = 0;
+  virtual void OnAddStream(rtc::scoped_refptr<MediaStreamInterface> stream) {}
+  // Deprecated; please use the version that uses a scoped_refptr.
+  virtual void OnAddStream(MediaStreamInterface* stream) {}
 
   // Triggered when a remote peer close a stream.
-  virtual void OnRemoveStream(MediaStreamInterface* stream) = 0;
+  virtual void OnRemoveStream(rtc::scoped_refptr<MediaStreamInterface> stream) {
+  }
+  // Deprecated; please use the version that uses a scoped_refptr.
+  virtual void OnRemoveStream(MediaStreamInterface* stream) {}
 
-  // Triggered when a remote peer open a data channel.
-  virtual void OnDataChannel(DataChannelInterface* data_channel) = 0;
+  // Triggered when a remote peer opens a data channel.
+  virtual void OnDataChannel(
+      rtc::scoped_refptr<DataChannelInterface> data_channel){};
+  // Deprecated; please use the version that uses a scoped_refptr.
+  virtual void OnDataChannel(DataChannelInterface* data_channel) {}
 
-  // Triggered when renegotiation is needed, for example the ICE has restarted.
+  // Triggered when renegotiation is needed. For example, an ICE restart
+  // has begun.
   virtual void OnRenegotiationNeeded() = 0;
 
-  // Called any time the IceConnectionState changes
+  // Called any time the IceConnectionState changes.
   virtual void OnIceConnectionChange(
       PeerConnectionInterface::IceConnectionState new_state) = 0;
 
-  // Called any time the IceGatheringState changes
+  // Called any time the IceGatheringState changes.
   virtual void OnIceGatheringChange(
       PeerConnectionInterface::IceGatheringState new_state) = 0;
 
-  // New Ice candidate have been found.
+  // A new ICE candidate has been gathered.
   virtual void OnIceCandidate(const IceCandidateInterface* candidate) = 0;
+
+  // Ice candidates have been removed.
+  // TODO(honghaiz): Make this a pure virtual method when all its subclasses
+  // implement it.
+  virtual void OnIceCandidatesRemoved(
+      const std::vector<cricket::Candidate>& candidates) {}
 
   // Called when the ICE connection receiving status changes.
   virtual void OnIceConnectionReceivingChange(bool receiving) {}
@@ -520,8 +599,14 @@ class PeerConnectionFactoryInterface : public rtc::RefCountInterface {
   virtual rtc::scoped_refptr<PeerConnectionInterface> CreatePeerConnection(
       const PeerConnectionInterface::RTCConfiguration& configuration,
       const MediaConstraintsInterface* constraints,
-      rtc::scoped_ptr<cricket::PortAllocator> allocator,
-      rtc::scoped_ptr<DtlsIdentityStoreInterface> dtls_identity_store,
+      std::unique_ptr<cricket::PortAllocator> allocator,
+      std::unique_ptr<rtc::RTCCertificateGeneratorInterface> cert_generator,
+      PeerConnectionObserver* observer) = 0;
+
+  virtual rtc::scoped_refptr<PeerConnectionInterface> CreatePeerConnection(
+      const PeerConnectionInterface::RTCConfiguration& configuration,
+      std::unique_ptr<cricket::PortAllocator> allocator,
+      std::unique_ptr<rtc::RTCCertificateGeneratorInterface> cert_generator,
       PeerConnectionObserver* observer) = 0;
 
   virtual rtc::scoped_refptr<MediaStreamInterface>
@@ -530,20 +615,28 @@ class PeerConnectionFactoryInterface : public rtc::RefCountInterface {
   // Creates a AudioSourceInterface.
   // |constraints| decides audio processing settings but can be NULL.
   virtual rtc::scoped_refptr<AudioSourceInterface> CreateAudioSource(
+      const cricket::AudioOptions& options) = 0;
+  // Deprecated - use version above.
+  virtual rtc::scoped_refptr<AudioSourceInterface> CreateAudioSource(
       const MediaConstraintsInterface* constraints) = 0;
 
-  // Creates a VideoSourceInterface. The new source take ownership of
-  // |capturer|. |constraints| decides video resolution and frame rate but can
+  // Creates a VideoTrackSourceInterface. The new source take ownership of
+  // |capturer|.
+  virtual rtc::scoped_refptr<VideoTrackSourceInterface> CreateVideoSource(
+      cricket::VideoCapturer* capturer) = 0;
+  // A video source creator that allows selection of resolution and frame rate.
+  // |constraints| decides video resolution and frame rate but can
   // be NULL.
-  virtual rtc::scoped_refptr<VideoSourceInterface> CreateVideoSource(
+  // In the NULL case, use the version above.
+  virtual rtc::scoped_refptr<VideoTrackSourceInterface> CreateVideoSource(
       cricket::VideoCapturer* capturer,
       const MediaConstraintsInterface* constraints) = 0;
 
   // Creates a new local VideoTrack. The same |source| can be used in several
   // tracks.
-  virtual rtc::scoped_refptr<VideoTrackInterface>
-      CreateVideoTrack(const std::string& label,
-                       VideoSourceInterface* source) = 0;
+  virtual rtc::scoped_refptr<VideoTrackInterface> CreateVideoTrack(
+      const std::string& label,
+      VideoTrackSourceInterface* source) = 0;
 
   // Creates an new AudioTrack. At the moment |source| can be NULL.
   virtual rtc::scoped_refptr<AudioTrackInterface>
@@ -566,13 +659,18 @@ class PeerConnectionFactoryInterface : public rtc::RefCountInterface {
   // passes it on to VoiceEngine, which will take the ownership. If the
   // operation fails the file will be closed. The logging will stop
   // automatically after 10 minutes have passed, or when the StopRtcEventLog
-  // function is called.
+  // function is called. A maximum filesize in bytes can be set, the logging
+  // will be stopped before exceeding this limit. If max_size_bytes is set to a
+  // value <= 0, no limit will be used.
   // This function as well as the StopRtcEventLog don't really belong on this
   // interface, this is a temporary solution until we move the logging object
   // from inside voice engine to webrtc::Call, which will happen when the VoE
   // restructuring effort is further along.
   // TODO(ivoc): Move this into being:
   //             PeerConnection => MediaController => webrtc::Call.
+  virtual bool StartRtcEventLog(rtc::PlatformFile file,
+                                int64_t max_size_bytes) = 0;
+  // Deprecated, use the version above.
   virtual bool StartRtcEventLog(rtc::PlatformFile file) = 0;
 
   // Stops logging the RtcEventLog.
@@ -586,19 +684,46 @@ class PeerConnectionFactoryInterface : public rtc::RefCountInterface {
 };
 
 // Create a new instance of PeerConnectionFactoryInterface.
+//
+// This method relies on the thread it's called on as the "signaling thread"
+// for the PeerConnectionFactory it creates.
+//
+// As such, if the current thread is not already running an rtc::Thread message
+// loop, an application using this method must eventually either call
+// rtc::Thread::Current()->Run(), or call
+// rtc::Thread::Current()->ProcessMessages() within the application's own
+// message loop.
 rtc::scoped_refptr<PeerConnectionFactoryInterface>
 CreatePeerConnectionFactory();
 
 // Create a new instance of PeerConnectionFactoryInterface.
-// Ownership of |factory|, |default_adm|, and optionally |encoder_factory| and
-// |decoder_factory| transferred to the returned factory.
-rtc::scoped_refptr<PeerConnectionFactoryInterface>
-CreatePeerConnectionFactory(
+//
+// |network_thread|, |worker_thread| and |signaling_thread| are
+// the only mandatory parameters.
+//
+// If non-null, ownership of |default_adm|, |encoder_factory| and
+// |decoder_factory| are transferred to the returned factory.
+rtc::scoped_refptr<PeerConnectionFactoryInterface> CreatePeerConnectionFactory(
+    rtc::Thread* network_thread,
     rtc::Thread* worker_thread,
     rtc::Thread* signaling_thread,
     AudioDeviceModule* default_adm,
     cricket::WebRtcVideoEncoderFactory* encoder_factory,
     cricket::WebRtcVideoDecoderFactory* decoder_factory);
+
+// Create a new instance of PeerConnectionFactoryInterface.
+// Same thread is used as worker and network thread.
+inline rtc::scoped_refptr<PeerConnectionFactoryInterface>
+CreatePeerConnectionFactory(
+    rtc::Thread* worker_and_network_thread,
+    rtc::Thread* signaling_thread,
+    AudioDeviceModule* default_adm,
+    cricket::WebRtcVideoEncoderFactory* encoder_factory,
+    cricket::WebRtcVideoDecoderFactory* decoder_factory) {
+  return CreatePeerConnectionFactory(
+      worker_and_network_thread, worker_and_network_thread, signaling_thread,
+      default_adm, encoder_factory, decoder_factory);
+}
 
 }  // namespace webrtc
 

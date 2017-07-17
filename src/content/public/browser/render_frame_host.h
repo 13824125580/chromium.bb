@@ -11,6 +11,7 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/common/console_message_level.h"
+#include "content/public/common/file_chooser_params.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 #include "third_party/WebKit/public/platform/WebPageVisibilityState.h"
@@ -23,12 +24,17 @@ namespace base {
 class Value;
 }
 
+namespace shell {
+class InterfaceRegistry;
+class InterfaceProvider;
+}
+
 namespace content {
 class RenderProcessHost;
 class RenderViewHost;
 class RenderWidgetHostView;
-class ServiceRegistry;
 class SiteInstance;
+struct FileChooserFileInfo;
 
 // The interface provides a communication conduit with a frame in the renderer.
 class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
@@ -37,16 +43,6 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // Returns the RenderFrameHost given its ID and the ID of its render process.
   // Returns nullptr if the IDs do not correspond to a live RenderFrameHost.
   static RenderFrameHost* FromID(int render_process_id, int render_frame_id);
-
-  // Returns the current RenderFrameHost associated with the frame identified by
-  // the given FrameTreeNode ID, in any WebContents. The frame may change its
-  // current RenderFrameHost over time, so the returned RenderFrameHost can be
-  // different from the RenderFrameHost that returned the ID via
-  // GetFrameTreeNodeId(). See GetFrameTreeNodeId for more details.
-  // Use WebContents::FindFrameByFrameTreeNodeId to find a RenderFrameHost in
-  // a specific WebContents.
-  // Returns nullptr if the frame does not exist.
-  static RenderFrameHost* FromFrameTreeNodeId(int frame_tree_node_id);
 
 #if defined(OS_ANDROID)
   // Globally allows for injecting JavaScript into the main world. This feature
@@ -173,11 +169,27 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   virtual void InsertVisualStateCallback(
       const VisualStateCallback& callback) = 0;
 
-  // Temporary until we get rid of RenderViewHost.
+  // Copies the image at the location in viewport coordinates (not frame
+  // coordinates) to the clipboard. If there is no image at that location, does
+  // nothing.
+  virtual void CopyImageAt(int x, int y) = 0;
+
+  // Requests to save the image at the location in viewport coordinates (not
+  // frame coordinates). If there is an image at the location, the renderer
+  // will post back the appropriate download message to trigger the save UI.
+  // If there is no image at that location, does nothing.
+  virtual void SaveImageAt(int x, int y) = 0;
+
+  // RenderViewHost for this frame.
   virtual RenderViewHost* GetRenderViewHost() = 0;
 
-  // Returns the ServiceRegistry for this frame.
-  virtual ServiceRegistry* GetServiceRegistry() = 0;
+  // Returns the InterfaceRegistry that this process uses to expose interfaces
+  // to the application running in this frame.
+  virtual shell::InterfaceRegistry* GetInterfaceRegistry() = 0;
+
+  // Returns the InterfaceProvider that this process can use to bind
+  // interfaces exposed to it by the application running in this frame.
+  virtual shell::InterfaceProvider* GetRemoteInterfaces() = 0;
 
   // Returns the visibility state of the frame. The different visibility states
   // of a frame are defined in Blink.
@@ -191,14 +203,12 @@ class CONTENT_EXPORT RenderFrameHost : public IPC::Listener,
   // use by resource metrics.
   virtual int GetProxyCount() = 0;
 
-#if defined(OS_ANDROID)
-  // Selects and zooms to the find result nearest to the point (x,y)
-  // defined in find-in-page coordinates.
-  virtual void ActivateNearestFindResult(int request_id, float x, float y) = 0;
-
-  // Asks the renderer process to send the rects of the current find matches.
-  virtual void RequestFindMatchRects(int current_version) = 0;
-#endif
+  // Notifies the Listener that one or more files have been chosen by the user
+  // from a file chooser dialog for the form. |permissions| is the file
+  // selection mode in which the chooser dialog was created.
+  virtual void FilesSelectedInChooser(
+      const std::vector<content::FileChooserFileInfo>& files,
+      FileChooserParams::Mode permissions) = 0;
 
  private:
   // This interface should only be implemented inside content.

@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_UI_FAST_UNLOAD_CONTROLLER_H_
 #define CHROME_BROWSER_UI_FAST_UNLOAD_CONTROLLER_H_
 
+#include <memory>
 #include <set>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
@@ -66,11 +66,11 @@ class FastUnloadController : public content::NotificationObserver,
   bool CanCloseContents(content::WebContents* contents);
 
   // Returns true if we need to run unload events for the |contents|.
-  static bool ShouldRunUnloadEventsHelper(content::WebContents* contents);
+  bool ShouldRunUnloadEventsHelper(content::WebContents* contents);
 
   // Helper function to run beforeunload listeners on a WebContents.
   // Returns true if |contents| beforeunload listeners were invoked.
-  static bool RunUnloadEventsHelper(content::WebContents* contents);
+  bool RunUnloadEventsHelper(content::WebContents* contents);
 
   // Called when a BeforeUnload handler is fired for |contents|. |proceed|
   // indicates the user's response to the Y/N BeforeUnload handler dialog. If
@@ -194,7 +194,7 @@ class FastUnloadController : public content::NotificationObserver,
 
   // Manage tabs with beforeunload/unload handlers that close detached.
   class DetachedWebContentsDelegate;
-  scoped_ptr<DetachedWebContentsDelegate> detached_delegate_;
+  std::unique_ptr<DetachedWebContentsDelegate> detached_delegate_;
 
   base::WeakPtrFactory<FastUnloadController> weak_factory_;
 

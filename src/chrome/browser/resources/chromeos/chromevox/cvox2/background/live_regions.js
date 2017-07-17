@@ -41,13 +41,8 @@ LiveRegions = function(chromeVoxState) {
    * @private
    */
   this.liveRegionNodeSet_ = new WeakSet();
-
-  // API only exists >= m49. Prevent us from crashing.
-  try {
-    chrome.automation.addTreeChangeObserver(
-        'liveRegionTreeChanges', this.onTreeChange.bind(this));
-  } catch (e) {
-  }
+  chrome.automation.addTreeChangeObserver(
+      'liveRegionTreeChanges', this.onTreeChange.bind(this));
 };
 
 /**
@@ -129,7 +124,7 @@ LiveRegions.prototype = {
     output.withSpeech(range, range, Output.EventType.NAVIGATE);
 
     if (!output.hasSpeech && node.liveAtomic)
-      output.format('$descendants', node);
+      output.format('$joinedDescendants', node);
 
     output.withSpeechCategory(cvox.TtsCategory.LIVE);
 

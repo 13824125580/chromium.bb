@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/background/ash_user_wallpaper_delegate.h"
 
+#include "ash/common/wm/window_animation_types.h"
 #include "ash/desktop_background/user_wallpaper_delegate.h"
 #include "ash/shell.h"
 #include "ash/wm/window_animations.h"
@@ -48,9 +49,9 @@ class UserWallpaperDelegate : public ash::UserWallpaperDelegate {
   ~UserWallpaperDelegate() override {}
 
   int GetAnimationType() override {
-    return ShouldShowInitialAnimation() ?
-        ash::WINDOW_VISIBILITY_ANIMATION_TYPE_BRIGHTNESS_GRAYSCALE :
-        static_cast<int>(wm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
+    return ShouldShowInitialAnimation()
+               ? ash::wm::WINDOW_VISIBILITY_ANIMATION_TYPE_BRIGHTNESS_GRAYSCALE
+               : static_cast<int>(::wm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
   }
 
   int GetAnimationDurationOverride() override {

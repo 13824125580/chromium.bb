@@ -34,6 +34,8 @@
 
 namespace blink {
 
+namespace {
+
 class TestExtraData : public WebURLRequest::ExtraData {
 public:
     explicit TestExtraData(bool* alive)
@@ -48,6 +50,8 @@ private:
     bool* m_alive;
 };
 
+} // anonymous namespace
+
 TEST(WebURLRequestTest, ExtraData)
 {
     bool alive = false;
@@ -58,15 +62,15 @@ TEST(WebURLRequestTest, ExtraData)
 
         urlRequest.initialize();
         urlRequest.setExtraData(extraData);
-        EXPECT_EQ(extraData, urlRequest.extraData());
+        EXPECT_EQ(extraData, urlRequest.getExtraData());
         {
             WebURLRequest otherUrlRequest = urlRequest;
             EXPECT_TRUE(alive);
-            EXPECT_EQ(extraData, otherUrlRequest.extraData());
-            EXPECT_EQ(extraData, urlRequest.extraData());
+            EXPECT_EQ(extraData, otherUrlRequest.getExtraData());
+            EXPECT_EQ(extraData, urlRequest.getExtraData());
         }
         EXPECT_TRUE(alive);
-        EXPECT_EQ(extraData, urlRequest.extraData());
+        EXPECT_EQ(extraData, urlRequest.getExtraData());
     }
     EXPECT_FALSE(alive);
 }

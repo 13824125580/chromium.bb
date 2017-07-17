@@ -9,6 +9,7 @@
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
@@ -120,14 +121,6 @@ int BrowserActionTestUtil::VisibleBrowserActions() {
   return [GetController(browser_, test_helper_.get()) visibleButtonCount];
 }
 
-bool BrowserActionTestUtil::IsChevronShowing() {
-  BrowserActionsController* controller =
-      GetController(browser_, test_helper_.get());
-  // The magic "18" comes from kChevronWidth in browser_actions_controller.mm.
-  return ![controller chevronIsHidden] &&
-         NSWidth([[controller containerView] animationEndFrame]) >= 18;
-}
-
 void BrowserActionTestUtil::InspectPopup(int index) {
   NOTREACHED();
 }
@@ -193,20 +186,15 @@ void BrowserActionTestUtil::SetWidth(int width) {
   [containerView setFrame:frame];
 }
 
-bool BrowserActionTestUtil::IsHighlightingForSurfacingBubble() {
-  BrowserActionsContainerView* containerView =
-      [GetController(browser_, test_helper_.get()) containerView];
-  return [containerView trackingEnabled] && [containerView isHighlighting];
-}
-
 ToolbarActionsBar* BrowserActionTestUtil::GetToolbarActionsBar() {
   return [GetController(browser_, test_helper_.get()) toolbarActionsBar];
 }
 
-scoped_ptr<BrowserActionTestUtil> BrowserActionTestUtil::CreateOverflowBar() {
+std::unique_ptr<BrowserActionTestUtil>
+BrowserActionTestUtil::CreateOverflowBar() {
   CHECK(!GetToolbarActionsBar()->in_overflow_mode())
       << "Only a main bar can create an overflow bar!";
-  return make_scoped_ptr(new BrowserActionTestUtil(browser_, this));
+  return base::WrapUnique(new BrowserActionTestUtil(browser_, this));
 }
 
 // static

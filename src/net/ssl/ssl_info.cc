@@ -31,6 +31,7 @@ SSLInfo& SSLInfo::operator=(const SSLInfo& info) {
   key_exchange_info = info.key_exchange_info;
   connection_status = info.connection_status;
   is_issued_by_known_root = info.is_issued_by_known_root;
+  pkp_bypassed = info.pkp_bypassed;
   client_cert_sent = info.client_cert_sent;
   channel_id_sent = info.channel_id_sent;
   token_binding_negotiated = info.token_binding_negotiated;
@@ -41,6 +42,7 @@ SSLInfo& SSLInfo::operator=(const SSLInfo& info) {
   signed_certificate_timestamps = info.signed_certificate_timestamps;
   ct_compliance_details_available = info.ct_compliance_details_available;
   ct_ev_policy_compliance = info.ct_ev_policy_compliance;
+  ct_cert_policy_compliance = info.ct_cert_policy_compliance;
 
   return *this;
 }
@@ -53,6 +55,7 @@ void SSLInfo::Reset() {
   key_exchange_info = 0;
   connection_status = 0;
   is_issued_by_known_root = false;
+  pkp_bypassed = false;
   client_cert_sent = false;
   channel_id_sent = false;
   token_binding_negotiated = false;
@@ -63,6 +66,8 @@ void SSLInfo::Reset() {
   signed_certificate_timestamps.clear();
   ct_compliance_details_available = false;
   ct_ev_policy_compliance = ct::EVPolicyCompliance::EV_POLICY_DOES_NOT_APPLY;
+  ct_cert_policy_compliance =
+      ct::CertPolicyCompliance::CERT_POLICY_COMPLIES_VIA_SCTS;
 }
 
 void SSLInfo::SetCertError(int error) {

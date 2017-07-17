@@ -25,10 +25,10 @@ RenderWidgetScreenMetricsEmulator::RenderWidgetScreenMetricsEmulator(
 }
 
 RenderWidgetScreenMetricsEmulator::~RenderWidgetScreenMetricsEmulator() {
+  delegate_->Resize(original_resize_params_);
   delegate_->SetScreenMetricsEmulationParameters(false, emulation_params_);
   delegate_->SetScreenRects(original_view_screen_rect_,
                             original_window_screen_rect_);
-  delegate_->Resize(original_resize_params_);
 }
 
 void RenderWidgetScreenMetricsEmulator::ChangeEmulationParams(
@@ -137,6 +137,14 @@ void RenderWidgetScreenMetricsEmulator::OnResize(const ResizeParams& params) {
 
   if (params.needs_resize_ack)
     delegate_->Redraw();
+}
+
+void RenderWidgetScreenMetricsEmulator::OnUpdateWindowScreenRect(
+    const gfx::Rect& window_screen_rect) {
+  original_window_screen_rect_ = window_screen_rect;
+  if (emulation_params_.screenPosition ==
+      blink::WebDeviceEmulationParams::Desktop)
+    Apply();
 }
 
 void RenderWidgetScreenMetricsEmulator::OnUpdateScreenRects(

@@ -44,18 +44,14 @@ Filter::Filter(const FloatRect& referenceBox, const FloatRect& filterRegion, flo
 {
 }
 
-Filter::~Filter()
+Filter* Filter::create(const FloatRect& referenceBox, const FloatRect& filterRegion, float scale, UnitScaling unitScaling)
 {
+    return new Filter(referenceBox, filterRegion, scale, unitScaling);
 }
 
-PassRefPtrWillBeRawPtr<Filter> Filter::create(const FloatRect& referenceBox, const FloatRect& filterRegion, float scale, UnitScaling unitScaling)
+Filter* Filter::create(float scale)
 {
-    return adoptRefWillBeNoop(new Filter(referenceBox, filterRegion, scale, unitScaling));
-}
-
-PassRefPtrWillBeRawPtr<Filter> Filter::create(float scale)
-{
-    return adoptRefWillBeNoop(new Filter(FloatRect(), FloatRect(), scale, UserSpace));
+    return new Filter(FloatRect(), FloatRect(), scale, UserSpace);
 }
 
 DEFINE_TRACE(Filter)
@@ -101,7 +97,7 @@ FloatPoint3D Filter::resolve3dPoint(const FloatPoint3D& point) const
         point.z() * sqrtf(referenceBox().size().diagonalLengthSquared() / 2));
 }
 
-void Filter::setLastEffect(PassRefPtrWillBeRawPtr<FilterEffect> effect)
+void Filter::setLastEffect(FilterEffect* effect)
 {
     m_lastEffect = effect;
 }

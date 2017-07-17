@@ -24,6 +24,7 @@
 #ifndef HTMLImageElement_h
 #define HTMLImageElement_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/fetch/FetchRequest.h"
 #include "core/html/HTMLElement.h"
@@ -32,7 +33,6 @@
 #include "core/imagebitmap/ImageBitmapSource.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/network/ResourceResponse.h"
-#include "wtf/WeakPtr.h"
 
 namespace blink {
 
@@ -41,16 +41,17 @@ class ImageCandidate;
 class ShadowRoot;
 class ImageBitmapOptions;
 
-class CORE_EXPORT HTMLImageElement final : public HTMLElement, public CanvasImageSource, public ImageBitmapSource {
+class CORE_EXPORT HTMLImageElement final : public HTMLElement, public CanvasImageSource, public ImageBitmapSource, public ActiveScriptWrappable {
     DEFINE_WRAPPERTYPEINFO();
+    USING_GARBAGE_COLLECTED_MIXIN(HTMLImageElement);
 public:
     class ViewportChangeListener;
 
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> create(Document&);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> create(Document&, HTMLFormElement*, bool createdByParser);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&, int width);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&, int width, int height);
+    static HTMLImageElement* create(Document&);
+    static HTMLImageElement* create(Document&, HTMLFormElement*, bool createdByParser);
+    static HTMLImageElement* createForJSConstructor(Document&);
+    static HTMLImageElement* createForJSConstructor(Document&, int width);
+    static HTMLImageElement* createForJSConstructor(Document&, int width, int height);
 
     ~HTMLImageElement() override;
     DECLARE_VIRTUAL_TRACE();
@@ -83,7 +84,7 @@ public:
 
     bool complete() const;
 
-    bool hasPendingActivity() const { return imageLoader().hasPendingActivity(); }
+    bool hasPendingActivity() const final { return imageLoader().hasPendingActivity(); }
 
     bool canContainRangeEndPoint() const override { return false; }
 
@@ -96,13 +97,15 @@ public:
     virtual void ensurePrimaryContent();
 
     // CanvasImageSource implementation
-    PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason) const override;
+    PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint, SnapshotReason, const FloatSize&) const override;
     bool isSVGSource() const override;
     bool wouldTaintOrigin(SecurityOrigin*) const override;
-    FloatSize elementSize() const override;
-    FloatSize defaultDestinationSize() const override;
+    FloatSize elementSize(const FloatSize&) const override;
+    FloatSize defaultDestinationSize(const FloatSize&) const override;
     const KURL& sourceURL() const override;
     bool isOpaque() const override;
+    int sourceWidth() override;
+    int sourceHeight() override;
 
     // public so that HTMLPictureElement can call this as well.
     void selectSourceURL(ImageLoader::UpdateFromElementBehavior);
@@ -159,12 +162,12 @@ private:
     void notifyViewportChanged();
     void createMediaQueryListIfDoesNotExist();
 
-    OwnPtrWillBeMember<HTMLImageLoader> m_imageLoader;
-    RefPtrWillBeMember<ViewportChangeListener> m_listener;
-    WeakPtrWillBeMember<HTMLFormElement> m_form;
+    Member<HTMLImageLoader> m_imageLoader;
+    Member<ViewportChangeListener> m_listener;
+    Member<HTMLFormElement> m_form;
     AtomicString m_bestFitImageURL;
     float m_imageDevicePixelRatio;
-    RefPtrWillBeMember<HTMLSourceElement> m_source;
+    Member<HTMLSourceElement> m_source;
     unsigned m_formWasSetByParser : 1;
     unsigned m_elementCreatedByParser : 1;
     unsigned m_useFallbackContent : 1;

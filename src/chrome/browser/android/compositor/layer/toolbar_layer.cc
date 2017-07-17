@@ -33,7 +33,6 @@ void ToolbarLayer::PushResource(
     int url_bar_background_resource_id,
     float url_bar_alpha,
     bool show_debug,
-    float brightness,
     bool clip_shadow) {
   ui::ResourceManager::Resource* resource =
       resource_manager_->GetResource(ui::ANDROID_RESOURCE_TYPE_DYNAMIC,
@@ -102,14 +101,6 @@ void ToolbarLayer::PushResource(
     layer_->AddChild(debug_layer_);
   else if (!show_debug && debug_layer_->parent())
     debug_layer_->RemoveFromParent();
-
-  if (brightness != brightness_) {
-    brightness_ = brightness;
-    cc::FilterOperations filters;
-    if (brightness_ < 1.f)
-      filters.Append(cc::FilterOperation::CreateBrightnessFilter(brightness_));
-    layer_->SetFilters(filters);
-  }
 }
 
 void ToolbarLayer::UpdateProgressBar(int progress_bar_x,
@@ -149,22 +140,14 @@ void ToolbarLayer::UpdateProgressBar(int progress_bar_x,
 
 ToolbarLayer::ToolbarLayer(ui::ResourceManager* resource_manager)
     : resource_manager_(resource_manager),
-      layer_(cc::Layer::Create(content::Compositor::LayerSettings())),
-      toolbar_background_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
-      url_bar_background_layer_(
-          cc::NinePatchLayer::Create(content::Compositor::LayerSettings())),
-      bitmap_layer_(
-          cc::UIResourceLayer::Create(content::Compositor::LayerSettings())),
-      progress_bar_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
-      progress_bar_background_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
-      anonymize_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
-      debug_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
-      brightness_(1.f) {
+      layer_(cc::Layer::Create()),
+      toolbar_background_layer_(cc::SolidColorLayer::Create()),
+      url_bar_background_layer_(cc::NinePatchLayer::Create()),
+      bitmap_layer_(cc::UIResourceLayer::Create()),
+      progress_bar_layer_(cc::SolidColorLayer::Create()),
+      progress_bar_background_layer_(cc::SolidColorLayer::Create()),
+      anonymize_layer_(cc::SolidColorLayer::Create()),
+      debug_layer_(cc::SolidColorLayer::Create()) {
   toolbar_background_layer_->SetIsDrawable(true);
   layer_->AddChild(toolbar_background_layer_);
 

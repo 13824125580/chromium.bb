@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -39,11 +39,7 @@ ExtensionToolbarMenuView::ExtensionToolbarMenuView(
       BrowserView::GetBrowserViewForBrowser(browser_)
           ->toolbar()->browser_actions();
   container_ = new BrowserActionsContainer(browser_, main);
-  container_->Init();
   SetContents(container_);
-  // We Layout() the container here so that we know the number of actions
-  // that will be visible in ShouldShow().
-  container_->Layout();
 
   // Listen for the drop to finish so we can close the app menu, if necessary.
   toolbar_actions_bar_observer_.Add(main->toolbar_actions_bar());
@@ -58,11 +54,6 @@ ExtensionToolbarMenuView::ExtensionToolbarMenuView(
 }
 
 ExtensionToolbarMenuView::~ExtensionToolbarMenuView() {
-}
-
-bool ExtensionToolbarMenuView::ShouldShow() {
-  return app_menu_->for_drop() ||
-         container_->VisibleBrowserActionsAfterAnimation();
 }
 
 gfx::Size ExtensionToolbarMenuView::GetPreferredSize() const {

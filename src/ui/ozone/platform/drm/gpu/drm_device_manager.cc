@@ -30,7 +30,7 @@ class FindByDevicePath {
 }  // namespace
 
 DrmDeviceManager::DrmDeviceManager(
-    scoped_ptr<DrmDeviceGenerator> drm_device_generator)
+    std::unique_ptr<DrmDeviceGenerator> drm_device_generator)
     : drm_device_generator_(std::move(drm_device_generator)) {}
 
 DrmDeviceManager::~DrmDeviceManager() {
@@ -90,15 +90,19 @@ scoped_refptr<DrmDevice> DrmDeviceManager::GetDrmDevice(
     return primary_device_;
 
   auto it = drm_device_map_.find(widget);
-  DCHECK(it != drm_device_map_.end())
+  DLOG_IF(WARNING, it == drm_device_map_.end())
       << "Attempting to get device for unknown widget " << widget;
   // If the widget isn't associated with a display (headless mode) we can
   // allocate buffers from any controller since they will never be scanned out.
   // Use the primary DRM device as a fallback when allocating these buffers.
-  if (!it->second)
+  if (it == drm_device_map_.end() || !it->second)
     return primary_device_;
 
   return it->second;
+}
+
+scoped_refptr<DrmDevice> DrmDeviceManager::GetPrimaryDrmDevice() {
+  return primary_device_;
 }
 
 const DrmDeviceVector& DrmDeviceManager::GetDrmDevices() const {

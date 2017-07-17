@@ -31,6 +31,7 @@
 #ifndef WebURLRequest_h
 #define WebURLRequest_h
 
+#include "WebAddressSpace.h"
 #include "WebCommon.h"
 #include "WebHTTPBody.h"
 #include "WebReferrerPolicy.h"
@@ -44,17 +45,10 @@ class WebSecurityOrigin;
 class WebString;
 class WebURL;
 class WebURLRequestPrivate;
+enum class WebCachePolicy;
 
 class WebURLRequest {
 public:
-    enum CachePolicy {
-        UseProtocolCachePolicy, // normal load
-        ReloadIgnoringCacheData, // reload
-        ReturnCacheDataElseLoad, // back/forward or encoding change - allow stale data
-        ReturnCacheDataDontLoad, // results of a post - allow stale data and only use cache
-        ReloadBypassingCache, // end-to-end reload
-    };
-
     enum Priority {
         PriorityUnresolved = -1,
         PriorityVeryLow,
@@ -121,7 +115,8 @@ public:
     enum FetchCredentialsMode {
         FetchCredentialsModeOmit,
         FetchCredentialsModeSameOrigin,
-        FetchCredentialsModeInclude
+        FetchCredentialsModeInclude,
+        FetchCredentialsModePassword
     };
 
     enum FetchRedirectMode {
@@ -144,6 +139,18 @@ public:
         LoFiUnspecified, // Let the browser process decide whether or not to request the Lo-Fi version.
         LoFiOff, // Request a normal (non-Lo-Fi) version of the resource.
         LoFiOn, // Request a Lo-Fi version of the resource.
+    };
+
+    // Indicates which types of ServiceWorkers should skip handling this request.
+    enum class SkipServiceWorker {
+        // Request can be handled both by a controlling same-origin worker and
+        // a cross-origin foreign fetch service worker.
+        None,
+        // Request should not be handled by a same-origin controlling worker,
+        // but can be intercepted by a foreign fetch service worker.
+        Controlling,
+        // Request should skip all possible service workers.
+        All
     };
 
     class ExtraData {
@@ -190,8 +197,8 @@ public:
     BLINK_PLATFORM_EXPORT bool allowStoredCredentials() const;
     BLINK_PLATFORM_EXPORT void setAllowStoredCredentials(bool);
 
-    BLINK_PLATFORM_EXPORT CachePolicy getCachePolicy() const;
-    BLINK_PLATFORM_EXPORT void setCachePolicy(CachePolicy);
+    BLINK_PLATFORM_EXPORT WebCachePolicy getCachePolicy() const;
+    BLINK_PLATFORM_EXPORT void setCachePolicy(WebCachePolicy);
 
     BLINK_PLATFORM_EXPORT WebString httpMethod() const;
     BLINK_PLATFORM_EXPORT void setHTTPMethod(const WebString&);
@@ -207,6 +214,9 @@ public:
     BLINK_PLATFORM_EXPORT WebHTTPBody httpBody() const;
     BLINK_PLATFORM_EXPORT void setHTTPBody(const WebHTTPBody&);
 
+    BLINK_PLATFORM_EXPORT WebHTTPBody attachedCredential() const;
+    BLINK_PLATFORM_EXPORT void setAttachedCredential(const WebHTTPBody&);
+
     // Controls whether upload progress events are generated when a request
     // has a body.
     BLINK_PLATFORM_EXPORT bool reportUploadProgress() const;
@@ -217,10 +227,10 @@ public:
     BLINK_PLATFORM_EXPORT bool reportRawHeaders() const;
     BLINK_PLATFORM_EXPORT void setReportRawHeaders(bool);
 
-    BLINK_PLATFORM_EXPORT RequestContext requestContext() const;
+    BLINK_PLATFORM_EXPORT RequestContext getRequestContext() const;
     BLINK_PLATFORM_EXPORT void setRequestContext(RequestContext);
 
-    BLINK_PLATFORM_EXPORT FrameType frameType() const;
+    BLINK_PLATFORM_EXPORT FrameType getFrameType() const;
     BLINK_PLATFORM_EXPORT void setFrameType(FrameType);
 
     BLINK_PLATFORM_EXPORT WebReferrerPolicy referrerPolicy() const;
@@ -257,27 +267,27 @@ public:
     BLINK_PLATFORM_EXPORT void setUseStreamOnResponse(bool);
 
     // True if the request should not be handled by the ServiceWorker.
-    BLINK_PLATFORM_EXPORT bool skipServiceWorker() const;
-    BLINK_PLATFORM_EXPORT void setSkipServiceWorker(bool);
+    BLINK_PLATFORM_EXPORT SkipServiceWorker skipServiceWorker() const;
+    BLINK_PLATFORM_EXPORT void setSkipServiceWorker(SkipServiceWorker);
 
     // True if corresponding AppCache group should be resetted.
     BLINK_PLATFORM_EXPORT bool shouldResetAppCache() const;
     BLINK_PLATFORM_EXPORT void setShouldResetAppCache(bool);
 
     // The request mode which will be passed to the ServiceWorker.
-    BLINK_PLATFORM_EXPORT FetchRequestMode fetchRequestMode() const;
+    BLINK_PLATFORM_EXPORT FetchRequestMode getFetchRequestMode() const;
     BLINK_PLATFORM_EXPORT void setFetchRequestMode(FetchRequestMode);
 
     // The credentials mode which will be passed to the ServiceWorker.
-    BLINK_PLATFORM_EXPORT FetchCredentialsMode fetchCredentialsMode() const;
+    BLINK_PLATFORM_EXPORT FetchCredentialsMode getFetchCredentialsMode() const;
     BLINK_PLATFORM_EXPORT void setFetchCredentialsMode(FetchCredentialsMode);
 
     // The redirect mode which is used in Fetch API.
-    BLINK_PLATFORM_EXPORT FetchRedirectMode fetchRedirectMode() const;
+    BLINK_PLATFORM_EXPORT FetchRedirectMode getFetchRedirectMode() const;
     BLINK_PLATFORM_EXPORT void setFetchRedirectMode(FetchRedirectMode);
 
     // The LoFi state which determines whether to request a Lo-Fi version of the resource.
-    BLINK_PLATFORM_EXPORT LoFiState loFiState() const;
+    BLINK_PLATFORM_EXPORT LoFiState getLoFiState() const;
     BLINK_PLATFORM_EXPORT void setLoFiState(LoFiState);
 
     // Extra data associated with the underlying resource request. Resource
@@ -286,10 +296,10 @@ public:
     // deleted when the last resource request is destroyed. Setting the extra
     // data pointer will cause the underlying resource request to be
     // dissociated from any existing non-null extra data pointer.
-    BLINK_PLATFORM_EXPORT ExtraData* extraData() const;
+    BLINK_PLATFORM_EXPORT ExtraData* getExtraData() const;
     BLINK_PLATFORM_EXPORT void setExtraData(ExtraData*);
 
-    BLINK_PLATFORM_EXPORT Priority priority() const;
+    BLINK_PLATFORM_EXPORT Priority getPriority() const;
     BLINK_PLATFORM_EXPORT void setPriority(Priority);
 
     // PlzNavigate: whether the FrameLoader should try to send the request to
@@ -307,10 +317,8 @@ public:
     BLINK_PLATFORM_EXPORT WebURLRequest::InputToLoadPerfMetricReportPolicy inputPerfMetricReportPolicy() const;
     BLINK_PLATFORM_EXPORT void setInputPerfMetricReportPolicy(WebURLRequest::InputToLoadPerfMetricReportPolicy);
 
-    // Does the request originate from a SecurityContext hosted in a reserved
-    // (RFC1918) IP range?
-    BLINK_PLATFORM_EXPORT bool originatesFromReservedIPRange() const;
-    BLINK_PLATFORM_EXPORT void setOriginatesFromReservedIPRange(bool);
+    // https://mikewest.github.io/cors-rfc1918/#external-request
+    BLINK_PLATFORM_EXPORT bool isExternalRequest() const;
 
 #if INSIDE_BLINK
     BLINK_PLATFORM_EXPORT ResourceRequest& toMutableResourceRequest();

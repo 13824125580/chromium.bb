@@ -41,10 +41,6 @@ const char kTopControlsShowThreshold[] = "top-controls-show-threshold";
 // complete, such as --slow-down-raster-scale-factor=25.
 const char kSlowDownRasterScaleFactor[] = "slow-down-raster-scale-factor";
 
-// Check that property changes during paint do not occur.
-const char kStrictLayerPropertyChangeChecking[] =
-    "strict-layer-property-change-checking";
-
 // Compress tile textures for GPUs supporting it.
 const char kEnableTileCompression[] = "enable-tile-compression";
 
@@ -89,8 +85,15 @@ const char kShowReplicaScreenSpaceRects[] = "show-replica-screenspace-rects";
 const char kUIShowReplicaScreenSpaceRects[] =
     "ui-show-replica-screenspace-rects";
 
+// Switches cc machinery to use layer lists instead of layer trees
+const char kEnableLayerLists[] = "enable-layer-lists";
+const char kUIEnableLayerLists[] = "ui-enable-layer-lists";
+
 // Prevents the layer tree unit tests from timing out.
 const char kCCLayerTreeTestNoTimeout[] = "cc-layer-tree-test-no-timeout";
+
+// Increases timeout for memory checkers.
+const char kCCLayerTreeTestLongTimeout[] = "cc-layer-tree-test-long-timeout";
 
 // Makes pixel tests write their output instead of read it.
 const char kCCRebaselinePixeltests[] = "cc-rebaseline-pixeltests";

@@ -29,9 +29,9 @@
 #include "modules/webaudio/AudioSourceNode.h"
 #include "platform/audio/AudioSourceProvider.h"
 #include "platform/audio/AudioSourceProviderClient.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/Threading.h"
+#include <memory>
 
 namespace blink {
 
@@ -39,10 +39,10 @@ class AbstractAudioContext;
 
 class MediaStreamAudioSourceHandler final : public AudioHandler {
 public:
-    static PassRefPtr<MediaStreamAudioSourceHandler> create(AudioNode&, MediaStream&, MediaStreamTrack*, PassOwnPtr<AudioSourceProvider>);
+    static PassRefPtr<MediaStreamAudioSourceHandler> create(AudioNode&, MediaStream&, MediaStreamTrack*, std::unique_ptr<AudioSourceProvider>);
     ~MediaStreamAudioSourceHandler() override;
 
-    MediaStream* mediaStream() { return m_mediaStream.get(); }
+    MediaStream* getMediaStream() { return m_mediaStream.get(); }
 
     // AudioHandler
     void process(size_t framesToProcess) override;
@@ -51,10 +51,10 @@ public:
     // MediaStreamAudioSourceNode.
     void setFormat(size_t numberOfChannels, float sampleRate);
 
-    AudioSourceProvider* audioSourceProvider() const { return m_audioSourceProvider.get(); }
+    AudioSourceProvider* getAudioSourceProvider() const { return m_audioSourceProvider.get(); }
 
 private:
-    MediaStreamAudioSourceHandler(AudioNode&, MediaStream&, MediaStreamTrack*, PassOwnPtr<AudioSourceProvider>);
+    MediaStreamAudioSourceHandler(AudioNode&, MediaStream&, MediaStreamTrack*, std::unique_ptr<AudioSourceProvider>);
     // As an audio source, we will never propagate silence.
     bool propagatesSilence() const override { return false; }
 
@@ -62,7 +62,7 @@ private:
     // MediaStreamAudioSourceNode.
     Persistent<MediaStream> m_mediaStream;
     Persistent<MediaStreamTrack> m_audioTrack;
-    OwnPtr<AudioSourceProvider> m_audioSourceProvider;
+    std::unique_ptr<AudioSourceProvider> m_audioSourceProvider;
 
     Mutex m_processLock;
 
@@ -73,17 +73,17 @@ class MediaStreamAudioSourceNode final : public AudioSourceNode, public AudioSou
     DEFINE_WRAPPERTYPEINFO();
     USING_GARBAGE_COLLECTED_MIXIN(MediaStreamAudioSourceNode);
 public:
-    static MediaStreamAudioSourceNode* create(AbstractAudioContext&, MediaStream&, MediaStreamTrack*, PassOwnPtr<AudioSourceProvider>);
+    static MediaStreamAudioSourceNode* create(AbstractAudioContext&, MediaStream&, ExceptionState&);
     DECLARE_VIRTUAL_TRACE();
     MediaStreamAudioSourceHandler& mediaStreamAudioSourceHandler() const;
 
-    MediaStream* mediaStream() const;
+    MediaStream* getMediaStream() const;
 
     // AudioSourceProviderClient functions:
     void setFormat(size_t numberOfChannels, float sampleRate) override;
 
 private:
-    MediaStreamAudioSourceNode(AbstractAudioContext&, MediaStream&, MediaStreamTrack*, PassOwnPtr<AudioSourceProvider>);
+    MediaStreamAudioSourceNode(AbstractAudioContext&, MediaStream&, MediaStreamTrack*, std::unique_ptr<AudioSourceProvider>);
 };
 
 } // namespace blink

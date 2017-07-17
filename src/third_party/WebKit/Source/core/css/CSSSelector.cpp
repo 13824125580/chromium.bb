@@ -34,6 +34,7 @@
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringBuilder.h"
 #include <algorithm>
+#include <memory>
 
 #ifndef NDEBUG
 #include <stdio.h>
@@ -171,31 +172,31 @@ PseudoId CSSSelector::pseudoId(PseudoType type)
 {
     switch (type) {
     case PseudoFirstLine:
-        return FIRST_LINE;
+        return PseudoIdFirstLine;
     case PseudoFirstLetter:
-        return FIRST_LETTER;
+        return PseudoIdFirstLetter;
     case PseudoSelection:
-        return SELECTION;
+        return PseudoIdSelection;
     case PseudoBefore:
-        return BEFORE;
+        return PseudoIdBefore;
     case PseudoAfter:
-        return AFTER;
+        return PseudoIdAfter;
     case PseudoBackdrop:
-        return BACKDROP;
+        return PseudoIdBackdrop;
     case PseudoScrollbar:
-        return SCROLLBAR;
+        return PseudoIdScrollbar;
     case PseudoScrollbarButton:
-        return SCROLLBAR_BUTTON;
+        return PseudoIdScrollbarButton;
     case PseudoScrollbarCorner:
-        return SCROLLBAR_CORNER;
+        return PseudoIdScrollbarCorner;
     case PseudoScrollbarThumb:
-        return SCROLLBAR_THUMB;
+        return PseudoIdScrollbarThumb;
     case PseudoScrollbarTrack:
-        return SCROLLBAR_TRACK;
+        return PseudoIdScrollbarTrack;
     case PseudoScrollbarTrackPiece:
-        return SCROLLBAR_TRACK_PIECE;
+        return PseudoIdScrollbarTrackPiece;
     case PseudoResizer:
-        return RESIZER;
+        return PseudoIdResizer;
     case PseudoUnknown:
     case PseudoEmpty:
     case PseudoFirstChild:
@@ -252,10 +253,12 @@ PseudoId CSSSelector::pseudoId(PseudoType type)
     case PseudoInRange:
     case PseudoOutOfRange:
     case PseudoWebKitCustomElement:
+    case PseudoBlinkInternalElement:
     case PseudoCue:
     case PseudoFutureCue:
     case PseudoPastCue:
     case PseudoUnresolved:
+    case PseudoDefined:
     case PseudoContent:
     case PseudoHost:
     case PseudoHostContext:
@@ -264,12 +267,13 @@ PseudoId CSSSelector::pseudoId(PseudoType type)
     case PseudoFullScreenAncestor:
     case PseudoSpatialNavigationFocus:
     case PseudoListBox:
+    case PseudoHostHasAppearance:
     case PseudoSlotted:
-        return NOPSEUDO;
+        return PseudoIdNone;
     }
 
     ASSERT_NOT_REACHED();
-    return NOPSEUDO;
+    return PseudoIdNone;
 }
 
 // Could be made smaller and faster by replacing pointer with an
@@ -285,6 +289,12 @@ const static NameToPseudoStruct pseudoTypeWithoutArgumentsMap[] = {
 {"-internal-list-box",            CSSSelector::PseudoListBox},
 {"-internal-media-controls-cast-button", CSSSelector::PseudoWebKitCustomElement},
 {"-internal-media-controls-overlay-cast-button", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-media-controls-text-track-list", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-media-controls-text-track-list-item", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-media-controls-text-track-list-item-input", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-media-controls-text-track-list-kind-captions", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-media-controls-text-track-list-kind-subtitles", CSSSelector::PseudoWebKitCustomElement},
+{"-internal-shadow-host-has-appearance", CSSSelector::PseudoHostHasAppearance},
 {"-internal-spatial-navigation-focus", CSSSelector::PseudoSpatialNavigationFocus},
 {"-webkit-any-link",              CSSSelector::PseudoAnyLink},
 {"-webkit-autofill",              CSSSelector::PseudoAutofill},
@@ -309,6 +319,7 @@ const static NameToPseudoStruct pseudoTypeWithoutArgumentsMap[] = {
 {"cue",                           CSSSelector::PseudoWebKitCustomElement},
 {"decrement",                     CSSSelector::PseudoDecrement},
 {"default",                       CSSSelector::PseudoDefault},
+{"defined",                       CSSSelector::PseudoDefined},
 {"disabled",                      CSSSelector::PseudoDisabled},
 {"double-button",                 CSSSelector::PseudoDoubleButton},
 {"empty",                         CSSSelector::PseudoEmpty},
@@ -403,7 +414,10 @@ static CSSSelector::PseudoType nameToPseudoType(const AtomicString& name, bool h
     }
     NameToPseudoStruct dummyKey = { 0, CSSSelector::PseudoUnknown };
     const NameToPseudoStruct* match = std::lower_bound(pseudoTypeMap, pseudoTypeMapEnd, dummyKey, NameToPseudoCompare(name));
-    if (match == pseudoTypeMapEnd || match->string != name.string())
+    if (match == pseudoTypeMapEnd || match->string != name.getString())
+        return CSSSelector::PseudoUnknown;
+
+    if (match->type == CSSSelector::PseudoDefined && !RuntimeEnabledFeatures::customElementsV1Enabled())
         return CSSSelector::PseudoUnknown;
 
     return static_cast<CSSSelector::PseudoType>(match->type);
@@ -448,6 +462,8 @@ CSSSelector::PseudoType CSSSelector::parsePseudoType(const AtomicString& name, b
 
     if (name.startsWith("-webkit-"))
         return PseudoWebKitCustomElement;
+    if (name.startsWith("-internal-"))
+        return PseudoBlinkInternalElement;
 
     return PseudoUnknown;
 }
@@ -481,6 +497,7 @@ void CSSSelector::updatePseudoType(const AtomicString& value, bool hasArguments)
     case PseudoScrollbarTrackPiece:
     case PseudoSelection:
     case PseudoWebKitCustomElement:
+    case PseudoBlinkInternalElement:
     case PseudoContent:
     case PseudoShadow:
     case PseudoSlotted:
@@ -501,6 +518,7 @@ void CSSSelector::updatePseudoType(const AtomicString& value, bool hasArguments)
     case PseudoCornerPresent:
     case PseudoDecrement:
     case PseudoDefault:
+    case PseudoDefined:
     case PseudoDisabled:
     case PseudoDoubleButton:
     case PseudoDrag:
@@ -517,6 +535,7 @@ void CSSSelector::updatePseudoType(const AtomicString& value, bool hasArguments)
     case PseudoHorizontal:
     case PseudoHost:
     case PseudoHostContext:
+    case PseudoHostHasAppearance:
     case PseudoHover:
     case PseudoInRange:
     case PseudoIncrement:
@@ -595,7 +614,7 @@ String CSSSelector::selectorText(const String& rightSide) const
         if (tagQName().prefix().isNull()) {
             str.append(tagQName().localName());
         } else {
-            str.append(tagQName().prefix().string());
+            str.append(tagQName().prefix().getString());
             str.append('|');
             str.append(tagQName().localName());
         }
@@ -653,7 +672,7 @@ String CSSSelector::selectorText(const String& rightSide) const
                 break;
             }
         } else if (cs->m_match == PseudoElement) {
-            str.appendLiteral("::");
+            str.append("::");
             str.append(cs->serializingValue());
         } else if (cs->isAttributeSelector()) {
             str.append('[');
@@ -672,19 +691,19 @@ String CSSSelector::selectorText(const String& rightSide) const
                 str.append(']');
                 break;
             case AttributeList:
-                str.appendLiteral("~=");
+                str.append("~=");
                 break;
             case AttributeHyphen:
-                str.appendLiteral("|=");
+                str.append("|=");
                 break;
             case AttributeBegin:
-                str.appendLiteral("^=");
+                str.append("^=");
                 break;
             case AttributeEnd:
-                str.appendLiteral("$=");
+                str.append("$=");
                 break;
             case AttributeContain:
-                str.appendLiteral("*=");
+                str.append("*=");
                 break;
             default:
                 break;
@@ -692,7 +711,7 @@ String CSSSelector::selectorText(const String& rightSide) const
             if (cs->m_match != AttributeSet) {
                 serializeString(cs->serializingValue(), str);
                 if (cs->attributeMatch() == CaseInsensitive)
-                    str.appendLiteral(" i");
+                    str.append(" i");
                 str.append(']');
             }
         }
@@ -748,10 +767,10 @@ void CSSSelector::setArgument(const AtomicString& value)
     m_data.m_rareData->m_argument = value;
 }
 
-void CSSSelector::setSelectorList(PassOwnPtr<CSSSelectorList> selectorList)
+void CSSSelector::setSelectorList(std::unique_ptr<CSSSelectorList> selectorList)
 {
     createRareData();
-    m_data.m_rareData->m_selectorList = selectorList;
+    m_data.m_rareData->m_selectorList = std::move(selectorList);
 }
 
 static bool validateSubSelector(const CSSSelector* selector)
@@ -799,6 +818,7 @@ static bool validateSubSelector(const CSSSelector* selector)
     case CSSSelector::PseudoNot:
     case CSSSelector::PseudoSpatialNavigationFocus:
     case CSSSelector::PseudoListBox:
+    case CSSSelector::PseudoHostHasAppearance:
         return true;
     default:
         return false;

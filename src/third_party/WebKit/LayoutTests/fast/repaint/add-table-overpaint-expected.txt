@@ -1,25 +1,61 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [2, 314, 152, 152],
-        [0, 314, 156, 152],
-        [0, 312, 800, 156],
-        [0, 312, 156, 156],
-        [0, 312, 156, 156]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow DIV",
-        "LayoutTable TABLE",
-        "LayoutTableCell TD",
-        "LayoutTableSection TBODY",
-        "LayoutTableRow TR",
-        "LayoutTableCell TD"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV",
+          "rect": [0, 312, 800, 156],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutTable TABLE",
+          "rect": [0, 312, 156, 156],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutTableSection TBODY",
+          "rect": [0, 312, 156, 156],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutTableRow TR",
+          "rect": [0, 314, 156, 152],
+          "reason": "layoutObject insertion"
+        },
+        {
+          "object": "LayoutTableCell TD",
+          "rect": [2, 314, 152, 152],
+          "reason": "layoutObject insertion"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutTable TABLE",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutTableSection TBODY",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutTableRow TR",
+      "reason": "layoutObject insertion"
+    },
+    {
+      "object": "LayoutTableCell TD",
+      "reason": "layoutObject insertion"
     }
   ]
 }

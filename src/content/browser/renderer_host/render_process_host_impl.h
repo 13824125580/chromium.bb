@@ -9,25 +9,27 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <queue>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/process.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
+#include "content/browser/bluetooth/bluetooth_adapter_factory_wrapper.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/power_monitor_message_broadcaster.h"
 #include "content/common/content_export.h"
-#include "content/common/mojo/service_registry_impl.h"
 #include "content/public/browser/render_process_host.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_platform_file.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
+#include "services/shell/public/interfaces/shell_client.mojom.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gl/gpu_switching_observer.h"
 
@@ -40,10 +42,6 @@ namespace gfx {
 class Size;
 }
 
-namespace gpu {
-class ValueStateMap;
-}
-
 namespace IPC {
 class ChannelMojoHost;
 }
@@ -51,13 +49,11 @@ class ChannelMojoHost;
 namespace content {
 class AudioInputRendererHost;
 class AudioRendererHost;
-class BluetoothDispatcherHost;
 class BrowserCdmManager;
 class BrowserDemuxerAndroid;
-class GpuMessageFilter;
 class InProcessChildThreadParams;
 class MessagePortMessageFilter;
-class MojoApplicationHost;
+class MojoChildConnection;
 class NotificationMessageFilter;
 #if defined(ENABLE_WEBRTC)
 class P2PSocketDispatcherHost;
@@ -70,7 +66,10 @@ class RenderWidgetHostImpl;
 class RenderWidgetHostViewFrameSubscriber;
 class StoragePartition;
 class StoragePartitionImpl;
+
+namespace mojom {
 class StoragePartitionService;
+}
 
 typedef base::Thread* (*RendererMainThreadFactoryFunction)(
     const InProcessChildThreadParams& params);
@@ -150,6 +149,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void DisableEventLogRecordings() override;
   void SetWebRtcLogMessageCallback(
       base::Callback<void(const std::string&)> callback) override;
+  void ClearWebRtcLogMessageCallback() override;
   WebRtcStopRtpDumpCallback StartRtpDump(
       bool incoming,
       bool outgoing,
@@ -157,14 +157,13 @@ class CONTENT_EXPORT RenderProcessHostImpl
 #endif
   void ResumeDeferredNavigation(const GlobalRequestID& request_id) override;
   void NotifyTimezoneChange(const std::string& timezone) override;
-  ServiceRegistry* GetServiceRegistry() override;
   bool IsProcessManagedExternally() const override;
+  shell::InterfaceRegistry* GetInterfaceRegistry() override;
+  shell::InterfaceProvider* GetRemoteInterfaces() override;
+  shell::Connection* GetChildConnection() override;
+  std::unique_ptr<base::SharedPersistentMemoryAllocator> TakeMetricsAllocator()
+      override;
   const base::TimeTicks& GetInitTimeForNavigationMetrics() const override;
-  bool SubscribeUniformEnabled() const override;
-  void OnAddSubscription(unsigned int target) override;
-  void OnRemoveSubscription(unsigned int target) override;
-  void SendUpdateValueState(
-      unsigned int target, const gpu::ValueState& state) override;
 #if defined(ENABLE_BROWSER_CDMS)
   scoped_refptr<media::MediaKeys> GetCdm(int render_frame_id,
                                          int cdm_id) const override;
@@ -172,6 +171,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   bool IsProcessBackgrounded() const override;
   void IncrementWorkerRefCount() override;
   void DecrementWorkerRefCount() override;
+  void PurgeAndSuspend() override;
 
   // IPC::Sender via RenderProcessHost.
   bool Send(IPC::Message* msg) override;
@@ -184,7 +184,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   // ChildProcessLauncher::Client implementation.
   void OnProcessLaunched() override;
-  void OnProcessLaunchFailed() override;
+  void OnProcessLaunchFailed(int error_code) override;
 
   scoped_refptr<AudioRendererHost> audio_renderer_host() const;
 
@@ -263,7 +263,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void GetAudioOutputControllers(
       const GetAudioOutputControllersCallback& callback) const override;
 
-  BluetoothDispatcherHost* GetBluetoothDispatcherHost();
+  BluetoothAdapterFactoryWrapper* GetBluetoothAdapterFactoryWrapper();
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
   // Launch the zygote early in the browser startup.
@@ -274,7 +274,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
  protected:
   // A proxy for our IPC::Channel that lives on the IO thread.
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
 
   // True if fast shutdown has been performed on this RPH.
   bool fast_shutdown_started_;
@@ -293,20 +293,20 @@ class CONTENT_EXPORT RenderProcessHostImpl
   int32_t pending_views_;
 
  private:
-  friend class VisitRelayingRenderProcessHost;
   friend class ChildProcessLauncherBrowserTest_ChildSpawnFail_Test;
+  friend class VisitRelayingRenderProcessHost;
 
-  scoped_ptr<IPC::ChannelProxy> CreateChannelProxy(
+  std::unique_ptr<IPC::ChannelProxy> CreateChannelProxy(
       const std::string& channel_id);
 
   // Creates and adds the IO thread message filters.
   void CreateMessageFilters();
 
-  // Registers Mojo services to be exposed to the renderer.
-  void RegisterMojoServices();
+  // Registers Mojo interfaces to be exposed to the renderer.
+  void RegisterMojoInterfaces();
 
   void CreateStoragePartitionService(
-      mojo::InterfaceRequest<StoragePartitionService> request);
+      mojo::InterfaceRequest<mojom::StoragePartitionService> request);
 
   // Control message handlers.
   void OnShutdownRequest();
@@ -322,6 +322,12 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // appropriate. Should be called after any of the involved data members
   // change.
   void UpdateProcessPriority();
+
+  // Creates a PersistentMemoryAllocator and shares it with the renderer
+  // process for it to store histograms from that process. The allocator is
+  // available for extraction by a SubprocesMetricsProvider in order to
+  // report those histograms to UMA.
+  void CreateSharedRendererHistogramAllocator();
 
   // Handle termination of our process.
   void ProcessDied(bool already_dead, RendererClosedDetails* known_details);
@@ -351,7 +357,15 @@ class CONTENT_EXPORT RenderProcessHostImpl
   base::FilePath GetEventLogFilePathWithExtensions(const base::FilePath& file);
 #endif
 
-  scoped_ptr<MojoApplicationHost> mojo_application_host_;
+  static void OnMojoError(
+      base::WeakPtr<RenderProcessHostImpl> process,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      const std::string& error);
+
+  std::string child_token_;
+
+  std::unique_ptr<MojoChildConnection> mojo_child_connection_;
+  shell::mojom::ShellClientPtr test_shell_client_;
 
   // The registered IPC listener objects. When this list is empty, we should
   // delete ourselves.
@@ -370,21 +384,12 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // IO thread.
   scoped_refptr<RenderWidgetHelper> widget_helper_;
 
-  // The filter for GPU-related messages coming from the renderer.
-  // Thread safety note: this field is to be accessed from the UI thread.
-  // We don't keep a reference to it, to avoid it being destroyed on the UI
-  // thread, but we clear this field when we clear channel_. When channel_ goes
-  // away, it posts a task to the IO thread to destroy it there, so we know that
-  // it's valid if non-NULL.
-  GpuMessageFilter* gpu_message_filter_;
-
   // The filter for MessagePort messages coming from the renderer.
   scoped_refptr<MessagePortMessageFilter> message_port_message_filter_;
 
   // The filter for Web Notification messages coming from the renderer. Holds a
   // closure per notification that must be freed when the notification closes.
   scoped_refptr<NotificationMessageFilter> notification_message_filter_;
-
 
   // True after Init() has been called. We can't just check channel_ because we
   // also reset that in the case of process termination.
@@ -395,7 +400,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   base::TimeTicks init_time_;
 
   // Used to launch and terminate the process without blocking the UI thread.
-  scoped_ptr<ChildProcessLauncher> child_process_launcher_;
+  std::unique_ptr<ChildProcessLauncher> child_process_launcher_;
 
   // Messages we queue while waiting for the process handle.  We queue them here
   // instead of in the channel so that we ensure they're sent after init related
@@ -466,7 +471,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   scoped_refptr<AudioInputRendererHost> audio_input_renderer_host_;
 
-  scoped_refptr<BluetoothDispatcherHost> bluetooth_dispatcher_host_;
+  BluetoothAdapterFactoryWrapper bluetooth_adapter_factory_wrapper_;
 
 #if defined(OS_ANDROID)
   scoped_refptr<BrowserDemuxerAndroid> browser_demuxer_android_;
@@ -490,22 +495,12 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // for UMA.
   int max_worker_count_;
 
-  // Context shared for each PermissionService instance created for this RPH.
-  scoped_ptr<PermissionServiceContext> permission_service_context_;
+  // Context shared for each mojom::PermissionService instance created for this
+  // RPH.
+  std::unique_ptr<PermissionServiceContext> permission_service_context_;
 
-  // This is a set of all subscription targets valuebuffers in the GPU process
-  // are currently subscribed too. Used to prevent sending unnecessary
-  // ValueState updates.
-  typedef base::hash_set<unsigned int> SubscriptionSet;
-  SubscriptionSet subscription_set_;
-
-  // Maintains ValueStates which are not currently subscribed too so we can
-  // pass them to the GpuService if a Valuebuffer ever subscribes to the
-  // respective subscription target
-  scoped_refptr<gpu::ValueStateMap> pending_valuebuffer_state_;
-
-  // Whether or not the CHROMIUM_subscribe_uniform WebGL extension is enabled
-  bool subscribe_uniform_enabled_;
+  // The memory allocator, if any, in which the renderer will write its metrics.
+  std::unique_ptr<base::SharedPersistentMemoryAllocator> metrics_allocator_;
 
   bool channel_connected_;
   bool sent_render_process_ready_;
@@ -518,6 +513,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // ignore this problem.
   base::WaitableEvent never_signaled_;
 #endif
+
+  std::string mojo_channel_token_;
+  mojo::ScopedMessagePipeHandle in_process_renderer_handle_;
 
   base::WeakPtrFactory<RenderProcessHostImpl> weak_factory_;
 

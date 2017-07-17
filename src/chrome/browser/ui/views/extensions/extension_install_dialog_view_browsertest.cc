@@ -12,6 +12,7 @@
 #include "chrome/browser/extensions/extension_icon_manager.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_prompt_test_helper.h"
+#include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -43,8 +44,8 @@ class ExtensionInstallDialogViewTestBase : public ExtensionBrowserTest {
 
   // Creates and returns an install prompt of |prompt_type_|, optionally setting
   // |permissions|.
-  scoped_ptr<ExtensionInstallPrompt::Prompt> CreatePrompt();
-  scoped_ptr<ExtensionInstallPrompt::Prompt> CreatePrompt(
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> CreatePrompt();
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> CreatePrompt(
       const PermissionMessages& permissions);
 
   content::WebContents* web_contents() { return web_contents_; }
@@ -70,13 +71,14 @@ void ExtensionInstallDialogViewTestBase::SetUpOnMainThread() {
   web_contents_ = browser()->tab_strip_model()->GetWebContentsAt(0);
 }
 
-scoped_ptr<ExtensionInstallPrompt::Prompt>
+std::unique_ptr<ExtensionInstallPrompt::Prompt>
 ExtensionInstallDialogViewTestBase::CreatePrompt() {
-  scoped_ptr<ExtensionInstallPrompt::Prompt> prompt(
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt(
       new ExtensionInstallPrompt::Prompt(prompt_type_));
   prompt->set_extension(extension_);
 
-  scoped_ptr<ExtensionIconManager> icon_manager(new ExtensionIconManager());
+  std::unique_ptr<ExtensionIconManager> icon_manager(
+      new ExtensionIconManager());
   const SkBitmap icon_bitmap = icon_manager->GetIcon(extension_->id());
   gfx::Image icon = gfx::Image::CreateFrom1xBitmap(icon_bitmap);
   prompt->set_icon(icon);
@@ -89,7 +91,8 @@ class ScrollbarTest : public ExtensionInstallDialogViewTestBase {
   ScrollbarTest();
   ~ScrollbarTest() override {}
 
-  bool IsScrollbarVisible(scoped_ptr<ExtensionInstallPrompt::Prompt> prompt);
+  bool IsScrollbarVisible(
+      std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ScrollbarTest);
@@ -101,7 +104,7 @@ ScrollbarTest::ScrollbarTest()
 }
 
 bool ScrollbarTest::IsScrollbarVisible(
-    scoped_ptr<ExtensionInstallPrompt::Prompt> prompt) {
+    std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
   ExtensionInstallDialogView* dialog = new ExtensionInstallDialogView(
       profile(), web_contents(), ExtensionInstallPrompt::DoneCallback(),
       std::move(prompt));
@@ -125,7 +128,7 @@ IN_PROC_BROWSER_TEST_F(ScrollbarTest, LongPromptScrollbar) {
     permissions.push_back(PermissionMessage(permission_string,
                                             PermissionIDSet()));
   }
-  scoped_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
   prompt->SetPermissions(permissions,
                          ExtensionInstallPrompt::REGULAR_PERMISSIONS);
   ASSERT_TRUE(IsScrollbarVisible(std::move(prompt)))
@@ -140,7 +143,7 @@ IN_PROC_BROWSER_TEST_F(ScrollbarTest, ScrollbarRegression) {
   PermissionMessages permissions;
   permissions.push_back(PermissionMessage(permission_string,
                                           PermissionIDSet()));
-  scoped_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
   prompt->SetPermissions(permissions,
                          ExtensionInstallPrompt::REGULAR_PERMISSIONS);
   ASSERT_FALSE(IsScrollbarVisible(std::move(prompt))) << "Scrollbar is visible";
@@ -156,13 +159,15 @@ class ExtensionInstallDialogViewTest
 
   views::DialogDelegateView* CreateAndShowPrompt(
       ExtensionInstallPromptTestHelper* helper) {
-    scoped_ptr<ExtensionInstallDialogView> dialog(
+    std::unique_ptr<ExtensionInstallDialogView> dialog(
         new ExtensionInstallDialogView(profile(), web_contents(),
                                        helper->GetCallback(), CreatePrompt()));
     views::DialogDelegateView* delegate_view = dialog.get();
 
     views::Widget* modal_dialog = views::DialogDelegate::CreateDialogWidget(
-        dialog.release(), nullptr, browser()->window()->GetNativeWindow());
+        dialog.release(), nullptr,
+        platform_util::GetViewForWindow(
+            browser()->window()->GetNativeWindow()));
     modal_dialog->Show();
 
     return delegate_view;

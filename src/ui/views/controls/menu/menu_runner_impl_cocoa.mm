@@ -4,8 +4,10 @@
 
 #import "ui/views/controls/menu/menu_runner_impl_cocoa.h"
 
+#include "base/mac/sdk_forward_declarations.h"
 #import "ui/base/cocoa/menu_controller.h"
 #include "ui/base/models/menu_model.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
@@ -41,7 +43,7 @@ base::scoped_nsobject<NSView> CreateMenuAnchorView(
     const gfx::Rect& screen_bounds,
     NSMenuItem* checked_item) {
   NSRect rect = gfx::ScreenRectToNSRect(screen_bounds);
-  rect.origin = [window convertScreenToBase:rect.origin];
+  rect = [window convertRectFromScreen:rect];
   rect = [[window contentView] convertRect:rect fromView:nil];
 
   // If there's no checked item (e.g. Combobox::STYLE_ACTION), NSMenu will
@@ -92,13 +94,15 @@ MenuRunnerImplInterface* MenuRunnerImplInterface::Create(
 }
 
 MenuRunnerImplCocoa::MenuRunnerImplCocoa(ui::MenuModel* menu)
-    : delete_after_run_(false), closing_event_time_(base::TimeDelta()) {
+    : running_(false),
+      delete_after_run_(false),
+      closing_event_time_(base::TimeTicks()) {
   menu_controller_.reset(
       [[MenuController alloc] initWithModel:menu useWithPopUpButtonCell:NO]);
 }
 
 bool MenuRunnerImplCocoa::IsRunning() const {
-  return [menu_controller_ isMenuOpen];
+  return running_;
 }
 
 void MenuRunnerImplCocoa::Release() {
@@ -121,7 +125,8 @@ MenuRunner::RunResult MenuRunnerImplCocoa::RunMenuAt(Widget* parent,
   DCHECK(run_types & kNativeRunTypes);
   DCHECK(!IsRunning());
   DCHECK(parent);
-  closing_event_time_ = base::TimeDelta();
+  closing_event_time_ = base::TimeTicks();
+  running_ = true;
 
   if (run_types & MenuRunner::CONTEXT_MENU) {
     [NSMenu popUpContextMenu:[menu_controller_ menu]
@@ -142,6 +147,7 @@ MenuRunner::RunResult MenuRunnerImplCocoa::RunMenuAt(Widget* parent,
   }
 
   closing_event_time_ = ui::EventTimeForNow();
+  running_ = false;
 
   if (delete_after_run_) {
     delete this;
@@ -155,7 +161,7 @@ void MenuRunnerImplCocoa::Cancel() {
   [menu_controller_ cancel];
 }
 
-base::TimeDelta MenuRunnerImplCocoa::GetClosingEventTime() const {
+base::TimeTicks MenuRunnerImplCocoa::GetClosingEventTime() const {
   return closing_event_time_;
 }
 

@@ -265,9 +265,9 @@
   OP(GetUniformBlocksCHROMIUM)                             /* 506 */ \
   OP(GetTransformFeedbackVaryingsCHROMIUM)                 /* 507 */ \
   OP(GetUniformsES3CHROMIUM)                               /* 508 */ \
-  OP(GetTranslatedShaderSourceANGLE)                       /* 509 */ \
-  OP(PostSubBufferCHROMIUM)                                /* 510 */ \
-  OP(TexImageIOSurface2DCHROMIUM)                          /* 511 */ \
+  OP(DescheduleUntilFinishedCHROMIUM)                      /* 509 */ \
+  OP(GetTranslatedShaderSourceANGLE)                       /* 510 */ \
+  OP(PostSubBufferCHROMIUM)                                /* 511 */ \
   OP(CopyTextureCHROMIUM)                                  /* 512 */ \
   OP(CopySubTextureCHROMIUM)                               /* 513 */ \
   OP(CompressedCopyTextureCHROMIUM)                        /* 514 */ \
@@ -280,68 +280,64 @@
   OP(ConsumeTextureCHROMIUMImmediate)                      /* 521 */ \
   OP(CreateAndConsumeTextureCHROMIUMImmediate)             /* 522 */ \
   OP(BindUniformLocationCHROMIUMBucket)                    /* 523 */ \
-  OP(GenValuebuffersCHROMIUMImmediate)                     /* 524 */ \
-  OP(DeleteValuebuffersCHROMIUMImmediate)                  /* 525 */ \
-  OP(IsValuebufferCHROMIUM)                                /* 526 */ \
-  OP(BindValuebufferCHROMIUM)                              /* 527 */ \
-  OP(SubscribeValueCHROMIUM)                               /* 528 */ \
-  OP(PopulateSubscribedValuesCHROMIUM)                     /* 529 */ \
-  OP(UniformValuebufferCHROMIUM)                           /* 530 */ \
-  OP(BindTexImage2DCHROMIUM)                               /* 531 */ \
-  OP(ReleaseTexImage2DCHROMIUM)                            /* 532 */ \
-  OP(TraceBeginCHROMIUM)                                   /* 533 */ \
-  OP(TraceEndCHROMIUM)                                     /* 534 */ \
-  OP(DiscardFramebufferEXTImmediate)                       /* 535 */ \
-  OP(LoseContextCHROMIUM)                                  /* 536 */ \
-  OP(InsertFenceSyncCHROMIUM)                              /* 537 */ \
-  OP(GenSyncTokenCHROMIUMImmediate)                        /* 538 */ \
-  OP(GenUnverifiedSyncTokenCHROMIUMImmediate)              /* 539 */ \
-  OP(VerifySyncTokensCHROMIUMImmediate)                    /* 540 */ \
-  OP(WaitSyncTokenCHROMIUM)                                /* 541 */ \
-  OP(DrawBuffersEXTImmediate)                              /* 542 */ \
-  OP(DiscardBackbufferCHROMIUM)                            /* 543 */ \
-  OP(ScheduleOverlayPlaneCHROMIUM)                         /* 544 */ \
-  OP(ScheduleCALayerCHROMIUM)                              /* 545 */ \
-  OP(CommitOverlayPlanesCHROMIUM)                          /* 546 */ \
-  OP(SwapInterval)                                         /* 547 */ \
-  OP(FlushDriverCachesCHROMIUM)                            /* 548 */ \
-  OP(MatrixLoadfCHROMIUMImmediate)                         /* 549 */ \
-  OP(MatrixLoadIdentityCHROMIUM)                           /* 550 */ \
-  OP(GenPathsCHROMIUM)                                     /* 551 */ \
-  OP(DeletePathsCHROMIUM)                                  /* 552 */ \
-  OP(IsPathCHROMIUM)                                       /* 553 */ \
-  OP(PathCommandsCHROMIUM)                                 /* 554 */ \
-  OP(PathParameterfCHROMIUM)                               /* 555 */ \
-  OP(PathParameteriCHROMIUM)                               /* 556 */ \
-  OP(PathStencilFuncCHROMIUM)                              /* 557 */ \
-  OP(StencilFillPathCHROMIUM)                              /* 558 */ \
-  OP(StencilStrokePathCHROMIUM)                            /* 559 */ \
-  OP(CoverFillPathCHROMIUM)                                /* 560 */ \
-  OP(CoverStrokePathCHROMIUM)                              /* 561 */ \
-  OP(StencilThenCoverFillPathCHROMIUM)                     /* 562 */ \
-  OP(StencilThenCoverStrokePathCHROMIUM)                   /* 563 */ \
-  OP(StencilFillPathInstancedCHROMIUM)                     /* 564 */ \
-  OP(StencilStrokePathInstancedCHROMIUM)                   /* 565 */ \
-  OP(CoverFillPathInstancedCHROMIUM)                       /* 566 */ \
-  OP(CoverStrokePathInstancedCHROMIUM)                     /* 567 */ \
-  OP(StencilThenCoverFillPathInstancedCHROMIUM)            /* 568 */ \
-  OP(StencilThenCoverStrokePathInstancedCHROMIUM)          /* 569 */ \
-  OP(BindFragmentInputLocationCHROMIUMBucket)              /* 570 */ \
-  OP(ProgramPathFragmentInputGenCHROMIUM)                  /* 571 */ \
-  OP(CoverageModulationCHROMIUM)                           /* 572 */ \
-  OP(BlendBarrierKHR)                                      /* 573 */ \
-  OP(ApplyScreenSpaceAntialiasingCHROMIUM)                 /* 574 */ \
-  OP(BindFragDataLocationIndexedEXTBucket)                 /* 575 */ \
-  OP(BindFragDataLocationEXTBucket)                        /* 576 */ \
-  OP(GetFragDataIndexEXT)                                  /* 577 */ \
-  OP(UniformMatrix4fvStreamTextureMatrixCHROMIUMImmediate) /* 578 */
+  OP(BindTexImage2DCHROMIUM)                               /* 524 */ \
+  OP(ReleaseTexImage2DCHROMIUM)                            /* 525 */ \
+  OP(TraceBeginCHROMIUM)                                   /* 526 */ \
+  OP(TraceEndCHROMIUM)                                     /* 527 */ \
+  OP(DiscardFramebufferEXTImmediate)                       /* 528 */ \
+  OP(LoseContextCHROMIUM)                                  /* 529 */ \
+  OP(InsertFenceSyncCHROMIUM)                              /* 530 */ \
+  OP(GenSyncTokenCHROMIUMImmediate)                        /* 531 */ \
+  OP(GenUnverifiedSyncTokenCHROMIUMImmediate)              /* 532 */ \
+  OP(VerifySyncTokensCHROMIUMImmediate)                    /* 533 */ \
+  OP(WaitSyncTokenCHROMIUM)                                /* 534 */ \
+  OP(DrawBuffersEXTImmediate)                              /* 535 */ \
+  OP(DiscardBackbufferCHROMIUM)                            /* 536 */ \
+  OP(ScheduleOverlayPlaneCHROMIUM)                         /* 537 */ \
+  OP(ScheduleCALayerCHROMIUM)                              /* 538 */ \
+  OP(ScheduleCALayerInUseQueryCHROMIUMImmediate)           /* 539 */ \
+  OP(CommitOverlayPlanesCHROMIUM)                          /* 540 */ \
+  OP(SwapInterval)                                         /* 541 */ \
+  OP(FlushDriverCachesCHROMIUM)                            /* 542 */ \
+  OP(MatrixLoadfCHROMIUMImmediate)                         /* 543 */ \
+  OP(MatrixLoadIdentityCHROMIUM)                           /* 544 */ \
+  OP(GenPathsCHROMIUM)                                     /* 545 */ \
+  OP(DeletePathsCHROMIUM)                                  /* 546 */ \
+  OP(IsPathCHROMIUM)                                       /* 547 */ \
+  OP(PathCommandsCHROMIUM)                                 /* 548 */ \
+  OP(PathParameterfCHROMIUM)                               /* 549 */ \
+  OP(PathParameteriCHROMIUM)                               /* 550 */ \
+  OP(PathStencilFuncCHROMIUM)                              /* 551 */ \
+  OP(StencilFillPathCHROMIUM)                              /* 552 */ \
+  OP(StencilStrokePathCHROMIUM)                            /* 553 */ \
+  OP(CoverFillPathCHROMIUM)                                /* 554 */ \
+  OP(CoverStrokePathCHROMIUM)                              /* 555 */ \
+  OP(StencilThenCoverFillPathCHROMIUM)                     /* 556 */ \
+  OP(StencilThenCoverStrokePathCHROMIUM)                   /* 557 */ \
+  OP(StencilFillPathInstancedCHROMIUM)                     /* 558 */ \
+  OP(StencilStrokePathInstancedCHROMIUM)                   /* 559 */ \
+  OP(CoverFillPathInstancedCHROMIUM)                       /* 560 */ \
+  OP(CoverStrokePathInstancedCHROMIUM)                     /* 561 */ \
+  OP(StencilThenCoverFillPathInstancedCHROMIUM)            /* 562 */ \
+  OP(StencilThenCoverStrokePathInstancedCHROMIUM)          /* 563 */ \
+  OP(BindFragmentInputLocationCHROMIUMBucket)              /* 564 */ \
+  OP(ProgramPathFragmentInputGenCHROMIUM)                  /* 565 */ \
+  OP(CoverageModulationCHROMIUM)                           /* 566 */ \
+  OP(BlendBarrierKHR)                                      /* 567 */ \
+  OP(ApplyScreenSpaceAntialiasingCHROMIUM)                 /* 568 */ \
+  OP(BindFragDataLocationIndexedEXTBucket)                 /* 569 */ \
+  OP(BindFragDataLocationEXTBucket)                        /* 570 */ \
+  OP(GetFragDataIndexEXT)                                  /* 571 */ \
+  OP(UniformMatrix4fvStreamTextureMatrixCHROMIUMImmediate) /* 572 */
 
 enum CommandId {
-  kStartPoint = cmd::kLastCommonId,  // All GLES2 commands start after this.
+  kOneBeforeStartPoint =
+      cmd::kLastCommonId,  // All GLES2 commands start after this.
 #define GLES2_CMD_OP(name) k##name,
   GLES2_COMMAND_LIST(GLES2_CMD_OP)
 #undef GLES2_CMD_OP
-      kNumCommands
+      kNumCommands,
+  kFirstGLES2Command = kOneBeforeStartPoint + 1
 };
 
 #endif  // GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_IDS_AUTOGEN_H_

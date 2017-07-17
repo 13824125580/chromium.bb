@@ -8,6 +8,8 @@
 #include <mferror.h>
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
@@ -107,14 +109,17 @@ class MFReaderCallback final
     return 1U;
   }
 
-  STDMETHOD(OnReadSample)(HRESULT status,
-                          DWORD stream_index,
-                          DWORD stream_flags,
-                          LONGLONG time_stamp,
-                          IMFSample* sample) override {
-    base::TimeTicks stamp(base::TimeTicks::Now());
+  STDMETHOD(OnReadSample)
+  (HRESULT status,
+   DWORD stream_index,
+   DWORD stream_flags,
+   LONGLONG raw_time_stamp,
+   IMFSample* sample) override {
+    base::TimeTicks reference_time(base::TimeTicks::Now());
+    base::TimeDelta timestamp =
+        base::TimeDelta::FromMicroseconds(raw_time_stamp / 10);
     if (!sample) {
-      observer_->OnIncomingCapturedData(NULL, 0, 0, stamp);
+      observer_->OnIncomingCapturedData(NULL, 0, 0, reference_time, timestamp);
       return S_OK;
     }
 
@@ -128,7 +133,8 @@ class MFReaderCallback final
         DWORD length = 0, max_length = 0;
         BYTE* data = NULL;
         buffer->Lock(&data, &max_length, &length);
-        observer_->OnIncomingCapturedData(data, length, 0, stamp);
+        observer_->OnIncomingCapturedData(data, length, 0, reference_time,
+                                          timestamp);
         buffer->Unlock();
       }
     }
@@ -229,12 +235,12 @@ bool VideoCaptureDeviceMFWin::Init(
 
 void VideoCaptureDeviceMFWin::AllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(CalledOnValidThread());
 
   base::AutoLock lock(lock_);
 
-  client_ = client.Pass();
+  client_ = std::move(client);
   DCHECK_EQ(capture_, false);
 
   CapabilityList capabilities;
@@ -267,7 +273,8 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
 
 void VideoCaptureDeviceMFWin::StopAndDeAllocate() {
   DCHECK(CalledOnValidThread());
-  base::WaitableEvent flushed(false, false);
+  base::WaitableEvent flushed(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
   const int kFlushTimeOutInMs = 1000;
   bool wait = false;
   {
@@ -297,11 +304,12 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedData(
     const uint8_t* data,
     int length,
     int rotation,
-    const base::TimeTicks& time_stamp) {
+    base::TimeTicks reference_time,
+    base::TimeDelta timestamp) {
   base::AutoLock lock(lock_);
   if (data && client_.get()) {
     client_->OnIncomingCapturedData(data, length, capture_format_, rotation,
-                                    time_stamp);
+                                    reference_time, timestamp);
   }
 
   if (capture_) {

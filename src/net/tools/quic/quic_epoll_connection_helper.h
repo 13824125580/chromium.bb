@@ -25,39 +25,30 @@ namespace net {
 class EpollServer;
 class QuicRandom;
 
-
-class AckAlarm;
-class RetransmissionAlarm;
-class SendAlarm;
-class TimeoutAlarm;
-
 using QuicStreamBufferAllocator = SimpleBufferAllocator;
+
+enum class QuicAllocator { SIMPLE, BUFFER_POOL };
 
 class QuicEpollConnectionHelper : public QuicConnectionHelperInterface {
  public:
-  explicit QuicEpollConnectionHelper(EpollServer* eps);
+  QuicEpollConnectionHelper(EpollServer* eps, QuicAllocator allocator);
   ~QuicEpollConnectionHelper() override;
 
   // QuicEpollConnectionHelperInterface
   const QuicClock* GetClock() const override;
   QuicRandom* GetRandomGenerator() override;
-  QuicAlarm* CreateAlarm(QuicAlarm::Delegate* delegate) override;
-  QuicArenaScopedPtr<QuicAlarm> CreateAlarm(
-      QuicArenaScopedPtr<QuicAlarm::Delegate> delegate,
-      QuicConnectionArena* arena) override;
 
   QuicBufferAllocator* GetBufferAllocator() override;
-
-  EpollServer* epoll_server() { return epoll_server_; }
 
  private:
   friend class QuicConnectionPeer;
 
-  EpollServer* epoll_server_;  // Not owned.
-
   const QuicEpollClock clock_;
   QuicRandom* random_generator_;
+  // Set up both allocators.  They take up minimal memory before use.
   QuicStreamBufferAllocator buffer_allocator_;
+  SimpleBufferAllocator simple_buffer_allocator_;
+  QuicAllocator allocator_type_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicEpollConnectionHelper);
 };

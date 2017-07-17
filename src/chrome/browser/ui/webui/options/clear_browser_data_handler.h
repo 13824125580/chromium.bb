@@ -49,24 +49,32 @@ class ClearBrowserDataHandler : public OptionsPageUIHandler,
   virtual void OnBrowsingHistoryPrefChanged();
 
   // Adds a |counter| for browsing data.
-  void AddCounter(scoped_ptr<BrowsingDataCounter> counter);
+  void AddCounter(std::unique_ptr<BrowsingDataCounter> counter);
 
   // Updates a counter in the UI according to the |result|.
-  void UpdateCounterText(scoped_ptr<BrowsingDataCounter::Result> result);
+  void UpdateCounterText(std::unique_ptr<BrowsingDataCounter::Result> result);
 
   // Implementation of SyncServiceObserver. Updates the support string at the
   // bottom of the dialog.
   void OnStateChanged() override;
+
+  // Finds out whether we should show a notice informing the user about other
+  // forms of browsing history. Responds with an asynchronous callback to
+  // |UpdateHistoryNotice|.
+  void RefreshHistoryNotice();
+
+  // Shows or hides the notice about other forms of browsing history.
+  void UpdateHistoryNotice(bool show);
+
+  // Remembers whether we should popup a dialog about other forms of browsing
+  // history when the user deletes the history for the first time.
+  void UpdateHistoryDeletionDialog(bool show);
 
   // If non-null it means removal is in progress.
   BrowsingDataRemover* remover_;
 
   // Keeps track of whether clearing LSO data is supported.
   BooleanPrefMember clear_plugin_lso_data_enabled_;
-
-  // Keeps track of whether Pepper Flash is enabled and thus Flapper-specific
-  // settings and removal options (e.g. Content Licenses) are available.
-  BooleanPrefMember pepper_flash_settings_enabled_;
 
   // Keeps track of whether deleting browsing history and downloads is allowed.
   BooleanPrefMember allow_deleting_browser_history_;
@@ -76,6 +84,16 @@ class ClearBrowserDataHandler : public OptionsPageUIHandler,
 
   // Informs us whether the user is syncing their data.
   ProfileSyncService* sync_service_;
+
+  // Whether we should show a notice about other forms of browsing history.
+  bool should_show_history_notice_;
+
+  // Whether we should popup a dialog about other forms of browsing history
+  // when the user deletes their browsing history for the first time.
+  bool should_show_history_deletion_dialog_;
+
+  // A weak pointer factory for asynchronous calls referencing this class.
+  base::WeakPtrFactory<ClearBrowserDataHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ClearBrowserDataHandler);
 };

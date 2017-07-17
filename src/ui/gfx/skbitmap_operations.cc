@@ -10,7 +10,6 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
@@ -649,10 +648,8 @@ SkBitmap SkBitmapOperations::UnPreMultiply(const SkBitmap& bitmap) {
   if (bitmap.isOpaque())
     return bitmap;
 
-  const SkImageInfo& info = bitmap.info();
-  SkImageInfo opaque_info =
-      SkImageInfo::Make(info.width(), info.height(), info.colorType(),
-                        kOpaque_SkAlphaType, info.profileType());
+  const SkImageInfo& opaque_info =
+      bitmap.info().makeAlphaType(kOpaque_SkAlphaType);
   SkBitmap opaque_bitmap;
   opaque_bitmap.allocPixels(opaque_info);
 
@@ -704,10 +701,9 @@ SkBitmap SkBitmapOperations::CreateColorMask(const SkBitmap& bitmap,
 
   SkCanvas canvas(color_mask);
 
-  skia::RefPtr<SkColorFilter> color_filter = skia::AdoptRef(
-      SkColorFilter::CreateModeFilter(c, SkXfermode::kSrcIn_Mode));
   SkPaint paint;
-  paint.setColorFilter(color_filter.get());
+  paint.setColorFilter(
+      SkColorFilter::MakeModeFilter(c, SkXfermode::kSrcIn_Mode));
   canvas.drawBitmap(bitmap, SkIntToScalar(0), SkIntToScalar(0), &paint);
   return color_mask;
 }
@@ -741,9 +737,7 @@ SkBitmap SkBitmapOperations::CreateDropShadow(
     // The blur is halved to produce a shadow that correctly fits within the
     // |shadow_margin|.
     SkScalar sigma = SkDoubleToScalar(shadow.blur() / 2);
-    skia::RefPtr<SkImageFilter> filter =
-        skia::AdoptRef(SkBlurImageFilter::Create(sigma, sigma));
-    paint.setImageFilter(filter.get());
+    paint.setImageFilter(SkBlurImageFilter::Make(sigma, sigma, nullptr));
 
     canvas.saveLayer(0, &paint);
     canvas.drawBitmap(shadow_image,

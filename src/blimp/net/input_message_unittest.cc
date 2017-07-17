@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/common/proto/input.pb.h"
 #include "blimp/net/blimp_message_processor.h"
@@ -22,12 +22,11 @@ void ValidateWebGestureEventRoundTripping(const blink::WebGestureEvent& event) {
   InputMessageGenerator generator;
   InputMessageConverter processor;
 
-  scoped_ptr<BlimpMessage> proto = generator.GenerateMessage(event);
+  std::unique_ptr<BlimpMessage> proto = generator.GenerateMessage(event);
   EXPECT_NE(nullptr, proto.get());
-  EXPECT_TRUE(proto->has_input());
-  EXPECT_EQ(BlimpMessage::INPUT, proto->type());
+  EXPECT_EQ(BlimpMessage::kInput, proto->feature_case());
 
-  scoped_ptr<blink::WebGestureEvent> new_event =
+  std::unique_ptr<blink::WebGestureEvent> new_event =
       processor.ProcessMessage(proto->input());
   EXPECT_NE(nullptr, new_event.get());
 
@@ -72,7 +71,7 @@ TEST(InputMessageTest, TestGestureScrollUpdateRoundTrip) {
   event.data.scrollUpdate.velocityY = 5.67f;
   event.data.scrollUpdate.previousUpdateInSequencePrevented = true;
   event.data.scrollUpdate.preventPropagation = true;
-  event.data.scrollUpdate.inertial = true;
+  event.data.scrollUpdate.inertialPhase = blink::WebGestureEvent::MomentumPhase;
   ValidateWebGestureEventRoundTripping(event);
 }
 
@@ -128,6 +127,46 @@ TEST(InputMessageTest, TestUnsupportedInputEventSerializationFails) {
   event.type = blink::WebInputEvent::Type::MouseWheel;
   InputMessageGenerator generator;
   EXPECT_EQ(nullptr, generator.GenerateMessage(event).get());
+}
+
+TEST(InputMessageConverterTest, TestTextInputTypeToProtoConversion) {
+  for (size_t i = ui::TextInputType::TEXT_INPUT_TYPE_TEXT;
+       i < ui::TextInputType::TEXT_INPUT_TYPE_MAX; i++) {
+    ui::TextInputType type = static_cast<ui::TextInputType>(i);
+    EXPECT_EQ(type, InputMessageConverter::TextInputTypeFromProto(
+                        InputMessageConverter::TextInputTypeToProto(type)));
+  }
+}
+
+TEST(InputMessageTest, TestGestureTapDownRoundTrip) {
+  blink::WebGestureEvent event = BuildBaseTestEvent();
+  event.type = blink::WebGestureEvent::Type::GestureTapDown;
+  event.data.tapDown.width = 2.3f;
+  event.data.tapDown.height = 3.4f;
+  ValidateWebGestureEventRoundTripping(event);
+}
+
+TEST(InputMessageTest, TestGestureTapCancelRoundTrip) {
+  blink::WebGestureEvent event = BuildBaseTestEvent();
+  event.type = blink::WebGestureEvent::Type::GestureTapCancel;
+  ValidateWebGestureEventRoundTripping(event);
+}
+
+TEST(InputMessageTest, TestGestureTapUnconfirmedRoundTrip) {
+  blink::WebGestureEvent event = BuildBaseTestEvent();
+  event.type = blink::WebGestureEvent::Type::GestureTapUnconfirmed;
+  event.data.tap.tapCount = 2;
+  event.data.tap.width = 2.3f;
+  event.data.tap.height = 3.4f;
+  ValidateWebGestureEventRoundTripping(event);
+}
+
+TEST(InputMessageTest, TestGestureShowPressRoundTrip) {
+  blink::WebGestureEvent event = BuildBaseTestEvent();
+  event.type = blink::WebGestureEvent::Type::GestureShowPress;
+  event.data.showPress.width = 2.3f;
+  event.data.showPress.height = 3.4f;
+  ValidateWebGestureEventRoundTripping(event);
 }
 
 }  // namespace blimp

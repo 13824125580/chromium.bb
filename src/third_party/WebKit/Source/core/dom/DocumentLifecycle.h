@@ -67,12 +67,12 @@ public:
         InPaintInvalidation,
         PaintInvalidationClean,
 
-        // When RuntimeEnabledFeatures::slimmingPaintV2Enabled.
-        InUpdatePaintProperties,
-        UpdatePaintPropertiesClean,
+        // In InPrePaint step, any data needed by painting are prepared.
+        // When RuntimeEnabledFeatures::slimmingPaintV2Enabled, paint property trees are built.
+        // Otherwise these steps are not applicable.
+        InPrePaint,
+        PrePaintClean,
 
-        // When RuntimeEnabledFeatures::slimmingPaintSynchronizedPaintingEnabled
-        // (implied by slimmingPaintV2Enabled).
         InPaint,
         PaintClean,
 
@@ -80,7 +80,6 @@ public:
         // to the style/layout/compositing states.
         Stopping,
         Stopped,
-        Disposed,
     };
 
     class Scope {
@@ -130,12 +129,28 @@ public:
         DocumentLifecycle& m_documentLifecycle;
     };
 
+    // Throttling is disabled by default. Instantiating this class allows
+    // throttling (e.g., during BeginMainFrame). If a script needs to run inside
+    // this scope, DisallowThrottlingScope should be used to let the script
+    // perform a synchronous layout if necessary.
     class CORE_EXPORT AllowThrottlingScope {
         STACK_ALLOCATED();
         WTF_MAKE_NONCOPYABLE(AllowThrottlingScope);
     public:
         AllowThrottlingScope(DocumentLifecycle&);
         ~AllowThrottlingScope();
+    };
+
+    class CORE_EXPORT DisallowThrottlingScope {
+        STACK_ALLOCATED();
+        WTF_MAKE_NONCOPYABLE(DisallowThrottlingScope);
+
+    public:
+        DisallowThrottlingScope(DocumentLifecycle&);
+        ~DisallowThrottlingScope();
+
+    private:
+        int m_savedCount;
     };
 
     DocumentLifecycle();
@@ -157,18 +172,16 @@ public:
     void incrementDetachCount() { m_detachCount++; }
     void decrementDetachCount()
     {
-        ASSERT(m_detachCount > 0);
+        DCHECK_GT(m_detachCount, 0);
         m_detachCount--;
     }
 
     bool throttlingAllowed() const;
 
-#if ENABLE(ASSERT)
-    static const char* stateAsDebugString(const LifecycleState);
-#endif
 
 private:
-#if ENABLE(ASSERT)
+#if DCHECK_IS_ON()
+    static const char* stateAsDebugString(const LifecycleState);
     bool canAdvanceTo(LifecycleState) const;
     bool canRewindTo(LifecycleState) const;
 #endif
@@ -184,7 +197,7 @@ inline bool DocumentLifecycle::stateAllowsTreeMutations() const
     return m_state != InStyleRecalc
         && m_state != InPerformLayout
         && m_state != InCompositingUpdate
-        && m_state != InUpdatePaintProperties
+        && m_state != InPrePaint
         && m_state != InPaint;
 }
 
@@ -208,7 +221,7 @@ inline bool DocumentLifecycle::stateAllowsDetach() const
         || m_state == LayoutClean
         || m_state == CompositingClean
         || m_state == PaintInvalidationClean
-        || m_state == UpdatePaintPropertiesClean
+        || m_state == PrePaintClean
         || m_state == PaintClean
         || m_state == Stopping;
 }
@@ -218,7 +231,7 @@ inline bool DocumentLifecycle::stateAllowsLayoutInvalidation() const
     return m_state != InPerformLayout
         && m_state != InCompositingUpdate
         && m_state != InPaintInvalidation
-        && m_state != InUpdatePaintProperties
+        && m_state != InPrePaint
         && m_state != InPaint;
 }
 

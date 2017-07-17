@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
@@ -19,6 +21,7 @@
 #include "components/browser_sync/common/browser_sync_switches.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/fake_signin_manager.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -91,10 +94,10 @@ class OneClickSigninSyncStarterTest : public ChromeRenderViewHostTestHarness {
   int succeeded_count_;
 
  private:
-  static scoped_ptr<KeyedService> BuildSigninManager(
+  static std::unique_ptr<KeyedService> BuildSigninManager(
       content::BrowserContext* context) {
     Profile* profile = static_cast<Profile*>(context);
-    return make_scoped_ptr(new FakeSigninManager(
+    return base::WrapUnique(new FakeSigninManager(
         ChromeSigninClientFactory::GetForProfile(profile),
         ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
         AccountTrackerServiceFactory::GetForProfile(profile),
@@ -126,6 +129,13 @@ TEST_F(OneClickSigninSyncStarterTest, CallbackNull) {
 
 // Verifies that the continue URL is loaded once signin completes.
 TEST_F(OneClickSigninSyncStarterTest, LoadContinueUrl) {
+  // This test would need to be a browser test to work under the password
+  // separated signin flow since it expects a full browser down the line.
+  // However, that flow doesn't support continue_url so this test is irrelevant
+  // there.
+  if (switches::UsePasswordSeparatedSigninFlow())
+    return;
+
   content::NavigationController& controller = web_contents()->GetController();
   EXPECT_FALSE(controller.GetPendingEntry());
 

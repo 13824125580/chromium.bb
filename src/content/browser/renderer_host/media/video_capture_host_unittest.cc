@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/renderer_host/media/video_capture_host.h"
+
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
@@ -13,18 +16,16 @@
 #include "base/files/scoped_file.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/media_stream_requester.h"
 #include "content/browser/renderer_host/media/media_stream_ui_proxy.h"
-#include "content/browser/renderer_host/media/video_capture_host.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
 #include "content/common/media/video_capture_messages.h"
 #include "content/public/common/content_switches.h"
@@ -120,6 +121,7 @@ class MockMediaStreamRequester : public MediaStreamRequester {
                                   int page_request_id,
                                   const std::string& label,
                                   const StreamDeviceInfo& device_info));
+  MOCK_METHOD1(DevicesChanged, void(MediaStreamType type));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockMediaStreamRequester);
@@ -273,14 +275,14 @@ class VideoCaptureHostTest : public testing::Test {
 #endif
 
     // Create our own MediaStreamManager.
-    audio_manager_.reset(media::AudioManager::CreateForTesting());
+    audio_manager_ = media::AudioManager::CreateForTesting(task_runner_);
 #ifndef TEST_REAL_CAPTURE_DEVICE
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kUseFakeDeviceForMediaStream);
 #endif
     media_stream_manager_.reset(new MediaStreamManager(audio_manager_.get()));
     media_stream_manager_->UseFakeUIForTests(
-        scoped_ptr<FakeMediaStreamUIProxy>());
+        std::unique_ptr<FakeMediaStreamUIProxy>());
 
     // Create a Host and connect it to a simulated IPC channel.
     host_ = new MockVideoCaptureHost(media_stream_manager_.get());
@@ -313,7 +315,7 @@ class VideoCaptureHostTest : public testing::Test {
     const int render_process_id = 1;
     const int render_frame_id = 1;
     const int page_request_id = 1;
-    const GURL security_origin("http://test.com");
+    const url::Origin security_origin(GURL("http://test.com"));
 
     ASSERT_TRUE(opened_device_label_.empty());
 
@@ -482,10 +484,13 @@ class VideoCaptureHostTest : public testing::Test {
   scoped_refptr<MockVideoCaptureHost> host_;
 
  private:
+  // media_stream_manager_ needs to outlive thread_bundle_ because it is a
+  // MessageLoop::DestructionObserver. audio_manager_ needs to outlive
+  // thread_bundle_ because it uses the underlying message loop.
   StrictMock<MockMediaStreamRequester> stream_requester_;
-  scoped_ptr<media::AudioManager> audio_manager_;
-  scoped_ptr<MediaStreamManager> media_stream_manager_;
+  std::unique_ptr<MediaStreamManager> media_stream_manager_;
   content::TestBrowserThreadBundle thread_bundle_;
+  media::ScopedAudioManagerPtr audio_manager_;
   content::TestBrowserContext browser_context_;
   content::TestContentBrowserClient browser_client_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;

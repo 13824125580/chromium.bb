@@ -78,6 +78,7 @@ component("ozone_base") {
     "public/gpu_platform_support_host.h",
     "public/input_controller.cc",
     "public/input_controller.h",
+    "public/native_pixmap.h",
     "public/overlay_candidates_ozone.cc",
     "public/overlay_candidates_ozone.h",
     "public/overlay_manager_ozone.h",
@@ -104,6 +105,8 @@ component("ozone_base") {
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gfx/ipc",
+    "//ui/gfx/ipc/geometry",
+    "//ui/gfx/ipc/skia",
   ]
 
   visibility += [
@@ -156,8 +159,6 @@ source_set("platform") {
     ":generate_ozone_platform_list",
   ]
 
-  # TODO(GYP) the GYP version has a way to add additional dependencies via
-  # build flags.
   deps += ozone_platform_deps
 
   # Platforms are always linked into //ui/ozone and can include our headers.
@@ -168,6 +169,8 @@ source_set("platform") {
 }
 
 component("ozone") {
+  visibility = []
+  visibility = [ "*" ]
   public_deps = [
     ":platform",
   ]

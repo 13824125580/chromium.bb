@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_USER_MANAGER_USER_H_
 #define COMPONENTS_USER_MANAGER_USER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -68,17 +69,21 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   //   (a) existing enumerated constants should never be deleted or reordered,
   //   (b) new constants should only be appended at the end of the enumeration.
   enum WallpaperType {
-    /* DAILY = 0 */    // Removed.
+    DAILY = 0,         // Surprise wallpaper. Changes once a day if enabled.
     CUSTOMIZED = 1,    // Selected by user.
     DEFAULT = 2,       // Default.
     /* UNKNOWN = 3 */  // Removed.
     ONLINE = 4,        // WallpaperInfo.location denotes an URL.
     POLICY = 5,        // Controlled by policy, can't be changed by the user.
-    WALLPAPER_TYPE_COUNT = 6
+    THIRDPARTY = 6,    // Current wallpaper is set by a third party app.
+    WALLPAPER_TYPE_COUNT = 7
   };
 
   // Returns true if user type has gaia account.
   static bool TypeHasGaiaAccount(UserType user_type);
+
+  explicit User(const AccountId& account_id);
+  ~User() override;
 
   // UserInfo
   std::string GetEmail() const override;
@@ -109,6 +114,9 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // True if the user is affiliated to the device.
   virtual bool IsAffiliated() const;
 
+  // True if the user is a device local account user.
+  virtual bool IsDeviceLocalAccount() const;
+
   // The email the user used to log in.
   // TODO(alemate): rename this to GetUserEmail() (see crbug.com/548923)
   const std::string& email() const;
@@ -127,19 +135,19 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   bool HasDefaultImage() const;
 
   int image_index() const { return image_index_; }
-  bool has_raw_image() const { return user_image_.has_raw_image(); }
-  // Returns raw representation of static user image.
-  const UserImage::RawImage& raw_image() const {
-    return user_image_.raw_image();
+  bool has_image_bytes() const { return user_image_->has_image_bytes(); }
+  // Returns bytes representation of static user image for WebUI.
+  const UserImage::Bytes& image_bytes() const {
+    return user_image_->image_bytes();
   }
 
-  // Whether |raw_image| contains data in format that is considered safe to
+  // Whether |user_image_| contains data in format that is considered safe to
   // decode in sensitive environment (on Login screen).
-  bool image_is_safe_format() const { return user_image_.is_safe_format(); }
+  bool image_is_safe_format() const { return user_image_->is_safe_format(); }
 
   // Returns the URL of user image, if there is any. Currently only the profile
   // image has a URL, for other images empty URL is returned.
-  GURL image_url() const { return user_image_.url(); }
+  GURL image_url() const { return user_image_->url(); }
 
   // True if user image is a stub (while real image is being loaded from file).
   bool image_is_stub() const { return image_is_stub_; }
@@ -191,22 +199,19 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   static User* CreateSupervisedUser(const AccountId& account_id);
   static User* CreatePublicAccountUser(const AccountId& account_id);
 
-  explicit User(const AccountId& account_id);
-  ~User() override;
-
   const std::string* GetAccountLocale() const { return account_locale_.get(); }
 
   // Setters are private so only UserManager can call them.
   void SetAccountLocale(const std::string& resolved_account_locale);
 
-  void SetImage(const UserImage& user_image, int image_index);
+  void SetImage(std::unique_ptr<UserImage> user_image, int image_index);
 
   void SetImageURL(const GURL& image_url);
 
   // Sets a stub image until the next |SetImage| call. |image_index| may be
   // one of |USER_IMAGE_EXTERNAL| or |USER_IMAGE_PROFILE|.
   // If |is_loading| is |true|, that means user image is being loaded from file.
-  void SetStubImage(const UserImage& stub_user_image,
+  void SetStubImage(std::unique_ptr<UserImage> stub_user_image,
                     int image_index,
                     bool is_loading);
 
@@ -224,7 +229,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   void set_using_saml(const bool using_saml) { using_saml_ = using_saml; }
 
-  const UserImage& user_image() const { return user_image_; }
+  const UserImage& user_image() const { return *user_image_; }
 
   void set_oauth_token_status(OAuthTokenStatus status) {
     oauth_token_status_ = status;
@@ -258,7 +263,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // The displayed user email, defaults to |email_|.
   std::string display_email_;
   bool using_saml_ = false;
-  UserImage user_image_;
+  std::unique_ptr<UserImage> user_image_;
   OAuthTokenStatus oauth_token_status_ = OAUTH_TOKEN_STATUS_UNKNOWN;
   bool force_online_signin_ = false;
 
@@ -266,7 +271,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // (Or failed to download, but at least one download attempt finished).
   // An empty string indicates error in data load, or in
   // translation of Account locale to chromeos locale.
-  scoped_ptr<std::string> account_locale_;
+  std::unique_ptr<std::string> account_locale_;
 
   // Used to identify homedir mount point.
   std::string username_hash_;

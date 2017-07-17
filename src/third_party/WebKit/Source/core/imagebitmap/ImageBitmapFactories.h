@@ -31,15 +31,17 @@
 #ifndef ImageBitmapFactories_h
 #define ImageBitmapFactories_h
 
+#include "bindings/core/v8/HTMLImageElementOrHTMLVideoElementOrHTMLCanvasElementOrBlobOrImageDataOrImageBitmap.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/UnionTypesCore.h"
 #include "core/fileapi/FileReaderLoader.h"
 #include "core/fileapi/FileReaderLoaderClient.h"
 #include "core/imagebitmap/ImageBitmapOptions.h"
 #include "platform/Supplementable.h"
 #include "platform/geometry/IntRect.h"
+
+class SkImage;
 
 namespace blink {
 
@@ -49,19 +51,15 @@ class ExceptionState;
 class ExecutionContext;
 class ImageBitmapSource;
 class ImageBitmapOptions;
-class ImageSource;
+class ImageDecoder;
 class WebTaskRunner;
 
 typedef HTMLImageElementOrHTMLVideoElementOrHTMLCanvasElementOrBlobOrImageDataOrImageBitmap ImageBitmapSourceUnion;
 
-class ImageBitmapFactories final : public NoBaseWillBeGarbageCollectedFinalized<ImageBitmapFactories>, public WillBeHeapSupplement<LocalDOMWindow>, public WillBeHeapSupplement<WorkerGlobalScope> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(ImageBitmapFactories);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ImageBitmapFactories);
-
+class ImageBitmapFactories final : public GarbageCollectedFinalized<ImageBitmapFactories>, public Supplement<LocalDOMWindow>, public Supplement<WorkerGlobalScope> {
+    USING_GARBAGE_COLLECTED_MIXIN(ImageBitmapFactories);
 public:
-    static ScriptPromise createImageBitmap(ScriptState*, EventTarget&, const ImageBitmapSourceUnion&, ExceptionState&);
     static ScriptPromise createImageBitmap(ScriptState*, EventTarget&, const ImageBitmapSourceUnion&, const ImageBitmapOptions&, ExceptionState&);
-    static ScriptPromise createImageBitmap(ScriptState*, EventTarget&, const ImageBitmapSourceUnion&, int sx, int sy, int sw, int sh, ExceptionState&);
     static ScriptPromise createImageBitmap(ScriptState*, EventTarget&, const ImageBitmapSourceUnion&, int sx, int sy, int sw, int sh, const ImageBitmapOptions&, ExceptionState&);
     static ScriptPromise createImageBitmap(ScriptState*, EventTarget&, ImageBitmapSource*, int sx, int sy, int sw, int sh, const ImageBitmapOptions&, ExceptionState&);
 
@@ -92,9 +90,9 @@ private:
 
         void rejectPromise();
 
-        void scheduleAsyncImageBitmapDecoding();
-        void decodeImageOnDecoderThread(WebTaskRunner*);
-        void resolvePromiseOnOriginalThread(PassOwnPtr<ImageSource>);
+        void scheduleAsyncImageBitmapDecoding(DOMArrayBuffer*);
+        void decodeImageOnDecoderThread(WebTaskRunner*, DOMArrayBuffer*, const String& premultiplyAlphaOption, const String& colorSpaceConversionOption);
+        void resolvePromiseOnOriginalThread(PassRefPtr<SkImage>);
 
         // FileReaderLoaderClient
         void didStartLoading() override { }
@@ -103,7 +101,7 @@ private:
         void didFail(FileError::ErrorCode) override;
 
         FileReaderLoader m_loader;
-        RawPtrWillBeMember<ImageBitmapFactories> m_factory;
+        Member<ImageBitmapFactories> m_factory;
         Member<ScriptPromiseResolver> m_resolver;
         IntRect m_cropRect;
         ImageBitmapOptions m_options;
@@ -117,7 +115,7 @@ private:
     void addLoader(ImageBitmapLoader*);
     void didFinishLoading(ImageBitmapLoader*);
 
-    PersistentHeapHashSetWillBeHeapHashSet<Member<ImageBitmapLoader>> m_pendingLoaders;
+    HeapHashSet<Member<ImageBitmapLoader>> m_pendingLoaders;
 };
 
 } // namespace blink

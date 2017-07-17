@@ -12,9 +12,10 @@ namespace prefs {
 // component. Keep alphabetized, and document each in the .cc file.
 
 extern const char kAutofillEnabled[];
+extern const char kAutofillProfileUseDatesFixed[];
+extern const char kAutofillLastVersionDeduped[];
 extern const char kAutofillWalletImportEnabled[];
 extern const char kAutofillWalletImportStorageCheckboxState[];
-extern const char kAutofillWalletSyncExperimentEnabled[];
 
 }  // namespace prefs
 }  // namespace autofill

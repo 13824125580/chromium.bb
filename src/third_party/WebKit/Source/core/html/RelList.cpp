@@ -5,6 +5,7 @@
 #include "core/html/RelList.h"
 
 #include "core/dom/Document.h"
+#include "platform/RuntimeEnabledFeatures.h"
 #include "wtf/HashMap.h"
 
 namespace blink {
@@ -13,20 +14,6 @@ using namespace HTMLNames;
 
 
 RelList::RelList(Element* element) : DOMTokenList(nullptr), m_element(element) { }
-
-#if !ENABLE(OILPAN)
-void RelList::ref()
-{
-    m_element->ref();
-    DOMTokenList::ref();
-}
-
-void RelList::deref()
-{
-    m_element->deref();
-    DOMTokenList::deref();
-}
-#endif
 
 unsigned RelList::length() const
 {
@@ -67,6 +54,8 @@ static RelList::SupportedTokens& supportedTokens()
         supportedValuesMap.add("manifest");
         supportedValuesMap.add("apple-touch-icon");
         supportedValuesMap.add("apple-touch-icon-precomposed");
+        if (RuntimeEnabledFeatures::linkServiceWorkerEnabled())
+            supportedValuesMap.add("serviceworker");
     }
 
     return supportedValuesMap;

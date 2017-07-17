@@ -58,14 +58,11 @@ protected:
     virtual bool paintTextArea(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMenuList(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMenuListButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMeter(const LayoutObject&, const PaintInfo&, const IntRect&);
     virtual bool paintProgressBar(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintSliderTrack(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintSliderThumb(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintSearchField(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintSearchFieldCancelButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchFieldDecoration(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchFieldResultsDecoration(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
 
     bool paintUsingFallbackTheme(const LayoutObject&, const PaintInfo&, const IntRect&);
     bool paintCheckboxUsingFallbackTheme(const LayoutObject&, const PaintInfo&, const IntRect&);

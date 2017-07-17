@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
+
+#include "build/build_config.h"
 #include "chrome/common/chrome_version.h"
 
 #define FPL FILE_PATH_LITERAL
@@ -147,10 +148,12 @@ const base::FilePath::CharType kLocalStorePoolName[] = FPL("LocalStorePool");
 const base::FilePath::CharType kMediaCacheDirname[] = FPL("Media Cache");
 const base::FilePath::CharType kNetworkPersistentStateFilename[] =
     FPL("Network Persistent State");
-const base::FilePath::CharType kOfflinePageArchviesDirname[] =
+const base::FilePath::CharType kOfflinePageArchivesDirname[] =
     FPL("Offline Pages/archives");
 const base::FilePath::CharType kOfflinePageMetadataDirname[] =
     FPL("Offline Pages/metadata");
+const base::FilePath::CharType kOfflinePageRequestQueueDirname[] =
+    FPL("Offline Pages/request_queue");
 const base::FilePath::CharType kPreferencesFilename[] = FPL("Preferences");
 const base::FilePath::CharType kProtectedPreferencesFilenameDeprecated[] =
     FPL("Protected Preferences");
@@ -203,14 +206,6 @@ const wchar_t kMetroNavigationAndSearchMessage[] =
     L"CHROME_METRO_NAV_SEARCH_REQUEST";
 const wchar_t kMetroGetCurrentTabInfoMessage[] =
     L"CHROME_METRO_GET_CURRENT_TAB_INFO";
-// This is used by breakpad and the metrics reporting.
-const wchar_t kBrowserCrashDumpAttemptsRegistryPath[] =
-    L"Software\\" PRODUCT_STRING_PATH L"\\BrowserCrashDumpAttempts";
-const wchar_t kBrowserCrashDumpAttemptsRegistryPathSxS[] =
-    L"Software\\" PRODUCT_STRING_PATH L"\\BrowserCrashDumpAttemptsSxS";
-// This is used by browser exit code metrics reporting.
-const wchar_t kBrowserExitCodesRegistryPath[] =
-    L"Software\\" PRODUCT_STRING_PATH L"\\BrowserExitCodes";
 #endif
 
 #if defined(OS_CHROMEOS)

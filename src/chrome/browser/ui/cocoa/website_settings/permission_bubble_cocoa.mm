@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/cocoa/website_settings/permission_bubble_cocoa.h"
 
+#include "base/memory/ptr_util.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/website_settings/permission_bubble_controller.h"
 #import "chrome/browser/ui/website_settings/permission_bubble_view.h"
@@ -16,12 +17,6 @@ PermissionBubbleCocoa::PermissionBubbleCocoa(Browser* browser)
 }
 
 PermissionBubbleCocoa::~PermissionBubbleCocoa() {
-}
-
-// static
-scoped_ptr<PermissionBubbleView> PermissionBubbleView::Create(
-    Browser* browser) {
-  return make_scoped_ptr(new PermissionBubbleCocoa(browser));
 }
 
 void PermissionBubbleCocoa::Show(

@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_ARC_ARC_SERVICE_LAUNCHER_H_
 #define CHROME_BROWSER_CHROMEOS_ARC_ARC_SERVICE_LAUNCHER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread_checker.h"
 #include "components/arc/arc_service_manager.h"
 
 namespace arc {
@@ -26,8 +26,7 @@ class ArcServiceLauncher {
   // DBus callback.
   void OnArcAvailable(bool available);
 
-  base::ThreadChecker thread_checker_;
-  scoped_ptr<ArcServiceManager> arc_service_manager_;
+  std::unique_ptr<ArcServiceManager> arc_service_manager_;
   base::WeakPtrFactory<ArcServiceLauncher> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcServiceLauncher);

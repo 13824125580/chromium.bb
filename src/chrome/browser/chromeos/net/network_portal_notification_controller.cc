@@ -6,16 +6,16 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
-#include "ash/shell.h"
-#include "ash/system/system_notifier.h"
-#include "ash/system/tray/system_tray_notifier.h"
+#include "ash/common/system/system_notifier.h"
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/wm_shell.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string16.h"
@@ -301,10 +301,9 @@ void NetworkPortalNotificationController::OnPortalDetectionCompleted(
     return;
   last_network_path_ = network->path();
 
-  if (ash::Shell::HasInstance()) {
-    ash::Shell::GetInstance()
-        ->system_tray_notifier()
-        ->NotifyOnCaptivePortalDetected(network->path());
+  if (ash::WmShell::HasInstance()) {
+    ash::WmShell::Get()->system_tray_notifier()->NotifyOnCaptivePortalDetected(
+        network->path());
   }
 
   message_center::MessageCenter::Get()->AddNotification(
@@ -329,7 +328,7 @@ void NetworkPortalNotificationController::OnDialogDestroyed(
   }
 }
 
-scoped_ptr<message_center::Notification>
+std::unique_ptr<message_center::Notification>
 NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
     const NetworkState* network) {
   message_center::RichNotificationData data;
@@ -342,7 +341,7 @@ NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
       ash::system_notifier::kNotifierNetworkPortalDetector);
   base::string16 notificationText;
   bool is_wifi = NetworkTypePattern::WiFi().MatchesType(network->type());
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
       l10n_util::GetStringUTF16(
           is_wifi ? IDS_PORTAL_DETECTION_NOTIFICATION_TITLE_WIFI
@@ -356,7 +355,8 @@ NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
   return notification;
 }
 
-scoped_ptr<message_center::Notification> NetworkPortalNotificationController::
+std::unique_ptr<message_center::Notification>
+NetworkPortalNotificationController::
     CreateCaptivePortalNotificationForExtension(
         const NetworkState* network,
         extensions::NetworkingConfigService* networking_config_service,
@@ -397,7 +397,7 @@ scoped_ptr<message_center::Notification> NetworkPortalNotificationController::
     data.buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
         IDS_PORTAL_DETECTION_NOTIFICATION_BUTTON_PORTAL)));
   }
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
       l10n_util::GetStringUTF16(IDS_PORTAL_DETECTION_NOTIFICATION_TITLE_WIFI),
       notificationText, icon, base::string16() /* display_source */, GURL(),
@@ -406,7 +406,8 @@ scoped_ptr<message_center::Notification> NetworkPortalNotificationController::
   return notification;
 }
 
-scoped_ptr<Notification> NetworkPortalNotificationController::GetNotification(
+std::unique_ptr<Notification>
+NetworkPortalNotificationController::GetNotification(
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalState& state) {
   base::string16 notificationText;

@@ -6,9 +6,10 @@
 
 #include <stddef.h>
 
-#include "cc/layers/picture_image_layer_impl.h"
+#include "cc/layers/picture_layer_impl.h"
 #include "cc/playback/display_item_list_settings.h"
 #include "cc/playback/drawing_display_item.h"
+#include "cc/trees/layer_tree_host.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
@@ -16,29 +17,28 @@
 
 namespace cc {
 
-scoped_refptr<PictureImageLayer> PictureImageLayer::Create(
-    const LayerSettings& settings) {
-  return make_scoped_refptr(new PictureImageLayer(settings));
+scoped_refptr<PictureImageLayer> PictureImageLayer::Create() {
+  return make_scoped_refptr(new PictureImageLayer());
 }
 
-PictureImageLayer::PictureImageLayer(const LayerSettings& settings)
-    : PictureLayer(settings, this) {
-}
+PictureImageLayer::PictureImageLayer() : PictureLayer(this) {}
 
 PictureImageLayer::~PictureImageLayer() {
   ClearClient();
 }
 
-scoped_ptr<LayerImpl> PictureImageLayer::CreateLayerImpl(
+std::unique_ptr<LayerImpl> PictureImageLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
-  return PictureImageLayerImpl::Create(tree_impl, id(), is_mask());
+  auto layer_impl = PictureLayerImpl::Create(tree_impl, id(), is_mask());
+  layer_impl->set_is_directly_composited_image(true);
+  return std::move(layer_impl);
 }
 
 bool PictureImageLayer::HasDrawableContent() const {
   return image_ && PictureLayer::HasDrawableContent();
 }
 
-void PictureImageLayer::SetImage(skia::RefPtr<const SkImage> image) {
+void PictureImageLayer::SetImage(sk_sp<const SkImage> image) {
   // SetImage() currently gets called whenever there is any
   // style change that affects the layer even if that change doesn't
   // affect the actual contents of the image (e.g. a CSS animation).
@@ -60,11 +60,11 @@ scoped_refptr<DisplayItemList> PictureImageLayer::PaintContentsToDisplayList(
   DCHECK(image_);
   DCHECK_GT(image_->width(), 0);
   DCHECK_GT(image_->height(), 0);
+  DCHECK(layer_tree_host());
 
-  // Picture image layers can be used with GatherPixelRefs, so cached SkPictures
-  // are currently required.
   DisplayItemListSettings settings;
-  settings.use_cached_picture = true;
+  settings.use_cached_picture =
+      layer_tree_host()->settings().use_cached_picture_raster;
   scoped_refptr<DisplayItemList> display_list =
       DisplayItemList::Create(PaintableRegion(), settings);
 
@@ -83,10 +83,8 @@ scoped_refptr<DisplayItemList> PictureImageLayer::PaintContentsToDisplayList(
   // transparent images blend correctly.
   canvas->drawImage(image_.get(), 0, 0);
 
-  skia::RefPtr<SkPicture> picture =
-      skia::AdoptRef(recorder.endRecordingAsPicture());
-  display_list->CreateAndAppendItem<DrawingDisplayItem>(PaintableRegion(),
-                                                        std::move(picture));
+  display_list->CreateAndAppendItem<DrawingDisplayItem>(
+      PaintableRegion(), recorder.finishRecordingAsPicture());
 
   display_list->Finalize();
   return display_list;

@@ -9,7 +9,11 @@
 
 #include <cstring>
 
+#include "base/metrics/field_trial.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 #include "build/build_config.h"
+#include "net/base/address_list.h"
 
 #if defined(OS_POSIX)
 #include <netinet/in.h>
@@ -150,6 +154,74 @@ bool HaveOnlyLoopbackAddresses() {
   NOTIMPLEMENTED();
   return false;
 #endif  // defined(various platforms)
+}
+
+#if !defined(OS_NACL)
+namespace {
+
+bool GetTimeDeltaForConnectionTypeFromFieldTrial(
+    const char* field_trial,
+    NetworkChangeNotifier::ConnectionType type,
+    base::TimeDelta* out) {
+  std::string group = base::FieldTrialList::FindFullName(field_trial);
+  if (group.empty())
+    return false;
+  std::vector<base::StringPiece> group_parts = base::SplitStringPiece(
+      group, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (type < 0)
+    return false;
+  size_t type_size = static_cast<size_t>(type);
+  if (type_size >= group_parts.size())
+    return false;
+  int64_t ms;
+  if (!base::StringToInt64(group_parts[type_size], &ms))
+    return false;
+  *out = base::TimeDelta::FromMilliseconds(ms);
+  return true;
+}
+
+}  // namespace
+
+base::TimeDelta GetTimeDeltaForConnectionTypeFromFieldTrialOrDefault(
+    const char* field_trial,
+    base::TimeDelta default_delta,
+    NetworkChangeNotifier::ConnectionType type) {
+  base::TimeDelta out;
+  if (!GetTimeDeltaForConnectionTypeFromFieldTrial(field_trial, type, &out))
+    out = default_delta;
+  return out;
+}
+#endif  // !defined(OS_NACL)
+
+AddressListDeltaType FindAddressListDeltaType(const AddressList& a,
+                                              const AddressList& b) {
+  bool pairwise_mismatch = false;
+  bool any_match = false;
+  bool any_missing = false;
+  bool same_size = a.size() == b.size();
+
+  for (size_t i = 0; i < a.size(); ++i) {
+    bool this_match = false;
+    for (size_t j = 0; j < b.size(); ++j) {
+      if (a[i] == b[j]) {
+        any_match = true;
+        this_match = true;
+      } else if (i == j) {
+        pairwise_mismatch = true;
+      }
+    }
+    if (!this_match)
+      any_missing = true;
+  }
+
+  if (same_size && !pairwise_mismatch)
+    return DELTA_IDENTICAL;
+  else if (same_size && !any_missing)
+    return DELTA_REORDERED;
+  else if (any_match)
+    return DELTA_OVERLAP;
+  else
+    return DELTA_DISJOINT;
 }
 
 }  // namespace net

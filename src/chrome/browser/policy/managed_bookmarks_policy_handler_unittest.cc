@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/policy/managed_bookmarks_policy_handler.h"
+
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "chrome/browser/policy/managed_bookmarks_policy_handler.h"
+#include "base/memory/ptr_util.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/policy/core/browser/configuration_policy_pref_store.h"
 #include "components/policy/core/browser/configuration_policy_pref_store_test.h"
@@ -24,7 +26,7 @@ class ManagedBookmarksPolicyHandlerTest
     : public ConfigurationPolicyPrefStoreTest {
   void SetUp() override {
     Schema chrome_schema = Schema::Wrap(GetChromeSchemaData());
-    handler_list_.AddHandler(make_scoped_ptr<ConfigurationPolicyHandler>(
+    handler_list_.AddHandler(base::WrapUnique<ConfigurationPolicyHandler>(
         new ManagedBookmarksPolicyHandler(chrome_schema)));
   }
 };
@@ -34,11 +36,14 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_FALSE(store_->GetValue(bookmarks::prefs::kManagedBookmarks, NULL));
 
   PolicyMap policy;
-  policy.Set(key::kManagedBookmarks,
-             POLICY_LEVEL_MANDATORY,
-             POLICY_SCOPE_USER,
+  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
              base::JSONReader::Read("["
+                                    // The following gets filtered out from the
+                                    // JSON string when parsed.
+                                    "  {"
+                                    "    \"toplevel_name\": \"abc 123\""
+                                    "  },"
                                     "  {"
                                     "    \"name\": \"Google\","
                                     "    \"url\": \"google.com\""
@@ -69,56 +74,104 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, ApplyPolicySettings) {
                                     "      }"
                                     "    ]"
                                     "  }"
-                                    "]")
-                 .release(),
-             NULL);
+                                    "]"),
+             nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
   EXPECT_TRUE(
       store_->GetValue(bookmarks::prefs::kManagedBookmarks, &pref_value));
   ASSERT_TRUE(pref_value);
 
-  scoped_ptr<base::Value> expected(
+  // Make sure the kManagedBookmarksFolderName pref is set correctly.
+  const base::Value* folder_value = NULL;
+  std::string folder_name;
+  EXPECT_TRUE(store_->GetValue(bookmarks::prefs::kManagedBookmarksFolderName,
+                               &folder_value));
+  ASSERT_TRUE(folder_value);
+  ASSERT_TRUE(folder_value->GetAsString(&folder_name));
+  EXPECT_EQ("abc 123", folder_name);
+
+  std::unique_ptr<base::Value> expected(
       extensions::ListBuilder()
-          .Append(std::move(extensions::DictionaryBuilder()
-                                .Set("name", "Google")
-                                .Set("url", "http://google.com/")))
-          .Append(std::move(extensions::DictionaryBuilder()
-                                .Set("name", "Empty Folder")
-                                .Set("children", extensions::ListBuilder())))
-          .Append(std::move(
+          .Append(extensions::DictionaryBuilder()
+                      .Set("name", "Google")
+                      .Set("url", "http://google.com/")
+                      .Build())
+          .Append(extensions::DictionaryBuilder()
+                      .Set("name", "Empty Folder")
+                      .Set("children", extensions::ListBuilder().Build())
+                      .Build())
+          .Append(
               extensions::DictionaryBuilder()
                   .Set("name", "Big Folder")
-                  .Set(
-                      "children",
-                      std::move(
-                          extensions::ListBuilder()
-                              .Append(std::move(
-                                  extensions::DictionaryBuilder()
-                                      .Set("name", "Youtube")
-                                      .Set("url", "http://youtube.com/")))
-                              .Append(std::move(
-                                  extensions::DictionaryBuilder()
-                                      .Set("name", "Chromium")
-                                      .Set("url", "http://chromium.org/")))
-                              .Append(std::move(
-                                  extensions::DictionaryBuilder()
-                                      .Set("name", "More Stuff")
-                                      .Set(
-                                          "children",
-                                          std::move(
-                                              extensions::ListBuilder().Append(
-                                                  std::move(
-                                                      extensions::
-                                                          DictionaryBuilder()
-                                                              .Set("name",
-                                                                   "Bugs")
-                                                              .Set(
-                                                                  "url",
-                                                                  "http://"
-                                                                  "crbug."
-                                                                  "com"
-                                                                  "/")))))))))))
+                  .Set("children",
+                       extensions::ListBuilder()
+                           .Append(extensions::DictionaryBuilder()
+                                       .Set("name", "Youtube")
+                                       .Set("url", "http://youtube.com/")
+                                       .Build())
+                           .Append(extensions::DictionaryBuilder()
+                                       .Set("name", "Chromium")
+                                       .Set("url", "http://chromium.org/")
+                                       .Build())
+                           .Append(
+                               extensions::DictionaryBuilder()
+                                   .Set("name", "More Stuff")
+                                   .Set("children",
+                                        extensions::ListBuilder()
+                                            .Append(
+                                                extensions::DictionaryBuilder()
+                                                    .Set("name", "Bugs")
+                                                    .Set("url",
+                                                         "http://"
+                                                         "crbug."
+                                                         "com"
+                                                         "/")
+                                                    .Build())
+                                            .Build())
+                                   .Build())
+                           .Build())
+                  .Build())
+          .Build());
+  EXPECT_TRUE(pref_value->Equals(expected.get()));
+}
+#endif  // defined(ENABLE_EXTENSIONS)
+
+#if defined(ENABLE_EXTENSIONS)
+TEST_F(ManagedBookmarksPolicyHandlerTest, ApplyPolicySettingsNoTitle) {
+  EXPECT_FALSE(store_->GetValue(bookmarks::prefs::kManagedBookmarks, NULL));
+
+  PolicyMap policy;
+  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+             POLICY_SOURCE_CLOUD,
+             base::JSONReader::Read("["
+                                    "  {"
+                                    "    \"name\": \"Google\","
+                                    "    \"url\": \"google.com\""
+                                    "  }"
+                                    "]"),
+             nullptr);
+  UpdateProviderPolicy(policy);
+  const base::Value* pref_value = NULL;
+  EXPECT_TRUE(
+      store_->GetValue(bookmarks::prefs::kManagedBookmarks, &pref_value));
+  ASSERT_TRUE(pref_value);
+
+  // Make sure the kManagedBookmarksFolderName pref is set correctly.
+  const base::Value* folder_value = NULL;
+  std::string folder_name;
+  EXPECT_TRUE(store_->GetValue(bookmarks::prefs::kManagedBookmarksFolderName,
+                               &folder_value));
+  ASSERT_TRUE(folder_value);
+  ASSERT_TRUE(folder_value->GetAsString(&folder_name));
+  EXPECT_EQ("", folder_name);
+
+  std::unique_ptr<base::Value> expected(
+      extensions::ListBuilder()
+          .Append(extensions::DictionaryBuilder()
+                      .Set("name", "Google")
+                      .Set("url", "http://google.com/")
+                      .Build())
           .Build());
   EXPECT_TRUE(pref_value->Equals(expected.get()));
 }
@@ -128,18 +181,16 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, WrongPolicyType) {
   PolicyMap policy;
   // The expected type is base::ListValue, but this policy sets it as an
   // unparsed base::StringValue. Any type other than ListValue should fail.
-  policy.Set(key::kManagedBookmarks,
-             POLICY_LEVEL_MANDATORY,
-             POLICY_SCOPE_USER,
-             POLICY_SOURCE_CLOUD,
-             new base::StringValue(
-                 "["
-                 "  {"
-                 "    \"name\": \"Google\","
-                 "    \"url\": \"google.com\""
-                 "  },"
-                 "]"),
-             NULL);
+  policy.Set(
+      key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+      POLICY_SOURCE_CLOUD,
+      base::WrapUnique(new base::StringValue("["
+                                             "  {"
+                                             "    \"name\": \"Google\","
+                                             "    \"url\": \"google.com\""
+                                             "  },"
+                                             "]")),
+      nullptr);
   UpdateProviderPolicy(policy);
   EXPECT_FALSE(store_->GetValue(bookmarks::prefs::kManagedBookmarks, NULL));
 }
@@ -147,9 +198,7 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, WrongPolicyType) {
 #if defined(ENABLE_EXTENSIONS)
 TEST_F(ManagedBookmarksPolicyHandlerTest, UnknownKeys) {
   PolicyMap policy;
-  policy.Set(key::kManagedBookmarks,
-             POLICY_LEVEL_MANDATORY,
-             POLICY_SCOPE_USER,
+  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
              base::JSONReader::Read("["
                                     "  {"
@@ -157,20 +206,20 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, UnknownKeys) {
                                     "    \"unknown\": \"should be ignored\","
                                     "    \"url\": \"google.com\""
                                     "  }"
-                                    "]")
-                 .release(),
-             NULL);
+                                    "]"),
+             nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
   EXPECT_TRUE(
       store_->GetValue(bookmarks::prefs::kManagedBookmarks, &pref_value));
   ASSERT_TRUE(pref_value);
 
-  scoped_ptr<base::Value> expected(
+  std::unique_ptr<base::Value> expected(
       extensions::ListBuilder()
-          .Append(std::move(extensions::DictionaryBuilder()
-                                .Set("name", "Google")
-                                .Set("url", "http://google.com/")))
+          .Append(extensions::DictionaryBuilder()
+                      .Set("name", "Google")
+                      .Set("url", "http://google.com/")
+                      .Build())
           .Build());
   EXPECT_TRUE(pref_value->Equals(expected.get()));
 }
@@ -179,9 +228,7 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, UnknownKeys) {
 #if defined(ENABLE_EXTENSIONS)
 TEST_F(ManagedBookmarksPolicyHandlerTest, BadBookmark) {
   PolicyMap policy;
-  policy.Set(key::kManagedBookmarks,
-             POLICY_LEVEL_MANDATORY,
-             POLICY_SCOPE_USER,
+  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
              base::JSONReader::Read("["
                                     "  {"
@@ -200,20 +247,20 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, BadBookmark) {
                                     "    \"name\": \"Google\","
                                     "    \"url\": \"google.com\""
                                     "  }"
-                                    "]")
-                 .release(),
-             NULL);
+                                    "]"),
+             nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
   EXPECT_TRUE(
       store_->GetValue(bookmarks::prefs::kManagedBookmarks, &pref_value));
   ASSERT_TRUE(pref_value);
 
-  scoped_ptr<base::Value> expected(
+  std::unique_ptr<base::Value> expected(
       extensions::ListBuilder()
-          .Append(std::move(extensions::DictionaryBuilder()
-                                .Set("name", "Google")
-                                .Set("url", "http://google.com/")))
+          .Append(extensions::DictionaryBuilder()
+                      .Set("name", "Google")
+                      .Set("url", "http://google.com/")
+                      .Build())
           .Build());
   EXPECT_TRUE(pref_value->Equals(expected.get()));
 }

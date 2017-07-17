@@ -7,13 +7,13 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,8 +51,8 @@ class SyncBrowserThreadModelWorkerTest : public testing::Test {
   syncer::SyncerError DoWork() {
     EXPECT_TRUE(db_thread_.task_runner()->BelongsToCurrentThread());
     timer_.Stop();  // Stop the failure timer so the test succeeds.
-    main_message_loop_.PostTask(FROM_HERE,
-                                base::MessageLoop::QuitWhenIdleClosure());
+    main_message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
     did_do_work_ = true;
     return syncer::SYNCER_OK;
   }
@@ -61,8 +61,8 @@ class SyncBrowserThreadModelWorkerTest : public testing::Test {
   // DoWork is called first.
   void Timeout() {
     ADD_FAILURE() << "Timed out waiting for work to be done on the DB thread.";
-    main_message_loop_.PostTask(FROM_HERE,
-                                base::MessageLoop::QuitWhenIdleClosure());
+    main_message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
   }
 
  protected:
@@ -91,7 +91,7 @@ TEST_F(SyncBrowserThreadModelWorkerTest, DoesWorkOnDatabaseThread) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&SyncBrowserThreadModelWorkerTest::ScheduleWork,
                             factory()->GetWeakPtr()));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(did_do_work());
 }
 

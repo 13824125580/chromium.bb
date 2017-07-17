@@ -12,22 +12,19 @@
 
 #include <string.h>
 
+#include "webrtc/base/logging.h"
+#include "webrtc/base/timeutils.h"
 #include "webrtc/base/trace_event.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "webrtc/modules/rtp_rtcp/source/byte_io.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 
 namespace webrtc {
 
 static const int kDtmfFrequencyHz = 8000;
 
-RTPSenderAudio::RTPSenderAudio(Clock* clock,
-                               RTPSender* rtpSender,
-                               RtpAudioFeedback* audio_feedback)
+RTPSenderAudio::RTPSenderAudio(Clock* clock, RTPSender* rtpSender)
     : _clock(clock),
       _rtpSender(rtpSender),
-      _audioFeedback(audio_feedback),
-      _sendAudioCritsect(CriticalSectionWrapper::CreateCriticalSection()),
       _packetSizeSamples(160),
       _dtmfEventIsOn(false),
       _dtmfEventFirstPacketSent(false),
@@ -56,7 +53,7 @@ int RTPSenderAudio::AudioFrequency() const {
 // set audio packet size, used to determine when it's time to send a DTMF packet
 // in silence (CNG)
 int32_t RTPSenderAudio::SetAudioPacketSize(uint16_t packetSizeSamples) {
-  CriticalSectionScoped cs(_sendAudioCritsect.get());
+  rtc::CritScope cs(&_sendAudioCritsect);
 
   _packetSizeSamples = packetSizeSamples;
   return 0;
@@ -70,7 +67,7 @@ int32_t RTPSenderAudio::RegisterAudioPayload(
     const uint32_t rate,
     RtpUtility::Payload** payload) {
   if (RtpUtility::StringCompare(payloadName, "cn", 2)) {
-    CriticalSectionScoped cs(_sendAudioCritsect.get());
+    rtc::CritScope cs(&_sendAudioCritsect);
     //  we can have multiple CNG payload types
     switch (frequency) {
       case 8000:
@@ -89,7 +86,7 @@ int32_t RTPSenderAudio::RegisterAudioPayload(
         return -1;
     }
   } else if (RtpUtility::StringCompare(payloadName, "telephone-event", 15)) {
-    CriticalSectionScoped cs(_sendAudioCritsect.get());
+    rtc::CritScope cs(&_sendAudioCritsect);
     // Don't add it to the list
     // we dont want to allow send with a DTMF payloadtype
     _dtmfPayloadType = payloadType;
@@ -107,7 +104,7 @@ int32_t RTPSenderAudio::RegisterAudioPayload(
 }
 
 bool RTPSenderAudio::MarkerBit(FrameType frameType, int8_t payload_type) {
-  CriticalSectionScoped cs(_sendAudioCritsect.get());
+  rtc::CritScope cs(&_sendAudioCritsect);
   // for audio true for first packet in a speech burst
   bool markerBit = false;
   if (_lastPayloadType != payload_type) {
@@ -158,7 +155,6 @@ int32_t RTPSenderAudio::SendAudio(FrameType frameType,
   // TODO(pwestin) Breakup function in smaller functions.
   size_t payloadSize = dataSize;
   size_t maxPayloadLength = _rtpSender->MaxPayloadLength();
-  bool dtmfToneStarted = false;
   uint16_t dtmfLengthMS = 0;
   uint8_t key = 0;
   int red_payload_type;
@@ -166,7 +162,7 @@ int32_t RTPSenderAudio::SendAudio(FrameType frameType,
   int8_t dtmf_payload_type;
   uint16_t packet_size_samples;
   {
-    CriticalSectionScoped cs(_sendAudioCritsect.get());
+    rtc::CritScope cs(&_sendAudioCritsect);
     red_payload_type = _REDPayloadType;
     audio_level_dbov = _audioLevel_dBov;
     dtmf_payload_type = _dtmfPayloadType;
@@ -185,14 +181,9 @@ int32_t RTPSenderAudio::SendAudio(FrameType frameType,
         _dtmfEventFirstPacketSent = false;
         _dtmfKey = key;
         _dtmfLengthSamples = (kDtmfFrequencyHz / 1000) * dtmfLengthMS;
-        dtmfToneStarted = true;
         _dtmfEventIsOn = true;
       }
     }
-  }
-  if (dtmfToneStarted) {
-    if (_audioFeedback)
-      _audioFeedback->OnPlayTelephoneEvent(key, dtmfLengthMS, _dtmfLevel);
   }
 
   // A source MAY send events and coded audio packets for the same time
@@ -342,8 +333,9 @@ int32_t RTPSenderAudio::SendAudio(FrameType frameType,
       memcpy(dataBuffer + rtpHeaderLength, payloadData, payloadSize);
     }
   }
+
   {
-    CriticalSectionScoped cs(_sendAudioCritsect.get());
+    rtc::CritScope cs(&_sendAudioCritsect);
     _lastPayloadType = payloadType;
   }
   // Update audio level extension, if included.
@@ -357,10 +349,14 @@ int32_t RTPSenderAudio::SendAudio(FrameType frameType,
   TRACE_EVENT_ASYNC_END2("webrtc", "Audio", captureTimeStamp, "timestamp",
                          _rtpSender->Timestamp(), "seqnum",
                          _rtpSender->SequenceNumber());
-  return _rtpSender->SendToNetwork(dataBuffer, payloadSize, rtpHeaderLength,
-                                   TickTime::MillisecondTimestamp(),
-                                   kAllowRetransmission,
-                                   RtpPacketSender::kHighPriority);
+  int32_t send_result = _rtpSender->SendToNetwork(
+      dataBuffer, payloadSize, rtpHeaderLength,
+      rtc::TimeMillis(), kAllowRetransmission,
+      RtpPacketSender::kHighPriority);
+  if (first_packet_sent_()) {
+    LOG(LS_INFO) << "First audio RTP packet sent to pacer";
+  }
+  return send_result;
 }
 
 // Audio level magnitude and voice activity flag are set for each RTP packet
@@ -368,7 +364,7 @@ int32_t RTPSenderAudio::SetAudioLevel(uint8_t level_dBov) {
   if (level_dBov > 127) {
     return -1;
   }
-  CriticalSectionScoped cs(_sendAudioCritsect.get());
+  rtc::CritScope cs(&_sendAudioCritsect);
   _audioLevel_dBov = level_dBov;
   return 0;
 }
@@ -378,14 +374,14 @@ int32_t RTPSenderAudio::SetRED(int8_t payloadType) {
   if (payloadType < -1) {
     return -1;
   }
-  CriticalSectionScoped cs(_sendAudioCritsect.get());
+  rtc::CritScope cs(&_sendAudioCritsect);
   _REDPayloadType = payloadType;
   return 0;
 }
 
 // Get payload type for Redundant Audio Data RFC 2198
 int32_t RTPSenderAudio::RED(int8_t* payloadType) const {
-  CriticalSectionScoped cs(_sendAudioCritsect.get());
+  rtc::CritScope cs(&_sendAudioCritsect);
   if (_REDPayloadType == -1) {
     // not configured
     return -1;
@@ -399,7 +395,7 @@ int32_t RTPSenderAudio::SendTelephoneEvent(uint8_t key,
                                            uint16_t time_ms,
                                            uint8_t level) {
   {
-    CriticalSectionScoped lock(_sendAudioCritsect.get());
+    rtc::CritScope lock(&_sendAudioCritsect);
     if (_dtmfPayloadType < 0) {
       // TelephoneEvent payloadtype not configured
       return -1;
@@ -454,7 +450,7 @@ int32_t RTPSenderAudio::SendTelephoneEventPacket(bool ended,
                          "Audio::SendTelephoneEvent", "timestamp",
                          dtmfTimeStamp, "seqnum", _rtpSender->SequenceNumber());
     retVal = _rtpSender->SendToNetwork(
-        dtmfbuffer, 4, 12, TickTime::MillisecondTimestamp(),
+        dtmfbuffer, 4, 12, rtc::TimeMillis(),
         kAllowRetransmission, RtpPacketSender::kHighPriority);
     sendCount--;
   } while (sendCount > 0 && retVal == 0);

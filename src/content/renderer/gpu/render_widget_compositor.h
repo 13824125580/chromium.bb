@@ -22,11 +22,10 @@
 #include "content/common/content_export.h"
 #include "content/renderer/gpu/compositor_dependencies.h"
 #include "third_party/WebKit/public/platform/WebLayerTreeView.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/rect.h"
 
-namespace ui {
-class LatencyInfo;
+namespace base {
+class CommandLine;
 }
 
 namespace cc {
@@ -34,11 +33,13 @@ class CopyOutputRequest;
 class InputHandler;
 class Layer;
 class LayerTreeHost;
-
 namespace proto {
 class CompositorMessage;
 }
+}
 
+namespace ui {
+class LatencyInfo;
 }
 
 namespace content {
@@ -53,12 +54,19 @@ class CONTENT_EXPORT RenderWidgetCompositor
  public:
   // Attempt to construct and initialize a compositor instance for the widget
   // with the given settings. Returns NULL if initialization fails.
-  static scoped_ptr<RenderWidgetCompositor> Create(
+  static std::unique_ptr<RenderWidgetCompositor> Create(
       RenderWidgetCompositorDelegate* delegate,
       float device_scale_factor,
       CompositorDependencies* compositor_deps);
 
   ~RenderWidgetCompositor() override;
+
+  static cc::LayerTreeSettings GenerateLayerTreeSettings(
+      const base::CommandLine& cmd,
+      CompositorDependencies* compositor_deps,
+      float device_scale_factor);
+  static cc::ManagedMemoryPolicy GetGpuMemoryPolicy(
+      const cc::ManagedMemoryPolicy& policy);
 
   void SetNeverVisible();
   const base::WeakPtr<cc::InputHandler>& GetInputHandler();
@@ -74,11 +82,11 @@ class CONTENT_EXPORT RenderWidgetCompositor
   // LatencyInfoSwapPromiseMonitor, if SetNeedsCommit() or
   // SetNeedsUpdateLayers() is called on LayerTreeHost, the original latency
   // info will be turned into a LatencyInfoSwapPromise.
-  scoped_ptr<cc::SwapPromiseMonitor> CreateLatencyInfoSwapPromiseMonitor(
+  std::unique_ptr<cc::SwapPromiseMonitor> CreateLatencyInfoSwapPromiseMonitor(
       ui::LatencyInfo* latency);
   // Calling QueueSwapPromise() to directly queue a SwapPromise into
   // LayerTreeHost.
-  void QueueSwapPromise(scoped_ptr<cc::SwapPromise> swap_promise);
+  void QueueSwapPromise(std::unique_ptr<cc::SwapPromise> swap_promise);
   int GetSourceFrameNumber() const;
   void SetNeedsUpdateLayers();
   void SetNeedsCommit();
@@ -86,13 +94,11 @@ class CONTENT_EXPORT RenderWidgetCompositor
   const cc::Layer* GetRootLayer() const;
   int ScheduleMicroBenchmark(
       const std::string& name,
-      scoped_ptr<base::Value> value,
-      const base::Callback<void(scoped_ptr<base::Value>)>& callback);
-  bool SendMessageToMicroBenchmark(int id, scoped_ptr<base::Value> value);
+      std::unique_ptr<base::Value> value,
+      const base::Callback<void(std::unique_ptr<base::Value>)>& callback);
+  bool SendMessageToMicroBenchmark(int id, std::unique_ptr<base::Value> value);
   void SetSurfaceIdNamespace(uint32_t surface_id_namespace);
   void OnHandleCompositorProto(const std::vector<uint8_t>& proto);
-  cc::ManagedMemoryPolicy GetGpuMemoryPolicy(
-      const cc::ManagedMemoryPolicy& policy);
   void SetPaintedDeviceScaleFactor(float device_scale);
 
   // WebLayerTreeView implementation.
@@ -116,6 +122,7 @@ class CONTENT_EXPORT RenderWidgetCompositor
                                bool use_anchor,
                                float new_page_scale,
                                double duration_sec) override;
+  bool hasPendingPageScaleAnimation() const override;
   void heuristicsForGpuRasterizationUpdated(bool matches_heuristics) override;
   void setNeedsAnimate() override;
   void setNeedsBeginFrame() override;
@@ -126,7 +133,6 @@ class CONTENT_EXPORT RenderWidgetCompositor
   void compositeAndReadbackAsync(
       blink::WebCompositeAndReadbackAsyncCallback* callback) override;
   void setDeferCommits(bool defer_commits) override;
-  void registerForAnimations(blink::WebLayer* layer) override;
   void registerViewportLayers(
       const blink::WebLayer* overscrollElasticityLayer,
       const blink::WebLayer* pageScaleLayer,
@@ -135,6 +141,8 @@ class CONTENT_EXPORT RenderWidgetCompositor
   void clearViewportLayers() override;
   void registerSelection(const blink::WebSelection& selection) override;
   void clearSelection() override;
+  void setMutatorClient(
+      std::unique_ptr<blink::WebCompositorMutatorClient>) override;
   void setEventListenerProperties(
       blink::WebEventListenerClass eventClass,
       blink::WebEventListenerProperties properties) override;
@@ -173,13 +181,9 @@ class CONTENT_EXPORT RenderWidgetCompositor
   void DidCommitAndDrawFrame() override;
   void DidCompleteSwapBuffers() override;
   void DidCompletePageScaleAnimation() override;
-  void RecordFrameTimingEvents(
-      scoped_ptr<cc::FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<cc::FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override;
 
   // cc::LayerTreeHostSingleThreadClient implementation.
-  void ScheduleAnimation() override;
+  void RequestScheduleAnimation() override;
   void DidPostSwapBuffers() override;
   void DidAbortSwapBuffers() override;
 
@@ -210,11 +214,12 @@ class CONTENT_EXPORT RenderWidgetCompositor
   int num_failed_recreate_attempts_;
   RenderWidgetCompositorDelegate* const delegate_;
   CompositorDependencies* const compositor_deps_;
-  scoped_ptr<cc::LayerTreeHost> layer_tree_host_;
+  const bool threaded_;
+  std::unique_ptr<cc::LayerTreeHost> layer_tree_host_;
   bool never_visible_;
 
   blink::WebLayoutAndPaintAsyncCallback* layout_and_paint_async_callback_;
-  scoped_ptr<cc::CopyOutputRequest> temporary_copy_output_request_;
+  std::unique_ptr<cc::CopyOutputRequest> temporary_copy_output_request_;
 
   cc::RemoteProtoChannel::ProtoReceiver* remote_proto_channel_receiver_;
 

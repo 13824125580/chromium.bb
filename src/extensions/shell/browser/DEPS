@@ -5,6 +5,7 @@ include_rules = [
   "+components/keyed_service",
   "+components/nacl/browser",
   "+components/nacl/common",
+  "+components/network_session_configurator/switches.h",
   "+components/pref_registry",
   "+components/update_client",
   "+components/user_prefs",
@@ -40,6 +41,7 @@ include_rules = [
   "+ui/aura",
   "+ui/chromeos",
   "+ui/display",
+  "+ui/ozone/public",
   "+ui/wm",
 
   "+third_party/cros_system_api",

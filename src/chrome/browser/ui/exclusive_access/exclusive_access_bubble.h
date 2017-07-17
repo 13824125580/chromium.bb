@@ -30,9 +30,9 @@ class Rect;
 //   has elapsed, the next user input re-displays the bubble.
 class ExclusiveAccessBubble : public gfx::AnimationDelegate {
  public:
-  explicit ExclusiveAccessBubble(ExclusiveAccessManager* manager,
-                                 const GURL& url,
-                                 ExclusiveAccessBubbleType bubble_type);
+  ExclusiveAccessBubble(ExclusiveAccessManager* manager,
+                        const GURL& url,
+                        ExclusiveAccessBubbleType bubble_type);
   ~ExclusiveAccessBubble() override;
 
   // Informs the ExclusiveAccessBubble of some user input, which may update
@@ -86,10 +86,6 @@ class ExclusiveAccessBubble : public gfx::AnimationDelegate {
   void CheckMousePosition();
 
   void ExitExclusiveAccess();
-  // Accepts the request. Can cause FullscreenExitBubble to be deleted.
-  void Accept();
-  // Denys the request. Can cause FullscreenExitBubble to be deleted.
-  void Cancel();
 
   // The following strings may change according to the content type and URL.
   base::string16 GetCurrentMessageText() const;

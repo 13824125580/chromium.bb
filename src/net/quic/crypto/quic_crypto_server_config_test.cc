@@ -6,8 +6,12 @@
 
 #include <stdarg.h>
 
+#include <memory>
+
 #include "base/stl_util.h"
 #include "net/quic/crypto/aes_128_gcm_12_encrypter.h"
+#include "net/quic/crypto/cert_compressor.h"
+#include "net/quic/crypto/chacha20_poly1305_encrypter.h"
 #include "net/quic/crypto/crypto_handshake_message.h"
 #include "net/quic/crypto/crypto_secret_boxer.h"
 #include "net/quic/crypto/crypto_server_config_protobuf.h"
@@ -17,6 +21,7 @@
 #include "net/quic/quic_time.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_clock.h"
+#include "net/quic/test_tools/quic_crypto_server_config_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,160 +34,6 @@ using std::vector;
 
 namespace net {
 namespace test {
-
-class QuicCryptoServerConfigPeer {
- public:
-  explicit QuicCryptoServerConfigPeer(QuicCryptoServerConfig* server_config)
-      : server_config_(server_config) {}
-
-  scoped_refptr<QuicCryptoServerConfig::Config> GetConfig(string config_id) {
-    base::AutoLock locked(server_config_->configs_lock_);
-    if (config_id == "<primary>") {
-      return scoped_refptr<QuicCryptoServerConfig::Config>(
-          server_config_->primary_config_);
-    } else {
-      return server_config_->GetConfigWithScid(config_id);
-    }
-  }
-
-  string NewSourceAddressToken(string config_id,
-                               SourceAddressTokens previous_tokens,
-                               const IPAddress& ip,
-                               QuicRandom* rand,
-                               QuicWallTime now,
-                               CachedNetworkParameters* cached_network_params) {
-    return server_config_->NewSourceAddressToken(*GetConfig(config_id),
-                                                 previous_tokens, ip, rand, now,
-                                                 cached_network_params);
-  }
-
-  HandshakeFailureReason ValidateSourceAddressTokens(
-      string config_id,
-      StringPiece srct,
-      const IPAddress& ip,
-      QuicWallTime now,
-      CachedNetworkParameters* cached_network_params) {
-    SourceAddressTokens tokens;
-    HandshakeFailureReason reason = server_config_->ParseSourceAddressToken(
-        *GetConfig(config_id), srct, &tokens);
-    if (reason != HANDSHAKE_OK) {
-      return reason;
-    }
-
-    return server_config_->ValidateSourceAddressTokens(tokens, ip, now,
-                                                       cached_network_params);
-  }
-
-  string NewServerNonce(QuicRandom* rand, QuicWallTime now) const {
-    return server_config_->NewServerNonce(rand, now);
-  }
-
-  HandshakeFailureReason ValidateServerNonce(StringPiece token,
-                                             QuicWallTime now) {
-    return server_config_->ValidateServerNonce(token, now);
-  }
-
-  base::Lock* GetStrikeRegisterClientLock() {
-    return &server_config_->strike_register_client_lock_;
-  }
-
-  // CheckConfigs compares the state of the Configs in |server_config_| to the
-  // description given as arguments. The arguments are given as
-  // nullptr-terminated pairs. The first of each pair is the server config ID of
-  // a Config. The second is a boolean describing whether the config is the
-  // primary. For example:
-  //   CheckConfigs(nullptr);  // checks that no Configs are loaded.
-  //
-  //   // Checks that exactly three Configs are loaded with the given IDs and
-  //   // status.
-  //   CheckConfigs(
-  //     "id1", false,
-  //     "id2", true,
-  //     "id3", false,
-  //     nullptr);
-  void CheckConfigs(const char* server_config_id1, ...) {
-    va_list ap;
-    va_start(ap, server_config_id1);
-
-    vector<pair<ServerConfigID, bool>> expected;
-    bool first = true;
-    for (;;) {
-      const char* server_config_id;
-      if (first) {
-        server_config_id = server_config_id1;
-        first = false;
-      } else {
-        server_config_id = va_arg(ap, const char*);
-      }
-
-      if (!server_config_id) {
-        break;
-      }
-
-      // varargs will promote the value to an int so we have to read that from
-      // the stack and cast down.
-      const bool is_primary = static_cast<bool>(va_arg(ap, int));
-      expected.push_back(std::make_pair(server_config_id, is_primary));
-    }
-
-    va_end(ap);
-
-    base::AutoLock locked(server_config_->configs_lock_);
-
-    ASSERT_EQ(expected.size(), server_config_->configs_.size())
-        << ConfigsDebug();
-
-    for (const pair<const ServerConfigID,
-                    scoped_refptr<QuicCryptoServerConfig::Config>>& i :
-         server_config_->configs_) {
-      bool found = false;
-      for (pair<ServerConfigID, bool>& j : expected) {
-        if (i.first == j.first && i.second->is_primary == j.second) {
-          found = true;
-          j.first.clear();
-          break;
-        }
-      }
-
-      ASSERT_TRUE(found) << "Failed to find match for " << i.first
-                         << " in configs:\n" << ConfigsDebug();
-    }
-  }
-
-  // ConfigsDebug returns a string that contains debugging information about
-  // the set of Configs loaded in |server_config_| and their status.
-  // ConfigsDebug() should be called after acquiring
-  // server_config_->configs_lock_.
-  string ConfigsDebug() {
-    if (server_config_->configs_.empty()) {
-      return "No Configs in QuicCryptoServerConfig";
-    }
-
-    string s;
-
-    for (const auto& i : server_config_->configs_) {
-      const scoped_refptr<QuicCryptoServerConfig::Config> config = i.second;
-      if (config->is_primary) {
-        s += "(primary) ";
-      } else {
-        s += "          ";
-      }
-      s += config->id;
-      s += "\n";
-    }
-
-    return s;
-  }
-
-  void SelectNewPrimaryConfig(int seconds) {
-    base::AutoLock locked(server_config_->configs_lock_);
-    server_config_->SelectNewPrimaryConfig(
-        QuicWallTime::FromUNIXSeconds(seconds));
-  }
-
- private:
-  const QuicCryptoServerConfig* server_config_;
-};
 
 class TestStrikeRegisterClient : public StrikeRegisterClient {
  public:
@@ -221,7 +72,7 @@ TEST(QuicCryptoServerConfigTest, ServerConfig) {
                                 CryptoTestUtils::ProofSourceForTesting());
   MockClock clock;
 
-  scoped_ptr<CryptoHandshakeMessage> message(server.AddDefaultConfig(
+  std::unique_ptr<CryptoHandshakeMessage> message(server.AddDefaultConfig(
       rand, &clock, QuicCryptoServerConfig::ConfigOptions()));
 
   // The default configuration should have AES-GCM and at least one ChaCha20
@@ -231,27 +82,7 @@ TEST(QuicCryptoServerConfigTest, ServerConfig) {
   ASSERT_EQ(QUIC_NO_ERROR, message->GetTaglist(kAEAD, &aead_tags, &aead_len));
   vector<QuicTag> aead(aead_tags, aead_tags + aead_len);
   EXPECT_THAT(aead, ::testing::Contains(kAESG));
-  EXPECT_LE(2u, aead.size());
-}
-
-TEST(QuicCryptoServerConfigTest, ServerConfigDisableChaCha) {
-  ValueRestore<bool> old_flag(
-      &FLAGS_quic_crypto_server_config_default_has_chacha20, false);
-  QuicRandom* rand = QuicRandom::GetInstance();
-  QuicCryptoServerConfig server(QuicCryptoServerConfig::TESTING, rand,
-                                CryptoTestUtils::ProofSourceForTesting());
-  MockClock clock;
-
-  scoped_ptr<CryptoHandshakeMessage> message(server.AddDefaultConfig(
-      rand, &clock, QuicCryptoServerConfig::ConfigOptions()));
-
-  // The default configuration should only contain AES-GCM when ChaCha20 has
-  // been disabled.
-  const QuicTag* aead_tags;
-  size_t aead_len;
-  ASSERT_EQ(QUIC_NO_ERROR, message->GetTaglist(kAEAD, &aead_tags, &aead_len));
-  vector<QuicTag> aead(aead_tags, aead_tags + aead_len);
-  EXPECT_THAT(aead, ::testing::ElementsAre(kAESG));
+  EXPECT_LE(1u, aead.size());
 }
 
 TEST(QuicCryptoServerConfigTest, GetOrbitIsCalledWithoutTheStrikeRegisterLock) {
@@ -265,9 +96,92 @@ TEST(QuicCryptoServerConfigTest, GetOrbitIsCalledWithoutTheStrikeRegisterLock) {
   server.SetStrikeRegisterClient(strike_register);
 
   QuicCryptoServerConfig::ConfigOptions options;
-  scoped_ptr<CryptoHandshakeMessage> message(
+  std::unique_ptr<CryptoHandshakeMessage> message(
       server.AddDefaultConfig(rand, &clock, options));
   EXPECT_TRUE(strike_register->is_known_orbit_called());
+}
+
+TEST(QuicCryptoServerConfigTest, CompressCerts) {
+  QuicCompressedCertsCache compressed_certs_cache(
+      QuicCompressedCertsCache::kQuicCompressedCertsCacheSize);
+
+  QuicRandom* rand = QuicRandom::GetInstance();
+  QuicCryptoServerConfig server(QuicCryptoServerConfig::TESTING, rand,
+                                CryptoTestUtils::ProofSourceForTesting());
+  QuicCryptoServerConfigPeer peer(&server);
+
+  vector<string> certs = {"testcert"};
+  scoped_refptr<ProofSource::Chain> chain(new ProofSource::Chain(certs));
+
+  string compressed =
+      peer.CompressChain(&compressed_certs_cache, chain, "", "", nullptr);
+
+  EXPECT_EQ(compressed_certs_cache.Size(), 1u);
+}
+
+TEST(QuicCryptoServerConfigTest, CompressSameCertsTwice) {
+  QuicCompressedCertsCache compressed_certs_cache(
+      QuicCompressedCertsCache::kQuicCompressedCertsCacheSize);
+
+  QuicRandom* rand = QuicRandom::GetInstance();
+  QuicCryptoServerConfig server(QuicCryptoServerConfig::TESTING, rand,
+                                CryptoTestUtils::ProofSourceForTesting());
+  QuicCryptoServerConfigPeer peer(&server);
+
+  // Compress the certs for the first time.
+  vector<string> certs = {"testcert"};
+  scoped_refptr<ProofSource::Chain> chain(new ProofSource::Chain(certs));
+  string common_certs = "";
+  string cached_certs = "";
+
+  string compressed = peer.CompressChain(&compressed_certs_cache, chain,
+                                         common_certs, cached_certs, nullptr);
+  EXPECT_EQ(compressed_certs_cache.Size(), 1u);
+
+  // Compress the same certs, should use cache if available.
+  string compressed2 = peer.CompressChain(&compressed_certs_cache, chain,
+                                          common_certs, cached_certs, nullptr);
+  EXPECT_EQ(compressed, compressed2);
+  EXPECT_EQ(compressed_certs_cache.Size(), 1u);
+}
+
+TEST(QuicCryptoServerConfigTest, CompressDifferentCerts) {
+  // This test compresses a set of similar but not identical certs. Cache if
+  // used should return cache miss and add all the compressed certs.
+  QuicCompressedCertsCache compressed_certs_cache(
+      QuicCompressedCertsCache::kQuicCompressedCertsCacheSize);
+
+  QuicRandom* rand = QuicRandom::GetInstance();
+  QuicCryptoServerConfig server(QuicCryptoServerConfig::TESTING, rand,
+                                CryptoTestUtils::ProofSourceForTesting());
+  QuicCryptoServerConfigPeer peer(&server);
+
+  vector<string> certs = {"testcert"};
+  scoped_refptr<ProofSource::Chain> chain(new ProofSource::Chain(certs));
+  string common_certs = "";
+  string cached_certs = "";
+
+  string compressed = peer.CompressChain(&compressed_certs_cache, chain,
+                                         common_certs, cached_certs, nullptr);
+  EXPECT_EQ(compressed_certs_cache.Size(), 1u);
+
+  // Compress a similar certs which only differs in the chain.
+  scoped_refptr<ProofSource::Chain> chain2(new ProofSource::Chain(certs));
+
+  string compressed2 = peer.CompressChain(&compressed_certs_cache, chain2,
+                                          common_certs, cached_certs, nullptr);
+  EXPECT_EQ(compressed_certs_cache.Size(), 2u);
+
+  // Compress a similar certs which only differs in common certs field.
+  static const uint64_t set_hash = 42;
+  std::unique_ptr<CommonCertSets> common_sets(
+      CryptoTestUtils::MockCommonCertSets(certs[0], set_hash, 1));
+  StringPiece different_common_certs(reinterpret_cast<const char*>(&set_hash),
+                                     sizeof(set_hash));
+  string compressed3 = peer.CompressChain(&compressed_certs_cache, chain,
+                                          different_common_certs.as_string(),
+                                          cached_certs, common_sets.get());
+  EXPECT_EQ(compressed_certs_cache.Size(), 3u);
 }
 
 class SourceAddressTokenTest : public ::testing::Test {
@@ -349,9 +263,9 @@ class SourceAddressTokenTest : public ::testing::Test {
   QuicCryptoServerConfig server_;
   QuicCryptoServerConfigPeer peer_;
   // Stores the primary config.
-  scoped_ptr<CryptoHandshakeMessage> primary_config_;
-  scoped_ptr<QuicServerConfigProtobuf> override_config_protobuf_;
-  scoped_ptr<CryptoHandshakeMessage> override_config_;
+  std::unique_ptr<CryptoHandshakeMessage> primary_config_;
+  std::unique_ptr<QuicServerConfigProtobuf> override_config_protobuf_;
+  std::unique_ptr<CryptoHandshakeMessage> override_config_;
 };
 
 // Test basic behavior of source address tokens including being specific
@@ -458,7 +372,7 @@ TEST(QuicCryptoServerConfigTest, ValidateServerNonce) {
 
   StringPiece message("hello world");
   const size_t key_size = CryptoSecretBoxer::GetKeySize();
-  scoped_ptr<uint8_t[]> key(new uint8_t[key_size]);
+  std::unique_ptr<uint8_t[]> key(new uint8_t[key_size]);
   memset(key.get(), 0x11, key_size);
 
   CryptoSecretBoxer boxer;

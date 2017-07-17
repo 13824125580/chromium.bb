@@ -9,26 +9,28 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/id_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "content/child/webmessageportchannel_impl.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "content/public/common/service_worker_event_status.mojom.h"
 #include "ipc/ipc_listener.h"
-#include "mojo/shell/public/interfaces/interface_provider.mojom.h"
-#include "third_party/WebKit/public/platform/WebGeofencingEventType.h"
+#include "services/shell/public/interfaces/interface_provider.mojom.h"
 #include "third_party/WebKit/public/platform/WebMessagePortChannel.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerError.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_event_status.mojom.h"
 #include "third_party/WebKit/public/web/modules/serviceworker/WebServiceWorkerContextClient.h"
 #include "third_party/WebKit/public/web/modules/serviceworker/WebServiceWorkerContextProxy.h"
 #include "v8/include/v8.h"
+
+struct ServiceWorkerMsg_ExtendableMessageEvent_Params;
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -36,8 +38,6 @@ class TaskRunner;
 }
 
 namespace blink {
-struct WebCircularGeofencingRegion;
-struct WebCrossOriginServiceWorkerClient;
 class WebDataSource;
 struct WebServiceWorkerClientQueryOptions;
 class WebServiceWorkerContextProxy;
@@ -51,7 +51,6 @@ class Message;
 
 namespace content {
 
-struct NavigatorConnectClient;
 struct PlatformNotificationData;
 struct PushEventPayload;
 struct ServiceWorkerClientInfo;
@@ -65,7 +64,8 @@ class WebServiceWorkerRegistrationImpl;
 class ServiceWorkerContextClient
     : public blink::WebServiceWorkerContextClient {
  public:
-  using SyncCallback = mojo::Callback<void(ServiceWorkerEventStatus)>;
+  using SyncCallback =
+      base::Callback<void(blink::mojom::ServiceWorkerEventStatus)>;
 
   // Returns a thread-specific client instance.  This does NOT create a
   // new instance.
@@ -83,12 +83,10 @@ class ServiceWorkerContextClient
                          int embedded_worker_id,
                          const IPC::Message& message);
 
-  // Called some time after the worker has started. Attempts to use the
-  // ServiceRegistry to connect to services before this method is called are
-  // queued up and will resolve after this method is called.
-  void BindServiceRegistry(
-      mojo::shell::mojom::InterfaceProviderRequest services,
-      mojo::shell::mojom::InterfaceProviderPtr exposed_services);
+  // Called some time after the worker has started.
+  void BindInterfaceProviders(
+      shell::mojom::InterfaceProviderRequest request,
+      shell::mojom::InterfaceProviderPtr remote_interfaces);
 
   // WebServiceWorkerContextClient overrides.
   blink::WebURL scope() const override;
@@ -107,12 +105,12 @@ class ServiceWorkerContextClient
   // Called on the main thread.
   void workerContextFailedToStart() override;
   void workerScriptLoaded() override;
+  bool hasAssociatedRegistration() override;
 
   void workerContextStarted(
       blink::WebServiceWorkerContextProxy* proxy) override;
   void didEvaluateWorkerScript(bool success) override;
-  void didInitializeWorkerContext(v8::Local<v8::Context> context,
-                                  const blink::WebURL& url) override;
+  void didInitializeWorkerContext(v8::Local<v8::Context> context) override;
   void willDestroyWorkerContext(v8::Local<v8::Context> context) override;
   void workerContextDestroyed() override;
   void reportException(const blink::WebString& error_message,
@@ -128,6 +126,8 @@ class ServiceWorkerContextClient
                            int call_id,
                            const blink::WebString& message,
                            const blink::WebString& state) override;
+  blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
+  createDevToolsMessageLoop() override;
   void didHandleActivateEvent(int request_id,
                               blink::WebServiceWorkerEventResult) override;
   void didHandleExtendableMessageEvent(
@@ -136,10 +136,12 @@ class ServiceWorkerContextClient
   void didHandleInstallEvent(
       int request_id,
       blink::WebServiceWorkerEventResult result) override;
-  void didHandleFetchEvent(int request_id) override;
-  void didHandleFetchEvent(
-      int request_id,
+  void respondToFetchEvent(int response_id) override;
+  void respondToFetchEvent(
+      int response_id,
       const blink::WebServiceWorkerResponse& response) override;
+  void didHandleFetchEvent(int event_finish_id,
+                           blink::WebServiceWorkerEventResult result) override;
   void didHandleNotificationClickEvent(
       int request_id,
       blink::WebServiceWorkerEventResult result) override;
@@ -161,9 +163,9 @@ class ServiceWorkerContextClient
       const blink::WebString& message,
       blink::WebMessagePortChannelArray* channels) override;
   void postMessageToCrossOriginClient(
-      const blink::WebCrossOriginServiceWorkerClient& client,
-      const blink::WebString& message,
-      blink::WebMessagePortChannelArray* channels) override;
+      const blink::WebCrossOriginServiceWorkerClient&,
+      const blink::WebString&,
+      blink::WebMessagePortChannelArray*) override;
   void focus(const blink::WebString& uuid,
              blink::WebServiceWorkerClientCallbacks*) override;
   void navigate(const blink::WebString& uuid,
@@ -177,7 +179,7 @@ class ServiceWorkerContextClient
       const blink::WebVector<blink::WebSecurityOrigin>& origins) override;
 
   virtual void DispatchSyncEvent(
-      const blink::WebSyncRegistration& registration,
+      const std::string& tag,
       blink::WebServiceWorkerContextProxy::LastChanceOption last_chance,
       const SyncCallback& callback);
 
@@ -197,11 +199,11 @@ class ServiceWorkerContextClient
   void OnActivateEvent(int request_id);
   void OnExtendableMessageEvent(
       int request_id,
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports,
-      const std::vector<int>& new_routing_ids);
+      const ServiceWorkerMsg_ExtendableMessageEvent_Params& params);
   void OnInstallEvent(int request_id);
-  void OnFetchEvent(int request_id, const ServiceWorkerFetchRequest& request);
+  void OnFetchEvent(int response_id,
+                    int event_finish_id,
+                    const ServiceWorkerFetchRequest& request);
   void OnNotificationClickEvent(
       int request_id,
       int64_t persistent_notification_id,
@@ -212,23 +214,7 @@ class ServiceWorkerContextClient
       int request_id,
       int64_t persistent_notification_id,
       const PlatformNotificationData& notification_data);
-  void OnGeofencingEvent(int request_id,
-                         blink::WebGeofencingEventType event_type,
-                         const std::string& region_id,
-                         const blink::WebCircularGeofencingRegion& region);
 
-  // TODO(nhiroki): Remove this after ExtendableMessageEvent is enabled by
-  // default (crbug.com/543198).
-  void OnPostMessage(
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports,
-      const std::vector<int>& new_routing_ids);
-
-  void OnCrossOriginMessageToWorker(
-      const NavigatorConnectClient& client,
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports,
-      const std::vector<int>& new_routing_ids);
   void OnDidGetClient(int request_id, const ServiceWorkerClientInfo& client);
   void OnDidGetClients(
       int request_id, const std::vector<ServiceWorkerClientInfo>& clients);
@@ -265,7 +251,7 @@ class ServiceWorkerContextClient
 
   // Initialized on the worker thread in workerContextStarted and
   // destructed on the worker thread in willDestroyWorkerContext.
-  scoped_ptr<WorkerContextData> context_;
+  std::unique_ptr<WorkerContextData> context_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerContextClient);
 };

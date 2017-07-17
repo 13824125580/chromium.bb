@@ -16,7 +16,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/login/users/avatar/user_image_loader.h"
 #include "chrome/common/url_constants.h"
 #include "components/user_manager/user_image/user_image.h"
@@ -35,11 +35,12 @@ const char* kWhitelistedDirectories[] = {
 // Callback for user_manager::UserImageLoader.
 void ImageLoaded(
     const content::URLDataSource::GotDataCallback& got_data_callback,
-    const user_manager::UserImage& user_image) {
+    std::unique_ptr<user_manager::UserImage> user_image) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (user_image.has_raw_image())
-    got_data_callback.Run(new base::RefCountedBytes(user_image.raw_image()));
+  // TODO(crbug.com/593251): Remove the data copy.
+  if (user_image->has_image_bytes())
+    got_data_callback.Run(new base::RefCountedBytes(user_image->image_bytes()));
   else
     got_data_callback.Run(NULL);
 }

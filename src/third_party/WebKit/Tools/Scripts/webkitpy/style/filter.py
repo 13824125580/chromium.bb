@@ -76,7 +76,7 @@ class _CategoryFilter(object):
             filter_rules = []
 
         self._filter_rules = filter_rules
-        self._should_check_category = {} # Cached dictionary of category to True/False
+        self._should_check_category = {}  # Cached dictionary of category to True/False
 
     def __str__(self):
         return ",".join(self._filter_rules)
@@ -108,12 +108,12 @@ class _CategoryFilter(object):
         if category in self._should_check_category:
             return self._should_check_category[category]
 
-        should_check = True # All categories checked by default.
+        should_check = True  # All categories checked by default.
         for rule in self._filter_rules:
             if not category.startswith(rule[1:]):
                 continue
             should_check = rule.startswith('+')
-        self._should_check_category[category] = should_check # Update cache.
+        self._should_check_category[category] = should_check  # Update cache.
         return should_check
 
 
@@ -174,6 +174,7 @@ class FilterConfiguration(object):
         """Cached dictionary of file path to CategoryFilter instance."""
 
     # Useful for unit testing.
+
     def __eq__(self, other):
         """Return whether this FilterConfiguration is equal to another."""
         if self._base_rules != other._base_rules:
@@ -213,7 +214,7 @@ class FilterConfiguration(object):
             for sub_path in sub_paths:
                 if path.find(sub_path) > -1:
                     return tuple(path_rules)
-        return () # Default to the empty tuple.
+        return ()  # Default to the empty tuple.
 
     def _filter_from_path_rules(self, path_rules):
         """Return the CategoryFilter associated to the given path rules.
@@ -227,7 +228,7 @@ class FilterConfiguration(object):
         # We reuse the same CategoryFilter where possible to take
         # advantage of the caching they do.
         if path_rules not in self._path_rules_to_filter:
-            rules = list(self._base_rules) # Make a copy
+            rules = list(self._base_rules)  # Make a copy
             rules.extend(path_rules)
             rules.extend(self._user_rules)
             self._path_rules_to_filter[path_rules] = _CategoryFilter(rules)
@@ -275,4 +276,3 @@ class FilterConfiguration(object):
 
         """
         return self._filter_from_path(path).should_check(category)
-

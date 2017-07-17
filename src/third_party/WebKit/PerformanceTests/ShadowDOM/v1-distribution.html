@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 <script src="../resources/runner.js"></script>
+<!-- This is a micro benchmark to catch an unintentional regression.
+     If the reason of a regression is clear, it is okay.
+     We do not have to optimize the result of the benchmark. -->
 <div id="wrapper">
   <div id="host"></div>
 </div>
@@ -28,9 +31,9 @@ function run() {
   let div = document.createElement('div');
   for (let i = 0; i < loops; ++i) {
     host.appendChild(div);
-    slot.getAssignedNodes({flatten: true});
+    slot.assignedNodes({flatten: true});
     host.removeChild(div);
-    slot.getAssignedNodes({flatten: true});
+    slot.assignedNodes({flatten: true});
   }
 }
 

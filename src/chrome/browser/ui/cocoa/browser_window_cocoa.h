@@ -70,6 +70,7 @@ class BrowserWindowCocoa
                           int reason) override;
   void ZoomChangedForActiveTab(bool can_show_bubble) override;
   gfx::Rect GetRestoredBounds() const override;
+  std::string GetWorkspace() const override;
   ui::WindowShowState GetRestoredState() const override;
   gfx::Rect GetBounds() const override;
   gfx::Size GetContentsSize() const override;
@@ -81,6 +82,8 @@ class BrowserWindowCocoa
   bool ShouldHideUIForFullscreen() const override;
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
+  void MaybeShowNewBackShortcutBubble(bool forward) override;
+  void HideNewBackShortcutBubble() override;
   LocationBar* GetLocationBar() const override;
   void SetFocusToLocationBar(bool select_all) override;
   void UpdateReloadStopState(bool is_loading, bool force) override;
@@ -98,8 +101,6 @@ class BrowserWindowCocoa
   bool IsTabStripEditable() const override;
   bool IsToolbarVisible() const override;
   gfx::Rect GetRootWindowResizerRect() const override;
-  void ConfirmAddSearchProvider(TemplateURL* template_url,
-                                Profile* profile) override;
   void ShowUpdateChromeDialog() override;
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override;
   void ShowBookmarkAppBubble(
@@ -114,10 +115,8 @@ class BrowserWindowCocoa
                            translate::TranslateErrors::Type error_type,
                            bool is_user_gesture) override;
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
-  void ShowOneClickSigninBubble(
-      OneClickSigninBubbleType type,
+  void ShowOneClickSigninConfirmation(
       const base::string16& email,
-      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) override;
 #endif
   bool IsDownloadShelfVisible() const override;
@@ -131,7 +130,7 @@ class BrowserWindowCocoa
   void ShowWebsiteSettings(
       Profile* profile,
       content::WebContents* web_contents,
-      const GURL& url,
+      const GURL& virtual_url,
       const security_state::SecurityStateModel::SecurityInfo& security_info)
       override;
   void ShowAppMenu() override;
@@ -153,6 +152,10 @@ class BrowserWindowCocoa
   void ExecuteExtensionCommand(const extensions::Extension* extension,
                                const extensions::Command& command) override;
   ExclusiveAccessContext* GetExclusiveAccessContext() override;
+  void ShowImeWarningBubble(
+      const extensions::Extension* extension,
+      const base::Callback<void(ImeWarningBubblePermissionStatus status)>&
+          callback) override;
 
   // Overridden from ExtensionKeybindingRegistry::Delegate:
   extensions::ActiveTabPermissionGranter* GetActiveTabPermissionGranter()
@@ -165,19 +168,21 @@ class BrowserWindowCocoa
   // Adds the given FindBar cocoa controller to this browser window.
   void AddFindBar(FindBarCocoaController* find_bar_cocoa_controller);
 
-  // Update window media state to show if one of the tabs within the window is
-  // playing an audio/video or even if it's playing something but it's muted.
-  void UpdateMediaState(TabMediaState media_state);
+  // Updates the window's alert state. If the new alert state is
+  // TabAlertState::AUDIO_PLAYING or TabAlertState::AUDIO_MUTING then sets
+  // the window's title to reflect that.
+  void UpdateAlertState(TabAlertState alert_state);
 
   // Returns the cocoa-world BrowserWindowController
   BrowserWindowController* cocoa_controller() { return controller_; }
 
-  // Returns window title based on the active tab title and window media state.
+  // Returns window title based on the active tab title and the window's alert
+  // state.
   NSString* WindowTitle();
 
-  // Returns current media state, determined by the media state of tabs, set by
-  // UpdateMediaState.
-  TabMediaState media_state() { return media_state_; }
+  // Returns the current alert state, determined by the alert state of tabs. Set
+  // by UpdateAlertState.
+  TabAlertState alert_state() { return alert_state_; }
 
  protected:
   void DestroyBrowser() override;
@@ -191,10 +196,10 @@ class BrowserWindowCocoa
   ui::WindowShowState initial_show_state_;
   NSInteger attention_request_id_;  // identifier from requestUserAttention
 
-  // Preserves window media state to show appropriate icon in the window title
-  // which can be audio playing, muting or none (determined by media state of
+  // Preserves window alert state to show appropriate icon in the window title
+  // which can be audio playing, muting or none (determined by alert state of
   // tabs.
-  TabMediaState media_state_;
+  TabAlertState alert_state_;
 };
 
 #endif  // CHROME_BROWSER_UI_COCOA_BROWSER_WINDOW_COCOA_H_

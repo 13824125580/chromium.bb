@@ -16,19 +16,11 @@ class SkTypeface;
 
 namespace content {
 
-// Make necessary calls to cache the data for a given font, used before
-// sandbox lockdown.
-CONTENT_EXPORT void DoPreSandboxWarmupForTypeface(SkTypeface* typeface);
-
 // Disables the default upstream behavior where the DWriteFactory is patched
 // to make GetSystemFontCollection call StubFontCollection.  When this is
 // disabled, skia will be configured to explicitly use the custom font
 // collection instead of depending on GetSystemFontCollection.
 CONTENT_EXPORT void DisableDWriteFactoryPatching();
-
-// Get the shared font manager used during pre-sandbox warmup for DirectWrite
-// fonts.
-CONTENT_EXPORT SkFontMgr* GetPreSandboxWarmupFontMgr();
 
 class GdiFontPatchData {
  public:
@@ -55,9 +47,6 @@ CONTENT_EXPORT void ResetEmulatedGdiHandlesForTesting();
 // Sets the pre-sandbox warmup font manager directly. This should only be used
 // for testing the implementation.
 CONTENT_EXPORT void SetPreSandboxWarmupFontMgrForTesting(SkFontMgr* fontmgr);
-
-// Warmup the direct write font manager for content processes.
-CONTENT_EXPORT void WarmupDirectWrite();
 
 // Directwrite connects to the font cache service to retrieve information about
 // fonts installed on the system etc. This works well outside the sandbox and

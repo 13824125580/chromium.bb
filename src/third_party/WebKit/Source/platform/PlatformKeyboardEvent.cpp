@@ -30,8 +30,6 @@
 #include <windows.h>
 #elif OS(MACOSX)
 #import <Carbon/Carbon.h>
-#else
-#include "platform/NotImplemented.h"
 #endif
 
 namespace blink {
@@ -43,7 +41,7 @@ static const unsigned short HIGHBITMASKSHORT = 0x8000;
 PlatformKeyboardEvent::OverrideCapsLockState PlatformKeyboardEvent::s_overrideCapsLockState =
     PlatformKeyboardEvent::OverrideCapsLockState::Default;
 
-void PlatformKeyboardEvent::disambiguateKeyDownEvent(Type type)
+void PlatformKeyboardEvent::disambiguateKeyDownEvent(EventType type)
 {
 #if OS(WIN)
     // No KeyDown events on Windows to disambiguate.
@@ -73,6 +71,16 @@ void PlatformKeyboardEvent::disambiguateKeyDownEvent(Type type)
 #endif
 }
 
+PlatformEvent::Modifiers PlatformKeyboardEvent::accessKeyModifiers()
+{
+    // TODO(crbug.com/618397): Add a settings to control this behavior.
+#if OS(MACOSX)
+    return static_cast<PlatformEvent::Modifiers>(PlatformEvent::CtrlKey | PlatformEvent::AltKey);
+#else
+    return PlatformEvent::AltKey;
+#endif
+}
+
 bool PlatformKeyboardEvent::currentCapsLockState()
 {
     switch (s_overrideCapsLockState) {
@@ -83,7 +91,7 @@ bool PlatformKeyboardEvent::currentCapsLockState()
 #elif OS(MACOSX)
             return GetCurrentKeyModifiers() & alphaLock;
 #else
-            notImplemented();
+            NOTIMPLEMENTED();
             return false;
 #endif
     case OverrideCapsLockState::On:
@@ -115,8 +123,8 @@ PlatformEvent::Modifiers PlatformKeyboardEvent::getCurrentModifierState()
     if (currentModifiers & ::cmdKey)
         modifiers |= MetaKey;
 #else
-    // See https://crbug.com/538289
-    notImplemented();
+    // TODO(crbug.com/538289): Implement on other platforms.
+    return static_cast<Modifiers>(0);
 #endif
     return static_cast<Modifiers>(modifiers);
 }

@@ -7,13 +7,13 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/values.h"
@@ -223,8 +223,8 @@ void KioskAppsHandler::OnGetConsumerKioskAutoLaunchStatus(
     base::DictionaryValue kiosk_params;
     kiosk_params.SetBoolean("kioskEnabled", is_kiosk_enabled_);
     kiosk_params.SetBoolean("autoLaunchEnabled", is_auto_launch_enabled_);
-    web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.enableKiosk",
-                                     kiosk_params);
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "extensions.KioskAppsOverlay.enableKiosk", kiosk_params);
   }
 }
 
@@ -252,18 +252,18 @@ void KioskAppsHandler::SendKioskAppSettings() {
   KioskAppManager::Apps apps;
   kiosk_app_manager_->GetApps(&apps);
 
-  scoped_ptr<base::ListValue> apps_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> apps_list(new base::ListValue);
   for (size_t i = 0; i < apps.size(); ++i) {
     const KioskAppManager::App& app_data = apps[i];
 
-    scoped_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
     PopulateAppDict(app_data, app_info.get());
     apps_list->Append(app_info.release());
   }
   settings.SetWithoutPathExpansion("apps", apps_list.release());
 
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.setSettings",
-                                   settings);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.setSettings", settings);
 }
 
 void KioskAppsHandler::HandleInitializeKioskAppSettings(
@@ -351,14 +351,14 @@ void KioskAppsHandler::UpdateApp(const std::string& app_id) {
   base::DictionaryValue app_dict;
   PopulateAppDict(app_data, &app_dict);
 
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.updateApp",
-                                   app_dict);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.updateApp", app_dict);
 }
 
 void KioskAppsHandler::ShowError(const std::string& app_id) {
   base::StringValue app_id_value(app_id);
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.showError",
-                                   app_id_value);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.showError", app_id_value);
 
   kiosk_app_manager_->RemoveApp(app_id, owner_settings_service_);
 }

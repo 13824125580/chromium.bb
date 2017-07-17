@@ -8,6 +8,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
@@ -44,6 +45,7 @@
 #include "google_apis/gaia/gaia_auth_consumer.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
+#include "net/http/http_response_headers.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -100,7 +102,7 @@ class UserCloudPolicyManagerChromeOSTest : public testing::Test {
                        BuildFakeProfileOAuth2TokenService));
     profile_ = profile_manager_->CreateTestingProfile(
         chrome::kInitialProfile,
-        scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
+        std::unique_ptr<syncable_prefs::PrefServiceSyncable>(),
         base::UTF8ToUTF16(""), 0, std::string(), factories);
     // Usually the signin Profile and the main Profile are separate, but since
     // the signin Profile is an OTR Profile then for this test it suffices to
@@ -111,23 +113,27 @@ class UserCloudPolicyManagerChromeOSTest : public testing::Test {
     chrome::RegisterLocalState(prefs_.registry());
 
     // Set up a policy map for testing.
-    policy_map_.Set(key::kHomepageLocation, POLICY_LEVEL_MANDATORY,
-                    POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
-                    new base::StringValue("http://chromium.org"), nullptr);
-    policy_map_.Set(key::kChromeOsMultiProfileUserBehavior,
-                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                    POLICY_SOURCE_ENTERPRISE_DEFAULT,
-                    new base::StringValue("primary-only"), nullptr);
+    policy_map_.Set(
+        key::kHomepageLocation, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+        POLICY_SOURCE_CLOUD,
+        base::WrapUnique(new base::StringValue("http://chromium.org")),
+        nullptr);
+    policy_map_.Set(
+        key::kChromeOsMultiProfileUserBehavior, POLICY_LEVEL_MANDATORY,
+        POLICY_SCOPE_USER, POLICY_SOURCE_ENTERPRISE_DEFAULT,
+        base::WrapUnique(new base::StringValue("primary-only")), nullptr);
     policy_map_.Set(key::kEasyUnlockAllowed, POLICY_LEVEL_MANDATORY,
                     POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
-                    new base::FundamentalValue(false), nullptr);
-    policy_map_.Set(key::kCaptivePortalAuthenticationIgnoresProxy,
-                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                    POLICY_SOURCE_CLOUD, new base::FundamentalValue(false),
+                    base::WrapUnique(new base::FundamentalValue(false)),
                     nullptr);
+    policy_map_.Set(
+        key::kCaptivePortalAuthenticationIgnoresProxy, POLICY_LEVEL_MANDATORY,
+        POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+        base::WrapUnique(new base::FundamentalValue(false)), nullptr);
     policy_map_.Set(key::kAllowDinosaurEasterEgg, POLICY_LEVEL_MANDATORY,
                     POLICY_SCOPE_USER, POLICY_SOURCE_ENTERPRISE_DEFAULT,
-                    new base::FundamentalValue(false), nullptr);
+                    base::WrapUnique(new base::FundamentalValue(false)),
+                    nullptr);
     expected_bundle_.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
         .CopyFrom(policy_map_);
 
@@ -170,13 +176,10 @@ class UserCloudPolicyManagerChromeOSTest : public testing::Test {
     external_data_manager_->SetPolicyStore(store_);
     EXPECT_CALL(*store_, Load());
     manager_.reset(new UserCloudPolicyManagerChromeOS(
-        scoped_ptr<CloudPolicyStore>(store_),
-        scoped_ptr<CloudExternalDataManager>(external_data_manager_),
-        base::FilePath(),
-        wait_for_fetch,
-        base::TimeDelta::FromSeconds(fetch_timeout),
-        task_runner_,
-        task_runner_,
+        std::unique_ptr<CloudPolicyStore>(store_),
+        std::unique_ptr<CloudExternalDataManager>(external_data_manager_),
+        base::FilePath(), wait_for_fetch,
+        base::TimeDelta::FromSeconds(fetch_timeout), task_runner_, task_runner_,
         task_runner_));
     manager_->Init(&schema_registry_);
     manager_->AddObserver(&observer_);
@@ -239,10 +242,11 @@ class UserCloudPolicyManagerChromeOSTest : public testing::Test {
       fetcher = PrepareOAuthFetcher(gaia_urls->client_login_to_oauth2_url());
       if (!fetcher)
         return NULL;
-      net::ResponseCookies cookies;
-      cookies.push_back(kOAuthCodeCookie);
 
-      fetcher->set_cookies(cookies);
+      scoped_refptr<net::HttpResponseHeaders> reponse_headers =
+          new net::HttpResponseHeaders("");
+      reponse_headers->AddCookie(kOAuthCodeCookie);
+      fetcher->set_response_headers(reponse_headers);
       fetcher->delegate()->OnURLFetchComplete(fetcher);
 
       // Issue the refresh token.
@@ -336,11 +340,11 @@ class UserCloudPolicyManagerChromeOSTest : public testing::Test {
   MockCloudExternalDataManager* external_data_manager_;  // Not owned.
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   SchemaRegistry schema_registry_;
-  scoped_ptr<UserCloudPolicyManagerChromeOS> manager_;
-  scoped_ptr<UserCloudPolicyTokenForwarder> token_forwarder_;
+  std::unique_ptr<UserCloudPolicyManagerChromeOS> manager_;
+  std::unique_ptr<UserCloudPolicyTokenForwarder> token_forwarder_;
 
   // Required by ProfileHelper to get the signin Profile context.
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* profile_;
   TestingProfile* signin_profile_;
 

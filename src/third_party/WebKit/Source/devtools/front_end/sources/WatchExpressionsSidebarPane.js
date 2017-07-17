@@ -190,7 +190,7 @@ WebInspector.WatchExpressionsSidebarPane.prototype = {
     {
         var isEditing = false;
         for (var watchExpression of this._watchExpressions)
-           isEditing |=  watchExpression.isEditing();
+            isEditing |=  watchExpression.isEditing();
 
         if (!isEditing)
             contextMenu.appendItem(WebInspector.UIString.capitalize("Add ^watch ^expression"), this._addButtonClicked.bind(this));
@@ -258,7 +258,7 @@ WebInspector.WatchExpression.prototype = {
     {
         var currentExecutionContext = WebInspector.context.flavor(WebInspector.ExecutionContext);
         if (currentExecutionContext && this._expression)
-            currentExecutionContext.evaluate(this._expression, WebInspector.WatchExpression._watchObjectGroupId, false, true, false, false, this._createWatchExpression.bind(this));
+            currentExecutionContext.evaluate(this._expression, WebInspector.WatchExpression._watchObjectGroupId, false, true, false, false, false, this._createWatchExpression.bind(this));
     },
 
     startEditing: function()
@@ -340,7 +340,7 @@ WebInspector.WatchExpression.prototype = {
     {
         this._result = result;
 
-        var headerElement= createElementWithClass("div", "watch-expression-header");
+        var headerElement = createElementWithClass("div", "watch-expression-header");
         var deleteButton = headerElement.createChild("button", "watch-expression-delete-button");
         deleteButton.title = WebInspector.UIString("Delete watch expression");
         deleteButton.addEventListener("click", this._deleteWatchExpression.bind(this), false);
@@ -383,7 +383,7 @@ WebInspector.WatchExpression.prototype = {
     _onSectionClick: function(event)
     {
         event.consume(true);
-        if (event.detail == 1) {
+        if (event.detail === 1) {
             this._preventClickTimeout = setTimeout(handleClick.bind(this), 333);
         } else {
             clearTimeout(this._preventClickTimeout);

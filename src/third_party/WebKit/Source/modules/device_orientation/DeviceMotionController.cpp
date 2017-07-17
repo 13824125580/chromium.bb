@@ -6,7 +6,7 @@
 
 #include "core/dom/Document.h"
 #include "core/frame/Deprecation.h"
-#include "core/frame/OriginsUsingFeatures.h"
+#include "core/frame/HostsUsingFeatures.h"
 #include "core/frame/Settings.h"
 #include "modules/EventModules.h"
 #include "modules/device_orientation/DeviceMotionData.h"
@@ -24,9 +24,6 @@ DeviceMotionController::DeviceMotionController(Document& document)
 
 DeviceMotionController::~DeviceMotionController()
 {
-#if !ENABLE(OILPAN)
-    stopUpdating();
-#endif
 }
 
 const char* DeviceMotionController::supplementName()
@@ -36,10 +33,10 @@ const char* DeviceMotionController::supplementName()
 
 DeviceMotionController& DeviceMotionController::from(Document& document)
 {
-    DeviceMotionController* controller = static_cast<DeviceMotionController*>(WillBeHeapSupplement<Document>::from(document, supplementName()));
+    DeviceMotionController* controller = static_cast<DeviceMotionController*>(Supplement<Document>::from(document, supplementName()));
     if (!controller) {
         controller = new DeviceMotionController(document);
-        WillBeHeapSupplement<Document>::provideTo(document, supplementName(), adoptPtrWillBeNoop(controller));
+        Supplement<Document>::provideTo(document, supplementName(), controller);
     }
     return *controller;
 }
@@ -55,7 +52,7 @@ void DeviceMotionController::didAddEventListener(LocalDOMWindow* window, const A
             UseCounter::count(document().frame(), UseCounter::DeviceMotionSecureOrigin);
         } else {
             Deprecation::countDeprecation(document().frame(), UseCounter::DeviceMotionInsecureOrigin);
-            OriginsUsingFeatures::countAnyWorld(document(), OriginsUsingFeatures::Feature::DeviceMotionInsecureOrigin);
+            HostsUsingFeatures::countAnyWorld(document(), HostsUsingFeatures::Feature::DeviceMotionInsecureHost);
             if (document().frame()->settings()->strictPowerfulFeatureRestrictions())
                 return;
         }
@@ -82,7 +79,7 @@ void DeviceMotionController::unregisterWithDispatcher()
     DeviceMotionDispatcher::instance().removeController(this);
 }
 
-PassRefPtrWillBeRawPtr<Event> DeviceMotionController::lastEvent() const
+Event* DeviceMotionController::lastEvent() const
 {
     return DeviceMotionEvent::create(EventTypeNames::devicemotion, DeviceMotionDispatcher::instance().latestDeviceMotionData());
 }
@@ -90,7 +87,7 @@ PassRefPtrWillBeRawPtr<Event> DeviceMotionController::lastEvent() const
 bool DeviceMotionController::isNullEvent(Event* event) const
 {
     DeviceMotionEvent* motionEvent = toDeviceMotionEvent(event);
-    return !motionEvent->deviceMotionData()->canProvideEventData();
+    return !motionEvent->getDeviceMotionData()->canProvideEventData();
 }
 
 const AtomicString& DeviceMotionController::eventTypeName() const
@@ -101,7 +98,7 @@ const AtomicString& DeviceMotionController::eventTypeName() const
 DEFINE_TRACE(DeviceMotionController)
 {
     DeviceSingleWindowEventController::trace(visitor);
-    WillBeHeapSupplement<Document>::trace(visitor);
+    Supplement<Document>::trace(visitor);
 }
 
 } // namespace blink

@@ -36,12 +36,15 @@
 #include "WebIconURL.h"
 #include "WebNode.h"
 #include "WebURLLoaderOptions.h"
+#include "public/platform/WebCachePolicy.h"
 #include "public/platform/WebCanvas.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
 #include "public/platform/WebMessagePortChannel.h"
 #include "public/platform/WebPrivateOwnPtr.h"
 #include "public/platform/WebReferrerPolicy.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLRequest.h"
+#include "public/web/WebFrameLoadType.h"
 #include "public/web/WebTreeScopeType.h"
 
 struct NPObject;
@@ -60,6 +63,7 @@ namespace blink {
 class Frame;
 class OpenedFrameTracker;
 class Visitor;
+class WebDOMEvent;
 class WebData;
 class WebDataSource;
 class WebDocument;
@@ -160,7 +164,7 @@ public:
     virtual void setSharedWorkerRepositoryClient(WebSharedWorkerRepositoryClient*) = 0;
 
     // The security origin of this frame.
-    BLINK_EXPORT WebSecurityOrigin securityOrigin() const;
+    BLINK_EXPORT WebSecurityOrigin getSecurityOrigin() const;
 
     // Updates the sandbox flags in the frame's FrameOwner.  This is used when
     // this frame's parent is in another process and it dynamically updates
@@ -168,8 +172,15 @@ public:
     // navigation.
     BLINK_EXPORT void setFrameOwnerSandboxFlags(WebSandboxFlags);
 
-    // Returns true if the frame is enforcing strict mixed content checking.
-    BLINK_EXPORT bool shouldEnforceStrictMixedContentChecking() const;
+    // The frame's insecure request policy.
+    BLINK_EXPORT WebInsecureRequestPolicy getInsecureRequestPolicy() const;
+
+    // Updates this frame's FrameOwner properties, such as scrolling, margin,
+    // or allowfullscreen.  This is used when this frame's parent is in
+    // another process and it dynamically updates these properties.
+    // TODO(dcheng): Currently, the update only takes effect on next frame
+    // navigation.  This matches the in-process frame behavior.
+    BLINK_EXPORT void setFrameOwnerProperties(const WebFrameOwnerProperties&);
 
     // Geometry -----------------------------------------------------------
 
@@ -204,7 +215,7 @@ public:
     BLINK_EXPORT WebFrame* opener() const;
 
     // Sets the frame that opened this one or 0 if there is none.
-    virtual void setOpener(WebFrame*);
+    BLINK_EXPORT void setOpener(WebFrame*);
 
     // Reset the frame that opened this frame to 0.
     // This is executed between layout tests runs
@@ -218,7 +229,7 @@ public:
     BLINK_EXPORT void appendChild(WebFrame*);
 
     // Removes the given child from this frame.
-    virtual void removeChild(WebFrame*);
+    BLINK_EXPORT void removeChild(WebFrame*);
 
     // Returns the parent frame or 0 if this is a top-most frame.
     BLINK_EXPORT WebFrame* parent() const;
@@ -252,23 +263,11 @@ public:
 
     // Closing -------------------------------------------------------------
 
-    // Runs beforeunload handlers for this frame, returning false if a
-    // handler suppressed unloading.
-    virtual bool dispatchBeforeUnloadEvent() = 0;
-
     // Runs unload handlers for this frame.
     virtual void dispatchUnloadEvent() = 0;
 
 
     // Scripting ----------------------------------------------------------
-
-    // Returns a NPObject corresponding to this frame's DOMWindow.
-    virtual NPObject* windowObject() const = 0;
-
-    // Binds a NPObject as a property of this frame's DOMWindow.
-    virtual void bindToWindowObject(const WebString& name, NPObject*) = 0;
-    virtual void bindToWindowObject(
-        const WebString& name, NPObject*, void*) = 0;
 
     // Executes script in the context of the current page.
     virtual void executeScript(const WebScriptSource&) = 0;
@@ -347,24 +346,19 @@ public:
 
 
     // Navigation ----------------------------------------------------------
+    // TODO(clamy): Remove the reload, reloadWithOverrideURL, and loadRequest
+    // functions once RenderFrame only calls WebLoadFrame::load.
 
     // Reload the current document.
-    // True |ignoreCache| explicitly bypasses caches.
-    // False |ignoreCache| revalidates any existing cache entries.
-    virtual void reload(bool ignoreCache = false) = 0;
+    // Note: reload() and reloadWithOverrideURL() will be deprecated.
+    // Do not use these APIs any more, but use loadRequest() instead.
+    virtual void reload(WebFrameLoadType = WebFrameLoadType::Reload) = 0;
 
     // This is used for situations where we want to reload a different URL because of a redirect.
-    virtual void reloadWithOverrideURL(const WebURL& overrideUrl, bool ignoreCache = false) = 0;
+    virtual void reloadWithOverrideURL(const WebURL& overrideUrl, WebFrameLoadType = WebFrameLoadType::Reload) = 0;
 
     // Load the given URL.
     virtual void loadRequest(const WebURLRequest&) = 0;
-
-    // Load the given history state, corresponding to a back/forward
-    // navigation of a frame. Multiple frames may be navigated via separate calls.
-    virtual void loadHistoryItem(
-        const WebHistoryItem&,
-        WebHistoryLoadType,
-        WebURLRequest::CachePolicy = WebURLRequest::UseProtocolCachePolicy) = 0;
 
     // This method is short-hand for calling LoadData, where mime_type is
     // "text/html" and text_encoding is "UTF-8".
@@ -433,8 +427,8 @@ public:
     // Supports commands like Undo, Redo, Cut, Copy, Paste, SelectAll,
     // Unselect, etc. See EditorCommand.cpp for the full list of supported
     // commands.
-    virtual bool executeCommand(const WebString&, const WebNode& = WebNode()) = 0;
-    virtual bool executeCommand(const WebString&, const WebString& value, const WebNode& = WebNode()) = 0;
+    virtual bool executeCommand(const WebString&) = 0;
+    virtual bool executeCommand(const WebString&, const WebString& value) = 0;
     virtual bool isCommandEnabled(const WebString&) const = 0;
 
     // Spell-checking support.
@@ -487,12 +481,12 @@ public:
     virtual int printBegin(const WebPrintParams&, const WebNode& constrainToNode = WebNode()) = 0;
 
     // Returns the page shrinking factor calculated by webkit (usually
-    // between 1/1.25 and 1/2). Returns 0 if the page number is invalid or
+    // between 1/1.33 and 1/2). Returns 0 if the page number is invalid or
     // not in printing mode.
     virtual float getPrintPageShrink(int page) = 0;
 
     // Prints one page, and returns the calculated page shrinking factor
-    // (usually between 1/1.25 and 1/2).  Returns 0 if the page number is
+    // (usually between 1/1.33 and 1/2).  Returns 0 if the page number is
     // invalid or not in printing mode.
     virtual float printPage(int pageToPrint, WebCanvas*) = 0;
 
@@ -576,12 +570,10 @@ public:
 
     bool inShadowTree() const { return m_scope == WebTreeScopeType::Shadow; }
 
-#if ENABLE(OILPAN)
     static void traceFrames(Visitor*, WebFrame*);
     static void traceFrames(InlinedGlobalMarkingVisitor, WebFrame*);
     void clearWeakFrames(Visitor*);
     void clearWeakFrames(InlinedGlobalMarkingVisitor);
-#endif
 #endif
 
 protected:
@@ -596,7 +588,6 @@ protected:
 
 private:
 #if BLINK_IMPLEMENTATION
-#if ENABLE(OILPAN)
     friend class OpenedFrameTracker;
 
     static void traceFrame(Visitor*, WebFrame*);
@@ -609,7 +600,6 @@ private:
     void clearWeakFramesImpl(VisitorDispatcher);
     template <typename VisitorDispatcher>
     static void traceFrameImpl(VisitorDispatcher, WebFrame*);
-#endif
 #endif
 
     const WebTreeScopeType m_scope;

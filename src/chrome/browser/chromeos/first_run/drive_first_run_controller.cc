@@ -7,21 +7,22 @@
 #include <stdint.h>
 #include <utility>
 
+#include "ash/common/system/tray/system_tray_delegate.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "base/callback.h"
+#include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/background/background_contents.h"
 #include "chrome/browser/background/background_contents_service.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/grit/generated_resources.h"
@@ -181,7 +182,7 @@ class DriveWebContentsManager : public content::WebContentsObserver,
   Profile* profile_;
   const std::string app_id_;
   const std::string endpoint_url_;
-  scoped_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<content::WebContents> web_contents_;
   content::NotificationRegistrar registrar_;
   bool started_;
   CompletionCallback completion_callback_;
@@ -237,12 +238,10 @@ void DriveWebContentsManager::OnOfflineInit(
   if (started_) {
     // We postpone notifying the controller as we may be in the middle
     // of a call stack for some routine of the contained WebContents.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&DriveWebContentsManager::RunCompletionCallback,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   success,
-                   outcome));
+                   weak_ptr_factory_.GetWeakPtr(), success, outcome));
     StopLoad();
   }
 }
@@ -329,13 +328,12 @@ void DriveWebContentsManager::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_BACKGROUND_CONTENTS_OPENED) {
-    const std::string app_id = base::UTF16ToUTF8(
-        content::Details<BackgroundContentsOpenedDetails>(details)
-            ->application_id);
-    if (app_id == app_id_)
-      OnOfflineInit(true, DriveFirstRunController::OUTCOME_OFFLINE_ENABLED);
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_BACKGROUND_CONTENTS_OPENED, type);
+  const std::string app_id = base::UTF16ToUTF8(
+      content::Details<BackgroundContentsOpenedDetails>(details)
+          ->application_id);
+  if (app_id == app_id_)
+    OnOfflineInit(true, DriveFirstRunController::OUTCOME_OFFLINE_ENABLED);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -435,7 +433,7 @@ void DriveFirstRunController::CleanUp() {
   if (web_contents_manager_)
     web_contents_manager_->StopLoad();
   web_contents_timer_.Stop();
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 void DriveFirstRunController::OnOfflineInit(bool success, UMAOutcome outcome) {
@@ -460,7 +458,7 @@ void DriveFirstRunController::ShowNotification() {
   data.buttons.push_back(message_center::ButtonInfo(
       l10n_util::GetStringUTF16(IDS_DRIVE_OFFLINE_NOTIFICATION_BUTTON)));
   ui::ResourceBundle& resource_bundle = ui::ResourceBundle::GetSharedInstance();
-  scoped_ptr<message_center::Notification> notification(
+  std::unique_ptr<message_center::Notification> notification(
       new message_center::Notification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kDriveOfflineNotificationId,
           base::string16(),  // title

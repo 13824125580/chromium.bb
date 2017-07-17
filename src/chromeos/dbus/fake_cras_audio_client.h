@@ -40,6 +40,10 @@ class CHROMEOS_EXPORT FakeCrasAudioClient : public CrasAudioClient {
   void AddActiveOutputNode(uint64_t node_id) override;
   void RemoveActiveOutputNode(uint64_t node_id) override;
   void SwapLeftRight(uint64_t node_id, bool swap) override;
+  void SetGlobalOutputChannelRemix(int32_t channels,
+                                   const std::vector<double>& mixer) override;
+  void WaitForServiceToBeAvailable(
+      const WaitForServiceToBeAvailableCallback& callback) override;
 
   // Modifies an AudioNode from |node_list_| based on |audio_node.id|.
   // if the |audio_node.id| cannot be found in list, Add an
@@ -56,20 +60,29 @@ class CHROMEOS_EXPORT FakeCrasAudioClient : public CrasAudioClient {
   void SetAudioNodesAndNotifyObserversForTesting(
       const AudioNodeList& new_nodes);
 
+  // Generates fake signal for OutputNodeVolumeChanged.
+  void NotifyOutputNodeVolumeChangedForTesting(uint64_t node_id, int volume);
+
   const AudioNodeList& node_list() const { return node_list_; }
   const uint64_t& active_input_node_id() const { return active_input_node_id_; }
   const uint64_t& active_output_node_id() const {
     return active_output_node_id_;
   }
+  void set_notify_volume_change_with_delay(bool notify_with_delay) {
+    notify_volume_change_with_delay_ = notify_with_delay;
+  }
 
  private:
-  // Find a node in the list based on the id.
+  // Finds a node in the list based on the id.
   AudioNodeList::iterator FindNode(uint64_t node_id);
 
   VolumeState volume_state_;
   AudioNodeList node_list_;
   uint64_t active_input_node_id_;
   uint64_t active_output_node_id_;
+  // By default, immediately sends OutputNodeVolumeChange signal following the
+  // SetOutputNodeVolume fake dbus call.
+  bool notify_volume_change_with_delay_ = false;
   base::ObserverList<Observer> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeCrasAudioClient);

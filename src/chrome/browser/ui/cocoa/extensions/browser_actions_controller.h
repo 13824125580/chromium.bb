@@ -7,8 +7,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/has_weak_browser_pointer.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -43,26 +44,13 @@ extern NSString* const kBrowserActionVisibilityChangedNotification;
   base::scoped_nsobject<NSMutableArray> buttons_;
 
   // The delegate for the ToolbarActionsBar.
-  scoped_ptr<ToolbarActionsBarDelegate> toolbarActionsBarBridge_;
+  std::unique_ptr<ToolbarActionsBarDelegate> toolbarActionsBarBridge_;
 
   // The controlling ToolbarActionsBar.
-  scoped_ptr<ToolbarActionsBar> toolbarActionsBar_;
-
-  // True if we should supppress the chevron (we do this during drag
-  // animations).
-  BOOL suppressChevron_;
+  std::unique_ptr<ToolbarActionsBar> toolbarActionsBar_;
 
   // True if this is the overflow container for toolbar actions.
   BOOL isOverflow_;
-
-  // The currently running chevron animation (fade in/out).
-  base::scoped_nsobject<NSViewAnimation> chevronAnimation_;
-
-  // The chevron button used when Browser Actions are hidden.
-  base::scoped_nsobject<MenuButton> chevronMenuButton_;
-
-  // The Browser Actions overflow menu.
-  base::scoped_nsobject<NSMenu> overflowMenu_;
 
   // The bubble that is actively showing, if any.
   ToolbarActionsBarBubbleMac* activeBubble_;
@@ -103,11 +91,6 @@ extern NSString* const kBrowserActionVisibilityChangedNotification;
 // Returns where the popup arrow should point to for the action with the given
 // |id|. If passed an id with no corresponding button, returns NSZeroPoint.
 - (NSPoint)popupPointForId:(const std::string&)id;
-
-// Returns whether the chevron button is currently hidden or in the process of
-// being hidden (fading out). Will return NO if it is not hidden or is in the
-// process of fading in.
-- (BOOL)chevronIsHidden;
 
 // Returns the currently-active web contents.
 - (content::WebContents*)currentWebContents;

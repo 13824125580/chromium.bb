@@ -5,16 +5,19 @@
 #ifndef COMPONENTS_SCHEDULER_RENDERER_WEB_VIEW_SCHEDULER_IMPL_H_
 #define COMPONENTS_SCHEDULER_RENDERER_WEB_VIEW_SCHEDULER_IMPL_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/scheduler/base/task_queue.h"
 #include "components/scheduler/scheduler_export.h"
 #include "third_party/WebKit/public/platform/WebViewScheduler.h"
 
 namespace base {
+namespace trace_event {
+class BlameContext;
+}  // namespace trace_event
 class SingleThreadTaskRunner;
 }  // namespace base
 
@@ -38,8 +41,8 @@ class SCHEDULER_EXPORT WebViewSchedulerImpl : public blink::WebViewScheduler {
 
   // blink::WebViewScheduler implementation:
   void setPageVisible(bool page_visible) override;
-  blink::WebPassOwnPtr<blink::WebFrameScheduler> createFrameScheduler()
-      override;
+  std::unique_ptr<blink::WebFrameScheduler> createFrameScheduler(
+      blink::BlameContext* blame_context) override;
   void enableVirtualTime() override;
   void setAllowVirtualTimeToAdvance(
       bool allow_virtual_time_to_advance) override;
@@ -47,7 +50,8 @@ class SCHEDULER_EXPORT WebViewSchedulerImpl : public blink::WebViewScheduler {
   // Virtual for testing.
   virtual void AddConsoleWarning(const std::string& message);
 
-  scoped_ptr<WebFrameSchedulerImpl> createWebFrameSchedulerImpl();
+  std::unique_ptr<WebFrameSchedulerImpl> createWebFrameSchedulerImpl(
+      base::trace_event::BlameContext* blame_context);
 
  private:
   friend class WebFrameSchedulerImpl;
@@ -59,7 +63,7 @@ class SCHEDULER_EXPORT WebViewSchedulerImpl : public blink::WebViewScheduler {
   }
 
   std::set<WebFrameSchedulerImpl*> frame_schedulers_;
-  scoped_ptr<AutoAdvancingVirtualTimeDomain> virtual_time_domain_;
+  std::unique_ptr<AutoAdvancingVirtualTimeDomain> virtual_time_domain_;
   TaskQueue::PumpPolicy virtual_time_pump_policy_;
   blink::WebView* web_view_;
   RendererSchedulerImpl* renderer_scheduler_;

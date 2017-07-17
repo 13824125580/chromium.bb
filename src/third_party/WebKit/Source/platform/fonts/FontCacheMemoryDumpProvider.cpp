@@ -6,7 +6,6 @@
 
 #include "platform/fonts/FontCache.h"
 #include "wtf/Assertions.h"
-#include "wtf/MainThread.h"
 
 namespace blink {
 
@@ -16,7 +15,7 @@ FontCacheMemoryDumpProvider* FontCacheMemoryDumpProvider::instance()
     return &instance;
 }
 
-bool FontCacheMemoryDumpProvider::onMemoryDump(WebMemoryDumpLevelOfDetail levelOfDetail, WebProcessMemoryDump* memoryDump)
+bool FontCacheMemoryDumpProvider::OnMemoryDump(const base::trace_event::MemoryDumpArgs&, base::trace_event::ProcessMemoryDump* memoryDump)
 {
     ASSERT(isMainThread());
     FontCache::fontCache()->dumpFontPlatformDataCache(memoryDump);

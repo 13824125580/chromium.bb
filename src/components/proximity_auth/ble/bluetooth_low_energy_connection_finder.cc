@@ -4,6 +4,7 @@
 
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection_finder.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -11,13 +12,14 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_device_whitelist.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
+#include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_discovery_session.h"
 #include "device/bluetooth/bluetooth_uuid.h"
@@ -209,7 +211,7 @@ void BluetoothLowEnergyConnectionFinder::OnAdapterInitialized(
 }
 
 void BluetoothLowEnergyConnectionFinder::OnDiscoverySessionStarted(
-    scoped_ptr<device::BluetoothDiscoverySession> discovery_session) {
+    std::unique_ptr<device::BluetoothDiscoverySession> discovery_session) {
   PA_LOG(INFO) << "Discovery session started";
   discovery_session_ = std::move(discovery_session);
 }
@@ -226,8 +228,8 @@ void BluetoothLowEnergyConnectionFinder::StartDiscoverySession() {
   }
 
   // Discover only low energy (LE) devices with strong enough signal.
-  scoped_ptr<BluetoothDiscoveryFilter> filter(new BluetoothDiscoveryFilter(
-      BluetoothDiscoveryFilter::Transport::TRANSPORT_LE));
+  std::unique_ptr<BluetoothDiscoveryFilter> filter(
+      new BluetoothDiscoveryFilter(device::BLUETOOTH_TRANSPORT_LE));
   filter->SetRSSI(kMinDiscoveryRSSI);
 
   adapter_->StartDiscoverySessionWithFilter(
@@ -245,12 +247,13 @@ void BluetoothLowEnergyConnectionFinder::StopDiscoverySession() {
   discovery_session_.reset();
 }
 
-scoped_ptr<Connection> BluetoothLowEnergyConnectionFinder::CreateConnection(
+std::unique_ptr<Connection>
+BluetoothLowEnergyConnectionFinder::CreateConnection(
     const std::string& device_address) {
   DCHECK(remote_device_.bluetooth_address.empty() ||
          remote_device_.bluetooth_address == device_address);
   remote_device_.bluetooth_address = device_address;
-  return make_scoped_ptr(new BluetoothLowEnergyConnection(
+  return base::WrapUnique(new BluetoothLowEnergyConnection(
       remote_device_, adapter_, remote_service_uuid_, bluetooth_throttler_,
       max_number_of_tries_));
 }

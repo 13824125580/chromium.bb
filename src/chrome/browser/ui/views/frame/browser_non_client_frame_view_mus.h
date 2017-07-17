@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_NON_CLIENT_FRAME_VIEW_MUS_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_NON_CLIENT_FRAME_VIEW_MUS_H_
 
-#include "build/build_config.h"
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/tab_icon_view_model.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_observer.h"
@@ -73,7 +74,7 @@ class BrowserNonClientFrameViewMus : public BrowserNonClientFrameView,
 
  protected:
   // BrowserNonClientFrameView:
-  void UpdateAvatar() override;
+  void UpdateProfileIcons() override;
 
  private:
   mus::Window* mus_window();

@@ -7,10 +7,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/app_list/app_list_model_builder.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 
@@ -32,7 +32,6 @@ class ArcAppModelBuilder : public AppListModelBuilder,
   void OnAppRegistered(const std::string& app_id,
                        const ArcAppListPrefs::AppInfo& app_info) override;
   void OnAppRemoved(const std::string& id) override;
-  void OnAppReadyChanged(const std::string& app_id, bool ready) override;
   void OnAppIconUpdated(const std::string& app_id,
                         ui::ScaleFactor scale_factor) override;
   void OnAppNameUpdated(const std::string& app_id,
@@ -43,8 +42,8 @@ class ArcAppModelBuilder : public AppListModelBuilder,
                        size_t to_index,
                        app_list::AppListItem* item) override;
 
-  scoped_ptr<ArcAppItem> CreateApp(const std::string& app_id,
-                                   const ArcAppListPrefs::AppInfo& info);
+  std::unique_ptr<ArcAppItem> CreateApp(const std::string& app_id,
+                                        const ArcAppListPrefs::AppInfo& info);
 
   ArcAppItem* GetArcAppItem(const std::string& app_id);
 

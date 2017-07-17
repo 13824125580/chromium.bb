@@ -29,10 +29,9 @@
  */
 
 [
-    GarbageCollected,
-    RuntimeEnabled=MediaSource,
 ] interface SourceBufferList : EventTarget {
     readonly attribute unsigned long length;
+    attribute EventHandler onaddsourcebuffer;
+    attribute EventHandler onremovesourcebuffer;
     [ImplementedAs=item] getter SourceBuffer (unsigned long index);
 };
-

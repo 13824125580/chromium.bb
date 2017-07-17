@@ -2,33 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/cert/nss_cert_database.h"
+
 #include <cert.h>
 #include <certdb.h>
 #include <pk11pub.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "crypto/scoped_nss_types.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/base/crypto_module.h"
+#include "net/base/hash_value.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verify_proc_nss.h"
 #include "net/cert/cert_verify_result.h"
-#include "net/cert/nss_cert_database.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/third_party/mozilla_security_manager/nsNSSCertificateDB.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -45,7 +47,7 @@ namespace net {
 namespace {
 
 void SwapCertList(CertificateList* destination,
-                  scoped_ptr<CertificateList> source) {
+                  std::unique_ptr<CertificateList> source) {
   ASSERT_TRUE(destination);
   destination->swap(*source);
 }
@@ -71,7 +73,7 @@ class CertDatabaseNSSTest : public testing::Test {
     // Run the message loop to process any observer callbacks (e.g. for the
     // ClientSocketFactory singleton) so that the scoped ref ptrs created in
     // NSSCertDatabase::NotifyObservers* get released.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -107,11 +109,18 @@ class CertDatabaseNSSTest : public testing::Test {
     CERT_DestroyCertList(cert_list);
 
     // Sort the result so that test comparisons can be deterministic.
-    std::sort(result.begin(), result.end(), X509Certificate::LessThan());
+    std::sort(
+        result.begin(), result.end(),
+        [](const scoped_refptr<X509Certificate>& lhs,
+           const scoped_refptr<X509Certificate>& rhs) {
+          return SHA256HashValueLessThan()(
+              X509Certificate::CalculateFingerprint256(lhs->os_cert_handle()),
+              X509Certificate::CalculateFingerprint256(rhs->os_cert_handle()));
+        });
     return result;
   }
 
-  scoped_ptr<NSSCertDatabase> cert_db_;
+  std::unique_ptr<NSSCertDatabase> cert_db_;
   const CertificateList empty_cert_list_;
   crypto::ScopedTestNSSDB test_nssdb_;
   scoped_refptr<CryptoModule> public_module_;

@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/update_client/ping_manager.h"
+
+#include <memory>
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "components/update_client/crx_update_item.h"
-#include "components/update_client/ping_manager.h"
 #include "components/update_client/test_configurator.h"
 #include "components/update_client/url_request_post_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
@@ -33,7 +34,7 @@ class ComponentUpdaterPingManagerTest : public testing::Test {
 
  protected:
   scoped_refptr<TestConfigurator> config_;
-  scoped_ptr<PingManager> ping_manager_;
+  std::unique_ptr<PingManager> ping_manager_;
 
  private:
   base::MessageLoopForIO loop_;
@@ -59,7 +60,7 @@ void ComponentUpdaterPingManagerTest::RunThreadsUntilIdle() {
 
 // Test is flaky: http://crbug.com/349547
 TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
-  scoped_ptr<InterceptorFactory> interceptor_factory(
+  std::unique_ptr<InterceptorFactory> interceptor_factory(
       new InterceptorFactory(base::ThreadTaskRunnerHandle::Get()));
   URLRequestPostInterceptor* interceptor =
       interceptor_factory->CreateInterceptor();
@@ -175,6 +176,25 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
           "download_time_ms=\"9870\"/></app>"))
       << interceptor->GetRequestsAsString();
   interceptor->Reset();
+}
+
+// Tests that sending the ping fails when the component requires encryption but
+// the ping URL is unsecure.
+TEST_F(ComponentUpdaterPingManagerTest, PingManagerRequiresEncryptionTest) {
+  config_->SetPingUrl(GURL("http:\\foo\bar"));
+
+  {
+    CrxUpdateItem item;
+    item.component.requires_network_encryption = true;
+
+    EXPECT_FALSE(ping_manager_->SendPing(&item));
+  }
+
+  {
+    // Tests that the default for |requires_network_encryption| is true.
+    CrxUpdateItem item;
+    EXPECT_FALSE(ping_manager_->SendPing(&item));
+  }
 }
 
 }  // namespace update_client

@@ -31,7 +31,7 @@
 #include "core/css/CSSToLengthConversionData.h"
 
 #include "core/css/CSSHelper.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/style/ComputedStyle.h"
 
 namespace blink {
@@ -56,19 +56,19 @@ float CSSToLengthConversionData::FontSizes::ex() const
     // FIXME: We have a bug right now where the zoom will be applied twice to EX units.
     // We really need to compute EX using fontMetrics for the original specifiedSize and not use
     // our actual constructed layoutObject font.
-    if (!m_font->fontMetrics().hasXHeight())
+    if (!m_font->getFontMetrics().hasXHeight())
         return m_em / 2.0f;
-    return m_font->fontMetrics().xHeight();
+    return m_font->getFontMetrics().xHeight();
 }
 
 float CSSToLengthConversionData::FontSizes::ch() const
 {
     ASSERT(m_font);
-    return m_font->fontMetrics().zeroWidth();
+    return m_font->getFontMetrics().zeroWidth();
 }
 
-CSSToLengthConversionData::ViewportSize::ViewportSize(const LayoutView* layoutView)
-    : m_size(layoutView ? layoutView->viewportSizeForViewportUnits() : DoubleSize())
+CSSToLengthConversionData::ViewportSize::ViewportSize(const LayoutViewItem& layoutViewItem)
+    : m_size(!layoutViewItem.isNull() ? layoutViewItem.viewportSizeForViewportUnits() : DoubleSize())
 {
 }
 
@@ -81,8 +81,8 @@ CSSToLengthConversionData::CSSToLengthConversionData(const ComputedStyle* style,
     ASSERT(m_style);
 }
 
-CSSToLengthConversionData::CSSToLengthConversionData(const ComputedStyle* style, const ComputedStyle* rootStyle, const LayoutView* layoutView, float zoom)
-    : CSSToLengthConversionData(style, FontSizes(style, rootStyle), ViewportSize(layoutView), zoom)
+CSSToLengthConversionData::CSSToLengthConversionData(const ComputedStyle* style, const ComputedStyle* rootStyle, const LayoutViewItem& layoutViewItem, float zoom)
+    : CSSToLengthConversionData(style, FontSizes(style, rootStyle), ViewportSize(layoutViewItem), zoom)
 {
 }
 

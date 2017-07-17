@@ -36,11 +36,11 @@ class IntRect;
 
 // Interface for notification about changes to an image, including decoding,
 // drawing, and animating.
-class PLATFORM_EXPORT ImageObserver : public WillBeGarbageCollectedMixin {
+class PLATFORM_EXPORT ImageObserver : public GarbageCollectedMixin {
 protected:
     virtual ~ImageObserver();
 public:
-    virtual void decodedSizeChanged(const Image*, int delta) = 0;
+    virtual void decodedSizeChangedTo(const Image*, size_t newSize) = 0;
     virtual void didDraw(const Image*) = 0;
 
     virtual bool shouldPauseAnimation(const Image*) = 0;

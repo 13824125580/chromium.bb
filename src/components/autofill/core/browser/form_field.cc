@@ -7,11 +7,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,7 +34,7 @@ bool ShouldBeProcessed(const AutofillField* field) {
   // interferes with correctly understanding ADDRESS_LINE2.
   // Ignore fields marked as presentational. See
   // http://www.w3.org/TR/wai-aria/roles#presentation
-  return !(field->is_checkable ||
+  return !(IsCheckable(field->check_status) ||
            field->role == FormFieldData::ROLE_ATTRIBUTE_PRESENTATION);
 }
 
@@ -174,7 +174,7 @@ void FormField::ParseFormFieldsPass(ParseFunction parse,
                                     FieldCandidatesMap* field_candidates) {
   AutofillScanner scanner(fields);
   while (!scanner.IsEnd()) {
-    scoped_ptr<FormField> form_field(parse(&scanner));
+    std::unique_ptr<FormField> form_field(parse(&scanner));
     if (form_field == nullptr) {
       scanner.Advance();
     } else {

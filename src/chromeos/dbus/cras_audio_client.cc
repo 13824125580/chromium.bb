@@ -186,6 +186,23 @@ class CrasAudioClientImpl : public CrasAudioClient {
                             dbus::ObjectProxy::EmptyResponseCallback());
   }
 
+  void SetGlobalOutputChannelRemix(int32_t channels,
+                                   const std::vector<double>& mixer) override {
+    dbus::MethodCall method_call(cras::kCrasControlInterface,
+                                 cras::kSetGlobalOutputChannelRemix);
+    dbus::MessageWriter writer(&method_call);
+    writer.AppendInt32(channels);
+    writer.AppendArrayOfDoubles(mixer.data(), mixer.size());
+    cras_proxy_->CallMethod(&method_call,
+                            dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                            dbus::ObjectProxy::EmptyResponseCallback());
+  }
+
+  void WaitForServiceToBeAvailable(
+      const WaitForServiceToBeAvailableCallback& callback) override {
+    cras_proxy_->WaitForServiceToBeAvailable(callback);
+  }
+
  protected:
   void Init(dbus::Bus* bus) override {
     cras_proxy_ = bus->GetObjectProxy(cras::kCrasServiceName,
@@ -237,6 +254,15 @@ class CrasAudioClientImpl : public CrasAudioClient {
         cras::kCrasControlInterface,
         cras::kActiveInputNodeChanged,
         base::Bind(&CrasAudioClientImpl::ActiveInputNodeChangedReceived,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&CrasAudioClientImpl::SignalConnected,
+                   weak_ptr_factory_.GetWeakPtr()));
+
+    // Monitor the D-Bus signal for output node volume change.
+    cras_proxy_->ConnectToSignal(
+        cras::kCrasControlInterface,
+        cras::kOutputNodeVolumeChanged,
+        base::Bind(&CrasAudioClientImpl::OutputNodeVolumeChangedReceived,
                    weak_ptr_factory_.GetWeakPtr()),
         base::Bind(&CrasAudioClientImpl::SignalConnected,
                    weak_ptr_factory_.GetWeakPtr()));
@@ -302,6 +328,21 @@ class CrasAudioClientImpl : public CrasAudioClient {
                  << signal->ToString();
     }
     FOR_EACH_OBSERVER(Observer, observers_, ActiveInputNodeChanged(node_id));
+  }
+
+  void OutputNodeVolumeChangedReceived(dbus::Signal* signal) {
+    dbus::MessageReader reader(signal);
+    uint64_t node_id;
+    int volume;
+
+    if (!reader.PopUint64(&node_id)) {
+      LOG(ERROR) << "Error eading signal from cras:" << signal->ToString();
+    }
+    if (!reader.PopInt32(&volume)) {
+      LOG(ERROR) << "Error eading signal from cras:" << signal->ToString();
+    }
+    FOR_EACH_OBSERVER(Observer, observers_,
+                      OutputNodeVolumeChanged(node_id, volume));
   }
 
   void OnGetVolumeState(const GetVolumeStateCallback& callback,
@@ -414,6 +455,9 @@ class CrasAudioClientImpl : public CrasAudioClient {
       } else if (key == cras::kMicPositionsProperty) {
         if (!value_reader.PopString(&node->mic_positions))
           return false;
+      } else if (key == cras::kStableDeviceIdProperty) {
+        if (!value_reader.PopUint64(&node->stable_device_id))
+          return false;
       }
     }
 
@@ -448,6 +492,10 @@ void CrasAudioClient::Observer::NodesChanged() {
 void CrasAudioClient::Observer::ActiveOutputNodeChanged(uint64_t node_id) {}
 
 void CrasAudioClient::Observer::ActiveInputNodeChanged(uint64_t node_id) {}
+
+void CrasAudioClient::Observer::OutputNodeVolumeChanged(uint64_t node_id,
+                                                        int volume) {
+}
 
 CrasAudioClient::CrasAudioClient() {
 }

@@ -51,7 +51,6 @@ using base::ASCIIToUTF16;
 namespace {
 const size_t kInvalid = base::string16::npos;
 const size_t kMaxMatches = 3;
-const char kTestLanguages[] = "en,ja,hi,zh";
 const char kClientWhitelistedScheme[] = "xyz";
 
 // Helper function to set lower case |lower_string| and |lower_terms| (words
@@ -158,9 +157,9 @@ class InMemoryURLIndexTest : public testing::Test {
   base::MessageLoop message_loop_;
   base::SequencedWorkerPoolOwner pool_owner_;
   base::ScopedTempDir history_dir_;
-  scoped_ptr<history::HistoryService> history_service_;
+  std::unique_ptr<history::HistoryService> history_service_;
   history::HistoryDatabase* history_database_;
-  scoped_ptr<InMemoryURLIndex> url_index_;
+  std::unique_ptr<InMemoryURLIndex> url_index_;
 };
 
 InMemoryURLIndexTest::InMemoryURLIndexTest()
@@ -208,8 +207,8 @@ const SchemeSet& InMemoryURLIndexTest::scheme_whitelist() {
 
 bool InMemoryURLIndexTest::UpdateURL(const history::URLRow& row) {
   return GetPrivateData()->UpdateURL(
-      history_service_.get(), row, url_index_->languages_,
-      url_index_->scheme_whitelist_, GetPrivateDataTracker());
+      history_service_.get(), row, url_index_->scheme_whitelist_,
+      GetPrivateDataTracker());
 }
 
 bool InMemoryURLIndexTest::DeleteURL(const GURL& url) {
@@ -218,10 +217,8 @@ bool InMemoryURLIndexTest::DeleteURL(const GURL& url) {
 
 void InMemoryURLIndexTest::SetUp() {
   // We cannot access the database until the backend has been loaded.
-  if (history_dir_.CreateUniqueTempDir()) {
-    history_service_ = history::CreateHistoryService(
-        history_dir_.path(), std::string(), true);
-  }
+  if (history_dir_.CreateUniqueTempDir())
+    history_service_ = history::CreateHistoryService(history_dir_.path(), true);
   ASSERT_TRUE(history_service_);
   BlockUntilInMemoryURLIndexIsRefreshed(url_index_.get());
 
@@ -251,8 +248,7 @@ void InMemoryURLIndexTest::SetUp() {
       proto_file.getline(sql_cmd_line, kCommandBufferMaxSize);
       if (!proto_file.eof()) {
         // We only process lines which begin with a upper-case letter.
-        // TODO(mrossetti): Can iswupper() be used here?
-        if (sql_cmd_line[0] >= 'A' && sql_cmd_line[0] <= 'Z') {
+        if (base::IsAsciiUpper(sql_cmd_line[0])) {
           std::string sql_cmd(sql_cmd_line);
           sql::Statement sql_stmt(db.GetUniqueStatement(sql_cmd_line));
           EXPECT_TRUE(sql_stmt.Run());
@@ -330,7 +326,7 @@ void InMemoryURLIndexTest::InitializeInMemoryURLIndex() {
   client_schemes_to_whitelist.insert(kClientWhitelistedScheme);
   url_index_.reset(new InMemoryURLIndex(
       nullptr, history_service_.get(), nullptr, pool_owner_.pool().get(),
-      base::FilePath(), kTestLanguages, client_schemes_to_whitelist));
+      base::FilePath(), client_schemes_to_whitelist));
   url_index_->Init();
   url_index_->RebuildFromHistory(history_database_);
 }
@@ -435,7 +431,8 @@ void InMemoryURLIndexTest::ExpectPrivateDataEqual(
     for (size_t i = 0;
          i < std::min(expected_visits.size(), actual_visits.size()); ++i) {
       EXPECT_EQ(expected_visits[i].first, actual_visits[i].first);
-      EXPECT_EQ(expected_visits[i].second, actual_visits[i].second);
+      EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+          actual_visits[i].second, expected_visits[i].second));
     }
   }
 
@@ -1008,9 +1005,9 @@ TEST_F(InMemoryURLIndexTest, ReadVisitsFromHistory) {
   {
     const VisitInfoVector& visits = entry->second.visits;
     ASSERT_EQ(3u, visits.size());
-    EXPECT_EQ(static_cast<ui::PageTransition>(0u), visits[0].second);
-    EXPECT_EQ(static_cast<ui::PageTransition>(1u), visits[1].second);
-    EXPECT_EQ(static_cast<ui::PageTransition>(0u), visits[2].second);
+    EXPECT_EQ(0, static_cast<int32_t>(visits[0].second));
+    EXPECT_EQ(1, static_cast<int32_t>(visits[1].second));
+    EXPECT_EQ(0, static_cast<int32_t>(visits[2].second));
   }
 
   // Ditto but for URL with id 35.
@@ -1018,9 +1015,9 @@ TEST_F(InMemoryURLIndexTest, ReadVisitsFromHistory) {
   ASSERT_TRUE(entry != history_info_map.end());
   {
     const VisitInfoVector& visits = entry->second.visits;
-    ASSERT_EQ(2u, visits.size());
-    EXPECT_EQ(static_cast<ui::PageTransition>(1u), visits[0].second);
-    EXPECT_EQ(static_cast<ui::PageTransition>(1u), visits[1].second);
+    ASSERT_EQ(2, static_cast<int32_t>(visits.size()));
+    EXPECT_EQ(1, static_cast<int32_t>(visits[0].second));
+    EXPECT_EQ(1, static_cast<int32_t>(visits[1].second));
   }
 
   // The URL with id 32 has many visits listed in the database, but we
@@ -1031,7 +1028,7 @@ TEST_F(InMemoryURLIndexTest, ReadVisitsFromHistory) {
     const VisitInfoVector& visits = entry->second.visits;
     EXPECT_EQ(10u, visits.size());
     for (size_t i = 0; i < visits.size(); ++i)
-      EXPECT_EQ(static_cast<ui::PageTransition>(0u), visits[i].second);
+      EXPECT_EQ(0, static_cast<int32_t>(visits[i].second));
   }
 }
 
@@ -1245,8 +1242,8 @@ TEST_F(InMemoryURLIndexTest, AddHistoryMatch) {
                   &lower_string, &lower_terms);
     URLIndexPrivateData::AddHistoryMatch match(nullptr, nullptr,
                                                *GetPrivateData(),
-                                               kTestLanguages, lower_string,
-                                               lower_terms, base::Time::Now());
+                                               lower_string, lower_terms,
+                                               base::Time::Now());
 
     // Verify against expectations.
     EXPECT_EQ(test_cases[i].expected_word_starts_offsets_size,
@@ -1274,7 +1271,7 @@ class InMemoryURLIndexCacheTest : public testing::Test {
   base::MessageLoop message_loop_;
   base::SequencedWorkerPoolOwner pool_owner_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<InMemoryURLIndex> url_index_;
+  std::unique_ptr<InMemoryURLIndex> url_index_;
 };
 
 InMemoryURLIndexCacheTest::InMemoryURLIndexCacheTest()
@@ -1285,7 +1282,7 @@ void InMemoryURLIndexCacheTest::SetUp() {
   base::FilePath path(temp_dir_.path());
   url_index_.reset(new InMemoryURLIndex(nullptr, nullptr, nullptr,
                                         pool_owner_.pool().get(), path,
-                                        kTestLanguages, SchemeSet()));
+                                        SchemeSet()));
 }
 
 void InMemoryURLIndexCacheTest::TearDown() {

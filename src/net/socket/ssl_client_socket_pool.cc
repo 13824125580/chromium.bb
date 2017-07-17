@@ -12,6 +12,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/profiler/scoped_tracker.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -159,8 +160,6 @@ void SSLConnectJob::GetAdditionalErrorState(ClientSocketHandle* handle) {
   handle->set_ssl_error_response_info(error_response_info_);
   if (!connect_timing_.ssl_start.is_null())
     handle->set_is_ssl_error(true);
-  if (ssl_socket_)
-    handle->set_ssl_failure_state(ssl_socket_->GetSSLFailureState());
 
   handle->set_connection_attempts(connection_attempts_);
 }
@@ -172,6 +171,7 @@ void SSLConnectJob::OnIOComplete(int result) {
 }
 
 int SSLConnectJob::DoLoop(int result) {
+  TRACE_EVENT0("net", "SSLConnectJob::DoLoop");
   DCHECK_NE(next_state_, STATE_NONE);
 
   int rv = result;
@@ -289,6 +289,7 @@ int SSLConnectJob::DoTunnelConnectComplete(int result) {
 }
 
 int SSLConnectJob::DoSSLConnect() {
+  TRACE_EVENT0("net", "SSLConnectJob::DoSSLConnect");
   // TODO(pkasting): Remove ScopedTracker below once crbug.com/462815 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION("462815 SSLConnectJob::DoSSLConnect"));
@@ -376,17 +377,16 @@ int SSLConnectJob::DoSSLConnectComplete(int result) {
                             cipher_suite);
     // UMA_HISTOGRAM_... macros cache the Histogram instance and thus only work
     // if the histogram name is constant, so don't generate it dynamically.
-    if (strcmp(str, "RSA") == 0) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Net.SSL_KeyExchange.RSA",
-                                  ssl_info.key_exchange_info);
-    } else if (strncmp(str, "DHE_", 4) == 0) {
+    if (strncmp(str, "DHE_", 4) == 0) {
       UMA_HISTOGRAM_SPARSE_SLOWLY("Net.SSL_KeyExchange.DHE",
                                   ssl_info.key_exchange_info);
     } else if (strncmp(str, "ECDHE_", 6) == 0) {
       UMA_HISTOGRAM_SPARSE_SLOWLY("Net.SSL_KeyExchange.ECDHE",
                                   ssl_info.key_exchange_info);
+    } else if (strncmp(str, "CECPQ1_", 7) == 0) {
+      // Nothing.
     } else {
-      NOTREACHED();
+      DCHECK_EQ(0, strcmp(str, "RSA"));
     }
 
     if (ssl_info.handshake_type == SSLInfo::HANDSHAKE_RESUME) {
@@ -548,11 +548,12 @@ SSLClientSocketPool::~SSLClientSocketPool() {
     ssl_config_service_->RemoveObserver(this);
 }
 
-scoped_ptr<ConnectJob> SSLClientSocketPool::SSLConnectJobFactory::NewConnectJob(
+std::unique_ptr<ConnectJob>
+SSLClientSocketPool::SSLConnectJobFactory::NewConnectJob(
     const std::string& group_name,
     const PoolBase::Request& request,
     ConnectJob::Delegate* delegate) const {
-  return scoped_ptr<ConnectJob>(new SSLConnectJob(
+  return std::unique_ptr<ConnectJob>(new SSLConnectJob(
       group_name, request.priority(), request.respect_limits(),
       request.params(), ConnectionTimeout(), transport_pool_, socks_pool_,
       http_proxy_pool_, client_socket_factory_, context_, delegate, net_log_));
@@ -594,7 +595,7 @@ void SSLClientSocketPool::CancelRequest(const std::string& group_name,
 }
 
 void SSLClientSocketPool::ReleaseSocket(const std::string& group_name,
-                                        scoped_ptr<StreamSocket> socket,
+                                        std::unique_ptr<StreamSocket> socket,
                                         int id) {
   base_.ReleaseSocket(group_name, std::move(socket), id);
 }
@@ -621,11 +622,11 @@ LoadState SSLClientSocketPool::GetLoadState(
   return base_.GetLoadState(group_name, handle);
 }
 
-scoped_ptr<base::DictionaryValue> SSLClientSocketPool::GetInfoAsValue(
+std::unique_ptr<base::DictionaryValue> SSLClientSocketPool::GetInfoAsValue(
     const std::string& name,
     const std::string& type,
     bool include_nested_pools) const {
-  scoped_ptr<base::DictionaryValue> dict(base_.GetInfoAsValue(name, type));
+  std::unique_ptr<base::DictionaryValue> dict(base_.GetInfoAsValue(name, type));
   if (include_nested_pools) {
     base::ListValue* list = new base::ListValue();
     if (transport_pool_) {

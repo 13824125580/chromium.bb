@@ -16,7 +16,7 @@
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/ssl/ssl_info.h"
-#include "net/url_request/certificate_report_sender.h"
+#include "net/url_request/report_sender.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
@@ -61,13 +61,13 @@ SafeBrowsingPingManager::SafeBrowsingPingManager(
     bool use_insecure_certificate_upload_url =
         certificate_reporting::ErrorReporter::IsHttpUploadUrlSupported();
 
-    net::CertificateReportSender::CookiesPreference cookies_preference;
+    net::ReportSender::CookiesPreference cookies_preference;
     GURL certificate_upload_url;
     if (use_insecure_certificate_upload_url) {
-      cookies_preference = net::CertificateReportSender::DO_NOT_SEND_COOKIES;
+      cookies_preference = net::ReportSender::DO_NOT_SEND_COOKIES;
       certificate_upload_url = GURL(kExtendedReportingUploadUrlInsecure);
     } else {
-      cookies_preference = net::CertificateReportSender::SEND_COOKIES;
+      cookies_preference = net::ReportSender::SEND_COOKIES;
       certificate_upload_url = GURL(kExtendedReportingUploadUrlSecure);
     }
 
@@ -136,7 +136,7 @@ void SafeBrowsingPingManager::ReportInvalidCertificateChain(
 }
 
 void SafeBrowsingPingManager::SetCertificateErrorReporterForTesting(
-    scoped_ptr<certificate_reporting::ErrorReporter>
+    std::unique_ptr<certificate_reporting::ErrorReporter>
         certificate_error_reporter) {
   certificate_error_reporter_ = std::move(certificate_error_reporter);
 }
@@ -198,14 +198,29 @@ GURL SafeBrowsingPingManager::SafeBrowsingHitUrl(
       NOTREACHED();
   }
 
+  // Add user_population component only if it's not empty.
+  std::string user_population_comp;
+  if (!hit_report.population_id.empty()) {
+    // Population_id should be URL-safe, but escape it and size-limit it
+    // anyway since it came from outside Chrome.
+    std::string up_str =
+        net::EscapeQueryParamValue(hit_report.population_id, true);
+    if (up_str.size() > 512) {
+      DCHECK(false) << "population_id is too long: " << up_str;
+      up_str = "UP_STRING_TOO_LONG";
+    }
+
+    user_population_comp = "&up=" + up_str;
+  }
+
   return GURL(base::StringPrintf(
-      "%s&evts=%s&evtd=%s&evtr=%s&evhr=%s&evtb=%d&src=%s&m=%d", url.c_str(),
+      "%s&evts=%s&evtd=%s&evtr=%s&evhr=%s&evtb=%d&src=%s&m=%d%s", url.c_str(),
       threat_list.c_str(),
       net::EscapeQueryParamValue(hit_report.malicious_url.spec(), true).c_str(),
       net::EscapeQueryParamValue(hit_report.page_url.spec(), true).c_str(),
       net::EscapeQueryParamValue(hit_report.referrer_url.spec(), true).c_str(),
       hit_report.is_subresource, threat_source.c_str(),
-      hit_report.is_metrics_reporting_active));
+      hit_report.is_metrics_reporting_active, user_population_comp.c_str()));
 }
 
 GURL SafeBrowsingPingManager::ThreatDetailsUrl() const {

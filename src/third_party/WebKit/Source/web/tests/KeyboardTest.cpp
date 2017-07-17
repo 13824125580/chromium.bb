@@ -37,6 +37,7 @@
 #include "public/web/WebInputEvent.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "web/WebInputEventConversion.h"
+#include <memory>
 
 namespace blink {
 
@@ -48,12 +49,12 @@ public:
     // E.g., sending in the enter key gives back "InsertNewline".
     const char* interpretKeyEvent(
         const WebKeyboardEvent& webKeyboardEvent,
-        PlatformEvent::Type keyType)
+        PlatformEvent::EventType keyType)
     {
         PlatformKeyboardEventBuilder evt(webKeyboardEvent);
         evt.setKeyType(keyType);
-        RefPtrWillBeRawPtr<KeyboardEvent> keyboardEvent = KeyboardEvent::create(evt, 0);
-        OwnPtr<Settings> settings = Settings::create();
+        KeyboardEvent* keyboardEvent = KeyboardEvent::create(evt, 0);
+        std::unique_ptr<Settings> settings = Settings::create();
         EditingBehavior behavior(settings->editingBehaviorType());
         return behavior.interpretKeyEvent(*keyboardEvent);
     }
@@ -185,26 +186,9 @@ TEST_F(KeyboardTest, TestInsertNewline)
     EXPECT_STREQ("InsertNewline", interpretNewLine(noModifiers));
 }
 
-TEST_F(KeyboardTest, TestInsertNewline2)
-{
-    EXPECT_STREQ("InsertNewline", interpretNewLine(WebInputEvent::ControlKey));
-}
-
 TEST_F(KeyboardTest, TestInsertLineBreak)
 {
     EXPECT_STREQ("InsertLineBreak", interpretNewLine(WebInputEvent::ShiftKey));
-}
-
-TEST_F(KeyboardTest, TestInsertNewline3)
-{
-    EXPECT_STREQ("InsertNewline", interpretNewLine(WebInputEvent::AltKey));
-}
-
-TEST_F(KeyboardTest, TestInsertNewline4)
-{
-    int modifiers = WebInputEvent::AltKey | WebInputEvent::ShiftKey;
-    const char* result = interpretNewLine(modifiers);
-    EXPECT_STREQ("InsertNewline", result);
 }
 
 } // namespace blink

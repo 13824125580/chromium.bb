@@ -12,7 +12,9 @@ goog.provide('cursors.Movement');
 goog.provide('cursors.Range');
 goog.provide('cursors.Unit');
 
+goog.require('AutomationPredicate');
 goog.require('AutomationUtil');
+goog.require('StringUtil');
 goog.require('constants');
 
 /**
@@ -70,10 +72,17 @@ var Unit = cursors.Unit;
  * is pointed to and covers the case where the accessible text is empty.
  */
 cursors.Cursor = function(node, index) {
-  /** @type {!AutomationNode} @private */
-  this.node_ = node;
   /** @type {number} @private */
   this.index_ = index;
+  /** @type {Array<AutomationNode>} @private */
+  this.ancestry_ = [];
+  var nodeWalker = node;
+  while (nodeWalker) {
+    this.ancestry_.push(nodeWalker);
+    nodeWalker = nodeWalker.parent;
+    if (nodeWalker && AutomationPredicate.root(nodeWalker))
+      break;
+  }
 };
 
 /**
@@ -92,15 +101,26 @@ cursors.Cursor.prototype = {
    * @return {boolean}
    */
   equals: function(rhs) {
-    return this.node_ === rhs.node &&
-        this.index_ === rhs.index;
+    return this.node === rhs.node &&
+        this.index === rhs.index;
   },
 
   /**
-   * @return {!AutomationNode}
+   * Returns the node. If the node is invalid since the last time it
+   * was accessed, moves the cursor to the nearest valid ancestor first.
+   * @return {AutomationNode}
    */
   get node() {
-    return this.node_;
+    for (var i = 0; i < this.ancestry_.length; i++) {
+      var firstValidNode = this.ancestry_[i];
+      if (firstValidNode != null && firstValidNode.role !== undefined &&
+          firstValidNode.root !== undefined) {
+        return firstValidNode;
+      }
+      // If we have to walk up to an ancestor, reset the index to NODE_INDEX.
+      this.index_ = cursors.NODE_INDEX;
+    }
+    return null;
   },
 
   /**
@@ -111,6 +131,28 @@ cursors.Cursor.prototype = {
   },
 
   /**
+   * An index appropriate for making selections.
+   * @return {number}
+   * @private
+   */
+  get selectionIndex_() {
+    if (this.index_ == cursors.NODE_INDEX)
+      return 0;
+
+    var adjustedIndex = this.index_;
+
+    if (this.node.role == RoleType.inlineTextBox) {
+      var sibling = this.node.previousSibling;
+      while (sibling) {
+        adjustedIndex += sibling.name.length;
+        sibling = sibling.previousSibling;
+      }
+    }
+
+    return adjustedIndex;
+  },
+
+  /**
    * Gets the accessible text of the node associated with this cursor.
    *
    * @param {!AutomationNode=} opt_node Use this node rather than this cursor's
@@ -118,7 +160,7 @@ cursors.Cursor.prototype = {
    * @return {string}
    */
   getText: function(opt_node) {
-    var node = opt_node || this.node_;
+    var node = opt_node || this.node;
     if (node.role === RoleType.textField)
       return node.value;
     return node.name || '';
@@ -133,7 +175,11 @@ cursors.Cursor.prototype = {
    * @return {!cursors.Cursor} The moved cursor.
    */
   move: function(unit, movement, dir) {
-    var newNode = this.node_;
+    var originalNode = this.node;
+    if (!originalNode)
+      return this;
+
+    var newNode = originalNode;
     var newIndex = this.index_;
 
     if ((unit != Unit.NODE || unit != Unit.DOM_NODE) &&
@@ -163,9 +209,10 @@ cursors.Cursor.prototype = {
         break;
       case Unit.WORD:
         if (newNode.role != RoleType.inlineTextBox) {
-          newNode = AutomationUtil.findNodePre(
-              newNode, Dir.FORWARD, AutomationPredicate.inlineTextBox) ||
-                  newNode;
+          newNode = AutomationUtil.findNextNode(newNode,
+              Dir.FORWARD,
+              AutomationPredicate.inlineTextBox,
+              {skipInitialSubtree: false}) || newNode;
         }
         switch (movement) {
           case Movement.BOUND:
@@ -231,9 +278,9 @@ cursors.Cursor.prototype = {
             break;
           case Movement.DIRECTIONAL:
             var pred = unit == Unit.NODE ?
-                AutomationPredicate.leaf : AutomationPredicate.element;
+                AutomationPredicate.leaf : AutomationPredicate.object;
             newNode = AutomationUtil.findNextNode(
-                newNode, dir, pred) || this.node_;
+                newNode, dir, pred) || originalNode;
             newIndex = cursors.NODE_INDEX;
             break;
         }
@@ -244,7 +291,7 @@ cursors.Cursor.prototype = {
           case Movement.BOUND:
             newNode = AutomationUtil.findNodeUntil(newNode, dir,
                 AutomationPredicate.linebreak, true);
-            newNode = newNode || this.node_;
+            newNode = newNode || originalNode;
             newIndex =
                 dir == Dir.FORWARD ? this.getText(newNode).length : 0;
             break;
@@ -257,9 +304,17 @@ cursors.Cursor.prototype = {
       default:
         throw Error('Unrecognized unit: ' + unit);
     }
-    newNode = newNode || this.node_;
+    newNode = newNode || originalNode;
     newIndex = goog.isDef(newIndex) ? newIndex : this.index_;
     return new cursors.Cursor(newNode, newIndex);
+  },
+
+  /**
+   * Returns whether this cursor points to a valid position.
+   * @return {boolean}
+   */
+  isValid: function() {
+    return this.node != null;
   }
 };
 
@@ -292,33 +347,48 @@ cursors.WrappingCursor.prototype = {
   /** @override */
   move: function(unit, movement, dir) {
     var result = this;
+    if (!result.node)
+      return this;
 
     // Regular movement.
-    if (!AutomationUtil.isTraversalRoot(this.node) || dir == Dir.FORWARD)
+    if (!AutomationPredicate.root(this.node) || dir == Dir.FORWARD)
       result = cursors.Cursor.prototype.move.call(this, unit, movement, dir);
 
     // There are two cases for wrapping:
     // 1. moving forwards from the last element.
-    // 2. moving backwards from the document root.
+    // 2. moving backwards from the first element.
     // Both result in |move| returning the same cursor.
     // For 1, simply place the new cursor on the document node.
-    // For 2, try to descend to the first leaf-like object.
+    // For 2, place range on the root (if not already there). If at root,
+    // try to descend to the first leaf-like object.
     if (movement == Movement.DIRECTIONAL && result.equals(this)) {
       var pred = unit == Unit.DOM_NODE ?
-          AutomationPredicate.element : AutomationPredicate.leaf;
+          AutomationPredicate.object : AutomationPredicate.leaf;
       var endpoint = this.node;
+      if (!endpoint)
+        return this;
 
       // Case 1: forwards (find the root-like node).
-      while (!AutomationUtil.isTraversalRoot(endpoint) && endpoint.parent)
+      while (!AutomationPredicate.root(endpoint) && endpoint.parent)
         endpoint = endpoint.parent;
 
-      // Case 2: backward (sync downwards to a leaf).
-      if (dir == Dir.BACKWARD)
-        endpoint = AutomationUtil.findNodePre(endpoint, dir, pred) || endpoint;
+      // Always play a wrap earcon when moving forward.
+      var playEarcon = dir == Dir.FORWARD;
 
-      cvox.ChromeVox.earcons.playEarcon(cvox.Earcon.WRAP);
-        return new cursors.WrappingCursor(endpoint, cursors.NODE_INDEX);
+      // Case 2: backward (sync downwards to a leaf), if already on the root.
+      if (dir == Dir.BACKWARD && endpoint == this.node) {
+        playEarcon = true;
+        endpoint = AutomationUtil.findNodePre(endpoint,
+            dir,
+            function(n) {
+              return pred(n) && !AutomationPredicate.shouldIgnoreNode(n);
+            }) || endpoint;
+      }
 
+      if (playEarcon)
+        cvox.ChromeVox.earcons.playEarcon(cvox.Earcon.WRAP);
+
+      return new cursors.WrappingCursor(endpoint, cursors.NODE_INDEX);
     }
     return new cursors.WrappingCursor(result.node, result.index);
   }
@@ -358,6 +428,10 @@ cursors.Range.fromNode = function(node) {
  */
 cursors.Range.getDirection = function(rangeA, rangeB) {
   if (!rangeA || !rangeB)
+    return Dir.FORWARD;
+
+  if (!rangeA.start.node || !rangeA.end.node ||
+      !rangeB.start.node || !rangeB.end.node)
     return Dir.FORWARD;
 
   // They are the same range.
@@ -439,11 +513,14 @@ cursors.Range.prototype = {
    */
   move: function(unit, dir) {
     var newStart = this.start_;
+    if (!newStart.node)
+      return this;
+
     var newEnd;
     switch (unit) {
       case Unit.CHARACTER:
-        newStart = newStart.move(unit, Movement.BOUND, dir);
-        newEnd = newStart.move(unit, Movement.BOUND, Dir.FORWARD);
+        newStart = newStart.move(unit, Movement.DIRECTIONAL, dir);
+        newEnd = newStart.move(unit, Movement.DIRECTIONAL, Dir.FORWARD);
         // Character crossed a node; collapses to the end of the node.
         if (newStart.node !== newEnd.node)
           newEnd = new cursors.Cursor(newStart.node, newStart.index + 1);
@@ -466,12 +543,59 @@ cursors.Range.prototype = {
   },
 
   /**
+   * Select the text contained within this range.
+   */
+  select: function() {
+    var start = this.start.node;
+    var end = this.end.node;
+
+    if (!start || !end)
+      return;
+
+    // Find the most common root.
+    var uniqueAncestors = AutomationUtil.getUniqueAncestors(start, end);
+    var mcr = start.root;
+    if (uniqueAncestors) {
+      var common = uniqueAncestors.pop().parent;
+      if (common)
+        mcr = common.root;
+    }
+
+    if (!mcr || mcr.role == RoleType.desktop)
+      return;
+
+    if (mcr === start.root && mcr === end.root) {
+      start = start.role == RoleType.inlineTextBox ? start.parent : start;
+      end = end.role == RoleType.inlineTextBox ? end.parent : end;
+
+      if (!start || !end)
+        return;
+
+      chrome.automation.setDocumentSelection(
+          { anchorObject: start,
+            anchorOffset: this.start.selectionIndex_,
+            focusObject: end,
+            focusOffset: this.end.selectionIndex_ }
+      );
+    }
+  },
+
+  /**
    * Returns true if this range has either cursor end on web content.
    * @return {boolean}
   */
   isWebRange: function() {
-    return this.start.node.root.role != RoleType.desktop ||
-        this.end.node.root.role != RoleType.desktop;
+    return this.isValid() &&
+        (this.start.node.root.role != RoleType.desktop ||
+        this.end.node.root.role != RoleType.desktop);
+  },
+
+  /**
+   * Returns whether this range has valid start and end cursors.
+   * @return {boolean}
+   */
+  isValid: function() {
+    return this.start.isValid() && this.end.isValid();
   }
 };
 

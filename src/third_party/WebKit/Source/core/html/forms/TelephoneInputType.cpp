@@ -31,13 +31,12 @@
 #include "core/html/forms/TelephoneInputType.h"
 
 #include "core/InputTypeNames.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> TelephoneInputType::create(HTMLInputElement& element)
+InputType* TelephoneInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new TelephoneInputType(element));
+    return new TelephoneInputType(element);
 }
 
 void TelephoneInputType::countUsage()

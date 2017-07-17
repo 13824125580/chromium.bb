@@ -8,10 +8,15 @@ import("//build/config/ui.gni")
 import("//build/config/win/console_app.gni")
 import("//build/config/win/manifest.gni")
 import("//media/media_options.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
 import("//tools/grit/repack.gni")
 import("//tools/grit/grit_rule.gni")
 if (is_android) {
   import("//build/config/android/config.gni")
+} else if (is_mac) {
+  import("//build/config/mac/rules.gni")
+  import("//build_overrides/v8.gni")
+  import("//build/mac/tweak_info_plist.gni")
 }
 
 declare_args() {
@@ -55,6 +60,8 @@ static_library("content_shell_lib") {
     "browser/layout_test/layout_test_bluetooth_adapter_provider.h",
     "browser/layout_test/layout_test_bluetooth_chooser_factory.cc",
     "browser/layout_test/layout_test_bluetooth_chooser_factory.h",
+    "browser/layout_test/layout_test_bluetooth_fake_adapter_setter_impl.cc",
+    "browser/layout_test/layout_test_bluetooth_fake_adapter_setter_impl.h",
     "browser/layout_test/layout_test_browser_context.cc",
     "browser/layout_test/layout_test_browser_context.h",
     "browser/layout_test/layout_test_browser_main.cc",
@@ -67,12 +74,12 @@ static_library("content_shell_lib") {
     "browser/layout_test/layout_test_devtools_frontend.h",
     "browser/layout_test/layout_test_download_manager_delegate.cc",
     "browser/layout_test/layout_test_download_manager_delegate.h",
+    "browser/layout_test/layout_test_first_device_bluetooth_chooser.cc",
+    "browser/layout_test/layout_test_first_device_bluetooth_chooser.h",
     "browser/layout_test/layout_test_javascript_dialog_manager.cc",
     "browser/layout_test/layout_test_javascript_dialog_manager.h",
     "browser/layout_test/layout_test_message_filter.cc",
     "browser/layout_test/layout_test_message_filter.h",
-    "browser/layout_test/layout_test_navigator_connect_service_factory.cc",
-    "browser/layout_test/layout_test_navigator_connect_service_factory.h",
     "browser/layout_test/layout_test_notification_manager.cc",
     "browser/layout_test/layout_test_notification_manager.h",
     "browser/layout_test/layout_test_permission_manager.cc",
@@ -83,8 +90,8 @@ static_library("content_shell_lib") {
     "browser/layout_test/layout_test_resource_dispatcher_host_delegate.h",
     "browser/layout_test/layout_test_url_request_context_getter.cc",
     "browser/layout_test/layout_test_url_request_context_getter.h",
-    "browser/layout_test/notify_done_forwarder.cc",
-    "browser/layout_test/notify_done_forwarder.h",
+    "browser/layout_test/secondary_test_window_observer.cc",
+    "browser/layout_test/secondary_test_window_observer.h",
     "browser/layout_test/test_info_extractor.cc",
     "browser/layout_test/test_info_extractor.h",
     "browser/shell.cc",
@@ -143,13 +150,19 @@ static_library("content_shell_lib") {
     "browser/shell_web_contents_view_delegate_creator.h",
     "browser/shell_web_contents_view_delegate_mac.mm",
     "browser/shell_web_contents_view_delegate_win.cc",
+    "common/layout_test/layout_test_content_client.cc",
+    "common/layout_test/layout_test_content_client.h",
     "common/layout_test/layout_test_messages.cc",
     "common/layout_test/layout_test_messages.h",
+    "common/layout_test/layout_test_switches.cc",
+    "common/layout_test/layout_test_switches.h",
     "common/leak_detection_result.h",
     "common/shell_content_client.cc",
     "common/shell_content_client.h",
     "common/shell_messages.cc",
     "common/shell_messages.h",
+    "common/shell_origin_trial_policy.cc",
+    "common/shell_origin_trial_policy.h",
     "common/shell_switches.cc",
     "common/shell_switches.h",
     "common/shell_test_configuration.cc",
@@ -162,14 +175,14 @@ static_library("content_shell_lib") {
     "renderer/layout_test/layout_test_content_renderer_client.h",
     "renderer/layout_test/layout_test_render_frame_observer.cc",
     "renderer/layout_test/layout_test_render_frame_observer.h",
-    "renderer/layout_test/layout_test_render_process_observer.cc",
-    "renderer/layout_test/layout_test_render_process_observer.h",
+    "renderer/layout_test/layout_test_render_thread_observer.cc",
+    "renderer/layout_test/layout_test_render_thread_observer.h",
     "renderer/layout_test/leak_detector.cc",
     "renderer/layout_test/leak_detector.h",
     "renderer/layout_test/test_media_stream_renderer_factory.cc",
     "renderer/layout_test/test_media_stream_renderer_factory.h",
-    "renderer/layout_test/test_video_frame_provider.cc",
-    "renderer/layout_test/test_video_frame_provider.h",
+    "renderer/layout_test/test_media_stream_video_renderer.cc",
+    "renderer/layout_test/test_media_stream_video_renderer.h",
     "renderer/shell_content_renderer_client.cc",
     "renderer/shell_content_renderer_client.h",
     "renderer/shell_render_view_observer.cc",
@@ -195,11 +208,11 @@ static_library("content_shell_lib") {
     "//content/public/app:both",
     "//content/public/browser",
     "//content/public/common",
-    "//content/public/plugin",
     "//content/public/renderer",
     "//content/public/utility",
   ]
   deps = [
+    ":mojo_bindings",
     ":resources",
     "//base",
     "//base:base_static",
@@ -208,6 +221,7 @@ static_library("content_shell_lib") {
     "//components/crash/content/app:app_breakpad_mac_win_to_be_deleted",
     "//components/devtools_discovery",
     "//components/devtools_http_handler",
+    "//components/network_session_configurator:switches",
     "//components/plugins/renderer",
     "//components/test_runner:test_runner",
     "//components/url_formatter",
@@ -217,6 +231,7 @@ static_library("content_shell_lib") {
     "//content/app/strings",
     "//content/gpu",
     "//content/test:layouttest_support",
+    "//content/test:test_support",
     "//device/bluetooth",
     "//device/bluetooth:mocks",
     "//gin",
@@ -240,24 +255,25 @@ static_library("content_shell_lib") {
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gfx/ipc",
+    "//ui/gfx/ipc/geometry",
+    "//ui/gfx/ipc/skia",
     "//ui/gl",
     "//url",
     "//v8",
-
-    #'copy_test_netscape_plugin',  TODO(GYP)
   ]
   if (enable_plugins) {
     deps += [
       "//content/ppapi_plugin",
+      "//ppapi:blink_deprecated_test_plugin",
       "//ppapi:blink_test_plugin",
+      "//ppapi/shared_impl",
     ]
   }
   if (mojo_media_host == "browser") {
-    deps += [ "//media/mojo/services:application_factory" ]
+    deps += [ "//media/mojo/services" ]
   }
 
   if (is_win) {
-    #'LinkIncremental': '<(msvs_large_module_debug_link_mode)',  TODO(GYP)
     sources += [
       "common/v8_breakpad_support_win.cc",
       "common/v8_breakpad_support_win.h",
@@ -265,7 +281,10 @@ static_library("content_shell_lib") {
   }
 
   if (is_linux) {
-    deps += [ "//build/linux:fontconfig" ]
+    deps += [
+      "//build/linux:fontconfig",
+      "//ui/gfx:test_support",
+    ]
   }
 
   if (use_x11) {
@@ -275,16 +294,18 @@ static_library("content_shell_lib") {
       "//tools/xdisplaycheck",
     ]
 
-    deps += [ "//ui/events/devices" ]
+    deps += [ "//ui/events/devices/x11" ]
   }
 
   if (is_android) {
     deps += [ "//content/shell/android:content_shell_jni_headers" ]
-    #deps -= [ "copy_test_netscape_plugin" ]  TODO(GYP)
   }
 
   if (is_posix && !is_mac) {
-    deps += [ "//components/crash/content/browser" ]
+    deps += [
+      "//components/crash/content/app",
+      "//components/crash/content/browser",
+    ]
   }
 
   if (use_aura) {
@@ -303,6 +324,7 @@ static_library("content_shell_lib") {
         "//ui/views",
         "//ui/views:test_support",
         "//ui/views/controls/webview",
+        "//ui/wm:test_support",
       ]
     } else {
       sources += [ "browser/shell_aura.cc" ]
@@ -312,11 +334,6 @@ static_library("content_shell_lib") {
       "browser/shell_platform_data_aura.cc",
       "browser/shell_platform_data_aura.h",
     ]
-  }
-
-  # The test plugin relies on X11.
-  if (is_linux && !use_x11) {
-    #deps -= [ 'copy_test_netscape_plugin' ]  TODO(GYP)
   }
 
   if (is_chromeos) {
@@ -339,6 +356,7 @@ static_library("content_shell_lib") {
 }
 
 grit("content_shell_resources_grit") {
+  # External code should depend on ":resources" instead.
   visibility = [ ":*" ]
   source = "shell_resources.grd"
   outputs = [
@@ -409,21 +427,61 @@ repack("pak") {
   output = "$root_out_dir/content_shell.pak"
 }
 
-# TODO(GYP): Figure out what this should be on android
-# and make linking this work on the Mac.
-if (!is_android && !is_mac) {
+if (is_android) {
+  group("content_shell") {
+    testonly = true
+    deps = [
+      "//content/shell/android:content_shell_apk",
+    ]
+  }
+} else if (is_mac) {
+  tweak_info_plist("content_shell_plist") {
+    testonly = true
+    info_plist = "app/app-Info.plist"
+    args = [
+      "--scm=1",
+      "--version",
+      content_shell_version,
+    ]
+  }
+  mac_app_bundle("content_shell") {
+    testonly = true
+    output_name = content_shell_product_name
+    sources = [
+      "app/shell_main.cc",
+    ]
+    deps = [
+      ":content_shell_framework_bundle_data",
+      ":content_shell_resources_bundle_data",
+
+      # TODO(rsesek): Remove this after GYP is gone, since it only needs to
+      # be here per the comment in blink_test_platform_support_mac.mm about
+      # the bundle structure.
+      "//components/test_runner:resources",
+    ]
+    ldflags = [
+      # The main app is at Content Shell.app/Contents/MacOS/Content Shell
+      # so set the rpath up to Contents/ so that the loader can find
+      # Framworks/.
+      "-rpath",
+      "@executable_path/../",
+    ]
+    info_plist_target = ":content_shell_plist"
+  }
+} else {
   # TODO(brettw) when GYP is no longer necessary, delete
   # content/shell/app/shell.exe.manifest. This file is not used in GN.
   executable("content_shell") {
     testonly = true
 
     # TODO(GYP) mac resource bundle stuff for this target.
-    # TODO(GYP) Windows content shell settings:
-    #  - RC file.
-    #  - 'LinkIncremental': '<(msvs_large_module_debug_link_mode)',
     sources = [
       "app/shell_main.cc",
     ]
+
+    if (is_win) {
+      sources += [ "app/shell.rc" ]
+    }
 
     defines = []
 
@@ -436,6 +494,11 @@ if (!is_android && !is_mac) {
 
     if (is_win) {
       deps += [ "//sandbox" ]
+
+      # This is a large module that can't do incremental linking in some cases.
+      configs -= [ "//build/config/win:default_incremental_linking" ]
+      configs +=
+          [ "//build/config/win:default_large_module_incremental_linking" ]
       if (win_console_app) {
         defines += [ "WIN_CONSOLE_APP" ]
       } else {
@@ -445,29 +508,10 @@ if (!is_android && !is_mac) {
       }
     }
 
-    if (is_mac) {
-      # TODO(GYP) lots of stuff from GYP file here including helper_app and
-      # postbuilds.
-      output_name = content_shell_product_name
-      deps = [
-        ":framework",
-      ]
+    if (is_linux && !is_component_build) {
+      # Set rpath to find our own libfreetype even in a non-component build.
+      configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
     }
-
-    if (is_android) {
-      # Some tests rely on this tool. It might be nicer if these tests relied on
-      # image diff rather than having content shell depend on it.
-      data_deps = [
-        "//tools/imagediff($host_toolchain)",
-      ]
-    }
-  }
-} else {
-  group("content_shell") {
-    testonly = true
-    deps = [
-      ":content_shell_lib",
-    ]
   }
 }
 
@@ -481,6 +525,7 @@ if (is_win) {
     deps = [
       "//base",
       "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
       "//components/crash/content/tools:crash_service",
     ]
 
@@ -490,22 +535,185 @@ if (is_win) {
 }
 
 if (is_mac) {
-  # TODO(GYP) this should be a bundle. Lots of other stuff in this target.
-  # GYP version: content/content_shell.gypi:content_shell_framework
-  shared_library("framework") {
+  mac_xib_bundle_data("content_shell_framework_xibs") {
+    sources = [
+      "app/English.lproj/HttpAuth.xib",
+      "app/English.lproj/MainMenu.xib",
+    ]
+    output_path = "{{bundle_resources_dir}}/English.lproj"
+  }
+
+  bundle_data("content_shell_framework_resources") {
+    sources = [
+      "$root_out_dir/content_shell.pak",
+      "$root_out_dir/icudtl.dat",
+      "resources/missingImage.png",
+      "resources/textAreaResizeCorner.png",
+    ]
+
+    public_deps = [
+      ":pak",
+    ]
+
+    deps = [
+      "//third_party/icu:icudata",
+    ]
+
+    if (v8_use_external_startup_data) {
+      sources += [
+        "$root_out_dir/natives_blob.bin",
+        "$root_out_dir/snapshot_blob.bin",
+      ]
+      public_deps += [ "//v8" ]
+    }
+
+    outputs = [
+      "{{bundle_resources_dir}}/{{source_file_part}}",
+    ]
+  }
+
+  if (enable_plugins) {
+    bundle_data("content_shell_framework_plugins") {
+      sources = [
+        "$root_out_dir/blink_deprecated_test_plugin.plugin",
+        "$root_out_dir/blink_test_plugin.plugin",
+      ]
+
+      outputs = [
+        "{{bundle_root_dir}}/{{source_file_part}}",
+      ]
+
+      public_deps = [
+        "//ppapi:blink_deprecated_test_plugin",
+        "//ppapi:blink_test_plugin",
+      ]
+    }
+  }
+
+  content_shell_framework_name = "$content_shell_product_name Framework"
+  content_shell_helper_name = "$content_shell_product_name Helper"
+
+  tweak_info_plist("content_shell_framework_plist") {
+    testonly = true
+    info_plist = "app/framework-Info.plist"
+    args = [
+      "--breakpad=1",
+      "--keystone=0",
+      "--scm=1",
+      "--version",
+      content_shell_version,
+      "--branding",
+      content_shell_product_name,
+    ]
+  }
+
+  mac_framework_bundle("content_shell_framework") {
     testonly = true
 
-    # TODO(GYP) bug 546894: Fix GN and toolchains to handle spaces here.
-    #output_name = "$content_shell_product_name Framework"
-    output_name = "content_shell_framework"  # Temporary one with no spaces.
+    output_name = content_shell_framework_name
 
     sources = [
       "app/shell_content_main.cc",
       "app/shell_content_main.h",
     ]
 
+    # TODO(rsesek): Handle these missing pieces:
+    #   - crash_inspector
+    #   - crash_report_sender.app
+
     deps = [
+      ":content_shell_framework_resources",
+      ":content_shell_framework_xibs",
       ":content_shell_lib",
+      "//third_party/icu:icudata",
+    ]
+
+    if (enable_plugins) {
+      deps += [ ":content_shell_framework_plugins" ]
+    }
+
+    # Both the main :content_shell and :content_shell_helper_app executables
+    # need to link the framework. Because they are at different directory
+    # depths, using @executable_path as the install_name would require using
+    # install_name_tool on one of the executables. However install_name_tool
+    # only operates in-place, which is problematic to express in GN. Instead,
+    # use rpath-based loading.
+    # TODO(rsesek): After GYP is gone, re-write content_shell_main to be like
+    # chrome_main and use dlopen() instead of a linked framework.
+    ldflags = [ "-Wl,-install_name,@rpath/Frameworks/$output_name.framework/$output_name" ]
+
+    if (is_component_build) {
+      # Set up the rpath for the framework so that it can find dylibs in the
+      # root output directory. The framework is at
+      # Content Shell.app/Contents/Frameworks/Content Shell Framework.framework/Content Shell Framework
+      # so use loader_path to go back to the root output directory.
+      ldflags += [
+        "-rpath",
+        "@loader_path/../../../..",
+      ]
+    }
+
+    info_plist_target = ":content_shell_framework_plist"
+  }
+
+  tweak_info_plist("content_shell_helper_plist") {
+    testonly = true
+    info_plist = "app/helper-Info.plist"
+    args = [
+      "--breakpad=0",
+      "--keystone=0",
+      "--scm=0",
+      "--version",
+      content_shell_version,
     ]
   }
+
+  mac_app_bundle("content_shell_helper_app") {
+    testonly = true
+    output_name = content_shell_helper_name
+    sources = [
+      "app/shell_main.cc",
+    ]
+    deps = [
+      ":content_shell_framework+link",
+    ]
+    ldflags = [
+      # The helper is in Content Shell.app/Contents/Frameworks/Content Shell Helper.app/Contents/MacOS/
+      # so set rpath up to Contents/ so that the loader can find Frameworks/.
+      "-rpath",
+      "@executable_path/../../../..",
+    ]
+    info_plist_target = ":content_shell_helper_plist"
+  }
+
+  bundle_data("content_shell_framework_bundle_data") {
+    testonly = true
+    sources = [
+      "$root_out_dir/$content_shell_framework_name.framework",
+      "$root_out_dir/$content_shell_helper_name.app",
+    ]
+    outputs = [
+      "{{bundle_root_dir}}/Frameworks/{{source_file_part}}",
+    ]
+    public_deps = [
+      ":content_shell_framework+link",
+      ":content_shell_helper_app",
+    ]
+  }
+
+  bundle_data("content_shell_resources_bundle_data") {
+    testonly = true
+    sources = [
+      "app/app.icns",
+    ]
+    outputs = [
+      "{{bundle_resources_dir}}/{{source_file_part}}",
+    ]
+  }
+}
+
+mojom("mojo_bindings") {
+  sources = [
+    "common/layout_test/layout_test_bluetooth_fake_adapter_setter.mojom",
+  ]
 }

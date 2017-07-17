@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_PASSWORDS_PASSWORD_DIALOG_CONTROLLER_IMPL_H_
 #define CHROME_BROWSER_UI_PASSWORDS_PASSWORD_DIALOG_CONTROLLER_IMPL_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/passwords/password_dialog_controller.h"
 
 class AccountChooserPrompt;
@@ -37,12 +37,14 @@ class PasswordDialogControllerImpl : public PasswordDialogController {
   const FormsVector& GetLocalForms() const override;
   const FormsVector& GetFederationsForms() const override;
   std::pair<base::string16, gfx::Range> GetAccoutChooserTitle() const override;
+  bool ShouldShowSignInButton() const override;
   base::string16 GetAutoSigninPromoTitle() const override;
   std::pair<base::string16, gfx::Range> GetAutoSigninText() const override;
   void OnSmartLockLinkClicked() override;
   void OnChooseCredentials(
       const autofill::PasswordForm& password_form,
       password_manager::CredentialType credential_type) override;
+  void OnSignInClicked() override;
   void OnAutoSigninOK() override;
   void OnAutoSigninTurnOff() override;
   void OnCloseDialog() override;
@@ -55,8 +57,8 @@ class PasswordDialogControllerImpl : public PasswordDialogController {
   PasswordsModelDelegate* const delegate_;
   AccountChooserPrompt* account_chooser_dialog_;
   AutoSigninFirstRunPrompt* autosignin_dialog_;
-  std::vector<scoped_ptr<autofill::PasswordForm>> local_credentials_;
-  std::vector<scoped_ptr<autofill::PasswordForm>> federated_credentials_;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials_;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> federated_credentials_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordDialogControllerImpl);
 };

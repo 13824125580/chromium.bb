@@ -4,17 +4,9 @@
 
 #include "cc/trees/layer_tree_settings.h"
 
-#include <GLES2/gl2.h>
-#include <stddef.h>
-#include <limits>
-
-#include "base/command_line.h"
-#include "base/logging.h"
-#include "base/strings/string_number_conversions.h"
 #include "cc/proto/gfx_conversions.h"
-#include "cc/proto/gpu_conversions.h"
 #include "cc/proto/layer_tree_settings.pb.h"
-#include "ui/gfx/buffer_types.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 namespace cc {
 
@@ -55,61 +47,18 @@ LayerTreeSettingsScrollbarAnimatorFromProto(
 }  // namespace
 
 LayerTreeSettings::LayerTreeSettings()
-    : single_thread_proxy_scheduler(true),
-      use_external_begin_frame_source(false),
-      main_frame_before_activation_enabled(false),
-      using_synchronous_renderer_compositor(false),
-      accelerated_animation_enabled(true),
-      can_use_lcd_text(true),
-      use_distance_field_text(false),
-      gpu_rasterization_enabled(false),
-      gpu_rasterization_forced(false),
-      gpu_rasterization_msaa_sample_count(0),
-      gpu_rasterization_skewport_target_time_in_seconds(0.2f),
-      create_low_res_tiling(false),
-      scrollbar_animator(NO_ANIMATOR),
-      scrollbar_fade_delay_ms(0),
-      scrollbar_fade_resize_delay_ms(0),
-      scrollbar_fade_duration_ms(0),
-      solid_color_scrollbar_color(SK_ColorWHITE),
-      timeout_and_draw_when_animation_checkerboards(true),
-      layer_transforms_should_scale_layer_contents(false),
-      layers_always_allowed_lcd_text(false),
-      minimum_contents_scale(0.0625f),
-      low_res_contents_scale_factor(0.25f),
-      top_controls_show_threshold(0.5f),
-      top_controls_hide_threshold(0.5f),
-      background_animation_rate(1.0),
-      default_tile_size(gfx::Size(256, 256)),
+    : default_tile_size(gfx::Size(256, 256)),
       max_untiled_layer_size(gfx::Size(512, 512)),
       minimum_occlusion_tracking_size(gfx::Size(160, 160)),
-      // 3000 pixels should give sufficient area for prepainting.
-      tiling_interest_area_padding(3000),
-      skewport_target_time_in_seconds(1.0f),
-      skewport_extrapolation_limit_in_content_pixels(2000),
-      max_memory_for_prepaint_percentage(100),
-      strict_layer_property_change_checking(false),
-      use_zero_copy(false),
-      use_partial_raster(false),
-      enable_elastic_overscroll(false),
       use_image_texture_targets(
           static_cast<size_t>(gfx::BufferFormat::LAST) + 1,
           GL_TEXTURE_2D),
-      ignore_root_layer_flings(false),
-      scheduled_raster_task_limit(32),
-      use_occlusion_for_tile_prioritization(false),
-      image_decode_tasks_enabled(false),
-      use_compositor_animation_timelines(true),
-      wait_for_beginframe_interval(true),
-      use_mouse_wheel_gestures(false),
-      max_staging_buffer_usage_in_bytes(32 * 1024 * 1024),
       memory_policy_(64 * 1024 * 1024,
                      gpu::MemoryAllocation::CUTOFF_ALLOW_EVERYTHING,
                      ManagedMemoryPolicy::kDefaultNumResourcesLimit) {}
 
 LayerTreeSettings::LayerTreeSettings(const LayerTreeSettings& other) = default;
-
-LayerTreeSettings::~LayerTreeSettings() {}
+LayerTreeSettings::~LayerTreeSettings() = default;
 
 bool LayerTreeSettings::operator==(const LayerTreeSettings& other) const {
   return renderer_settings == other.renderer_settings &&
@@ -120,11 +69,11 @@ bool LayerTreeSettings::operator==(const LayerTreeSettings& other) const {
              other.main_frame_before_activation_enabled &&
          using_synchronous_renderer_compositor ==
              other.using_synchronous_renderer_compositor &&
-         accelerated_animation_enabled == other.accelerated_animation_enabled &&
          can_use_lcd_text == other.can_use_lcd_text &&
          use_distance_field_text == other.use_distance_field_text &&
          gpu_rasterization_enabled == other.gpu_rasterization_enabled &&
          gpu_rasterization_forced == other.gpu_rasterization_forced &&
+         async_worker_context_enabled == other.async_worker_context_enabled &&
          gpu_rasterization_msaa_sample_count ==
              other.gpu_rasterization_msaa_sample_count &&
          create_low_res_tiling == other.create_low_res_tiling &&
@@ -152,12 +101,10 @@ bool LayerTreeSettings::operator==(const LayerTreeSettings& other) const {
          tiling_interest_area_padding == other.tiling_interest_area_padding &&
          skewport_target_time_in_seconds ==
              other.skewport_target_time_in_seconds &&
-         skewport_extrapolation_limit_in_content_pixels ==
-             other.skewport_extrapolation_limit_in_content_pixels &&
+         skewport_extrapolation_limit_in_screen_pixels ==
+             other.skewport_extrapolation_limit_in_screen_pixels &&
          max_memory_for_prepaint_percentage ==
              other.max_memory_for_prepaint_percentage &&
-         strict_layer_property_change_checking ==
-             other.strict_layer_property_change_checking &&
          use_zero_copy == other.use_zero_copy &&
          use_partial_raster == other.use_partial_raster &&
          enable_elastic_overscroll == other.enable_elastic_overscroll &&
@@ -166,16 +113,15 @@ bool LayerTreeSettings::operator==(const LayerTreeSettings& other) const {
          scheduled_raster_task_limit == other.scheduled_raster_task_limit &&
          use_occlusion_for_tile_prioritization ==
              other.use_occlusion_for_tile_prioritization &&
+         verify_clip_tree_calculations == other.verify_clip_tree_calculations &&
          image_decode_tasks_enabled == other.image_decode_tasks_enabled &&
-         use_compositor_animation_timelines ==
-             other.use_compositor_animation_timelines &&
          wait_for_beginframe_interval == other.wait_for_beginframe_interval &&
-         use_mouse_wheel_gestures == other.use_mouse_wheel_gestures &&
          max_staging_buffer_usage_in_bytes ==
              other.max_staging_buffer_usage_in_bytes &&
          memory_policy_ == other.memory_policy_ &&
          LayerTreeDebugState::Equal(initial_debug_state,
-                                    other.initial_debug_state);
+                                    other.initial_debug_state) &&
+         use_cached_picture_raster == other.use_cached_picture_raster;
 }
 
 void LayerTreeSettings::ToProtobuf(proto::LayerTreeSettings* proto) const {
@@ -186,11 +132,11 @@ void LayerTreeSettings::ToProtobuf(proto::LayerTreeSettings* proto) const {
       main_frame_before_activation_enabled);
   proto->set_using_synchronous_renderer_compositor(
       using_synchronous_renderer_compositor);
-  proto->set_accelerated_animation_enabled(accelerated_animation_enabled);
   proto->set_can_use_lcd_text(can_use_lcd_text);
   proto->set_use_distance_field_text(use_distance_field_text);
   proto->set_gpu_rasterization_enabled(gpu_rasterization_enabled);
   proto->set_gpu_rasterization_forced(gpu_rasterization_forced);
+  proto->set_async_worker_context_enabled(async_worker_context_enabled);
   proto->set_gpu_rasterization_msaa_sample_count(
       gpu_rasterization_msaa_sample_count);
   proto->set_create_low_res_tiling(create_low_res_tiling);
@@ -216,12 +162,10 @@ void LayerTreeSettings::ToProtobuf(proto::LayerTreeSettings* proto) const {
               proto->mutable_minimum_occlusion_tracking_size());
   proto->set_tiling_interest_area_padding(tiling_interest_area_padding);
   proto->set_skewport_target_time_in_seconds(skewport_target_time_in_seconds);
-  proto->set_skewport_extrapolation_limit_in_content_pixels(
-      skewport_extrapolation_limit_in_content_pixels);
+  proto->set_skewport_extrapolation_limit_in_screen_pixels(
+      skewport_extrapolation_limit_in_screen_pixels);
   proto->set_max_memory_for_prepaint_percentage(
       max_memory_for_prepaint_percentage);
-  proto->set_strict_layer_property_change_checking(
-      strict_layer_property_change_checking);
   proto->set_use_zero_copy(use_zero_copy);
   proto->set_use_partial_raster(use_partial_raster);
   proto->set_enable_elastic_overscroll(enable_elastic_overscroll);
@@ -230,14 +174,12 @@ void LayerTreeSettings::ToProtobuf(proto::LayerTreeSettings* proto) const {
   proto->set_use_occlusion_for_tile_prioritization(
       use_occlusion_for_tile_prioritization);
   proto->set_image_decode_tasks_enabled(image_decode_tasks_enabled);
-  proto->set_use_compositor_animation_timelines(
-      use_compositor_animation_timelines);
   proto->set_wait_for_beginframe_interval(wait_for_beginframe_interval);
-  proto->set_use_mouse_wheel_gestures(use_mouse_wheel_gestures);
   proto->set_max_staging_buffer_usage_in_bytes(
       max_staging_buffer_usage_in_bytes);
   memory_policy_.ToProtobuf(proto->mutable_memory_policy());
   initial_debug_state.ToProtobuf(proto->mutable_initial_debug_state());
+  proto->set_use_cached_picture_raster(use_cached_picture_raster);
 
   for (unsigned u : use_image_texture_targets)
     proto->add_use_image_texture_targets(u);
@@ -251,11 +193,11 @@ void LayerTreeSettings::FromProtobuf(const proto::LayerTreeSettings& proto) {
       proto.main_frame_before_activation_enabled();
   using_synchronous_renderer_compositor =
       proto.using_synchronous_renderer_compositor();
-  accelerated_animation_enabled = proto.accelerated_animation_enabled();
   can_use_lcd_text = proto.can_use_lcd_text();
   use_distance_field_text = proto.use_distance_field_text();
   gpu_rasterization_enabled = proto.gpu_rasterization_enabled();
   gpu_rasterization_forced = proto.gpu_rasterization_forced();
+  async_worker_context_enabled = proto.async_worker_context_enabled();
   gpu_rasterization_msaa_sample_count =
       proto.gpu_rasterization_msaa_sample_count();
   create_low_res_tiling = proto.create_low_res_tiling();
@@ -281,12 +223,10 @@ void LayerTreeSettings::FromProtobuf(const proto::LayerTreeSettings& proto) {
       ProtoToSize(proto.minimum_occlusion_tracking_size());
   tiling_interest_area_padding = proto.tiling_interest_area_padding();
   skewport_target_time_in_seconds = proto.skewport_target_time_in_seconds();
-  skewport_extrapolation_limit_in_content_pixels =
-      proto.skewport_extrapolation_limit_in_content_pixels();
+  skewport_extrapolation_limit_in_screen_pixels =
+      proto.skewport_extrapolation_limit_in_screen_pixels();
   max_memory_for_prepaint_percentage =
       proto.max_memory_for_prepaint_percentage();
-  strict_layer_property_change_checking =
-      proto.strict_layer_property_change_checking();
   use_zero_copy = proto.use_zero_copy();
   use_partial_raster = proto.use_partial_raster();
   enable_elastic_overscroll = proto.enable_elastic_overscroll();
@@ -297,13 +237,11 @@ void LayerTreeSettings::FromProtobuf(const proto::LayerTreeSettings& proto) {
   use_occlusion_for_tile_prioritization =
       proto.use_occlusion_for_tile_prioritization();
   image_decode_tasks_enabled = proto.image_decode_tasks_enabled();
-  use_compositor_animation_timelines =
-      proto.use_compositor_animation_timelines();
   wait_for_beginframe_interval = proto.wait_for_beginframe_interval();
-  use_mouse_wheel_gestures = proto.use_mouse_wheel_gestures();
   max_staging_buffer_usage_in_bytes = proto.max_staging_buffer_usage_in_bytes();
   memory_policy_.FromProtobuf(proto.memory_policy());
   initial_debug_state.FromProtobuf(proto.initial_debug_state());
+  use_cached_picture_raster = proto.use_cached_picture_raster();
 
   for (int i = 0; i < proto.use_image_texture_targets_size(); ++i)
     use_image_texture_targets.push_back(proto.use_image_texture_targets(i));
@@ -322,6 +260,8 @@ SchedulerSettings LayerTreeSettings::ToSchedulerSettings() const {
   scheduler_settings.throttle_frame_production = wait_for_beginframe_interval;
   scheduler_settings.background_frame_interval =
       base::TimeDelta::FromSecondsD(1.0 / background_animation_rate);
+  scheduler_settings.abort_commit_before_output_surface_creation =
+      abort_commit_before_output_surface_creation;
   return scheduler_settings;
 }
 

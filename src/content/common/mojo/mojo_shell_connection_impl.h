@@ -1,81 +1,73 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_COMMON_MOJO_SHELL_CONNECTION_IMPL_H_
 #define CONTENT_COMMON_MOJO_SHELL_CONNECTION_IMPL_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/common/mojo_shell_connection.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/system/message_pipe.h"
-#include "mojo/shell/public/cpp/shell.h"
-#include "mojo/shell/public/cpp/shell_client.h"
-#include "mojo/shell/public/cpp/shell_connection.h"
-
-namespace mojo {
-namespace shell {
-class RunnerConnection;
-}
-}
+#include "services/shell/public/cpp/shell_client.h"
+#include "services/shell/public/cpp/shell_connection.h"
+#include "services/shell/public/interfaces/shell_client_factory.mojom.h"
 
 namespace content {
 
-// Returns true for processes launched from an external mojo shell.
-bool IsRunningInMojoShell();
+class EmbeddedApplicationRunner;
 
-class MojoShellConnectionImpl : public MojoShellConnection,
-                                public mojo::ShellClient {
+class MojoShellConnectionImpl
+    : public MojoShellConnection,
+      public shell::ShellClient,
+      public shell::InterfaceFactory<shell::mojom::ShellClientFactory>,
+      public shell::mojom::ShellClientFactory {
+
  public:
-  // Creates an instance of this class and stuffs it in TLS on the calling
-  // thread. Retrieve it using MojoShellConnection::Get().
-  static void Create();
-
-  // Like above but for initializing a connection to an embedded in-process
-  // shell implementation. Binds to |request|.
-  static void Create(mojo::shell::mojom::ShellClientRequest request);
-
-  // Will return null if no connection has been established (either because it
-  // hasn't happened yet or the application was not spawned from the external
-  // Mojo shell).
-  static MojoShellConnectionImpl* Get();
-
-  // Blocks the calling thread until calling GetApplication() will return an
-  // Initialized() application with a bound ShellPtr. This call is a no-op
-  // if the connection has already been initialized.
-  void BindToCommandLinePlatformChannel();
-
-  // Same as BindToCommandLinePlatformChannel(), but receives a |handle| instead
-  // of looking for one on the command line.
-  void BindToMessagePipe(mojo::ScopedMessagePipeHandle handle);
-
- private:
-  explicit MojoShellConnectionImpl(bool external);
+  explicit MojoShellConnectionImpl(shell::mojom::ShellClientRequest request);
   ~MojoShellConnectionImpl() override;
 
-  // mojo::ShellClient:
-  void Initialize(mojo::Connector* connector, const std::string& url,
-                  uint32_t id, uint32_t user_id) override;
-  bool AcceptConnection(mojo::Connection* connection) override;
-
+ private:
   // MojoShellConnection:
-  mojo::Connector* GetConnector() override;
-  bool UsingExternalShell() const override;
-  void AddListener(Listener* listener) override;
-  void RemoveListener(Listener* listener) override;
+  shell::ShellConnection* GetShellConnection() override;
+  shell::Connector* GetConnector() override;
+  const shell::Identity& GetIdentity() const override;
+  void SetConnectionLostClosure(const base::Closure& closure) override;
+  void AddEmbeddedShellClient(
+      std::unique_ptr<shell::ShellClient> shell_client) override;
+  void AddEmbeddedShellClient(shell::ShellClient* shell_client) override;
+  void AddEmbeddedService(const std::string& name,
+                          const MojoApplicationInfo& info) override;
+  void AddShellClientRequestHandler(
+      const std::string& name,
+      const ShellClientRequestHandler& handler) override;
 
-  // Blocks the calling thread until a connection to the spawning shell is
-  // established, an Application request from it is bound, and the Initialize()
-  // method on that application is called.
-  void WaitForShell(mojo::ScopedMessagePipeHandle handle);
+  // shell::ShellClient:
+  void Initialize(shell::Connector* connector,
+                  const shell::Identity& identity,
+                  uint32_t id) override;
+  bool AcceptConnection(shell::Connection* connection) override;
+  shell::InterfaceRegistry* GetInterfaceRegistryForConnection() override;
+  shell::InterfaceProvider* GetInterfaceProviderForConnection() override;
 
-  bool external_;
-  bool initialized_;
-  scoped_ptr<mojo::shell::RunnerConnection> runner_connection_;
-  scoped_ptr<mojo::ShellConnection> shell_connection_;
-  std::vector<Listener*> listeners_;
+  // shell::InterfaceFactory<shell::mojom::ShellClientFactory>:
+  void Create(shell::Connection* connection,
+              shell::mojom::ShellClientFactoryRequest request) override;
+
+  // shell::mojom::ShellClientFactory:
+  void CreateShellClient(shell::mojom::ShellClientRequest request,
+                         const mojo::String& name) override;
+
+  std::unique_ptr<shell::ShellConnection> shell_connection_;
+  mojo::BindingSet<shell::mojom::ShellClientFactory> factory_bindings_;
+  std::vector<shell::ShellClient*> embedded_shell_clients_;
+  std::vector<std::unique_ptr<shell::ShellClient>> owned_shell_clients_;
+  std::unordered_map<std::string, std::unique_ptr<EmbeddedApplicationRunner>>
+      embedded_apps_;
+  std::unordered_map<std::string, ShellClientRequestHandler> request_handlers_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoShellConnectionImpl);
 };

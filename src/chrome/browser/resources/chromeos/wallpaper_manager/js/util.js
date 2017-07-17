@@ -310,6 +310,15 @@ WallpaperUtil.saveToSyncStorage = function(key, value, opt_callback) {
  *     set by the built-in wallpaper picker, it is set to an empty string.
  */
 WallpaperUtil.saveWallpaperInfo = function(url, layout, source, appName) {
+  chrome.wallpaperPrivate.recordWallpaperUMA(source);
+
+  // In order to keep the wallpaper sync working across different versions, we
+  // have to revert DAILY/THIRDPARTY type wallpaper info to ONLINE/CUSTOM type
+  // after record the correct UMA stats.
+  source = (source == Constants.WallpaperSourceEnum.Daily) ?
+      Constants.WallpaperSourceEnum.Online : source;
+  source = (source == Constants.WallpaperSourceEnum.ThirdParty) ?
+      Constants.WallpaperSourceEnum.Custom : source;
   var wallpaperInfo = {
       url: url,
       layout: layout,
@@ -378,8 +387,6 @@ WallpaperUtil.setOnlineWallpaper = function(url, layout, onSuccess, onFailure) {
       if (xhr.response != null) {
         chrome.wallpaperPrivate.setWallpaper(xhr.response, layout, url,
                                              onSuccess);
-        self.saveWallpaperInfo(
-            url, layout, Constants.WallpaperSourceEnum.Online, '');
       } else {
         onFailure();
       }

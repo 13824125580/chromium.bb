@@ -37,11 +37,13 @@ class OfflineAudioDestinationHandler;
 class MODULES_EXPORT OfflineAudioContext final : public AbstractAudioContext {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static OfflineAudioContext* create(ExecutionContext*, unsigned numberOfChannels, size_t numberOfFrames, float sampleRate, ExceptionState&);
+    static OfflineAudioContext* create(ExecutionContext*, unsigned numberOfChannels, unsigned numberOfFrames, float sampleRate, ExceptionState&);
 
     ~OfflineAudioContext() override;
 
     DECLARE_VIRTUAL_TRACE();
+
+    unsigned length() const { return m_totalRenderFrames; }
 
     ScriptPromise startOfflineRendering(ScriptState*);
 
@@ -52,6 +54,8 @@ public:
     // This is to implement the pure virtual method from AbstractAudioContext.
     // CANNOT be called from an OfflineAudioContext.
     ScriptPromise suspendContext(ScriptState*) final;
+
+    void rejectPendingResolvers() override;
 
     bool hasRealtimeConstraint() final { return false; }
 

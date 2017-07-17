@@ -18,7 +18,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -231,13 +230,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowArgumentsOverflow) {
 class WindowOpenPanelDisabledTest : public ExtensionApiTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ExtensionApiTest::SetUpCommandLine(command_line);
-    // TODO(jennb): Re-enable when panels are enabled by default.
-    // command_line->AppendSwitch(switches::kDisablePanels);
+    command_line->AppendSwitch(switches::kDisablePanels);
   }
 };
 
-IN_PROC_BROWSER_TEST_F(WindowOpenPanelDisabledTest,
-                       DISABLED_WindowOpenPanelNotEnabled) {
+IN_PROC_BROWSER_TEST_F(WindowOpenPanelDisabledTest, WindowOpenPanelNotEnabled) {
   ASSERT_TRUE(RunExtensionTest("window_open/panel_not_enabled")) << message_;
 }
 
@@ -281,7 +278,18 @@ IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, BrowsingInstanceTest) {
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(StartEmbeddedTestServer());
 
-  ASSERT_TRUE(RunExtensionTest("window_open/panel_browsing_instance"))
+  ASSERT_TRUE(
+      RunExtensionTestWithArg("window_open/panel_browsing_instance", "panel"))
+      << message_;
+}
+
+// Similar to the previous test, but for when panels are disabled.
+IN_PROC_BROWSER_TEST_F(WindowOpenPanelDisabledTest, BrowsingInstanceTest) {
+  host_resolver()->AddRule("*", "127.0.0.1");
+  ASSERT_TRUE(StartEmbeddedTestServer());
+
+  ASSERT_TRUE(
+      RunExtensionTestWithArg("window_open/panel_browsing_instance", "popup"))
       << message_;
 }
 
@@ -308,13 +316,6 @@ IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, MAYBE_WindowOpenPanelDetached) {
 #endif
 IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest,
                        MAYBE_CloseNonExtensionPanelsOnUninstall) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
 #if defined(USE_ASH_PANELS)
   // On Ash, new panel windows open as popup windows instead.
   int num_popups, num_panels;

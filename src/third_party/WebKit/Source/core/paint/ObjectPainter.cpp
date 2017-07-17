@@ -184,6 +184,21 @@ void paintComplexOutline(GraphicsContext& graphicsContext, const Vector<IntRect>
         graphicsContext.endLayer();
 }
 
+
+void fillQuad(GraphicsContext& context, const FloatPoint quad[], const Color& color, bool antialias)
+{
+    SkPath path;
+    path.moveTo(quad[0]);
+    path.lineTo(quad[1]);
+    path.lineTo(quad[2]);
+    path.lineTo(quad[3]);
+    SkPaint paint(context.fillPaint());
+    paint.setAntiAlias(antialias);
+    paint.setColor(color.rgb());
+
+    context.drawPath(path, paint);
+}
+
 } // namespace
 
 void ObjectPainter::paintOutline(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -203,7 +218,7 @@ void ObjectPainter::paintOutline(const PaintInfo& paintInfo, const LayoutPoint& 
     if (outlineRects.isEmpty())
         return;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutObject, paintInfo.phase, paintOffset))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutObject, paintInfo.phase))
         return;
 
     // The result rects are in coordinates of m_layoutObject's border box.
@@ -224,7 +239,7 @@ void ObjectPainter::paintOutline(const PaintInfo& paintInfo, const LayoutPoint& 
     IntRect unitedOutlineRect = unionRectEvenIfEmpty(pixelSnappedOutlineRects);
     IntRect bounds = unitedOutlineRect;
     bounds.inflate(m_layoutObject.styleRef().outlineOutsetExtent());
-    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutObject, paintInfo.phase, bounds, paintOffset);
+    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutObject, paintInfo.phase, bounds);
 
     Color color = m_layoutObject.resolveColor(styleToUse, CSSPropertyOutlineColor);
     if (styleToUse.outlineStyleIsAuto()) {
@@ -266,10 +281,10 @@ void ObjectPainter::addPDFURLRectIfNeeded(const PaintInfo& paintInfo, const Layo
     if (rect.isEmpty())
         return;
 
-    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutObject, DisplayItem::PrintedContentPDFURLRect, paintOffset))
+    if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutObject, DisplayItem::PrintedContentPDFURLRect))
         return;
 
-    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutObject, DisplayItem::PrintedContentPDFURLRect, rect, paintOffset);
+    LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutObject, DisplayItem::PrintedContentPDFURLRect, rect);
     if (url.hasFragmentIdentifier() && equalIgnoringFragmentIdentifier(url, m_layoutObject.document().baseURL())) {
         String fragmentName = url.fragmentIdentifier();
         if (m_layoutObject.document().findAnchor(fragmentName))
@@ -299,38 +314,38 @@ void ObjectPainter::drawLineForBoxSide(GraphicsContext& graphicsContext, int x1,
     if (length <= 0 || thickness <= 0)
         return;
 
-    if (style == DOUBLE && thickness < 3)
-        style = SOLID;
+    if (style == BorderStyleDouble && thickness < 3)
+        style = BorderStyleSolid;
 
     switch (style) {
-    case BNONE:
-    case BHIDDEN:
+    case BorderStyleNone:
+    case BorderStyleHidden:
         return;
-    case DOTTED:
-    case DASHED:
+    case BorderStyleDotted:
+    case BorderStyleDashed:
         drawDashedOrDottedBoxSide(graphicsContext, x1, y1, x2, y2, side,
             color, thickness, style, antialias);
         break;
-    case DOUBLE:
+    case BorderStyleDouble:
         drawDoubleBoxSide(graphicsContext, x1, y1, x2, y2, length, side, color,
             thickness, adjacentWidth1, adjacentWidth2, antialias);
         break;
-    case RIDGE:
-    case GROOVE:
+    case BorderStyleRidge:
+    case BorderStyleGroove:
         drawRidgeOrGrooveBoxSide(graphicsContext, x1, y1, x2, y2, side, color,
             style, adjacentWidth1, adjacentWidth2, antialias);
         break;
-    case INSET:
+    case BorderStyleInset:
         // FIXME: Maybe we should lighten the colors on one side like Firefox.
         // https://bugs.webkit.org/show_bug.cgi?id=58608
         if (side == BSTop || side == BSLeft)
             color = color.dark();
         // fall through
-    case OUTSET:
-        if (style == OUTSET && (side == BSBottom || side == BSRight))
+    case BorderStyleOutset:
+        if (style == BorderStyleOutset && (side == BSBottom || side == BSRight))
             color = color.dark();
         // fall through
-    case SOLID:
+    case BorderStyleSolid:
         drawSolidBoxSide(graphicsContext, x1, y1, x2, y2, side, color, adjacentWidth1, adjacentWidth2, antialias);
         break;
     }
@@ -342,11 +357,11 @@ void ObjectPainter::drawDashedOrDottedBoxSide(GraphicsContext& graphicsContext, 
     ASSERT(thickness > 0);
 
     bool wasAntialiased = graphicsContext.shouldAntialias();
-    StrokeStyle oldStrokeStyle = graphicsContext.strokeStyle();
+    StrokeStyle oldStrokeStyle = graphicsContext.getStrokeStyle();
     graphicsContext.setShouldAntialias(antialias);
     graphicsContext.setStrokeColor(color);
     graphicsContext.setStrokeThickness(thickness);
-    graphicsContext.setStrokeStyle(style == DASHED ? DashedStroke : DottedStroke);
+    graphicsContext.setStrokeStyle(style == BorderStyleDashed ? DashedStroke : DottedStroke);
 
     switch (side) {
     case BSBottom:
@@ -373,7 +388,7 @@ void ObjectPainter::drawDoubleBoxSide(GraphicsContext& graphicsContext, int x1, 
     ASSERT(thirdOfThickness > 0);
 
     if (!adjacentWidth1 && !adjacentWidth2) {
-        StrokeStyle oldStrokeStyle = graphicsContext.strokeStyle();
+        StrokeStyle oldStrokeStyle = graphicsContext.getStrokeStyle();
         graphicsContext.setStrokeStyle(NoStroke);
         graphicsContext.setFillColor(color);
 
@@ -405,34 +420,34 @@ void ObjectPainter::drawDoubleBoxSide(GraphicsContext& graphicsContext, int x1, 
     case BSTop:
         drawLineForBoxSide(graphicsContext, x1 + std::max((-adjacentWidth1 * 2 + 1) / 3, 0),
             y1, x2 - std::max((-adjacentWidth2 * 2 + 1) / 3, 0), y1 + thirdOfThickness,
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         drawLineForBoxSide(graphicsContext, x1 + std::max((adjacentWidth1 * 2 + 1) / 3, 0),
             y2 - thirdOfThickness, x2 - std::max((adjacentWidth2 * 2 + 1) / 3, 0), y2,
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         break;
     case BSLeft:
         drawLineForBoxSide(graphicsContext, x1, y1 + std::max((-adjacentWidth1 * 2 + 1) / 3, 0),
             x1 + thirdOfThickness, y2 - std::max((-adjacentWidth2 * 2 + 1) / 3, 0),
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         drawLineForBoxSide(graphicsContext, x2 - thirdOfThickness, y1 + std::max((adjacentWidth1 * 2 + 1) / 3, 0),
             x2, y2 - std::max((adjacentWidth2 * 2 + 1) / 3, 0),
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         break;
     case BSBottom:
         drawLineForBoxSide(graphicsContext, x1 + std::max((adjacentWidth1 * 2 + 1) / 3, 0),
             y1, x2 - std::max((adjacentWidth2 * 2 + 1) / 3, 0), y1 + thirdOfThickness,
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         drawLineForBoxSide(graphicsContext, x1 + std::max((-adjacentWidth1 * 2 + 1) / 3, 0),
             y2 - thirdOfThickness, x2 - std::max((-adjacentWidth2 * 2 + 1) / 3, 0), y2,
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         break;
     case BSRight:
         drawLineForBoxSide(graphicsContext, x1, y1 + std::max((adjacentWidth1 * 2 + 1) / 3, 0),
             x1 + thirdOfThickness, y2 - std::max((adjacentWidth2 * 2 + 1) / 3, 0),
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         drawLineForBoxSide(graphicsContext, x2 - thirdOfThickness, y1 + std::max((-adjacentWidth1 * 2 + 1) / 3, 0),
             x2, y2 - std::max((-adjacentWidth2 * 2 + 1) / 3, 0),
-            side, color, SOLID, adjacent1BigThird, adjacent2BigThird, antialias);
+            side, color, BorderStyleSolid, adjacent1BigThird, adjacent2BigThird, antialias);
         break;
     default:
         break;
@@ -444,12 +459,12 @@ void ObjectPainter::drawRidgeOrGrooveBoxSide(GraphicsContext& graphicsContext, i
 {
     EBorderStyle s1;
     EBorderStyle s2;
-    if (style == GROOVE) {
-        s1 = INSET;
-        s2 = OUTSET;
+    if (style == BorderStyleGroove) {
+        s1 = BorderStyleInset;
+        s2 = BorderStyleOutset;
     } else {
-        s1 = OUTSET;
-        s2 = INSET;
+        s1 = BorderStyleOutset;
+        s2 = BorderStyleInset;
     }
 
     int adjacent1BigHalf = ((adjacentWidth1 > 0) ? adjacentWidth1 + 1 : adjacentWidth1 - 1) / 2;
@@ -490,7 +505,7 @@ void ObjectPainter::drawSolidBoxSide(GraphicsContext& graphicsContext, int x1, i
     ASSERT(y2 >= y1);
 
     if (!adjacentWidth1 && !adjacentWidth2) {
-        // Tweak antialiasing to match the behavior of fillPolygon();
+        // Tweak antialiasing to match the behavior of fillQuad();
         // this matters for rects in transformed contexts.
         bool wasAntialiased = graphicsContext.shouldAntialias();
         if (antialias != wasAntialiased)
@@ -529,10 +544,10 @@ void ObjectPainter::drawSolidBoxSide(GraphicsContext& graphicsContext, int x1, i
         break;
     }
 
-    graphicsContext.fillPolygon(4, quad, color, antialias);
+    fillQuad(graphicsContext, quad, color, antialias);
 }
 
-void ObjectPainter::paintAsPseudoStackingContext(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
+void ObjectPainter::paintAllPhasesAtomically(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     // Pass PaintPhaseSelection and PaintPhaseTextClip to the descendants so that they will paint
     // for selection and text clip respectively. We don't need complete painting for these phases.

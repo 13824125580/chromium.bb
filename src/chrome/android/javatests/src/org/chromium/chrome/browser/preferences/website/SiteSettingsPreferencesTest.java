@@ -131,6 +131,15 @@ public class SiteSettingsPreferencesTest extends ChromeActivityTestCaseBase<Chro
         assertTrue(getInfoBars().isEmpty());
     }
 
+    private Preferences startSiteSettingsMenu(String category) {
+        Bundle fragmentArgs = new Bundle();
+        fragmentArgs.putString(SingleCategoryPreferences.EXTRA_CATEGORY, category);
+        Intent intent = PreferencesLauncher.createIntentForSettingsPage(
+                getInstrumentation().getTargetContext(), SiteSettingsPreferences.class.getName());
+        intent.putExtra(Preferences.EXTRA_SHOW_FRAGMENT_ARGUMENTS, fragmentArgs);
+        return (Preferences) getInstrumentation().startActivitySync(intent);
+    }
+
     private Preferences startSiteSettingsCategory(String category) {
         Bundle fragmentArgs = new Bundle();
         fragmentArgs.putString(SingleCategoryPreferences.EXTRA_CATEGORY, category);
@@ -301,6 +310,25 @@ public class SiteSettingsPreferencesTest extends ChromeActivityTestCaseBase<Chro
         preferenceActivity.finish();
     }
 
+    private void setEnableBackgroundSync(final boolean enabled) {
+        final Preferences preferenceActivity =
+                startSiteSettingsCategory(SiteSettingsCategory.CATEGORY_BACKGROUND_SYNC);
+
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                SingleCategoryPreferences backgroundSyncPreferences =
+                        (SingleCategoryPreferences) preferenceActivity.getFragmentForTest();
+                ChromeSwitchPreference toggle =
+                        (ChromeSwitchPreference) backgroundSyncPreferences.findPreference(
+                                SingleCategoryPreferences.READ_WRITE_TOGGLE_KEY);
+                backgroundSyncPreferences.onPreferenceChange(toggle, enabled);
+            }
+        });
+    }
+
+    // TODO(finnur): Write test for Autoplay.
+
     /**
      * Tests that disabling cookies turns off the third-party cookie toggle.
      * @throws Exception
@@ -438,6 +466,70 @@ public class SiteSettingsPreferencesTest extends ChromeActivityTestCaseBase<Chro
     }
 
     /**
+     * Test that showing the Site Settings menu doesn't crash (crbug.com/610576).
+     * @throws Exception
+     */
+    @SmallTest
+    @Feature({"Preferences"})
+    public void testSiteSettingsMenu() throws Exception {
+        final Preferences preferenceActivity = startSiteSettingsMenu("");
+        preferenceActivity.finish();
+    }
+
+    /**
+     * Test the Media Menu.
+     * @throws Exception
+     */
+    @SmallTest
+    @Feature({"Preferences"})
+    public void testMediaMenu() throws Exception {
+        final Preferences preferenceActivity =
+                startSiteSettingsMenu(SiteSettingsPreferences.MEDIA_KEY);
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                SiteSettingsPreferences siteSettings = (SiteSettingsPreferences)
+                        preferenceActivity.getFragmentForTest();
+
+                SiteSettingsPreference allSites  = (SiteSettingsPreference)
+                        siteSettings.findPreference(SiteSettingsPreferences.ALL_SITES_KEY);
+                assertEquals(null, allSites);
+
+                SiteSettingsPreference autoplay  = (SiteSettingsPreference)
+                        siteSettings.findPreference(SiteSettingsPreferences.AUTOPLAY_KEY);
+                assertFalse(autoplay == null);
+
+                SiteSettingsPreference protectedContent = (SiteSettingsPreference)
+                        siteSettings.findPreference(SiteSettingsPreferences.PROTECTED_CONTENT_KEY);
+                assertFalse(protectedContent == null);
+
+                preferenceActivity.finish();
+            }
+        });
+    }
+
+    /**
+     * Tests Reset Site not crashing on host names (issue 600232).
+     * @throws Exception
+     */
+    @SmallTest
+    @Feature({"Preferences"})
+    public void testResetCrash600232() throws Exception {
+        Website website = new Website(WebsiteAddress.create("example.com"));
+        final Preferences preferenceActivity = startSingleWebsitePreferences(website);
+
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                SingleWebsitePreferences websitePreferences =
+                        (SingleWebsitePreferences) preferenceActivity.getFragmentForTest();
+                websitePreferences.resetSite();
+            }
+        });
+        preferenceActivity.finish();
+    }
+
+    /**
      * Sets Allow Camera Enabled to be false and make sure it is set correctly.
      * @throws Exception
      */
@@ -540,6 +632,33 @@ public class SiteSettingsPreferencesTest extends ChromeActivityTestCaseBase<Chro
         assertEquals("Wrong page encoding while auto detect encoding enabled", "Big5",
                 getActivity().getCurrentContentViewCore().getWebContents().getEncoding());
 
+    }
+
+    /**
+     * Helper function to test allowing and blocking background sync.
+     * @param enabled true to test enabling background sync, false to test disabling the feature.
+     */
+    private void doTestBackgroundSyncPermission(final boolean enabled) {
+        setEnableBackgroundSync(enabled);
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                assertEquals("Background Sync should be " + (enabled ? "enabled" : "disabled"),
+                        PrefServiceBridge.getInstance().isBackgroundSyncAllowed(), enabled);
+            }
+        });
+    }
+
+    @SmallTest
+    @Feature({"Preferences"})
+    public void testAllowBackgroundSync() {
+        doTestBackgroundSyncPermission(true);
+    }
+
+    @SmallTest
+    @Feature({"Preferences"})
+    public void testBlockBackgroundSync() {
+        doTestBackgroundSyncPermission(false);
     }
 
     private int getTabCount() {

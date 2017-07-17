@@ -2,22 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 
+#include "ash/common/login_status.h"
+#include "ash/common/system/date/date_default_view.h"
+#include "ash/common/system/date/tray_date.h"
+#include "ash/common/system/tray/tray_popup_header_button.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/system/date/date_default_view.h"
-#include "ash/system/date/tray_date.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/tray_popup_header_button.h"
-#include "ash/system/user/login_status.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker_tester.h"
@@ -135,7 +136,7 @@ class ShutdownPolicyBaseTest
 
   content::WebContents* contents_;
   bool result_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 };
 
 class ShutdownPolicyInSessionTest
@@ -150,9 +151,8 @@ class ShutdownPolicyInSessionTest
                                  ->GetPrimarySystemTray()
                                  ->GetTrayDateForTesting();
     ASSERT_TRUE(tray_date);
-    date_default_view_.reset(
-        static_cast<ash::DateDefaultView*>(
-            tray_date->CreateDefaultViewForTesting(ash::user::LOGGED_IN_USER)));
+    date_default_view_.reset(static_cast<ash::DateDefaultView*>(
+        tray_date->CreateDefaultViewForTesting(ash::LoginStatus::USER)));
     ASSERT_TRUE(date_default_view_);
   }
 
@@ -175,7 +175,7 @@ class ShutdownPolicyInSessionTest
   }
 
  private:
-  scoped_ptr<ash::DateDefaultView> date_default_view_;
+  std::unique_ptr<ash::DateDefaultView> date_default_view_;
 
   DISALLOW_COPY_AND_ASSIGN(ShutdownPolicyInSessionTest);
 };
@@ -208,7 +208,7 @@ class ShutdownPolicyLockerTest : public ShutdownPolicyBaseTest {
   void SetUpInProcessBrowserTestFixture() override {
     fake_session_manager_client_ = new FakeSessionManagerClient;
     DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        scoped_ptr<SessionManagerClient>(fake_session_manager_client_));
+        std::unique_ptr<SessionManagerClient>(fake_session_manager_client_));
 
     ShutdownPolicyBaseTest::SetUpInProcessBrowserTestFixture();
     zero_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
@@ -222,7 +222,7 @@ class ShutdownPolicyLockerTest : public ShutdownPolicyBaseTest {
 
     // Bring up the locker screen.
     ScreenLocker::Show();
-    scoped_ptr<test::ScreenLockerTester> tester(ScreenLocker::GetTester());
+    std::unique_ptr<test::ScreenLockerTester> tester(ScreenLocker::GetTester());
     tester->EmulateWindowManagerReady();
     content::WindowedNotificationObserver lock_state_observer(
         chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED,
@@ -244,7 +244,7 @@ class ShutdownPolicyLockerTest : public ShutdownPolicyBaseTest {
   }
 
  private:
-  scoped_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
+  std::unique_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
   FakeSessionManagerClient* fake_session_manager_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ShutdownPolicyLockerTest);
@@ -306,8 +306,8 @@ class ShutdownPolicyLoginTest : public ShutdownPolicyBaseTest {
   void TearDownOnMainThread() override {
     // If the login display is still showing, exit gracefully.
     if (LoginDisplayHost::default_host()) {
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(&chrome::AttemptExit));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(&chrome::AttemptExit));
       content::RunMessageLoop();
     }
   }

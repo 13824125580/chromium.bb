@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/run_loop.h"
 #include "components/nacl/loader/nacl_listener.h"
 
 #include <errno.h>
@@ -9,15 +10,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <memory>
+
 #if defined(OS_POSIX)
 #include <unistd.h>
 #endif
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_messages.h"
 #include "components/nacl/common/nacl_renderer_messages.h"
@@ -73,39 +77,7 @@ void LoadStatusCallback(int load_status) {
           static_cast<NaClErrorCode>(load_status)));
 }
 
-#if defined(OS_MACOSX)
-
-// On Mac OS X, shm_open() works in the sandbox but does not give us
-// an FD that we can map as PROT_EXEC.  Rather than doing an IPC to
-// get an executable SHM region when CreateMemoryObject() is called,
-// we preallocate one on startup, since NaCl's sel_ldr only needs one
-// of them.  This saves a round trip.
-
-base::subtle::Atomic32 g_shm_fd = -1;
-
-int CreateMemoryObject(size_t size, int executable) {
-  if (executable && size > 0) {
-    int result_fd = base::subtle::NoBarrier_AtomicExchange(&g_shm_fd, -1);
-    if (result_fd != -1) {
-      // ftruncate() is disallowed by the Mac OS X sandbox and
-      // returns EPERM.  Luckily, we can get the same effect with
-      // lseek() + write().
-      if (lseek(result_fd, size - 1, SEEK_SET) == -1) {
-        LOG(ERROR) << "lseek() failed: " << errno;
-        return -1;
-      }
-      if (write(result_fd, "", 1) != 1) {
-        LOG(ERROR) << "write() failed: " << errno;
-        return -1;
-      }
-      return result_fd;
-    }
-  }
-  // Fall back to NaCl's default implementation.
-  return -1;
-}
-
-#elif defined(OS_LINUX)
+#if defined(OS_LINUX)
 
 int CreateMemoryObject(size_t size, int executable) {
   return content::MakeSharedMemorySegmentViaIPC(size, executable);
@@ -186,7 +158,8 @@ class BrowserValidationDBProxy : public NaClValidationDB {
 };
 
 NaClListener::NaClListener()
-    : shutdown_event_(true, false),
+    : shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
       io_thread_("NaCl_IOThread"),
 #if defined(OS_LINUX)
       prereserved_sandbox_size_(0),
@@ -194,7 +167,6 @@ NaClListener::NaClListener()
 #if defined(OS_POSIX)
       number_of_cores_(-1),  // unknown/error
 #endif
-      main_loop_(NULL),
       is_started_(false) {
   IPC::AttachmentBrokerUnprivileged::CreateBrokerIfNeeded();
   io_thread_.StartWithOptions(
@@ -210,8 +182,8 @@ NaClListener::~NaClListener() {
 }
 
 bool NaClListener::Send(IPC::Message* msg) {
-  DCHECK(main_loop_ != NULL);
-  if (base::MessageLoop::current() == main_loop_) {
+  DCHECK(!!main_task_runner_);
+  if (main_task_runner_->BelongsToCurrentThread()) {
     // This thread owns the channel.
     return channel_->Send(msg);
   } else {
@@ -260,8 +232,8 @@ void NaClListener::Listen() {
   if (global && !global->IsPrivilegedBroker())
     global->RegisterBrokerCommunicationChannel(channel_.get());
   channel_->Init(channel_name, IPC::Channel::MODE_CLIENT, true);
-  main_loop_ = base::MessageLoop::current();
-  main_loop_->Run();
+  main_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+  base::RunLoop().Run();
 }
 
 bool NaClListener::OnMessageReceived(const IPC::Message& msg) {
@@ -379,13 +351,12 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
     LOG(FATAL) << "NaClChromeMainArgsCreate() failed";
   }
 
-#if defined(OS_LINUX) || defined(OS_MACOSX)
+#if defined(OS_POSIX)
   args->number_of_cores = number_of_cores_;
+#endif
+
+#if defined(OS_LINUX)
   args->create_memory_object_func = CreateMemoryObject;
-# if defined(OS_MACOSX)
-  CHECK(params.mac_shm_fd != IPC::InvalidPlatformFileForTransit());
-  g_shm_fd = IPC::PlatformFileForTransitToPlatformFile(params.mac_shm_fd);
-# endif
 #endif
 
   DCHECK(params.process_type != nacl::kUnknownNaClProcessType);

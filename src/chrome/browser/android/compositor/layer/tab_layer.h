@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_LAYER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 
 namespace cc {
@@ -85,6 +86,7 @@ class TabLayer : public Layer {
                      float view_width,
                      float view_height,
                      bool show_toolbar,
+                     int default_theme_color,
                      int toolbar_background_color,
                      bool anonymize_toolbar,
                      int toolbar_textbox_resource_id,
@@ -100,6 +102,11 @@ class TabLayer : public Layer {
 
   scoped_refptr<cc::Layer> layer() override;
 
+  static void ComputePaddingPositions(const gfx::Size& content_size,
+                                      const gfx::Size& desired_size,
+                                      gfx::Rect* side_padding_rect,
+                                      gfx::Rect* bottom_padding_rect);
+
  protected:
   TabLayer(bool incognito,
            ui::ResourceManager* resource_manager,
@@ -111,6 +118,8 @@ class TabLayer : public Layer {
   void SetTitle(DecorationTitle* title);
 
   const bool incognito_;
+  bool toolbar_background_color_;
+  bool tab_switcher_themes_enabled_;
   ui::ResourceManager* resource_manager_;
   LayerTitleCache* layer_title_cache_;
 
@@ -129,7 +138,8 @@ class TabLayer : public Layer {
   scoped_refptr<ToolbarLayer> toolbar_layer_;
   scoped_refptr<cc::Layer> title_;
   scoped_refptr<ContentLayer> content_;
-  scoped_refptr<cc::SolidColorLayer> padding_;
+  scoped_refptr<cc::SolidColorLayer> side_padding_;
+  scoped_refptr<cc::SolidColorLayer> bottom_padding_;
   scoped_refptr<cc::UIResourceLayer> close_button_;
   scoped_refptr<cc::NinePatchLayer> front_border_;
   scoped_refptr<cc::NinePatchLayer> front_border_inner_shadow_;

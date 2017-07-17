@@ -10,12 +10,12 @@
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 #include "device/bluetooth/bluetooth_uuid.h"
+#include "third_party/WebKit/public/platform/modules/bluetooth/web_bluetooth.mojom.h"
 
 namespace content {
-
-struct BluetoothScanFilter;
 
 // Implements the Web Bluetooth Blacklist policy as defined in the Web Bluetooth
 // specification:
@@ -40,16 +40,32 @@ class CONTENT_EXPORT BluetoothBlacklist final {
   // Returns a singleton instance of the blacklist.
   static BluetoothBlacklist& Get();
 
-  // Adds a UUID to the blacklist to be excluded from operations. Crash if the
-  // UUID is already in the blacklist.
-  void AddOrDie(const device::BluetoothUUID&, Value);
+  // Adds a UUID to the blacklist to be excluded from operations, merging with
+  // any previous value and resulting in the strictest exclusion rule from the
+  // combination of the two, E.G.:
+  //   Add(uuid, EXCLUDE_READS);
+  //   Add(uuid, EXCLUDE_WRITES);
+  //   IsExcluded(uuid);  // true.
+  // Requires UUID to be valid.
+  void Add(const device::BluetoothUUID&, Value);
+
+  // Adds UUIDs to the blacklist by parsing a blacklist string and calling
+  // Add(uuid, value).
+  //
+  // The blacklist string format is defined at
+  // ContentBrowserClient::GetWebBluetoothBlacklist().
+  //
+  // Malformed pairs in the string are ignored, including invalid UUID or
+  // exclusion values. Duplicate UUIDs follow Add()'s merging rule.
+  void Add(base::StringPiece blacklist_string);
 
   // Returns if a UUID is excluded from all operations. UUID must be valid.
   bool IsExcluded(const device::BluetoothUUID&) const;
 
   // Returns if any UUID in a set of filters is excluded from all operations.
   // UUID must be valid.
-  bool IsExcluded(const std::vector<content::BluetoothScanFilter>&);
+  bool IsExcluded(
+      const mojo::Array<blink::mojom::WebBluetoothScanFilterPtr>& filters);
 
   // Returns if a UUID is excluded from read operations. UUID must be valid.
   bool IsExcludedFromReads(const device::BluetoothUUID&) const;
@@ -57,8 +73,10 @@ class CONTENT_EXPORT BluetoothBlacklist final {
   // Returns if a UUID is excluded from write operations. UUID must be valid.
   bool IsExcludedFromWrites(const device::BluetoothUUID&) const;
 
-  // Modifies a list of UUIDs, removing any UUIDs with Value::EXCLUDE.
-  void RemoveExcludedUuids(std::vector<device::BluetoothUUID>*);
+  // Modifies |options->optional_services|, removing any UUIDs with
+  // Value::EXCLUDE.
+  void RemoveExcludedUUIDs(
+      blink::mojom::WebBluetoothRequestDeviceOptions* options);
 
   // Size of blacklist.
   size_t size() { return blacklisted_uuids_.size(); }
@@ -72,6 +90,10 @@ class CONTENT_EXPORT BluetoothBlacklist final {
   BluetoothBlacklist();
 
   void PopulateWithDefaultValues();
+
+  // Populates blacklist with values obtained dynamically from a server, able
+  // to be updated without shipping new executable versions.
+  void PopulateWithServerProvidedValues();
 
   // Map of UUID to blacklisted value.
   std::map<device::BluetoothUUID, Value> blacklisted_uuids_;

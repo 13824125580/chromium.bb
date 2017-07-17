@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/webstore_inline_installer.h"
+
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/tab_helper.h"
-#include "chrome/browser/extensions/webstore_inline_installer.h"
 #include "chrome/browser/extensions/webstore_inline_installer_factory.h"
 #include "chrome/browser/extensions/webstore_installer_test.h"
 #include "chrome/browser/extensions/webstore_standalone_installer.h"
@@ -71,8 +73,8 @@ class ProgrammableInstallPrompt : public ExtensionInstallPrompt {
       const ExtensionInstallPrompt::DoneCallback& done_callback,
       const Extension* extension,
       const SkBitmap* icon,
-      scoped_ptr<ExtensionInstallPrompt::Prompt> prompt,
-      scoped_ptr<const extensions::PermissionSet> custom_permissions,
+      std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt,
+      std::unique_ptr<const extensions::PermissionSet> custom_permissions,
       const ShowDialogCallback& show_dialog_callback) override {
     done_callback_ = done_callback;
     g_done_callback = &done_callback_;
@@ -118,9 +120,9 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
         install_result_target_(nullptr),
         programmable_prompt_(nullptr) {}
 
-  scoped_ptr<ExtensionInstallPrompt> CreateInstallUI() override {
+  std::unique_ptr<ExtensionInstallPrompt> CreateInstallUI() override {
     programmable_prompt_ = new ProgrammableInstallPrompt(web_contents());
-    return make_scoped_ptr(programmable_prompt_);
+    return base::WrapUnique(programmable_prompt_);
   }
 
   // Added here to make it public so that test cases can call it below.
@@ -131,7 +133,7 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
   // Tests that care about the actual arguments to the install callback can use
   // this to receive a copy in |install_result_target|.
   void set_install_result_target(
-      scoped_ptr<InstallResult>* install_result_target) {
+      std::unique_ptr<InstallResult>* install_result_target) {
     install_result_target_ = install_result_target;
   }
 
@@ -153,7 +155,7 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
 
   // This can be set by tests that want to get the actual install callback
   // arguments.
-  scoped_ptr<InstallResult>* install_result_target_;
+  std::unique_ptr<InstallResult>* install_result_target_;
 
   ProgrammableInstallPrompt* programmable_prompt_;
 };
@@ -225,7 +227,7 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
   // implement). If we ever do change things to kill the prompt in this case,
   // the following code can be removed (it verifies that clicking ok on the
   // dialog does not result in an install).
-  scoped_ptr<InstallResult> install_result;
+  std::unique_ptr<InstallResult> install_result;
   factory->last_installer()->set_install_result_target(&install_result);
   ASSERT_TRUE(ProgrammableInstallPrompt::Ready());
   ProgrammableInstallPrompt::Accept();
@@ -241,11 +243,9 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
       GenerateTestServerUrl(kAppDomain, "install_from_popup.html");
   // Disable popup blocking for the test url.
   HostContentSettingsMapFactory::GetForProfile(browser()->profile())
-      ->SetContentSetting(ContentSettingsPattern::FromURL(install_url),
-                          ContentSettingsPattern::Wildcard(),
-                          CONTENT_SETTINGS_TYPE_POPUPS,
-                          std::string(),
-                          CONTENT_SETTING_ALLOW);
+      ->SetContentSettingDefaultScope(install_url, GURL(),
+                                      CONTENT_SETTINGS_TYPE_POPUPS,
+                                      std::string(), CONTENT_SETTING_ALLOW);
   ui_test_utils::NavigateToURL(browser(), install_url);
   // The test page opens a popup which is a new |browser| window.
   Browser* popup_browser =
@@ -309,6 +309,14 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
             ExtensionInstallPrompt::g_last_prompt_type_for_tests);
 }
 
+// Test calling chrome.webstore.install() twice without waiting for the first to
+// finish.
+IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest, DoubleInlineInstallTest) {
+  ui_test_utils::NavigateToURL(
+      browser(), GenerateTestServerUrl(kAppDomain, "double_install.html"));
+  RunTest("runTest");
+}
+
 class WebstoreInlineInstallerListenerTest : public WebstoreInlineInstallerTest {
  public:
   WebstoreInlineInstallerListenerTest() {}
@@ -335,6 +343,26 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerListenerTest,
 
 IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerListenerTest, BothListenersTest) {
   RunTest("both_listeners.html");
+  // The extension should be installed.
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
+  EXPECT_TRUE(registry->enabled_extensions().GetByID(kTestExtensionId));
+
+  // Rinse and repeat: uninstall the extension, open a new tab, and install it
+  // again. Regression test for crbug.com/613949.
+  extension_service()->UninstallExtension(
+      kTestExtensionId, UNINSTALL_REASON_FOR_TESTING,
+      base::Bind(&base::DoNothing), nullptr);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(registry->enabled_extensions().GetByID(kTestExtensionId));
+  int old_tab_index = browser()->tab_strip_model()->active_index();
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GenerateTestServerUrl(kAppDomain, "both_listeners.html"),
+      NEW_FOREGROUND_TAB, ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+  DCHECK_NE(old_tab_index, browser()->tab_strip_model()->active_index());
+  browser()->tab_strip_model()->CloseWebContentsAt(old_tab_index,
+                                                   TabStripModel::CLOSE_NONE);
+  WebstoreInstallerTest::RunTest("runTest");
+  EXPECT_TRUE(registry->enabled_extensions().GetByID(kTestExtensionId));
 }
 
 }  // namespace extensions

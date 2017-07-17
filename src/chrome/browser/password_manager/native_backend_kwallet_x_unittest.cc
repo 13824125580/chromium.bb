@@ -19,7 +19,7 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/password_manager/native_backend_kwallet_x.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/autofill/core/common/password_form.h"
@@ -282,7 +282,8 @@ class NativeBackendKWalletTest : public NativeBackendKWalletTestBase {
 
   // Let the DB thread run to completion of all current tasks.
   void RunDBThread() {
-    base::WaitableEvent event(false, false);
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     BrowserThread::PostTask(BrowserThread::DB, FROM_HERE,
                             base::Bind(ThreadDone, &event));
     event.Wait();
@@ -503,7 +504,7 @@ dbus::Response* NativeBackendKWalletTest::KLauncherMethodCall(
   if (kwallet_runnable_)
     kwallet_running_ = true;
 
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   writer.AppendInt32(klauncher_ret_);
   writer.AppendString(std::string());  // dbus_name
@@ -520,7 +521,7 @@ dbus::Response* NativeBackendKWalletTest::KWalletMethodCall(
 
   if (ContainsKey(failing_methods_, method_call->GetMember()))
     return nullptr;
-  scoped_ptr<dbus::Response> response;
+  std::unique_ptr<dbus::Response> response;
   if (method_call->GetMember() == "isEnabled") {
     response = dbus::Response::CreateEmpty();
     dbus::MessageWriter writer(response.get());

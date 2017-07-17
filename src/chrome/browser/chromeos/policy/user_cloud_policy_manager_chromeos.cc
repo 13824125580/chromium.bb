@@ -29,7 +29,6 @@
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/core/common/policy_types.h"
@@ -82,8 +81,8 @@ void OnWildcardCheckCompleted(const std::string& username,
 }  // namespace
 
 UserCloudPolicyManagerChromeOS::UserCloudPolicyManagerChromeOS(
-    scoped_ptr<CloudPolicyStore> store,
-    scoped_ptr<CloudExternalDataManager> external_data_manager,
+    std::unique_ptr<CloudPolicyStore> store,
+    std::unique_ptr<CloudExternalDataManager> external_data_manager,
     const base::FilePath& component_policy_cache_path,
     bool wait_for_policy_fetch,
     base::TimeDelta initial_policy_fetch_timeout,
@@ -128,26 +127,20 @@ void UserCloudPolicyManagerChromeOS::Connect(
   DCHECK(device_management_service);
   DCHECK(local_state);
   local_state_ = local_state;
-  scoped_refptr<net::URLRequestContextGetter> request_context;
-  if (system_request_context.get()) {
-    // |system_request_context| can be null for tests.
-    // Use the system request context here instead of a context derived
-    // from the Profile because Connect() is called before the profile is
-    // fully initialized (required so we can perform the initial policy load).
-    // TODO(atwilson): Change this to use a UserPolicyRequestContext once
-    // Connect() is called after profile initialization. http://crbug.com/323591
-    request_context = new SystemPolicyRequestContext(
-        system_request_context, GetUserAgent());
-  }
-  scoped_ptr<CloudPolicyClient> cloud_policy_client(new CloudPolicyClient(
+  // Note: |system_request_context| can be null for tests.
+  // Use the system request context here instead of a context derived
+  // from the Profile because Connect() is called before the profile is
+  // fully initialized (required so we can perform the initial policy load).
+  std::unique_ptr<CloudPolicyClient> cloud_policy_client(new CloudPolicyClient(
       std::string(), std::string(), kPolicyVerificationKeyHash,
-      device_management_service, request_context));
+      device_management_service, system_request_context));
   CreateComponentCloudPolicyService(component_policy_cache_path_,
-                                    request_context, cloud_policy_client.get());
+                                    system_request_context,
+                                    cloud_policy_client.get());
   core()->Connect(std::move(cloud_policy_client));
   client()->AddObserver(this);
 
-  external_data_manager_->Connect(request_context);
+  external_data_manager_->Connect(system_request_context);
 
   // Determine the next step after the CloudPolicyService initializes.
   if (service()->IsInitializationComplete()) {
@@ -334,7 +327,7 @@ void UserCloudPolicyManagerChromeOS::FetchPolicyOAuthToken() {
                                          ->user_context()
                                          .GetRefreshToken();
   if (!refresh_token.empty()) {
-    token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+    token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
     token_fetcher_->StartWithRefreshToken(
         refresh_token, g_browser_process->system_request_context(),
         base::Bind(&UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched,
@@ -351,7 +344,7 @@ void UserCloudPolicyManagerChromeOS::FetchPolicyOAuthToken() {
     return;
   }
 
-  token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+  token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
   token_fetcher_->StartWithSigninContext(
       signin_context.get(), g_browser_process->system_request_context(),
       base::Bind(&UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched,

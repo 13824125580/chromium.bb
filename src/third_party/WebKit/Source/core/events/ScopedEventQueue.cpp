@@ -34,7 +34,8 @@
 #include "core/events/EventDispatchMediator.h"
 #include "core/events/EventDispatcher.h"
 #include "core/events/EventTarget.h"
-#include "wtf/OwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -54,11 +55,11 @@ ScopedEventQueue::~ScopedEventQueue()
 void ScopedEventQueue::initialize()
 {
     ASSERT(!s_instance);
-    OwnPtr<ScopedEventQueue> instance = adoptPtr(new ScopedEventQueue);
-    s_instance = instance.leakPtr();
+    std::unique_ptr<ScopedEventQueue> instance = wrapUnique(new ScopedEventQueue);
+    s_instance = instance.release();
 }
 
-void ScopedEventQueue::enqueueEventDispatchMediator(PassRefPtrWillBeRawPtr<EventDispatchMediator> mediator)
+void ScopedEventQueue::enqueueEventDispatchMediator(EventDispatchMediator* mediator)
 {
     if (shouldQueueEvents())
         m_queuedEventDispatchMediators.append(mediator);
@@ -68,14 +69,14 @@ void ScopedEventQueue::enqueueEventDispatchMediator(PassRefPtrWillBeRawPtr<Event
 
 void ScopedEventQueue::dispatchAllEvents()
 {
-    WillBeHeapVector<RefPtrWillBeMember<EventDispatchMediator>> queuedEventDispatchMediators;
+    HeapVector<Member<EventDispatchMediator>> queuedEventDispatchMediators;
     queuedEventDispatchMediators.swap(m_queuedEventDispatchMediators);
 
     for (size_t i = 0; i < queuedEventDispatchMediators.size(); i++)
         dispatchEvent(queuedEventDispatchMediators[i].release());
 }
 
-void ScopedEventQueue::dispatchEvent(PassRefPtrWillBeRawPtr<EventDispatchMediator> mediator) const
+void ScopedEventQueue::dispatchEvent(EventDispatchMediator* mediator) const
 {
     ASSERT(mediator->event().target());
     Node* node = mediator->event().target()->toNode();

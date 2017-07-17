@@ -32,7 +32,6 @@
 #include "public/platform/WebSourceInfo.h"
 #include "public/platform/WebTraceLocation.h"
 #include "wtf/Functional.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -51,18 +50,18 @@ MediaStreamTrackSourcesRequestImpl::~MediaStreamTrackSourcesRequestImpl()
 {
 }
 
-String MediaStreamTrackSourcesRequestImpl::origin()
+PassRefPtr<SecurityOrigin> MediaStreamTrackSourcesRequestImpl::origin()
 {
-    return m_executionContext->securityOrigin()->toString();
+    return m_executionContext->getSecurityOrigin()->isolatedCopy();
 }
 
 void MediaStreamTrackSourcesRequestImpl::requestSucceeded(const WebVector<WebSourceInfo>& webSourceInfos)
 {
-    ASSERT(m_callback);
+    DCHECK(m_callback);
 
     for (size_t i = 0; i < webSourceInfos.size(); ++i)
         m_sourceInfos.append(SourceInfo::create(webSourceInfos[i]));
-    m_executionContext->postTask(BLINK_FROM_HERE, createCrossThreadTask(&MediaStreamTrackSourcesRequestImpl::performCallback, this));
+    m_executionContext->postTask(BLINK_FROM_HERE, createCrossThreadTask(&MediaStreamTrackSourcesRequestImpl::performCallback, wrapCrossThreadPersistent(this)));
 }
 
 void MediaStreamTrackSourcesRequestImpl::performCallback()

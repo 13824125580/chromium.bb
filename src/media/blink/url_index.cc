@@ -6,7 +6,9 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "media/blink/resource_multibuffer_data_provider.h"
 #include "media/blink/url_index.h"
@@ -22,12 +24,12 @@ ResourceMultiBuffer::ResourceMultiBuffer(UrlData* url_data, int block_shift)
 
 ResourceMultiBuffer::~ResourceMultiBuffer() {}
 
-scoped_ptr<MultiBuffer::DataProvider> ResourceMultiBuffer::CreateWriter(
+std::unique_ptr<MultiBuffer::DataProvider> ResourceMultiBuffer::CreateWriter(
     const MultiBufferBlockId& pos) {
   ResourceMultiBufferDataProvider* ret =
       new ResourceMultiBufferDataProvider(url_data_, pos);
   ret->Start();
-  return scoped_ptr<MultiBuffer::DataProvider>(ret);
+  return std::unique_ptr<MultiBuffer::DataProvider>(ret);
 }
 
 bool ResourceMultiBuffer::RangeSupported() const {
@@ -42,6 +44,7 @@ UrlData::UrlData(const GURL& url,
                  CORSMode cors_mode,
                  const base::WeakPtr<UrlIndex>& url_index)
     : url_(url),
+      have_data_origin_(false),
       cors_mode_(cors_mode),
       url_index_(url_index),
       length_(kPositionNotSpecified),
@@ -67,16 +70,18 @@ void UrlData::MergeFrom(const scoped_refptr<UrlData>& other) {
   // We're merging from another UrlData that refers to the *same*
   // resource, so when we merge the metadata, we can use the most
   // optimistic values.
-  DCHECK(thread_checker_.CalledOnValidThread());
-  valid_until_ = std::max(valid_until_, other->valid_until_);
-  // set_length() will not override the length if already known.
-  set_length(other->length_);
-  cacheable_ |= other->cacheable_;
-  range_supported_ |= other->range_supported_;
-  if (last_modified_.is_null()) {
-    last_modified_ = other->last_modified_;
+  if (ValidateDataOrigin(other->data_origin_)) {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    valid_until_ = std::max(valid_until_, other->valid_until_);
+    // set_length() will not override the length if already known.
+    set_length(other->length_);
+    cacheable_ |= other->cacheable_;
+    range_supported_ |= other->range_supported_;
+    if (last_modified_.is_null()) {
+      last_modified_ = other->last_modified_;
+    }
+    multibuffer()->MergeFrom(other->multibuffer());
   }
-  multibuffer()->MergeFrom(other->multibuffer());
 }
 
 void UrlData::set_cacheable(bool cacheable) {
@@ -123,9 +128,22 @@ void UrlData::Use() {
   last_used_ = base::Time::Now();
 }
 
+bool UrlData::ValidateDataOrigin(const GURL& origin) {
+  if (!have_data_origin_) {
+    data_origin_ = origin;
+    have_data_origin_ = true;
+    return true;
+  }
+  if (cors_mode_ == UrlData::CORS_UNSPECIFIED) {
+    return data_origin_ == origin;
+  }
+  // The actual cors checks is done in the net layer.
+  return true;
+}
+
 void UrlData::OnEmpty() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&UrlIndex::RemoveUrlDataIfEmpty, url_index_,
                             scoped_refptr<UrlData>(this)));
 }
@@ -168,7 +186,7 @@ UrlIndex::UrlIndex(blink::WebFrame* frame) : UrlIndex(frame, kBlockSizeShift) {}
 
 UrlIndex::UrlIndex(blink::WebFrame* frame, int block_shift)
     : frame_(frame),
-      lru_(new MultiBuffer::GlobalLRU()),
+      lru_(new MultiBuffer::GlobalLRU(base::ThreadTaskRunnerHandle::Get())),
       block_shift_(block_shift),
       weak_factory_(this) {}
 

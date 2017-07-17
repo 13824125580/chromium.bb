@@ -9,7 +9,6 @@
 #include <set>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "content/public/renderer/render_frame_observer.h"
@@ -42,9 +41,9 @@ class ContentSettingsObserver
                           bool should_whitelist);
   ~ContentSettingsObserver() override;
 
-  // Sets the content setting rules which back |AllowImage()|, |AllowScript()|,
-  // and |AllowScriptFromSource()|. |content_setting_rules| must outlive this
-  // |ContentSettingsObserver|.
+  // Sets the content setting rules which back |allowImage()|, |allowScript()|,
+  // |allowScriptFromSource()| and |allowAutoplay()|. |content_setting_rules|
+  // must outlive this |ContentSettingsObserver|.
   void SetContentSettingRules(
       const RendererContentSettingRules* content_setting_rules);
 
@@ -61,7 +60,7 @@ class ContentSettingsObserver
   // blink::WebContentSettingsClient implementation.
   bool allowDatabase(const blink::WebString& name,
                      const blink::WebString& display_name,
-                     unsigned long estimated_size) override;
+                     unsigned estimated_size) override;
   void requestFileSystemAccessAsync(
       const blink::WebContentSettingCallbacks& callbacks) override;
   bool allowImage(bool enabled_per_settings,
@@ -84,9 +83,7 @@ class ContentSettingsObserver
   bool allowRunningInsecureContent(bool allowed_per_settings,
                                    const blink::WebSecurityOrigin& context,
                                    const blink::WebURL& url) override;
-
-  // This is used for cases when the NPAPI plugins malfunction if used.
-  bool AreNPAPIPluginsBlocked() const;
+  bool allowAutoplay(bool default_value) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ContentSettingsObserverTest, WhitelistedSchemes);
@@ -98,11 +95,11 @@ class ContentSettingsObserver
   bool OnMessageReceived(const IPC::Message& message) override;
   void DidCommitProvisionalLoad(bool is_new_navigation,
                                 bool is_same_page_navigation) override;
+  void OnDestruct() override;
 
   // Message handlers.
   void OnLoadBlockedPlugins(const std::string& identifier);
   void OnSetAsInterstitial();
-  void OnNPAPINotSupported();
   void OnSetAllowDisplayingInsecureContent(bool allow);
   void OnSetAllowRunningInsecureContent(bool allow);
   void OnReloadFrame();
@@ -140,7 +137,7 @@ class ContentSettingsObserver
 
   // A pointer to content setting rules stored by the renderer. Normally, the
   // |RendererContentSettingRules| object is owned by
-  // |ChromeRenderProcessObserver|. In the tests it is owned by the caller of
+  // |ChromeRenderThreadObserver|. In the tests it is owned by the caller of
   // |SetContentSettingRules|.
   const RendererContentSettingRules* content_setting_rules_;
 
@@ -156,7 +153,6 @@ class ContentSettingsObserver
 
   std::set<std::string> temporarily_allowed_plugins_;
   bool is_interstitial_page_;
-  bool npapi_plugins_blocked_;
 
   int current_request_id_;
   typedef std::map<int, blink::WebContentSettingCallbacks> PermissionRequestMap;

@@ -32,6 +32,7 @@
 
 #include "core/animation/AnimationClock.h"
 #include "core/animation/AnimationEffect.h"
+#include "core/animation/CompositorPendingAnimations.h"
 #include "core/animation/KeyframeEffect.h"
 #include "core/animation/KeyframeEffectModel.h"
 #include "core/dom/Document.h"
@@ -41,6 +42,7 @@
 #include "platform/weborigin/KURL.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -75,9 +77,7 @@ protected:
         document.release();
         element.release();
         timeline.release();
-#if ENABLE(OILPAN)
-        Heap::collectAllGarbage();
-#endif
+        ThreadHeap::collectAllGarbage();
     }
 
     void updateClockAndService(double time)
@@ -88,9 +88,9 @@ protected:
         timeline->scheduleNextService();
     }
 
-    OwnPtr<DummyPageHolder> pageHolder;
-    RefPtrWillBePersistent<Document> document;
-    RefPtrWillBePersistent<Element> element;
+    std::unique_ptr<DummyPageHolder> pageHolder;
+    Persistent<Document> document;
+    Persistent<Element> element;
     Persistent<AnimationTimeline> timeline;
     Timing timing;
     Persistent<MockPlatformTiming> platformTiming;

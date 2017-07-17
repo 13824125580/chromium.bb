@@ -4,14 +4,16 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <algorithm>
 #include <utility>
 
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/devtools/device/adb/mock_adb_server.h"
 #include "chrome/browser/devtools/device/devtools_android_bridge.h"
 #include "chrome/browser/devtools/device/usb/android_usb_device.h"
@@ -21,15 +23,16 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "device/core/device_client.h"
+#include "device/usb/mock_usb_service.h"
 #include "device/usb/usb_descriptors.h"
 #include "device/usb/usb_device.h"
 #include "device/usb/usb_device_handle.h"
-#include "device/usb/usb_service.h"
 #include "net/base/io_buffer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using content::BrowserThread;
 using device::DeviceClient;
+using device::MockUsbService;
 using device::UsbConfigDescriptor;
 using device::UsbDevice;
 using device::UsbDeviceHandle;
@@ -116,7 +119,7 @@ class MockLocalSocket : public MockAndroidConnection::Delegate {
   }
 
   Callback callback_;
-  scoped_ptr<MockAndroidConnection> connection_;
+  std::unique_ptr<MockAndroidConnection> connection_;
 };
 
 template <class T>
@@ -230,10 +233,10 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
     }
   }
 
-  bool FindInterfaceByEndpoint(uint8_t endpoint_address,
-                               uint8_t* interface_number) {
+  const UsbInterfaceDescriptor* FindInterfaceByEndpoint(
+      uint8_t endpoint_address) {
     NOTIMPLEMENTED();
-    return false;
+    return nullptr;
   }
 
   template <class D>
@@ -299,14 +302,12 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
                       std::string());
         local_sockets_.set(
             current_message_->arg0,
-            make_scoped_ptr(new MockLocalSocket(
+            base::WrapUnique(new MockLocalSocket(
                 base::Bind(&MockUsbDeviceHandle::WriteResponse,
-                           base::Unretained(this),
-                           last_local_socket_,
+                           base::Unretained(this), last_local_socket_,
                            current_message_->arg0),
-                kDeviceSerial,
-                current_message_->body.substr(
-                    0, current_message_->body.size() - 1))));
+                kDeviceSerial, current_message_->body.substr(
+                                   0, current_message_->body.size() - 1))));
         return;
       }
       default: {
@@ -332,7 +333,7 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
   }
 
   void ProcessQueries() {
-    if (!queries_.size())
+    if (queries_.empty())
       return;
     Query query = queries_.front();
     if (broken_) {
@@ -384,10 +385,10 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
 
   scoped_refptr<MockUsbDevice<T> > device_;
   uint32_t remaining_body_length_;
-  scoped_ptr<AdbMessage> current_message_;
+  std::unique_ptr<AdbMessage> current_message_;
   std::vector<char> output_buffer_;
   std::queue<Query> queries_;
-  base::ScopedPtrHashMap<int, scoped_ptr<MockLocalSocket>> local_sockets_;
+  base::ScopedPtrHashMap<int, std::unique_ptr<MockLocalSocket>> local_sockets_;
   int last_local_socket_;
   bool broken_;
 };
@@ -396,23 +397,25 @@ template <class T>
 class MockUsbDevice : public UsbDevice {
  public:
   MockUsbDevice()
-      : UsbDevice(0,
-                  0,
+      : UsbDevice(0x0200,  // usb_version
+                  0,       // device_class
+                  0,       // device_subclass
+                  0,       // device_protocol
+                  0,       // vendor_id
+                  0,       // product_id
+                  0x0100,  // device_version
                   base::UTF8ToUTF16(kDeviceManufacturer),
                   base::UTF8ToUTF16(kDeviceModel),
-                  base::UTF8ToUTF16(kDeviceSerial)),
-        config_desc_(1, false, false, 0) {
+                  base::UTF8ToUTF16(kDeviceSerial)) {
+    UsbConfigDescriptor config_desc(1, false, false, 0);
     UsbInterfaceDescriptor interface_desc(0, 0, T::kClass, T::kSubclass,
                                           T::kProtocol);
-    interface_desc.endpoints.emplace_back(0x81, device::USB_DIRECTION_INBOUND,
-                                          512, device::USB_SYNCHRONIZATION_NONE,
-                                          device::USB_TRANSFER_BULK,
-                                          device::USB_USAGE_DATA, 0);
-    interface_desc.endpoints.emplace_back(0x01, device::USB_DIRECTION_OUTBOUND,
-                                          512, device::USB_SYNCHRONIZATION_NONE,
-                                          device::USB_TRANSFER_BULK,
-                                          device::USB_USAGE_DATA, 0);
-    config_desc_.interfaces.push_back(interface_desc);
+    interface_desc.endpoints.emplace_back(0x81, 0x02, 512, 0);
+    interface_desc.endpoints.emplace_back(0x01, 0x02, 512, 0);
+    config_desc.interfaces.push_back(interface_desc);
+    configurations_.push_back(config_desc);
+    if (T::kConfigured)
+      ActiveConfigurationChanged(1);
   }
 
   void Open(const OpenCallback& callback) override {
@@ -421,50 +424,10 @@ class MockUsbDevice : public UsbDevice {
                                             new MockUsbDeviceHandle<T>(this))));
   }
 
-  const UsbConfigDescriptor* GetActiveConfiguration() override {
-    return T::kConfigured ? &config_desc_ : nullptr;
-  }
-
   std::set<int> claimed_interfaces_;
 
  protected:
   virtual ~MockUsbDevice() {}
-
- private:
-  UsbConfigDescriptor config_desc_;
-};
-
-class MockUsbService : public UsbService {
- public:
-  MockUsbService() {
-    devices_.push_back(new MockUsbDevice<AndroidTraits>());
-  }
-
-  scoped_refptr<UsbDevice> GetDevice(const std::string& guid) override {
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-
-  void GetDevices(const GetDevicesCallback& callback) override {
-    callback.Run(devices_);
-  }
-
-  std::vector<scoped_refptr<UsbDevice> > devices_;
-};
-
-class MockBreakingUsbService : public MockUsbService {
- public:
-  MockBreakingUsbService() {
-    devices_.clear();
-    devices_.push_back(new MockUsbDevice<BreakingAndroidTraits>());
-  }
-};
-
-class MockNoConfigUsbService : public MockUsbService {
- public:
-  MockNoConfigUsbService() {
-    devices_.push_back(new MockUsbDevice<NoConfigTraits>());
-  }
 };
 
 class MockUsbServiceForCheckingTraits : public MockUsbService {
@@ -503,14 +466,14 @@ class MockUsbServiceForCheckingTraits : public MockUsbService {
 
 class TestDeviceClient : public DeviceClient {
  public:
-  explicit TestDeviceClient(scoped_ptr<UsbService> service)
+  explicit TestDeviceClient(std::unique_ptr<UsbService> service)
       : DeviceClient(), usb_service_(std::move(service)) {}
   ~TestDeviceClient() override {}
 
  private:
   UsbService* GetUsbService() override { return usb_service_.get(); }
 
-  scoped_ptr<UsbService> usb_service_;
+  std::unique_ptr<UsbService> usb_service_;
 };
 
 class DevToolsAndroidBridgeWarmUp
@@ -558,12 +521,14 @@ class AndroidUsbDiscoveryTest : public InProcessBrowserTest {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, request);
   }
 
-  virtual scoped_ptr<MockUsbService> CreateMockService() {
-    return make_scoped_ptr(new MockUsbService());
+  virtual std::unique_ptr<MockUsbService> CreateMockService() {
+    std::unique_ptr<MockUsbService> service(new MockUsbService());
+    service->AddDevice(new MockUsbDevice<AndroidTraits>());
+    return service;
   }
 
   scoped_refptr<content::MessageLoopRunner> runner_;
-  scoped_ptr<TestDeviceClient> device_client_;
+  std::unique_ptr<TestDeviceClient> device_client_;
   DevToolsAndroidBridge* adb_bridge_;
   int scheduler_invoked_;
 };
@@ -581,22 +546,27 @@ class AndroidUsbCountTest : public AndroidUsbDiscoveryTest {
 
 class AndroidUsbTraitsTest : public AndroidUsbDiscoveryTest {
  protected:
-  scoped_ptr<MockUsbService> CreateMockService() override {
-    return make_scoped_ptr(new MockUsbServiceForCheckingTraits());
+  std::unique_ptr<MockUsbService> CreateMockService() override {
+    return base::WrapUnique(new MockUsbServiceForCheckingTraits());
   }
 };
 
 class AndroidBreakingUsbTest : public AndroidUsbDiscoveryTest {
  protected:
-  scoped_ptr<MockUsbService> CreateMockService() override {
-    return make_scoped_ptr(new MockBreakingUsbService());
+  std::unique_ptr<MockUsbService> CreateMockService() override {
+    std::unique_ptr<MockUsbService> service(new MockUsbService());
+    service->AddDevice(new MockUsbDevice<BreakingAndroidTraits>());
+    return service;
   }
 };
 
 class AndroidNoConfigUsbTest : public AndroidUsbDiscoveryTest {
  protected:
-  scoped_ptr<MockUsbService> CreateMockService() override {
-    return make_scoped_ptr(new MockNoConfigUsbService());
+  std::unique_ptr<MockUsbService> CreateMockService() override {
+    std::unique_ptr<MockUsbService> service(new MockUsbService());
+    service->AddDevice(new MockUsbDevice<AndroidTraits>());
+    service->AddDevice(new MockUsbDevice<NoConfigTraits>());
+    return service;
   }
 };
 

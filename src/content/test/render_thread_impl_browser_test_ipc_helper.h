@@ -6,11 +6,9 @@
 #define CONTENT_TEST_RENDER_THREAD_IMPL_BROWSER_TEST_IPC_HELPER_H_
 
 #include "content/app/mojo/mojo_init.h"
-#include "content/browser/mojo/mojo_application_host.h"
-#include "content/common/mojo/mojo_messages.h"
+#include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_channel_proxy.h"
-#include "ipc/mojo/ipc_channel_mojo.h"
-#include "ipc/mojo/scoped_ipc_support.h"
+#include "mojo/edk/test/scoped_ipc_support.h"
 
 namespace IPC {
 class ChannelProxy;
@@ -34,18 +32,27 @@ class RenderThreadImplBrowserIPCTestHelper {
 
   scoped_refptr<base::SingleThreadTaskRunner> GetIOTaskRunner() const;
 
+  const std::string& GetMojoIpcToken() const {
+    return mojo_ipc_token_;
+  }
+
+  const std::string& GetMojoApplicationToken() const {
+    return mojo_application_token_;
+  }
+
  private:
   class DummyListener;
 
   void SetupIpcThread();
   void SetupMojo();
 
-  scoped_ptr<IPC::ChannelProxy> channel_;
-  scoped_ptr<base::Thread> ipc_thread_;
-  scoped_ptr<base::MessageLoopForIO> message_loop_;
-  scoped_ptr<DummyListener> dummy_listener_;
-  scoped_ptr<IPC::ScopedIPCSupport> ipc_support_;
-  scoped_ptr<MojoApplicationHost> mojo_application_host_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<base::Thread> ipc_thread_;
+  std::unique_ptr<base::MessageLoopForIO> message_loop_;
+  std::unique_ptr<DummyListener> dummy_listener_;
+  std::unique_ptr<mojo::edk::test::ScopedIPCSupport> ipc_support_;
+  std::string mojo_ipc_token_;
+  std::string mojo_application_token_;
   std::string channel_id_;
 };
 

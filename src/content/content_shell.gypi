@@ -25,7 +25,6 @@
         'content.gyp:content_browser',
         'content.gyp:content_common',
         'content.gyp:content_gpu',
-        'content.gyp:content_plugin',
         'content.gyp:content_ppapi_plugin',
         'content.gyp:content_renderer',
         'content.gyp:content_resources',
@@ -33,6 +32,7 @@
         'content.gyp:sandbox_helper_win',
         'content_shell_resources',
         '../chrome/chrome_blpwtk2.gyp:chrome_blpwtk2',
+        'content_shell_mojo_bindings',
         '../base/base.gyp:base',
         '../base/base.gyp:base_static',
         '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
@@ -41,6 +41,7 @@
         '../components/components.gyp:crash_component_breakpad_to_be_deleted',
         '../components/components.gyp:devtools_discovery',
         '../components/components.gyp:devtools_http_handler',
+        '../components/components.gyp:network_session_configurator_switches',
         '../components/components.gyp:web_cache_renderer',
         '../components/url_formatter/url_formatter.gyp:url_formatter',
         '../device/bluetooth/bluetooth.gyp:device_bluetooth',
@@ -51,6 +52,7 @@
         '../media/media.gyp:media',
         '../net/net.gyp:net',
         '../net/net.gyp:net_resources',
+        '../ppapi/ppapi_internal.gyp:blink_deprecated_test_plugin',
         '../ppapi/ppapi_internal.gyp:blink_test_plugin',
         '../skia/skia.gyp:skia',
         '../storage/storage_browser.gyp:storage',
@@ -65,10 +67,13 @@
         '../ui/events/events.gyp:events_base',
         '../ui/gfx/gfx.gyp:gfx',
         '../ui/gfx/gfx.gyp:gfx_geometry',
+        '../ui/gfx/ipc/geometry/gfx_ipc_geometry.gyp:gfx_ipc_geometry',
         '../ui/gfx/ipc/gfx_ipc.gyp:gfx_ipc',
+        '../ui/gfx/ipc/skia/gfx_ipc_skia.gyp:gfx_ipc_skia',
         '../ui/gl/gl.gyp:gl',
         '../url/url.gyp:url_lib',
-        '../v8/tools/gyp/v8.gyp:v8',
+        '../url/ipc/url_ipc.gyp:url_ipc',
+        '../v8/src/v8.gyp:v8',
       ],
       'include_dirs': [
         '..',
@@ -93,47 +98,6 @@
         'shell/app/shell_main_delegate.h',
         'shell/app/shell_main_delegate_mac.h',
         'shell/app/shell_main_delegate_mac.mm',
-		# blpwtk2: Remove test-only code
-        # 'shell/browser/layout_test/blink_test_controller.cc',
-        # 'shell/browser/layout_test/blink_test_controller.h',
-        # 'shell/browser/layout_test/layout_test_android.cc',
-        # 'shell/browser/layout_test/layout_test_android.h',
-        # 'shell/browser/layout_test/layout_test_bluetooth_adapter_provider.cc',
-        # 'shell/browser/layout_test/layout_test_bluetooth_adapter_provider.h',
-        # 'shell/browser/layout_test/layout_test_bluetooth_chooser_factory.cc',
-        # 'shell/browser/layout_test/layout_test_bluetooth_chooser_factory.h',
-        # 'shell/browser/layout_test/layout_test_browser_context.cc',
-        # 'shell/browser/layout_test/layout_test_browser_context.h',
-        # 'shell/browser/layout_test/layout_test_browser_main.cc',
-        # 'shell/browser/layout_test/layout_test_browser_main.h',
-        # 'shell/browser/layout_test/layout_test_browser_main_parts.cc',
-        # 'shell/browser/layout_test/layout_test_browser_main_parts.h',
-        # 'shell/browser/layout_test/layout_test_content_browser_client.cc',
-        # 'shell/browser/layout_test/layout_test_content_browser_client.h',
-        # 'shell/browser/layout_test/layout_test_devtools_frontend.cc',
-        # 'shell/browser/layout_test/layout_test_devtools_frontend.h',
-        # 'shell/browser/layout_test/layout_test_download_manager_delegate.cc',
-        # 'shell/browser/layout_test/layout_test_download_manager_delegate.h',
-        # 'shell/browser/layout_test/layout_test_javascript_dialog_manager.cc',
-        # 'shell/browser/layout_test/layout_test_javascript_dialog_manager.h',
-        # 'shell/browser/layout_test/layout_test_message_filter.cc',
-        # 'shell/browser/layout_test/layout_test_message_filter.h',
-        # 'shell/browser/layout_test/layout_test_navigator_connect_service_factory.cc',
-        # 'shell/browser/layout_test/layout_test_navigator_connect_service_factory.h',
-        # 'shell/browser/layout_test/layout_test_notification_manager.cc',
-        # 'shell/browser/layout_test/layout_test_notification_manager.h',
-        # 'shell/browser/layout_test/layout_test_permission_manager.cc',
-        # 'shell/browser/layout_test/layout_test_permission_manager.h',
-        # 'shell/browser/layout_test/layout_test_push_messaging_service.cc',
-        # 'shell/browser/layout_test/layout_test_push_messaging_service.h',
-        # 'shell/browser/layout_test/layout_test_resource_dispatcher_host_delegate.cc',
-        # 'shell/browser/layout_test/layout_test_resource_dispatcher_host_delegate.h',
-        # 'shell/browser/layout_test/layout_test_url_request_context_getter.cc',
-        # 'shell/browser/layout_test/layout_test_url_request_context_getter.h',
-        'shell/browser/layout_test/notify_done_forwarder.cc',
-        'shell/browser/layout_test/notify_done_forwarder.h',
-        # 'shell/browser/layout_test/test_info_extractor.cc',
-        # 'shell/browser/layout_test/test_info_extractor.h',
         'shell/browser/shell.cc',
         'shell/browser/shell.h',
         'shell/browser/shell_access_token_store.cc',
@@ -192,14 +156,15 @@
         'shell/browser/shell_web_contents_view_delegate_creator.h',
         'shell/browser/shell_web_contents_view_delegate_mac.mm',
         'shell/browser/shell_web_contents_view_delegate_win.cc',
-
-        # SHEZ: Remove test-only code
-        # 'shell/common/layout_test/layout_test_messages.cc',
-        # 'shell/common/layout_test/layout_test_messages.h',
-
+        'shell/common/layout_test/layout_test_content_client.cc',
+        'shell/common/layout_test/layout_test_content_client.h',
+        'shell/common/layout_test/layout_test_switches.cc',
+        'shell/common/layout_test/layout_test_switches.h',
         'shell/common/leak_detection_result.h',
         'shell/common/shell_content_client.cc',
         'shell/common/shell_content_client.h',
+        'shell/common/shell_origin_trial_policy.cc',
+        'shell/common/shell_origin_trial_policy.h',
         'shell/common/shell_messages.cc',
         'shell/common/shell_messages.h',
         'shell/common/shell_switches.cc',
@@ -211,25 +176,6 @@
 
         'shell/common/v8_breakpad_support_win.cc',
         'shell/common/v8_breakpad_support_win.h',
-
-        # SHEZ: Remove test-only code
-        # 'shell/renderer/layout_test/blink_test_helpers.cc',
-        # 'shell/renderer/layout_test/blink_test_helpers.h',
-        # 'shell/renderer/layout_test/blink_test_runner.cc',
-        # 'shell/renderer/layout_test/blink_test_runner.h',
-        # 'shell/renderer/layout_test/layout_test_content_renderer_client.cc',
-        # 'shell/renderer/layout_test/layout_test_content_renderer_client.h',
-        # 'shell/renderer/layout_test/layout_test_render_frame_observer.cc',
-        # 'shell/renderer/layout_test/layout_test_render_frame_observer.h',
-        # 'shell/renderer/layout_test/layout_test_render_process_observer.cc',
-        # 'shell/renderer/layout_test/layout_test_render_process_observer.h',
-        # 'shell/renderer/layout_test/leak_detector.cc',
-        # 'shell/renderer/layout_test/leak_detector.h',
-        # 'shell/renderer/layout_test/test_media_stream_renderer_factory.cc',
-        # 'shell/renderer/layout_test/test_media_stream_renderer_factory.h',
-        # 'shell/renderer/layout_test/test_video_frame_provider.cc',
-        # 'shell/renderer/layout_test/test_video_frame_provider.h',
-
         'shell/renderer/shell_content_renderer_client.cc',
         'shell/renderer/shell_content_renderer_client.h',
         'shell/renderer/shell_render_view_observer.cc',
@@ -271,6 +217,7 @@
         ['use_x11 == 1', {
           'dependencies': [
             '../ui/events/devices/events_devices.gyp:events_devices',
+            '../ui/events/devices/x11/events_devices_x11.gyp:events_devices_x11',
             '../tools/xdisplaycheck/xdisplaycheck.gyp:xdisplaycheck',
           ],
         }],
@@ -524,6 +471,7 @@
               # Modify the Info.plist as needed.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--scm=1',
                          '--version=<(content_shell_version)'],
             },
@@ -545,103 +493,25 @@
       ],
     },
     {
-      'target_name': 'test_netscape_plugin',
-      'conditions': [
-        ['OS != "win" and OS != "mac"', {
+       'target_name': 'content_shell_mojo_bindings_mojom',
           'type': 'none',
-        }, {  # OS=="win" or OS=="mac"
-          'type': 'loadable_module',
-          'sources': [
-            'shell/tools/plugin/PluginObject.cpp',
-            'shell/tools/plugin/PluginObject.h',
-            'shell/tools/plugin/PluginTest.cpp',
-            'shell/tools/plugin/PluginTest.h',
-            'shell/tools/plugin/TestObject.cpp',
-            'shell/tools/plugin/Tests/EvaluateJSAfterRemovingPluginElement.cpp',
-            'shell/tools/plugin/Tests/FormValue.cpp',
-            'shell/tools/plugin/Tests/GetUserAgentWithNullNPPFromNPPNew.cpp',
-            'shell/tools/plugin/Tests/LeakWindowScriptableObject.cpp',
-            'shell/tools/plugin/Tests/LogNPPSetWindow.cpp',
-            'shell/tools/plugin/Tests/NPDeallocateCalledBeforeNPShutdown.cpp',
-            'shell/tools/plugin/Tests/NPPNewFails.cpp',
-            'shell/tools/plugin/Tests/NPRuntimeCallsWithNullNPP.cpp',
-            'shell/tools/plugin/Tests/NPRuntimeObjectFromDestroyedPlugin.cpp',
-            'shell/tools/plugin/Tests/NPRuntimeRemoveProperty.cpp',
-            'shell/tools/plugin/Tests/NullNPPGetValuePointer.cpp',
-            'shell/tools/plugin/Tests/PassDifferentNPPStruct.cpp',
-            'shell/tools/plugin/Tests/PluginScriptableNPObjectInvokeDefault.cpp',
-            'shell/tools/plugin/Tests/PluginScriptableObjectOverridesAllProperties.cpp',
-            'shell/tools/plugin/main.cpp',
-            'shell/tools/plugin/test_object.h',
+       'variables': {
+         'mojom_files': [
+           'shell/common/layout_test/layout_test_bluetooth_fake_adapter_setter.mojom'
           ],
-          'include_dirs': [
-            '<(DEPTH)',
-            '<(DEPTH)/content/shell/tools/plugin/',
-          ],
-          'dependencies': [
-            '../base/base.gyp:base',
-            '../third_party/npapi/npapi.gyp:npapi',
-          ],
-          'conditions': [
-            ['OS=="mac"', {
-              'mac_bundle': 1,
-              'product_extension': 'plugin',
-              'link_settings': {
-                'libraries': [
-                  '$(SDKROOT)/System/Library/Frameworks/Carbon.framework',
-                  '$(SDKROOT)/System/Library/Frameworks/Cocoa.framework',
-                  '$(SDKROOT)/System/Library/Frameworks/QuartzCore.framework',
-                ]
               },
-              'xcode_settings': {
-                'GCC_SYMBOLS_PRIVATE_EXTERN': 'NO',
-                'INFOPLIST_FILE': 'shell/tools/plugin/mac/Info.plist',
-              },
-            }],
-            ['OS=="win"', {
-              'conditions': [
-                ['MSVS_VERSION < "2015"', {
-                  'defines': [
-                    # This seems like a hack, but this is what Safari Win does.
-                    # Luckily it is no longer needed/allowed with VS 2015.
-                    'snprintf=_snprintf',
-                  ],
-                }],
-              ],
-              'sources': [
-                'shell/tools/plugin/win/TestNetscapePlugin.def',
-                'shell/tools/plugin/win/TestNetscapePlugin.rc',
-              ],
-              # The .rc file requires that the name of the dll is np_test_netscape_plugin.dll.
-              'product_name': 'np_test_netscape_plugin',
-              # Disable c4267 warnings until we fix size_t to int truncations.
-              'msvs_disabled_warnings': [ 4267, ],
-            }],
-          ],
-        }],
+       'includes': [
+         '../mojo/mojom_bindings_generator_explicit.gypi',
       ],
     },
     {
-      'target_name': 'copy_test_netscape_plugin',
-      'type': 'none',
+        'target_name': 'content_shell_mojo_bindings',
+        'type': 'static_library',
       'dependencies': [
-        'test_netscape_plugin',
+          'content_shell_mojo_bindings_mojom',
+          '../mojo/mojo_public.gyp:mojo_cpp_bindings',
       ],
-      'conditions': [
-        ['OS=="win"', {
-          'copies': [{
-            'destination': '<(PRODUCT_DIR)/plugins',
-            'files': ['<(PRODUCT_DIR)/np_test_netscape_plugin.dll'],
-          }],
-        }],
-        ['OS=="mac"', {
-          'copies': [{
-            'destination': '<(PRODUCT_DIR)/plugins/',
-            'files': ['<(PRODUCT_DIR)/test_netscape_plugin.plugin/'],
-          }],
-        }],
-      ],
-    }
+    },
   ],
   'conditions': [
     ['OS=="mac"', {
@@ -695,6 +565,7 @@
               # but this seems like a really good place to store them.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--breakpad=1',
                          '--keystone=0',
                          '--scm=1',
@@ -708,6 +579,7 @@
               # that corresponds to Content Shell Framework.framework.
               'destination': '<(PRODUCT_DIR)/$(CONTENTS_FOLDER_PATH)',
               'files': [
+                '<(PRODUCT_DIR)/blink_deprecated_test_plugin.plugin',
                 '<(PRODUCT_DIR)/blink_test_plugin.plugin',
               ],
             },
@@ -784,6 +656,7 @@
               # never placed into the helper.
               'postbuild_name': 'Tweak Info.plist',
               'action': ['../build/mac/tweak_info_plist.py',
+                         '--plist=${TARGET_BUILD_DIR}/${INFOPLIST_PATH}',
                          '--breakpad=0',
                          '--keystone=0',
                          '--scm=0',

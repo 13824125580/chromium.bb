@@ -61,8 +61,12 @@ TEST(CygprofileTest, ThreadLogBasic) {
 }
 
 TEST(CygprofileTest, ManagerBasic) {
-  base::WaitableEvent wait_event(true, false);
-  base::WaitableEvent notify_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  base::WaitableEvent notify_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   ThreadLogsManager manager(
       base::Bind(&base::WaitableEvent::Wait, base::Unretained(&wait_event)),
@@ -70,7 +74,7 @@ TEST(CygprofileTest, ManagerBasic) {
                  base::Unretained(&notify_event)));
 
   std::vector<LogEntry> entries;
-  scoped_ptr<ThreadLog> thread_log(
+  std::unique_ptr<ThreadLog> thread_log(
       new ThreadLog(base::Bind(&FlushEntries, base::Unretained(&entries))));
 
   thread_log->AddEntry(reinterpret_cast<void*>(0x2));

@@ -4,9 +4,10 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #include "chrome/browser/ui/website_settings/website_settings_ui.h"
 #include "components/security_state/security_state_model.h"
@@ -43,6 +44,9 @@ class WebContents;
   // for enterprise users with DevTools disabled.
   NSButton* securityDetailsButton_;
 
+  // URL of the page for which the bubble is shown.
+  GURL url_;
+
   // Whether DevTools is disabled for the relevant profile.
   BOOL isDevToolsDisabled_;
 
@@ -73,11 +77,11 @@ class WebContents;
 
   // The UI translates user actions to specific events and forwards them to the
   // |presenter_|. The |presenter_| handles these events and updates the UI.
-  scoped_ptr<WebsiteSettings> presenter_;
+  std::unique_ptr<WebsiteSettings> presenter_;
 
   // Bridge which implements the WebsiteSettingsUI interface and forwards
   // methods on to this class.
-  scoped_ptr<WebsiteSettingsUIBridge> bridge_;
+  std::unique_ptr<WebsiteSettingsUIBridge> bridge_;
 }
 
 // Designated initializer. The controller will release itself when the bubble
@@ -86,7 +90,7 @@ class WebContents;
 - (id)initWithParentWindow:(NSWindow*)parentWindow
     websiteSettingsUIBridge:(WebsiteSettingsUIBridge*)bridge
                 webContents:(content::WebContents*)webContents
-             isInternalPage:(BOOL)isInternalPage
+                        url:(const GURL&)url
          isDevToolsDisabled:(BOOL)isDevToolsDisabled;
 
 // Return the default width of the window. It may be wider to fit the content.
@@ -106,7 +110,7 @@ class WebsiteSettingsUIBridge : public content::WebContentsObserver,
   // Creates a |WebsiteSettingsBubbleController| and displays the UI. |parent|
   // is the currently active window. |profile| points to the currently active
   // profile. |web_contents| points to the WebContents that wraps the currently
-  // active tab. |url| is the GURL of the currently active
+  // active tab. |virtual_url| is the virtual GURL of the currently active
   // tab. |security_info| is the
   // |security_state::SecurityStateModel::SecurityInfo| of
   // the connection to the website in the currently active tab.
@@ -114,7 +118,7 @@ class WebsiteSettingsUIBridge : public content::WebContentsObserver,
       gfx::NativeWindow parent,
       Profile* profile,
       content::WebContents* web_contents,
-      const GURL& url,
+      const GURL& virtual_url,
       const security_state::SecurityStateModel::SecurityInfo& security_info);
 
   void set_bubble_controller(

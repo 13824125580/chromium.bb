@@ -33,6 +33,7 @@
 #include "bindings/core/v8/ScriptController.h"
 #include "bindings/core/v8/V8Binding.h"
 #include "core/dom/Document.h"
+#include "core/events/Event.h"
 #include "core/frame/LocalFrame.h"
 
 namespace blink {
@@ -44,7 +45,7 @@ V8EventListener::V8EventListener(bool isAttribute, ScriptState* scriptState)
 
 v8::Local<v8::Function> V8EventListener::getListenerFunction(ScriptState* scriptState)
 {
-    v8::Local<v8::Object> listener = getListenerObject(scriptState->executionContext());
+    v8::Local<v8::Object> listener = getListenerObject(scriptState->getExecutionContext());
 
     // Has the listener been disposed?
     if (listener.IsEmpty())
@@ -79,14 +80,15 @@ v8::Local<v8::Value> V8EventListener::callListenerFunction(ScriptState* scriptSt
     if (handlerFunction.IsEmpty() || receiver.IsEmpty())
         return v8::Local<v8::Value>();
 
-    if (!scriptState->executionContext()->isDocument())
+    if (!scriptState->getExecutionContext()->isDocument())
         return v8::Local<v8::Value>();
 
-    LocalFrame* frame = toDocument(scriptState->executionContext())->frame();
+    LocalFrame* frame = toDocument(scriptState->getExecutionContext())->frame();
     if (!frame)
         return v8::Local<v8::Value>();
 
-    if (!frame->script().canExecuteScripts(AboutToExecuteScript))
+    // TODO(jochen): Consider moving this check into canExecuteScripts. http://crbug.com/608641
+    if (scriptState->world().isMainWorld() && !frame->script().canExecuteScripts(AboutToExecuteScript))
         return v8::Local<v8::Value>();
 
     v8::Local<v8::Value> parameters[1] = { jsEvent };

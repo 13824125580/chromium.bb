@@ -22,7 +22,7 @@ from dashboard import stored_object
 from dashboard import utils
 from dashboard.models import graph_data
 
-_QUEUE_YAML_DIR = os.path.join(os.path.dirname(__file__), os.path.pardir)
+_QUEUE_YAML_DIR = os.path.join(os.path.dirname(__file__), '..')
 
 
 class FakeRequestObject(object):
@@ -130,6 +130,9 @@ class TestCase(unittest.TestCase):
           return None
     return None
 
+  def GetJsonValue(self, response, key):
+    return json.loads(response.body).get(key)
+
   def PatchDatastoreHooksRequest(self, remote_addr=None):
     """This patches the request object to allow IP address to be set.
 
@@ -171,29 +174,31 @@ def AddTests(masters, bots, tests_dict):
   for master_name in masters:
     master_key = graph_data.Master(id=master_name).put()
     for bot_name in bots:
-      bot_key = graph_data.Bot(id=bot_name, parent=master_key).put()
+      graph_data.Bot(id=bot_name, parent=master_key).put()
       for test_name in tests_dict:
-        test_key = graph_data.Test(id=test_name, parent=bot_key).put()
-        _AddSubtest(test_key, tests_dict[test_name])
+        test_path = '%s/%s/%s' % (master_name, bot_name, test_name)
+        graph_data.TestMetadata(id=test_path).put()
+        _AddSubtest(test_path, tests_dict[test_name])
 
 
-def _AddSubtest(parent_test_key, subtests_dict):
-  """Helper function to recursively add sub-Tests to a Test.
+def _AddSubtest(parent_test_path, subtests_dict):
+  """Helper function to recursively add sub-TestMetadatas to a TestMetadata.
 
   Args:
-    parent_test_key: A Test key.
+    parent_test_path: A path to the parent test.
     subtests_dict: A dict of test names to dictionaries of subtests.
   """
   for test_name in subtests_dict:
-    test_key = graph_data.Test(id=test_name, parent=parent_test_key).put()
-    _AddSubtest(test_key, subtests_dict[test_name])
+    test_path = '%s/%s' % (parent_test_path, test_name)
+    graph_data.TestMetadata(id=test_path).put()
+    _AddSubtest(test_path, subtests_dict[test_name])
 
 
 def AddRows(test_path, rows):
   """Adds Rows to a given test.
 
   Args:
-    test_path: Full test path of Test entity to add Rows to.
+    test_path: Full test path of TestMetadata entity to add Rows to.
     rows: Either a dict mapping ID (revision) to properties, or a set of IDs.
 
   Returns:

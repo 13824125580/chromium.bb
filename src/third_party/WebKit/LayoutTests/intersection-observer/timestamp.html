@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <script src="../resources/js-test.js"></script>
-<script src="helper-functions.js"></script>
+<script src="../resources/intersection-observer-helper-functions.js"></script>
 <div id="beforeFrame" style="width:100%; height:700px;"></div>
 <div id="afterFrame" style="width:100%; height:700px;"></div>
 
@@ -8,43 +8,41 @@
 description("Test that intersection observer time is relative to time in the callback context.");
 var topWindowEntries = [];
 var iframeWindowEntries = [];
+var topWindowObserver;
+var iframeWindowObserver;
 var targetIframe;
 var iframeScroller;
 var topWindowTime;
 var iframeWindowTime;
-var timestampTolerance = 24;  // 1.5 times frame duration.
+var timestampTolerance = 24;
 
 function step0() {
-  setTimeout(function() {
-    // Test results are only significant if there's a sufficient gap between
-    // top window time and iframe window time.
-    topWindowTime = performance.now();
-    iframeWindowTime = targetIframe.contentWindow.performance.now();
-    shouldBeGreaterThan("topWindowTime - iframeWindowTime", "2 * timestampTolerance");
+  // Test results are only significant if there's a sufficient gap between
+  // top window time and iframe window time.
+  topWindowTime = performance.now();
+  iframeWindowTime = targetIframe.contentWindow.performance.now();
+  shouldBeGreaterThan("topWindowTime - iframeWindowTime", "2.5 * timestampTolerance");
 
-    shouldBeEqualToNumber("topWindowEntries.length", 0);
-    shouldBeEqualToNumber("iframeWindowEntries.length", 0);
-    document.scrollingElement.scrollTop = 200;
-    iframeScroller.scrollTop = 250;
-    requestAnimationFrame(step1);
-  });
+  shouldBeEqualToNumber("topWindowEntries.length", 0);
+  shouldBeEqualToNumber("iframeWindowEntries.length", 0);
+  document.scrollingElement.scrollTop = 200;
+  iframeScroller.scrollTop = 250;
+  waitForNotification(step1);
 }
 
 function step1() {
-  setTimeout(function() {
-    topWindowTime = performance.now();
-    iframeWindowTime = targetIframe.contentWindow.performance.now();
-    shouldBeEqualToNumber("topWindowEntries.length", 1);
-    if (topWindowEntries.length) {
-      shouldBeCloseTo("topWindowEntries[0].time", "topWindowTime", timestampTolerance);
-    }
-    shouldBeEqualToNumber("iframeWindowEntries.length", 1);
-    if (iframeWindowEntries.length) {
-      shouldBeCloseTo("iframeWindowEntries[0].time", "iframeWindowTime", timestampTolerance);
-    }
-    finishJSTest();
-    document.scrollingElement.scrollTop = 0;
-  });
+  topWindowTime = performance.now();
+  iframeWindowTime = targetIframe.contentWindow.performance.now();
+  shouldBeEqualToNumber("topWindowEntries.length", 1);
+  if (topWindowEntries.length)
+    shouldBeCloseTo("topWindowEntries[0].time", "topWindowTime", timestampTolerance);
+
+  shouldBeEqualToNumber("iframeWindowEntries.length", 1);
+  if (iframeWindowEntries.length) {
+    shouldBeCloseTo("iframeWindowEntries[0].time", "iframeWindowTime", timestampTolerance);
+  }
+  waitForNotification(finishJSTest);
+  document.scrollingElement.scrollTop = 0;
 }
 
 function runTest() {
@@ -53,21 +51,21 @@ function runTest() {
 
   // Observer created here, callback created in iframe context.  Timestamps should be
   // from this window.
-  var observer = new IntersectionObserver(targetIframe.contentDocument.createObserverCallback(topWindowEntries), {});
-  observer.observe(target);
+  topWindowObserver = new IntersectionObserver(targetIframe.contentDocument.createObserverCallback(topWindowEntries), {});
+  topWindowObserver.observe(target);
 
   // Callback created here, observer created in iframe.  Timestamps should be
   // from iframe window.
-  observer = targetIframe.contentDocument.createObserver(function(newEntries) {
+  iframeWindowObserver = targetIframe.contentDocument.createObserver(function(newEntries) {
     for (var i = 0; i < newEntries.length; i++)
       iframeWindowEntries.push(newEntries[i]);
   });
-  observer.observe(target);
+  iframeWindowObserver.observe(target);
 
-  step0();
+  waitForNotification(step0);
 }
 
-window.onload = function() {
+onload = function() {
   setTimeout(function() {
     targetIframe = document.createElement("iframe");
     targetIframe.src = "../resources/intersection-observer-timestamp-subframe.html";
@@ -75,7 +73,7 @@ window.onload = function() {
     var afterFrame = document.getElementById("afterFrame");
     afterFrame.parentNode.insertBefore(targetIframe, afterFrame);
     targetIframe.onload = runTest;
-  }, 100);
+  }, 2.5 * timestampTolerance);
 };
 
 </script>

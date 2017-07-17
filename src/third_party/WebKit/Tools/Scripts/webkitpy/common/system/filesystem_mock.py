@@ -49,6 +49,7 @@ class MockFileSystem(object):
                 not exist.
         """
         self.files = files or {}
+        self.executable_files = set()
         self.written_files = {}
         self.last_tmpdir = None
         self.current_tmpno = 0
@@ -60,7 +61,6 @@ class MockFileSystem(object):
             while not d in self.dirs:
                 self.dirs.add(d)
                 d = self.dirname(d)
-
     def clear_written_files(self):
         # This function can be used to track what is written between steps in a test.
         self.written_files = {}
@@ -74,6 +74,9 @@ class MockFileSystem(object):
         if self.sep in path:
             return path.rsplit(self.sep, 1)
         return ('', path)
+
+    def make_executable(self, file_path):
+        self.executable_files.add(file_path)
 
     def abspath(self, path):
         if os.path.isabs(path):
@@ -223,7 +226,12 @@ class MockFileSystem(object):
                         dirs.append(dir)
                 else:
                     files.append(remaining)
-        return [(top[:-1], dirs, files)]
+        file_system_tuples = [(top[:-1], dirs, files)]
+        for dir in dirs:
+            dir = top + dir
+            tuples_from_subdirs = self.walk(dir)
+            file_system_tuples += tuples_from_subdirs
+        return file_system_tuples
 
     def mtime(self, path):
         if self.exists(path):
@@ -240,6 +248,7 @@ class MockFileSystem(object):
 
     def mkdtemp(self, **kwargs):
         class TemporaryDirectory(object):
+
             def __init__(self, fs, **kwargs):
                 self._kwargs = kwargs
                 self._filesystem = fs
@@ -351,7 +360,7 @@ class MockFileSystem(object):
         dot_dot = ''
         while not common_root == '':
             if path.startswith(common_root):
-                 break
+                break
             common_root = self.dirname(common_root)
             dot_dot += '..' + self.sep
 
@@ -415,6 +424,7 @@ class MockFileSystem(object):
 
 
 class WritableBinaryFileObject(object):
+
     def __init__(self, fs, path):
         self.fs = fs
         self.path = path
@@ -436,11 +446,13 @@ class WritableBinaryFileObject(object):
 
 
 class WritableTextFileObject(WritableBinaryFileObject):
+
     def write(self, str):
         WritableBinaryFileObject.write(self, str.encode('utf-8'))
 
 
 class ReadableBinaryFileObject(object):
+
     def __init__(self, fs, path, data):
         self.fs = fs
         self.path = path
@@ -466,6 +478,7 @@ class ReadableBinaryFileObject(object):
 
 
 class ReadableTextFileObject(ReadableBinaryFileObject):
+
     def __init__(self, fs, path, data):
         super(ReadableTextFileObject, self).__init__(fs, path, StringIO.StringIO(data.decode("utf-8")))
 

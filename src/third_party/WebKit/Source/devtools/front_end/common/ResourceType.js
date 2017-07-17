@@ -190,7 +190,7 @@ WebInspector.resourceTypes = {
     Other: new WebInspector.ResourceType("other", "Other", WebInspector.resourceCategories.Other, false),
     SourceMapScript: new WebInspector.ResourceType("sm-script", "Script", WebInspector.resourceCategories.Script, false),
     SourceMapStyleSheet: new WebInspector.ResourceType("sm-stylesheet", "Stylesheet", WebInspector.resourceCategories.Stylesheet, false),
-    Manifest: new WebInspector.ResourceType("manifest", "Manifest", WebInspector.resourceCategories.Manifest, false),
+    Manifest: new WebInspector.ResourceType("manifest", "Manifest", WebInspector.resourceCategories.Manifest, true),
 }
 
 /**
@@ -199,11 +199,11 @@ WebInspector.resourceTypes = {
  */
 WebInspector.ResourceType.mimeFromURL = function(url)
 {
-    var name = WebInspector.TextUtils.fileName(url);
+    var name = WebInspector.ParsedURL.extractName(url);
     if (WebInspector.ResourceType.mimeTypeByName[name]) {
         return WebInspector.ResourceType.mimeTypeByName[name];
     }
-    var ext = WebInspector.TextUtils.extension(url).toLowerCase();
+    var ext = WebInspector.ParsedURL.extractExtension(url).toLowerCase();
     return WebInspector.ResourceType.mimeTypeByExtension[ext];
 }
 
@@ -215,7 +215,6 @@ WebInspector.ResourceType.mimeTypeByName = {
 WebInspector.ResourceType.mimeTypeByExtension = {
     // Web extensions
     "js": "text/javascript",
-    "jsx": "text/javascript",
     "css": "text/css",
     "html": "text/html",
     "htm": "text/html",
@@ -285,6 +284,9 @@ WebInspector.ResourceType.mimeTypeByExtension = {
 
     // Stylus
     "styl": "text/x-styl",
+
+    // JSX
+    "jsx": "text/jsx",
 
     // Image
     "jpeg": "image/jpeg",

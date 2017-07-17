@@ -5,10 +5,11 @@
 #ifndef COMPONENTS_BROWSER_SYNC_BROWSER_PROFILE_SYNC_TEST_UTIL_H_
 #define COMPONENTS_BROWSER_SYNC_BROWSER_PROFILE_SYNC_TEST_UTIL_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/sequenced_worker_pool_owner.h"
 #include "base/time/time.h"
@@ -101,7 +102,7 @@ class ProfileSyncServiceBundle {
 
     void set_activate_model_creation() { activate_model_creation_ = true; }
 
-    scoped_ptr<sync_driver::FakeSyncClient> Build();
+    std::unique_ptr<sync_driver::FakeSyncClient> Build();
 
    private:
     // Associated bundle to source objects from.
@@ -126,8 +127,8 @@ class ProfileSyncServiceBundle {
   // |sync_client|, and fills the rest with dummy values and objects owned by
   // the bundle.
   ProfileSyncService::InitParams CreateBasicInitParams(
-      browser_sync::ProfileSyncServiceStartBehavior start_behavior,
-      scoped_ptr<sync_driver::SyncClient> sync_client);
+      ProfileSyncService::StartBehavior start_behavior,
+      std::unique_ptr<sync_driver::SyncClient> sync_client);
 
   // Accessors
 

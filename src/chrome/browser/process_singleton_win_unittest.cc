@@ -6,6 +6,8 @@
 
 #include <windows.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
@@ -13,7 +15,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
@@ -22,7 +23,7 @@
 #include "base/test/multiprocess_test.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/wrapped_window_proc.h"
-#include "chrome/browser/chrome_process_finder_win.h"
+#include "chrome/browser/win/chrome_process_finder.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/common/result_codes.h"
@@ -246,7 +247,7 @@ class ProcessSingletonTest : public base::MultiProcessTest {
   base::Process browser_victim_;
   base::win::ScopedHandle continue_event_;
 
-  scoped_ptr<ProcessSingleton> test_singleton_;
+  std::unique_ptr<ProcessSingleton> test_singleton_;
 
   base::TimeDelta old_notification_timeout_;
   bool should_kill_called_;

@@ -46,12 +46,6 @@ jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyPromoAllowed(
   return Settings()->PromoAllowed();
 }
 
-jboolean DataReductionProxySettingsAndroid::IsIncludedInAltFieldTrial(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return false;
-}
-
 jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
@@ -195,18 +189,6 @@ ScopedJavaLocalRef<jstring> DataReductionProxySettingsAndroid::GetHttpProxyList(
     return ConvertUTF8ToJavaString(env, std::string());
 
   return ConvertUTF8ToJavaString(env, event_store->GetHttpProxyList());
-}
-
-ScopedJavaLocalRef<jstring>
-DataReductionProxySettingsAndroid::GetHttpsProxyList(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  data_reduction_proxy::DataReductionProxyEventStore* event_store =
-      Settings()->GetEventStore();
-  if (!event_store)
-    return ConvertUTF8ToJavaString(env, std::string());
-
-  return ConvertUTF8ToJavaString(env, event_store->GetHttpsProxyList());
 }
 
 DataReductionProxySettings* DataReductionProxySettingsAndroid::Settings() {

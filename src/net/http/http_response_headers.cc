@@ -10,6 +10,7 @@
 #include "net/http/http_response_headers.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 
 #include "base/format_macros.h"
@@ -23,6 +24,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "net/base/escape.h"
+#include "net/base/parse_number.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_log_util.h"
 #include "net/http/http_util.h"
@@ -352,6 +354,10 @@ void HttpResponseHeaders::AddHeader(const std::string& header) {
   Parse(new_raw_headers);
 }
 
+void HttpResponseHeaders::AddCookie(const std::string& cookie_string) {
+  AddHeader("Set-Cookie: " + cookie_string);
+}
+
 void HttpResponseHeaders::ReplaceStatusLine(const std::string& new_status) {
   CheckDoesNotHaveEmbededNulls(new_status);
   // Copy up to the null byte.  This just copies the status line.
@@ -456,7 +462,7 @@ void HttpResponseHeaders::GetNormalizedHeaders(std::string* output) const {
   // be a web app, we cannot be certain of the semantics of commas despite the
   // fact that RFC 2616 says that they should be regarded as value separators.
   //
-  typedef base::hash_map<std::string, size_t> HeadersMap;
+  using HeadersMap = std::unordered_map<std::string, size_t>;
   HeadersMap headers_map;
   HeadersMap::iterator iter = headers_map.end();
 
@@ -654,7 +660,7 @@ HttpVersion HttpResponseHeaders::ParseVersion(
   ++p;  // from / to first digit.
   ++dot;  // from . to second digit.
 
-  if (!(*p >= '0' && *p <= '9' && *dot >= '0' && *dot <= '9')) {
+  if (!(base::IsAsciiDigit(*p) && base::IsAsciiDigit(*dot))) {
     DVLOG(1) << "malformed version number";
     return HttpVersion();
   }
@@ -709,7 +715,7 @@ void HttpResponseHeaders::ParseStatusLine(
     ++p;
 
   std::string::const_iterator code = p;
-  while (p < line_end && *p >= '0' && *p <= '9')
+  while (p < line_end && base::IsAsciiDigit(*p))
     ++p;
 
   if (p == code) {
@@ -961,7 +967,7 @@ ValidationType HttpResponseHeaders::RequiresValidation(
     const Time& response_time,
     const Time& current_time) const {
   FreshnessLifetimes lifetimes = GetFreshnessLifetimes(response_time);
-  if (lifetimes.freshness == TimeDelta() && lifetimes.staleness == TimeDelta())
+  if (lifetimes.freshness.is_zero() && lifetimes.staleness.is_zero())
     return VALIDATION_SYNCHRONOUS;
 
   TimeDelta age = GetCurrentAge(request_time, response_time, current_time);
@@ -1155,8 +1161,20 @@ bool HttpResponseHeaders::GetAgeValue(TimeDelta* result) const {
   if (!EnumerateHeader(nullptr, "Age", &value))
     return false;
 
-  int64_t seconds;
-  base::StringToInt64(value, &seconds);
+  // Parse the delta-seconds as 1*DIGIT.
+  uint32_t seconds;
+  ParseIntError error;
+  if (!ParseUint32(value, &seconds, &error)) {
+    if (error == ParseIntError::FAILED_OVERFLOW) {
+      // If the Age value cannot fit in a uint32_t, saturate it to a maximum
+      // value. This is similar to what RFC 2616 says in section 14.6 for how
+      // caches should transmit values that overflow.
+      seconds = std::numeric_limits<decltype(seconds)>::max();
+    } else {
+      return false;
+    }
+  }
+
   *result = TimeDelta::FromSeconds(seconds);
   return true;
 }
@@ -1246,6 +1264,15 @@ bool HttpResponseHeaders::HasStrongValidators() const {
                                        etag_header,
                                        last_modified_header,
                                        date_header);
+}
+
+bool HttpResponseHeaders::HasValidators() const {
+  std::string etag_header;
+  EnumerateHeader(NULL, "etag", &etag_header);
+  std::string last_modified_header;
+  EnumerateHeader(NULL, "Last-Modified", &last_modified_header);
+  return HttpUtil::HasValidators(GetHttpVersion(), etag_header,
+                                 last_modified_header);
 }
 
 // From RFC 2616:
@@ -1389,11 +1416,11 @@ bool HttpResponseHeaders::GetContentRange(int64_t* first_byte_position,
   return true;
 }
 
-scoped_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
+std::unique_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
     NetLogCaptureMode capture_mode) const {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   base::ListValue* headers = new base::ListValue();
-  headers->Append(new base::StringValue(GetStatusLine()));
+  headers->AppendString(EscapeNonASCII(GetStatusLine()));
   size_t iterator = 0;
   std::string name;
   std::string value;
@@ -1402,10 +1429,8 @@ scoped_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
         ElideHeaderValueForNetLog(capture_mode, name, value);
     std::string escaped_name = EscapeNonASCII(name);
     std::string escaped_value = EscapeNonASCII(log_value);
-    headers->Append(
-      new base::StringValue(
-          base::StringPrintf("%s: %s", escaped_name.c_str(),
-                             escaped_value.c_str())));
+    headers->AppendString(base::StringPrintf("%s: %s", escaped_name.c_str(),
+                                             escaped_value.c_str()));
   }
   dict->Set("headers", headers);
   return std::move(dict);

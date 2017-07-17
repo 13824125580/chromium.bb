@@ -10,15 +10,18 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/filename_util.h"
 #include "net/base/load_flags.h"
 #include "net/base/network_delegate_impl.h"
 #include "net/base/test_completion_callback.h"
+#include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/mock_cert_verifier.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_cache.h"
@@ -62,32 +65,38 @@ class RequestContext : public URLRequestContext {
  public:
   RequestContext() : storage_(this) {
     ProxyConfig no_proxy;
-    storage_.set_host_resolver(scoped_ptr<HostResolver>(new MockHostResolver));
-    storage_.set_cert_verifier(make_scoped_ptr(new MockCertVerifier));
+    storage_.set_host_resolver(
+        std::unique_ptr<HostResolver>(new MockHostResolver));
+    storage_.set_cert_verifier(base::WrapUnique(new MockCertVerifier));
     storage_.set_transport_security_state(
-        make_scoped_ptr(new TransportSecurityState));
+        base::WrapUnique(new TransportSecurityState));
+    storage_.set_cert_transparency_verifier(
+        base::WrapUnique(new MultiLogCTVerifier));
+    storage_.set_ct_policy_enforcer(base::WrapUnique(new CTPolicyEnforcer));
     storage_.set_proxy_service(ProxyService::CreateFixed(no_proxy));
     storage_.set_ssl_config_service(new SSLConfigServiceDefaults);
     storage_.set_http_server_properties(
-        scoped_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
+        std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
 
     HttpNetworkSession::Params params;
     params.host_resolver = host_resolver();
     params.cert_verifier = cert_verifier();
     params.transport_security_state = transport_security_state();
+    params.cert_transparency_verifier = cert_transparency_verifier();
+    params.ct_policy_enforcer = ct_policy_enforcer();
     params.proxy_service = proxy_service();
     params.ssl_config_service = ssl_config_service();
     params.http_server_properties = http_server_properties();
     storage_.set_http_network_session(
-        make_scoped_ptr(new HttpNetworkSession(params)));
-    storage_.set_http_transaction_factory(make_scoped_ptr(
+        base::WrapUnique(new HttpNetworkSession(params)));
+    storage_.set_http_transaction_factory(base::WrapUnique(
         new HttpCache(storage_.http_network_session(),
                       HttpCache::DefaultBackend::InMemory(0), false)));
-    scoped_ptr<URLRequestJobFactoryImpl> job_factory =
-        make_scoped_ptr(new URLRequestJobFactoryImpl());
+    std::unique_ptr<URLRequestJobFactoryImpl> job_factory =
+        base::WrapUnique(new URLRequestJobFactoryImpl());
 #if !defined(DISABLE_FILE_SUPPORT)
     job_factory->SetProtocolHandler("file",
-                                    make_scoped_ptr(new FileProtocolHandler(
+                                    base::WrapUnique(new FileProtocolHandler(
                                         base::ThreadTaskRunnerHandle::Get())));
 #endif
     storage_.set_job_factory(std::move(job_factory));
@@ -129,14 +138,14 @@ class BasicNetworkDelegate : public NetworkDelegateImpl {
     return OK;
   }
 
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override {
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override {
     return OK;
   }
 
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override {}
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override {}
 
   int OnHeadersReceived(
       URLRequest* request,

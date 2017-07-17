@@ -6,6 +6,7 @@
 
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "wtf/Assertions.h"
 
 namespace blink {
 
@@ -14,11 +15,9 @@ RemoteSecurityContext::RemoteSecurityContext()
 {
     // RemoteSecurityContext's origin is expected to stay uninitialized until
     // we set it using replicated origin data from the browser process.
-    ASSERT(!haveInitializedSecurityOrigin());
+    DCHECK(!getSecurityOrigin());
 
-    // CSP will not be replicated for RemoteSecurityContexts, as it is moving
-    // to the browser process.  For now, initialize CSP to a default
-    // locked-down policy.
+    // Start with a clean slate.
     setContentSecurityPolicy(ContentSecurityPolicy::create());
 
     // FIXME: Document::initSecurityContext has a few other things we may
@@ -26,9 +25,9 @@ RemoteSecurityContext::RemoteSecurityContext()
     // grantUniversalAccess().
 }
 
-PassRefPtrWillBeRawPtr<RemoteSecurityContext> RemoteSecurityContext::create()
+RemoteSecurityContext* RemoteSecurityContext::create()
 {
-    return adoptRefWillBeNoop(new RemoteSecurityContext());
+    return new RemoteSecurityContext();
 }
 
 DEFINE_TRACE(RemoteSecurityContext)
@@ -38,8 +37,16 @@ DEFINE_TRACE(RemoteSecurityContext)
 
 void RemoteSecurityContext::setReplicatedOrigin(PassRefPtr<SecurityOrigin> origin)
 {
+    DCHECK(origin);
     setSecurityOrigin(origin);
+    contentSecurityPolicy()->setupSelf(*getSecurityOrigin());
 }
 
+void RemoteSecurityContext::resetReplicatedContentSecurityPolicy()
+{
+    DCHECK(getSecurityOrigin());
+    setContentSecurityPolicy(ContentSecurityPolicy::create());
+    contentSecurityPolicy()->setupSelf(*getSecurityOrigin());
+}
 
 } // namespace blink

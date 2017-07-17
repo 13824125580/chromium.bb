@@ -34,31 +34,36 @@
 #include "core/loader/FrameLoader.h"
 #include "core/loader/FrameLoaderClient.h"
 #include "core/plugins/PluginView.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/weborigin/SecurityOrigin.h"
 
 namespace blink {
 
-typedef WillBeHeapHashMap<RefPtrWillBeMember<Widget>, RawPtrWillBeMember<FrameView>> WidgetToParentMap;
+typedef HeapHashMap<Member<Widget>, Member<FrameView>> WidgetToParentMap;
 static WidgetToParentMap& widgetNewParentMap()
 {
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<WidgetToParentMap>, map, (adoptPtrWillBeNoop(new WidgetToParentMap())));
-    return *map;
+    DEFINE_STATIC_LOCAL(WidgetToParentMap, map, (new WidgetToParentMap));
+    return map;
 }
 
-typedef WillBeHeapHashSet<RefPtrWillBeMember<Widget>> WidgetSet;
+using WidgetSet = HeapHashSet<Member<Widget>>;
 static WidgetSet& widgetsPendingTemporaryRemovalFromParent()
 {
     // Widgets in this set will not leak because it will be cleared in
     // HTMLFrameOwnerElement::UpdateSuspendScope::performDeferredWidgetTreeOperations.
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<WidgetSet>, set, (adoptPtrWillBeNoop(new WidgetSet())));
-    return *set;
+    DEFINE_STATIC_LOCAL(WidgetSet, set, (new WidgetSet));
+    return set;
 }
 
-WillBeHeapHashCountedSet<RawPtrWillBeMember<Node>>& SubframeLoadingDisabler::disabledSubtreeRoots()
+static WidgetSet& widgetsPendingDispose()
 {
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<WillBeHeapHashCountedSet<RawPtrWillBeMember<Node>>>, nodes, (adoptPtrWillBeNoop(new WillBeHeapHashCountedSet<RawPtrWillBeMember<Node>>())));
-    return *nodes;
+    DEFINE_STATIC_LOCAL(WidgetSet, set, (new WidgetSet));
+    return set;
+}
+
+SubframeLoadingDisabler::SubtreeRootSet& SubframeLoadingDisabler::disabledSubtreeRoots()
+{
+    DEFINE_STATIC_LOCAL(SubtreeRootSet, nodes, (new SubtreeRootSet));
+    return nodes;
 }
 
 static unsigned s_updateSuspendCount = 0;
@@ -81,19 +86,27 @@ void HTMLFrameOwnerElement::UpdateSuspendScope::performDeferredWidgetTreeOperati
                 currentParent->removeChild(child);
             if (newParent)
                 newParent->addChild(child);
-#if ENABLE(OILPAN)
             if (currentParent && !newParent)
                 child->dispose();
-#endif
         }
     }
 
-    WidgetSet set;
-    widgetsPendingTemporaryRemovalFromParent().swap(set);
-    for (const auto& widget : set) {
-        FrameView* currentParent = toFrameView(widget->parent());
-        if (currentParent)
-            currentParent->removeChild(widget.get());
+    {
+        WidgetSet set;
+        widgetsPendingTemporaryRemovalFromParent().swap(set);
+        for (const auto& widget : set) {
+            FrameView* currentParent = toFrameView(widget->parent());
+            if (currentParent)
+                currentParent->removeChild(widget.get());
+        }
+    }
+
+    {
+        WidgetSet set;
+        widgetsPendingDispose().swap(set);
+        for (const auto& widget : set) {
+            widget->dispose();
+        }
     }
 }
 
@@ -123,9 +136,7 @@ void moveWidgetToParentSoon(Widget* child, FrameView* parent)
             parent->addChild(child);
         } else if (toFrameView(child->parent())) {
             toFrameView(child->parent())->removeChild(child);
-#if ENABLE(OILPAN)
             child->dispose();
-#endif
         }
         return;
     }
@@ -154,7 +165,7 @@ void HTMLFrameOwnerElement::setContentFrame(Frame& frame)
     // Make sure we will not end up with two frames referencing the same owner element.
     ASSERT(!m_contentFrame || m_contentFrame->owner() != this);
     // Disconnected frames should not be allowed to load.
-    ASSERT(inDocument());
+    ASSERT(inShadowIncludingDocument());
     m_contentFrame = &frame;
 
     for (ContainerNode* node = this; node; node = node->parentOrShadowHostNode())
@@ -166,6 +177,7 @@ void HTMLFrameOwnerElement::clearContentFrame()
     if (!m_contentFrame)
         return;
 
+    ASSERT(m_contentFrame->owner() == this);
     m_contentFrame = nullptr;
 
     for (ContainerNode* node = this; node; node = node->parentOrShadowHostNode())
@@ -178,7 +190,7 @@ void HTMLFrameOwnerElement::disconnectContentFrame()
     // unload event in the subframe which could execute script that could then
     // reach up into this document and then attempt to look back down. We should
     // see if this behavior is really needed as Gecko does not allow this.
-    if (RefPtrWillBeRawPtr<Frame> frame = contentFrame()) {
+    if (Frame* frame = contentFrame()) {
         frame->detach(FrameDetachType::Remove);
     }
 }
@@ -214,9 +226,24 @@ bool HTMLFrameOwnerElement::isKeyboardFocusable() const
     return m_contentFrame && HTMLElement::isKeyboardFocusable();
 }
 
+void HTMLFrameOwnerElement::disposeWidgetSoon(Widget* widget)
+{
+    if (s_updateSuspendCount) {
+        widgetsPendingDispose().add(widget);
+        return;
+    }
+    widget->dispose();
+}
+
 void HTMLFrameOwnerElement::dispatchLoad()
 {
     dispatchScopedEvent(Event::create(EventTypeNames::load));
+}
+
+const WebVector<WebPermissionType>& HTMLFrameOwnerElement::delegatedPermissions() const
+{
+    DEFINE_STATIC_LOCAL(WebVector<WebPermissionType>, permissions, ());
+    return permissions;
 }
 
 Document* HTMLFrameOwnerElement::getSVGDocument(ExceptionState& exceptionState) const
@@ -227,7 +254,7 @@ Document* HTMLFrameOwnerElement::getSVGDocument(ExceptionState& exceptionState) 
     return nullptr;
 }
 
-void HTMLFrameOwnerElement::setWidget(PassRefPtrWillBeRawPtr<Widget> widget)
+void HTMLFrameOwnerElement::setWidget(Widget* widget)
 {
     if (widget == m_widget)
         return;
@@ -257,7 +284,7 @@ void HTMLFrameOwnerElement::setWidget(PassRefPtrWillBeRawPtr<Widget> widget)
         cache->childrenChanged(layoutPart);
 }
 
-PassRefPtrWillBeRawPtr<Widget> HTMLFrameOwnerElement::releaseWidget()
+Widget* HTMLFrameOwnerElement::releaseWidget()
 {
     if (!m_widget)
         return nullptr;
@@ -278,14 +305,14 @@ Widget* HTMLFrameOwnerElement::ownedWidget() const
 
 bool HTMLFrameOwnerElement::loadOrRedirectSubframe(const KURL& url, const AtomicString& frameName, bool replaceCurrentItem)
 {
-    RefPtrWillBeRawPtr<LocalFrame> parentFrame = document().frame();
+    LocalFrame* parentFrame = document().frame();
     if (contentFrame()) {
         contentFrame()->navigate(document(), url, replaceCurrentItem, UserGestureStatus::None);
         return true;
     }
 
-    if (!document().securityOrigin()->canDisplay(url)) {
-        FrameLoader::reportLocalLoadFailed(parentFrame.get(), url.string());
+    if (!document().getSecurityOrigin()->canDisplay(url)) {
+        FrameLoader::reportLocalLoadFailed(parentFrame, url.getString());
         return false;
     }
 
@@ -297,11 +324,9 @@ bool HTMLFrameOwnerElement::loadOrRedirectSubframe(const KURL& url, const Atomic
 
     FrameLoadRequest frameLoadRequest(&document(), url, "_self", CheckContentSecurityPolicy);
 
-    if (RuntimeEnabledFeatures::referrerPolicyAttributeEnabled()) {
-        ReferrerPolicy policy = referrerPolicyAttribute();
-        if (policy != ReferrerPolicyDefault)
-            frameLoadRequest.resourceRequest().setHTTPReferrer(SecurityPolicy::generateReferrer(policy, url, document().outgoingReferrer()));
-    }
+    ReferrerPolicy policy = referrerPolicyAttribute();
+    if (policy != ReferrerPolicyDefault)
+        frameLoadRequest.resourceRequest().setHTTPReferrer(SecurityPolicy::generateReferrer(policy, url, document().outgoingReferrer()));
 
     return parentFrame->loader().client()->createFrame(frameLoadRequest, frameName, this);
 }

@@ -27,19 +27,52 @@ namespace {
 // A helper class that will create FakeURLFetcher and record the requested URLs.
 class TestURLFetcherCallback {
  public:
-  scoped_ptr<net::FakeURLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* d,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
     OnRequestDone(url);
-    return scoped_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
-        url, d, response_data, response_code, status));
+    return std::unique_ptr<net::FakeURLFetcher>(
+        new net::FakeURLFetcher(url, d, response_data, response_code, status));
   }
 
   MOCK_METHOD1(OnRequestDone, void(const GURL&));
 };
+
+// A Widget observer class used to observe bubbles closing.
+class BubbleCloseObserver : public views::WidgetObserver {
+ public:
+  explicit BubbleCloseObserver(views::DialogDelegateView* bubble);
+  ~BubbleCloseObserver() override;
+
+  bool widget_closed() const { return !widget_; }
+
+ private:
+  // WidgetObserver:
+  void OnWidgetClosing(views::Widget* widget) override;
+
+  views::Widget* widget_;
+
+  DISALLOW_COPY_AND_ASSIGN(BubbleCloseObserver);
+};
+
+BubbleCloseObserver::BubbleCloseObserver(views::DialogDelegateView* bubble)
+    : widget_(bubble->GetWidget()) {
+  widget_->AddObserver(this);
+}
+
+BubbleCloseObserver::~BubbleCloseObserver() {
+  if (widget_)
+    widget_->RemoveObserver(this);
+}
+
+void BubbleCloseObserver::OnWidgetClosing(views::Widget* widget) {
+  DCHECK_EQ(widget_, widget);
+  widget_->RemoveObserver(this);
+  widget_ = nullptr;
+}
 
 // ManagePasswordsUIController subclass to capture the dialog instance
 class TestManagePasswordsUIController : public ManagePasswordsUIController {
@@ -122,8 +155,7 @@ class PasswordDialogViewTest : public InProcessBrowserTest {
         browser()->tab_strip_model()->GetActiveWebContents());
   }
 
-  MOCK_METHOD1(OnChooseCredential,
-               void(const password_manager::CredentialInfo&));
+  MOCK_METHOD1(OnChooseCredential, void(const autofill::PasswordForm*));
 
  private:
   TestManagePasswordsUIController* controller_;
@@ -196,10 +228,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
                          ScopedVector<autofill::PasswordForm>(), origin);
   ASSERT_TRUE(controller()->current_account_chooser());
   AccountChooserDialogView* dialog = controller()->current_account_chooser();
-  EXPECT_CALL(*this,
-              OnChooseCredential(Field(
-                  &password_manager::CredentialInfo::type,
-                  password_manager::CredentialType::CREDENTIAL_TYPE_EMPTY)));
+  EXPECT_CALL(*this, OnChooseCredential(nullptr));
   EXPECT_CALL(*controller(), OnDialogClosed());
   dialog->GetWidget()->Close();
 
@@ -230,10 +259,7 @@ IN_PROC_BROWSER_TEST_F(
   // After picking a credential, we should pass it back to the caller via the
   // callback, but we should not pop up the autosignin prompt as there were
   // multiple credentials available.
-  EXPECT_CALL(
-      *this, OnChooseCredential(Field(
-                 &password_manager::CredentialInfo::type,
-                 password_manager::CredentialType::CREDENTIAL_TYPE_FEDERATED)));
+  EXPECT_CALL(*this, OnChooseCredential(testing::Pointee(form)));
   EXPECT_TRUE(
       password_bubble_experiment::ShouldShowAutoSignInPromptFirstRunExperience(
           browser()->profile()->GetPrefs()));
@@ -257,13 +283,31 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
 
   EXPECT_TRUE(controller()->current_account_chooser());
   AccountChooserDialogView* dialog = controller()->current_account_chooser();
-  EXPECT_CALL(*this,
-              OnChooseCredential(Field(
-                  &password_manager::CredentialInfo::type,
-                  password_manager::CredentialType::CREDENTIAL_TYPE_EMPTY)));
+  EXPECT_CALL(*this, OnChooseCredential(nullptr));
   EXPECT_CALL(*controller(), OnDialogClosed());
   dialog->GetWidget()->Close();
   EXPECT_FALSE(controller()->current_autosignin_prompt());
+}
+
+IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
+                       PopupAccountChooserWithSingleCredentialClickSignIn) {
+  GURL origin("https://example.com");
+  ScopedVector<autofill::PasswordForm> local_credentials;
+  autofill::PasswordForm form;
+  form.origin = origin;
+  form.display_name = base::ASCIIToUTF16("Peter");
+  form.username_value = base::ASCIIToUTF16("peter@pan.test");
+  local_credentials.push_back(new autofill::PasswordForm(form));
+
+  SetupChooseCredentials(std::move(local_credentials),
+                         ScopedVector<autofill::PasswordForm>(), origin);
+
+  EXPECT_TRUE(controller()->current_account_chooser());
+  views::DialogDelegateView* dialog = controller()->current_account_chooser();
+  BubbleCloseObserver bubble_observer(dialog);
+  EXPECT_CALL(*this, OnChooseCredential(testing::Pointee(form)));
+  dialog->Accept();
+  EXPECT_TRUE(bubble_observer.widget_closed());
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
@@ -283,10 +327,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
 
   // After picking a credential, we should pass it back to the caller via the
   // callback, and pop up the autosignin prompt iff we should show it.
-  EXPECT_CALL(*this,
-              OnChooseCredential(Field(
-                  &password_manager::CredentialInfo::type,
-                  password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD)));
+  EXPECT_CALL(*this, OnChooseCredential(testing::Pointee(form)));
   EXPECT_TRUE(
       password_bubble_experiment::ShouldShowAutoSignInPromptFirstRunExperience(
           browser()->profile()->GetPrefs()));
@@ -316,10 +357,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
 
   // After picking a credential, we should pass it back to the caller via the
   // callback, and pop up the autosignin prompt iff we should show it.
-  EXPECT_CALL(*this,
-              OnChooseCredential(Field(
-                  &password_manager::CredentialInfo::type,
-                  password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD)));
+  EXPECT_CALL(*this, OnChooseCredential(testing::Pointee(form)));
   browser()->profile()->GetPrefs()->SetBoolean(
       password_manager::prefs::kCredentialsEnableAutosignin, false);
   controller()->ChooseCredential(
@@ -357,10 +395,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
             controller()->GetState());
   EXPECT_TRUE(controller()->current_account_chooser());
 
-  EXPECT_CALL(*this,
-              OnChooseCredential(Field(
-                  &password_manager::CredentialInfo::type,
-                  password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD)));
+  EXPECT_CALL(*this, OnChooseCredential(testing::Pointee(form)));
   controller()->ChooseCredential(
       form, password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD);
 
@@ -377,9 +412,11 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest, PopupAutoSigninPrompt) {
   EXPECT_EQ(password_manager::ui::INACTIVE_STATE, controller()->GetState());
   AutoSigninFirstRunDialogView* dialog =
       controller()->current_autosignin_prompt();
+  BubbleCloseObserver bubble_observer(dialog);
   ui::Accelerator esc(ui::VKEY_ESCAPE, 0);
   EXPECT_CALL(*controller(), OnDialogClosed());
   EXPECT_TRUE(dialog->GetWidget()->client_view()->AcceleratorPressed(esc));
+  EXPECT_TRUE(bubble_observer.widget_closed());
   content::RunAllPendingInMessageLoop();
   testing::Mock::VerifyAndClearExpectations(controller());
   EXPECT_TRUE(
@@ -404,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   ASSERT_FALSE(controller()->current_autosignin_prompt());
 
   // Blocked automatic sign-in will not prompt:
-  scoped_ptr<autofill::PasswordForm> blocked_form(
+  std::unique_ptr<autofill::PasswordForm> blocked_form(
       new autofill::PasswordForm(form));
   client()->NotifyUserCouldBeAutoSignedIn(std::move(blocked_form));
   ASSERT_FALSE(controller()->current_autosignin_prompt());

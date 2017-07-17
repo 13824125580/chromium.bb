@@ -33,6 +33,7 @@
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_widget_host_view.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -41,16 +42,18 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/mock_render_process_host.h"
+#include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/test_content_browser_client.h"
 #include "content/test/test_content_client.h"
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
-#include "net/base/test_data_directory.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "url/url_constants.h"
 
 namespace content {
 namespace {
@@ -353,12 +356,14 @@ class FakeValidationMessageDelegate : public WebContentsDelegate {
 TEST_F(WebContentsImplTest, UpdateTitle) {
   NavigationControllerImpl& cont =
       static_cast<NavigationControllerImpl&>(controller());
+  cont.LoadURL(GURL(url::kAboutBlankURL), Referrer(), ui::PAGE_TRANSITION_TYPED,
+               std::string());
+
   FrameHostMsg_DidCommitProvisionalLoad_Params params;
   InitNavigateParams(&params, 0, 0, true, GURL(url::kAboutBlankURL),
                      ui::PAGE_TRANSITION_TYPED);
 
-  LoadCommittedDetails details;
-  cont.RendererDidNavigate(contents()->GetMainFrame(), params, &details);
+  contents()->GetMainFrame()->SendNavigateWithParams(&params);
 
   contents()->UpdateTitle(contents()->GetMainFrame(), 0,
                           base::ASCIIToUTF16("    Lots O' Whitespace\n"),
@@ -400,30 +405,46 @@ TEST_F(WebContentsImplTest, UseTitleFromPendingEntryIfSet) {
   EXPECT_EQ(title, contents()->GetTitle());
 }
 
-// Test view source mode for a webui page.
-TEST_F(WebContentsImplTest, NTPViewSource) {
+// Browser initiated navigations to view-source URLs of WebUI pages should work.
+TEST_F(WebContentsImplTest, DirectNavigationToViewSourceWebUI) {
   NavigationControllerImpl& cont =
       static_cast<NavigationControllerImpl&>(controller());
-  const char kUrl[] = "view-source:chrome://blah";
-  const GURL kGURL(kUrl);
+  const GURL kGURL("view-source:chrome://blah");
+  // NavigationControllerImpl rewrites view-source URLs, simulating that here.
+  const GURL kRewrittenURL("chrome://blah");
 
   process()->sink().ClearMessages();
 
-  cont.LoadURL(
-      kGURL, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
+  // Use LoadURLWithParams instead of LoadURL, because the former properly
+  // rewrites view-source:chrome://blah URLs to chrome://blah.
+  NavigationController::LoadURLParams load_params(kGURL);
+  load_params.transition_type = ui::PAGE_TRANSITION_TYPED;
+  load_params.extra_headers = "content-type: text/plain";
+  load_params.load_type = NavigationController::LOAD_TYPE_DEFAULT;
+  load_params.is_renderer_initiated = false;
+  controller().LoadURLWithParams(load_params);
+
   int entry_id = cont.GetPendingEntry()->GetUniqueID();
-  rvh()->GetDelegate()->RenderViewCreated(rvh());
   // Did we get the expected message?
   EXPECT_TRUE(process()->sink().GetFirstMessageMatching(
-      ViewMsg_EnableViewSourceMode::ID));
+      FrameMsg_EnableViewSourceMode::ID));
 
   FrameHostMsg_DidCommitProvisionalLoad_Params params;
-  InitNavigateParams(&params, 0, entry_id, true, kGURL,
+  InitNavigateParams(&params, 0, entry_id, true, kRewrittenURL,
                      ui::PAGE_TRANSITION_TYPED);
-  LoadCommittedDetails details;
-  cont.RendererDidNavigate(contents()->GetMainFrame(), params, &details);
-  // Also check title and url.
-  EXPECT_EQ(base::ASCIIToUTF16(kUrl), contents()->GetTitle());
+  contents()->GetMainFrame()->PrepareForCommit();
+  contents()->GetMainFrame()->OnMessageReceived(
+      FrameHostMsg_DidStartProvisionalLoad(1, kRewrittenURL,
+                                           base::TimeTicks::Now()));
+  contents()->GetMainFrame()->SendNavigateWithParams(&params);
+
+  // This is the virtual URL.
+  EXPECT_EQ(base::ASCIIToUTF16("view-source:chrome://blah"),
+            contents()->GetTitle());
+
+  // The actual URL navigated to.
+  EXPECT_EQ(kRewrittenURL,
+            contents()->GetController().GetLastCommittedEntry()->GetURL());
 }
 
 // Test to ensure UpdateMaxPageID is working properly.
@@ -488,7 +509,7 @@ TEST_F(WebContentsImplTest, SimpleNavigation) {
 TEST_F(WebContentsImplTest, NavigateToExcessivelyLongURL) {
   // Construct a URL that's kMaxURLChars + 1 long of all 'a's.
   const GURL url(std::string("http://example.org/").append(
-      kMaxURLChars + 1, 'a'));
+      url::kMaxURLChars + 1, 'a'));
 
   controller().LoadURL(
       url, Referrer(), ui::PAGE_TRANSITION_GENERATED, std::string());
@@ -587,10 +608,6 @@ TEST_F(WebContentsImplTest, CrossSiteBoundaries) {
   if (IsBrowserSideNavigationEnabled())
     contents()->GetMainFrame()->PrepareForCommit();
   TestRenderFrameHost* goback_rfh = contents()->GetPendingMainFrame();
-  if (!SiteIsolationPolicy::IsSwappedOutStateForbidden()) {
-    // Recycling the rfh is a behavior specific to swappedout://
-    EXPECT_EQ(orig_rfh, goback_rfh);
-  }
   EXPECT_TRUE(contents()->CrossProcessNavigationPending());
 
   // Navigations should be suspended in goback_rfh until BeforeUnloadACK.
@@ -688,7 +705,7 @@ TEST_F(WebContentsImplTest, NavigateTwoTabsCrossSite) {
                               ui::PAGE_TRANSITION_TYPED);
 
   // Open a new contents with the same SiteInstance, navigated to the same site.
-  scoped_ptr<TestWebContents> contents2(
+  std::unique_ptr<TestWebContents> contents2(
       TestWebContents::Create(browser_context(), instance1));
   contents2->GetController().LoadURL(url, Referrer(),
                                      ui::PAGE_TRANSITION_TYPED,
@@ -849,8 +866,8 @@ TEST_F(WebContentsImplTest, NavigateFromRestoredSitelessUrl) {
   // SiteInstance.
   browser_client.set_assign_site_for_url(false);
   const GURL native_url("non-site-url://stuffandthings");
-  std::vector<scoped_ptr<NavigationEntry>> entries;
-  scoped_ptr<NavigationEntry> new_entry =
+  std::vector<std::unique_ptr<NavigationEntry>> entries;
+  std::unique_ptr<NavigationEntry> new_entry =
       NavigationControllerImpl::CreateNavigationEntry(
           native_url, Referrer(), ui::PAGE_TRANSITION_LINK, false,
           std::string(), browser_context());
@@ -899,8 +916,8 @@ TEST_F(WebContentsImplTest, NavigateFromRestoredRegularUrl) {
   // ShouldAssignSiteForUrl override is disabled (i.e. returns true).
   browser_client.set_assign_site_for_url(true);
   const GURL regular_url("http://www.yahoo.com");
-  std::vector<scoped_ptr<NavigationEntry>> entries;
-  scoped_ptr<NavigationEntry> new_entry =
+  std::vector<std::unique_ptr<NavigationEntry>> entries;
+  std::unique_ptr<NavigationEntry> new_entry =
       NavigationControllerImpl::CreateNavigationEntry(
           regular_url, Referrer(), ui::PAGE_TRANSITION_LINK, false,
           std::string(), browser_context());
@@ -961,7 +978,7 @@ TEST_F(WebContentsImplTest, FindOpenerRVHWhenPending) {
   // While it is still pending, simulate opening a new tab with the first tab
   // as its opener.  This will call CreateOpenerProxies on the opener to ensure
   // that an RVH exists.
-  scoped_ptr<TestWebContents> popup(
+  std::unique_ptr<TestWebContents> popup(
       TestWebContents::Create(browser_context(), instance));
   popup->SetOpener(contents());
   contents()->GetRenderManager()->CreateOpenerProxies(instance, nullptr);
@@ -973,20 +990,15 @@ TEST_F(WebContentsImplTest, FindOpenerRVHWhenPending) {
       popup->GetRenderManager()->GetOpenerRoutingID(instance);
   RenderFrameProxyHost* proxy =
       contents()->GetRenderManager()->GetRenderFrameProxyHost(instance);
-  if (SiteIsolationPolicy::IsSwappedOutStateForbidden()) {
-    EXPECT_TRUE(proxy);
-    EXPECT_EQ(proxy->GetRoutingID(), opener_frame_routing_id);
+  EXPECT_TRUE(proxy);
+  EXPECT_EQ(proxy->GetRoutingID(), opener_frame_routing_id);
 
-    // Ensure that committing the navigation removes the proxy.
-    int entry_id = controller().GetPendingEntry()->GetUniqueID();
-    contents()->TestDidNavigate(pending_rfh, 2, entry_id, true, url2,
-                                ui::PAGE_TRANSITION_TYPED);
-    EXPECT_FALSE(
-        contents()->GetRenderManager()->GetRenderFrameProxyHost(instance));
-  } else {
-    EXPECT_FALSE(proxy);
-    EXPECT_EQ(pending_rfh->GetRoutingID(), opener_frame_routing_id);
-  }
+  // Ensure that committing the navigation removes the proxy.
+  entry_id = controller().GetPendingEntry()->GetUniqueID();
+  contents()->TestDidNavigate(pending_rfh, 2, entry_id, true, url2,
+                              ui::PAGE_TRANSITION_TYPED);
+  EXPECT_FALSE(
+      contents()->GetRenderManager()->GetRenderFrameProxyHost(instance));
 }
 
 // Tests that WebContentsImpl uses the current URL, not the SiteInstance's site,
@@ -1005,7 +1017,7 @@ TEST_F(WebContentsImplTest, CrossSiteComparesAgainstCurrentPage) {
                               ui::PAGE_TRANSITION_TYPED);
 
   // Open a related contents to a second site.
-  scoped_ptr<TestWebContents> contents2(
+  std::unique_ptr<TestWebContents> contents2(
       TestWebContents::Create(browser_context(), instance1));
   const GURL url2("http://www.yahoo.com");
   contents2->GetController().LoadURL(url2, Referrer(),
@@ -1325,11 +1337,13 @@ TEST_F(WebContentsImplTest, CrossSiteNavigationBackOldNavigationIgnored) {
 
   // Go back within the site.
   controller().GoBack();
+  contents()->GetMainFrame()->PrepareForCommit();
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
   EXPECT_EQ(entry2, controller().GetPendingEntry());
 
   // Before that commits, go back again.
   controller().GoBack();
+  contents()->GetMainFrame()->PrepareForCommit();
   EXPECT_TRUE(contents()->CrossProcessNavigationPending());
   EXPECT_TRUE(contents()->GetPendingMainFrame());
   EXPECT_EQ(entry1, controller().GetPendingEntry());
@@ -1401,6 +1415,7 @@ TEST_F(WebContentsImplTest, CrossSiteNotPreemptedDuringBeforeUnload) {
       url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
   int entry1_id = controller().GetPendingEntry()->GetUniqueID();
   TestRenderFrameHost* orig_rfh = contents()->GetMainFrame();
+  orig_rfh->PrepareForCommit();
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
 
   // Navigate to new site, with the beforeunload request in flight.
@@ -1534,11 +1549,11 @@ TEST_F(WebContentsImplTest, NavigationExitsFullscreen) {
   EXPECT_EQ(orig_rfh, contents()->GetMainFrame());
 
   // Toggle fullscreen mode on (as if initiated via IPC from renderer).
-  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
   EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
   orig_rfh->OnMessageReceived(
       FrameHostMsg_ToggleFullscreen(orig_rfh->GetRoutingID(), true));
-  EXPECT_TRUE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_TRUE(contents()->IsFullscreenForCurrentTab());
   EXPECT_TRUE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
   // Navigate to a new site.
@@ -1552,7 +1567,7 @@ TEST_F(WebContentsImplTest, NavigationExitsFullscreen) {
                               ui::PAGE_TRANSITION_TYPED);
 
   // Confirm fullscreen has exited.
-  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
   EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
   contents()->SetDelegate(nullptr);
@@ -1587,14 +1602,14 @@ TEST_F(WebContentsImplTest, HistoryNavigationExitsFullscreen) {
   EXPECT_EQ(orig_rfh, contents()->GetMainFrame());
 
   // Sanity-check: Confirm we're not starting out in fullscreen mode.
-  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
   EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
   for (int i = 0; i < 2; ++i) {
     // Toggle fullscreen mode on (as if initiated via IPC from renderer).
     orig_rfh->OnMessageReceived(
         FrameHostMsg_ToggleFullscreen(orig_rfh->GetRoutingID(), true));
-    EXPECT_TRUE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+    EXPECT_TRUE(contents()->IsFullscreenForCurrentTab());
     EXPECT_TRUE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
     // Navigate backward (or forward).
@@ -1611,8 +1626,7 @@ TEST_F(WebContentsImplTest, HistoryNavigationExitsFullscreen) {
     orig_rfh->SimulateNavigationStop();
 
     // Confirm fullscreen has exited.
-    EXPECT_FALSE(
-        contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+    EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
     EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
   }
 
@@ -1651,18 +1665,18 @@ TEST_F(WebContentsImplTest, CrashExitsFullscreen) {
                               url, ui::PAGE_TRANSITION_TYPED);
 
   // Toggle fullscreen mode on (as if initiated via IPC from renderer).
-  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
   EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
   contents()->GetMainFrame()->OnMessageReceived(FrameHostMsg_ToggleFullscreen(
       contents()->GetMainFrame()->GetRoutingID(), true));
-  EXPECT_TRUE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_TRUE(contents()->IsFullscreenForCurrentTab());
   EXPECT_TRUE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
   // Crash the renderer.
   main_test_rfh()->GetProcess()->SimulateCrash();
 
   // Confirm fullscreen has exited.
-  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab(test_rvh()->GetWidget()));
+  EXPECT_FALSE(contents()->IsFullscreenForCurrentTab());
   EXPECT_FALSE(fake_delegate.IsFullscreenForTabOrPending(contents()));
 
   contents()->SetDelegate(nullptr);
@@ -2549,7 +2563,7 @@ TEST_F(WebContentsImplTest, CopyStateFromAndPruneSourceInterstitial) {
 
   // Create another NavigationController.
   GURL url3("http://foo2");
-  scoped_ptr<TestWebContents> other_contents(
+  std::unique_ptr<TestWebContents> other_contents(
       static_cast<TestWebContents*>(CreateTestWebContents()));
   NavigationControllerImpl& other_controller = other_contents->GetController();
   other_contents->NavigateAndCommit(url3);
@@ -2574,7 +2588,7 @@ TEST_F(WebContentsImplTest, CopyStateFromAndPruneTargetInterstitial) {
   contents()->NavigateAndCommit(url1);
 
   // Create another NavigationController.
-  scoped_ptr<TestWebContents> other_contents(
+  std::unique_ptr<TestWebContents> other_contents(
       static_cast<TestWebContents*>(CreateTestWebContents()));
   NavigationControllerImpl& other_controller = other_contents->GetController();
 
@@ -2624,7 +2638,7 @@ TEST_F(WebContentsImplTest, FilterURLs) {
   EXPECT_EQ(url_normalized, observer.last_url());
 
   // Create and navigate another WebContents.
-  scoped_ptr<TestWebContents> other_contents(
+  std::unique_ptr<TestWebContents> other_contents(
       static_cast<TestWebContents*>(CreateTestWebContents()));
   TestWebContentsObserver other_observer(other_contents.get());
   other_contents->NavigateAndCommit(url_normalized);
@@ -2638,12 +2652,13 @@ TEST_F(WebContentsImplTest, FilterURLs) {
 // Test that if a pending contents is deleted before it is shown, we don't
 // crash.
 TEST_F(WebContentsImplTest, PendingContents) {
-  scoped_ptr<TestWebContents> other_contents(
+  std::unique_ptr<TestWebContents> other_contents(
       static_cast<TestWebContents*>(CreateTestWebContents()));
   contents()->AddPendingContents(other_contents.get());
+  int process_id = other_contents->GetRenderViewHost()->GetProcess()->GetID();
   int route_id = other_contents->GetRenderViewHost()->GetRoutingID();
   other_contents.reset();
-  EXPECT_EQ(nullptr, contents()->GetCreatedWindow(route_id));
+  EXPECT_EQ(nullptr, contents()->GetCreatedWindow(process_id, route_id));
 }
 
 TEST_F(WebContentsImplTest, CapturerOverridesPreferredSize) {
@@ -2798,7 +2813,7 @@ class ContentsZoomChangedDelegate : public WebContentsDelegate {
 TEST_F(WebContentsImplTest, HandleWheelEvent) {
   using blink::WebInputEvent;
 
-  scoped_ptr<ContentsZoomChangedDelegate> delegate(
+  std::unique_ptr<ContentsZoomChangedDelegate> delegate(
       new ContentsZoomChangedDelegate());
   contents()->SetDelegate(delegate.get());
 
@@ -2809,43 +2824,34 @@ TEST_F(WebContentsImplTest, HandleWheelEvent) {
   EXPECT_FALSE(contents()->HandleWheelEvent(event));
   EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
 
-  modifiers = WebInputEvent::ShiftKey | WebInputEvent::AltKey |
-      WebInputEvent::ControlKey;
-  event =
-      SyntheticWebMouseWheelEventBuilder::Build(0, 0, 0, 1, modifiers, false);
-  EXPECT_FALSE(contents()->HandleWheelEvent(event));
-  EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
-
-  // But whenever the ctrl modifier is applied with canScroll=false, they can
-  // increase/decrease zoom. Except on MacOS where we never want to adjust zoom
+  // But whenever the ctrl modifier is applied zoom can be increased or
+  // decreased. Except on MacOS where we never want to adjust zoom
   // with mousewheel.
   modifiers = WebInputEvent::ControlKey;
   event =
       SyntheticWebMouseWheelEventBuilder::Build(0, 0, 0, 1, modifiers, false);
-  event.canScroll = false;
   bool handled = contents()->HandleWheelEvent(event);
-#if defined(OS_MACOSX)
-  EXPECT_FALSE(handled);
-  EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
-#else
+#if defined(USE_AURA)
   EXPECT_TRUE(handled);
   EXPECT_EQ(1, delegate->GetAndResetContentsZoomChangedCallCount());
   EXPECT_TRUE(delegate->last_zoom_in());
+#else
+  EXPECT_FALSE(handled);
+  EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
 #endif
 
   modifiers = WebInputEvent::ControlKey | WebInputEvent::ShiftKey |
       WebInputEvent::AltKey;
   event =
       SyntheticWebMouseWheelEventBuilder::Build(0, 0, 2, -5, modifiers, false);
-  event.canScroll = false;
   handled = contents()->HandleWheelEvent(event);
-#if defined(OS_MACOSX)
-  EXPECT_FALSE(handled);
-  EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
-#else
+#if defined(USE_AURA)
   EXPECT_TRUE(handled);
   EXPECT_EQ(1, delegate->GetAndResetContentsZoomChangedCallCount());
   EXPECT_FALSE(delegate->last_zoom_in());
+#else
+  EXPECT_FALSE(handled);
+  EXPECT_EQ(0, delegate->GetAndResetContentsZoomChangedCallCount());
 #endif
 
   // Unless there is no vertical movement.
@@ -2878,12 +2884,12 @@ TEST_F(WebContentsImplTest, ActiveContentsCountBasic) {
   EXPECT_EQ(0u, instance1->GetRelatedActiveContentsCount());
   EXPECT_EQ(0u, instance2->GetRelatedActiveContentsCount());
 
-  scoped_ptr<TestWebContents> contents1(
+  std::unique_ptr<TestWebContents> contents1(
       TestWebContents::Create(browser_context(), instance1.get()));
   EXPECT_EQ(1u, instance1->GetRelatedActiveContentsCount());
   EXPECT_EQ(1u, instance2->GetRelatedActiveContentsCount());
 
-  scoped_ptr<TestWebContents> contents2(
+  std::unique_ptr<TestWebContents> contents2(
       TestWebContents::Create(browser_context(), instance1.get()));
   EXPECT_EQ(2u, instance1->GetRelatedActiveContentsCount());
   EXPECT_EQ(2u, instance2->GetRelatedActiveContentsCount());
@@ -2905,7 +2911,7 @@ TEST_F(WebContentsImplTest, ActiveContentsCountNavigate) {
 
   EXPECT_EQ(0u, instance->GetRelatedActiveContentsCount());
 
-  scoped_ptr<TestWebContents> contents(
+  std::unique_ptr<TestWebContents> contents(
       TestWebContents::Create(browser_context(), instance.get()));
   EXPECT_EQ(1u, instance->GetRelatedActiveContentsCount());
 
@@ -2953,7 +2959,7 @@ TEST_F(WebContentsImplTest, ActiveContentsCountChangeBrowsingInstance) {
 
   EXPECT_EQ(0u, instance->GetRelatedActiveContentsCount());
 
-  scoped_ptr<TestWebContents> contents(
+  std::unique_ptr<TestWebContents> contents(
       TestWebContents::Create(browser_context(), instance.get()));
   EXPECT_EQ(1u, instance->GetRelatedActiveContentsCount());
 
@@ -3046,9 +3052,14 @@ TEST_F(WebContentsImplTestWithSiteIsolation, StartStopEventsBalance) {
   controller().LoadURL(
       main_url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
   int entry_id = controller().GetPendingEntry()->GetUniqueID();
-  orig_rfh->PrepareForCommit();
-  orig_rfh->OnMessageReceived(
-      FrameHostMsg_DidStartLoading(orig_rfh->GetRoutingID(), false));
+
+  // PlzNavigate: the RenderFrameHost does not expect to receive
+  // DidStartLoading IPCs for navigations to different documents.
+  if (!IsBrowserSideNavigationEnabled()) {
+    orig_rfh->OnMessageReceived(
+        FrameHostMsg_DidStartLoading(orig_rfh->GetRoutingID(), false));
+  }
+  contents()->GetMainFrame()->PrepareForCommit();
   contents()->TestDidNavigate(orig_rfh, 1, entry_id, true, main_url,
                               ui::PAGE_TRANSITION_TYPED);
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
@@ -3062,9 +3073,10 @@ TEST_F(WebContentsImplTestWithSiteIsolation, StartStopEventsBalance) {
   // Navigate the child frame to about:blank, which will send both
   // DidStartLoading and DidStopLoading messages.
   {
-    subframe->SendRendererInitiatedNavigationRequest(initial_url, false);
-    subframe->OnMessageReceived(
-        FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    if (!IsBrowserSideNavigationEnabled()) {
+      subframe->OnMessageReceived(
+          FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    }
     subframe->SendNavigateWithTransition(1, 0, false, initial_url,
                                          ui::PAGE_TRANSITION_AUTO_SUBFRAME);
     subframe->OnMessageReceived(
@@ -3076,8 +3088,10 @@ TEST_F(WebContentsImplTestWithSiteIsolation, StartStopEventsBalance) {
   {
     subframe->SendRendererInitiatedNavigationRequest(foo_url, false);
     subframe->PrepareForCommit();
-    subframe->OnMessageReceived(
-        FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    if (!IsBrowserSideNavigationEnabled()) {
+      subframe->OnMessageReceived(
+          FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    }
     subframe->SendNavigateWithTransition(1, 0, false, foo_url,
                                          ui::PAGE_TRANSITION_AUTO_SUBFRAME);
     subframe->OnMessageReceived(
@@ -3106,8 +3120,10 @@ TEST_F(WebContentsImplTestWithSiteIsolation, StartStopEventsBalance) {
     controller().LoadURLWithParams(load_params);
     entry_id = controller().GetPendingEntry()->GetUniqueID();
 
-    subframe->OnMessageReceived(
-        FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    if (!IsBrowserSideNavigationEnabled()) {
+      subframe->OnMessageReceived(
+          FrameHostMsg_DidStartLoading(subframe->GetRoutingID(), true));
+    }
 
     // Commit the navigation in the child frame and send the DidStopLoading
     // message.
@@ -3372,6 +3388,9 @@ TEST_F(WebContentsImplTest, LoadResourceFromMemoryCacheWithBadSecurityInfo) {
 // does not mistakenly think it has seen a good certificate and thus forget any
 // user exceptions for that host. See https://crbug.com/516808.
 TEST_F(WebContentsImplTest, LoadResourceFromMemoryCacheWithEmptySecurityInfo) {
+  WebContentsImplTestBrowserClient browser_client;
+  SetBrowserClientForTesting(&browser_client);
+
   scoped_refptr<net::X509Certificate> cert =
       net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem");
   SSLPolicyBackend* backend = contents()->controller_.ssl_manager()->backend();
@@ -3384,7 +3403,11 @@ TEST_F(WebContentsImplTest, LoadResourceFromMemoryCacheWithEmptySecurityInfo) {
                                                RESOURCE_TYPE_MAIN_FRAME);
 
   EXPECT_TRUE(backend->HasAllowException(test_url.host()));
+
+  DeleteContents();
 }
+
+namespace {
 
 class TestJavaScriptDialogManager : public JavaScriptDialogManager {
  public:
@@ -3397,7 +3420,6 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager {
 
   void RunJavaScriptDialog(WebContents* web_contents,
                            const GURL& origin_url,
-                           const std::string& accept_lang,
                            JavaScriptMessageType javascript_message_type,
                            const base::string16& message_text,
                            const base::string16& default_prompt_text,
@@ -3407,7 +3429,6 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager {
   };
 
   void RunBeforeUnloadDialog(WebContents* web_contents,
-                             const base::string16& message_text,
                              bool is_reload,
                              const DialogClosedCallback& callback) override {}
 
@@ -3427,26 +3448,23 @@ class TestJavaScriptDialogManager : public JavaScriptDialogManager {
   DISALLOW_COPY_AND_ASSIGN(TestJavaScriptDialogManager);
 };
 
+}  // namespace
+
 TEST_F(WebContentsImplTest, ResetJavaScriptDialogOnUserNavigate) {
-  scoped_ptr<TestJavaScriptDialogManager> delegate(
-      new TestJavaScriptDialogManager());
-  contents()->SetJavaScriptDialogManagerForTesting(delegate.get());
+  TestJavaScriptDialogManager dialog_manager;
+  contents()->SetJavaScriptDialogManagerForTesting(&dialog_manager);
 
   // A user-initiated navigation.
-
-  contents()->GetMainFrame()->PrepareForCommit();
   contents()->TestDidNavigate(contents()->GetMainFrame(), 1, 0, true,
                               GURL("about:whatever"),
                               ui::PAGE_TRANSITION_TYPED);
-  EXPECT_EQ(1u, delegate->reset_count());
+  EXPECT_EQ(1u, dialog_manager.reset_count());
 
   // An automatic navigation.
-
-  contents()->GetMainFrame()->PrepareForCommit();
   contents()->GetMainFrame()->SendNavigateWithModificationCallback(
       2, 0, true, GURL(url::kAboutBlankURL), base::Bind(SetAsNonUserGesture));
 
-  EXPECT_EQ(1u, delegate->reset_count());
+  EXPECT_EQ(1u, dialog_manager.reset_count());
 
   contents()->SetJavaScriptDialogManagerForTesting(nullptr);
 }

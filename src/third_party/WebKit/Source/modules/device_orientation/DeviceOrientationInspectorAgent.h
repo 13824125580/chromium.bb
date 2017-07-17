@@ -6,6 +6,7 @@
 #define DeviceOrientationInspectorAgent_h
 
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/DeviceOrientation.h"
 #include "modules/ModulesExport.h"
 #include "wtf/text/WTFString.h"
 
@@ -14,12 +15,11 @@ namespace blink {
 class DeviceOrientationController;
 class Page;
 
-typedef String ErrorString;
 
-class MODULES_EXPORT DeviceOrientationInspectorAgent final : public InspectorBaseAgent<DeviceOrientationInspectorAgent, protocol::Frontend::DeviceOrientation>, public protocol::Dispatcher::DeviceOrientationCommandHandler {
+class MODULES_EXPORT DeviceOrientationInspectorAgent final : public InspectorBaseAgent<protocol::DeviceOrientation::Metainfo> {
     WTF_MAKE_NONCOPYABLE(DeviceOrientationInspectorAgent);
 public:
-    static PassOwnPtrWillBeRawPtr<DeviceOrientationInspectorAgent> create(Page*);
+    static DeviceOrientationInspectorAgent* create(Page*);
 
     ~DeviceOrientationInspectorAgent() override;
     DECLARE_VIRTUAL_TRACE();
@@ -36,7 +36,7 @@ public:
 private:
     explicit DeviceOrientationInspectorAgent(Page&);
     DeviceOrientationController& controller();
-    RawPtrWillBeMember<Page> m_page;
+    Member<Page> m_page;
 };
 
 } // namespace blink

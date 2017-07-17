@@ -23,9 +23,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -174,7 +174,7 @@ BootTimesRecorder::Stats BootTimesRecorder::Stats::DeserializeFromString(
   if (source.empty())
     return Stats();
 
-  scoped_ptr<base::Value> value = base::JSONReader::Read(source);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(source);
   base::DictionaryValue* dictionary;
   if (!value || !value->GetAsDictionary(&dictionary)) {
     LOG(ERROR) << "BootTimesRecorder::Stats::DeserializeFromString(): not a "

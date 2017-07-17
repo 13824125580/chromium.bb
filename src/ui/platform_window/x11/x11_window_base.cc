@@ -85,6 +85,7 @@ void X11WindowBase::Create() {
       CopyFromParent,  // visual
       CWBackPixmap | CWBitGravity | CWOverrideRedirect, &swa);
 
+  // Setup XInput event mask.
   long event_mask = ButtonPressMask | ButtonReleaseMask | FocusChangeMask |
                     KeyPressMask | KeyReleaseMask | EnterWindowMask |
                     LeaveWindowMask | ExposureMask | VisibilityChangeMask |
@@ -92,6 +93,7 @@ void X11WindowBase::Create() {
                     PointerMotionMask;
   XSelectInput(xdisplay_, xwindow_, event_mask);
 
+  // Setup XInput2 event mask.
   unsigned char mask[XIMaskLen(XI_LASTEVENT)];
   memset(mask, 0, sizeof(mask));
 
@@ -103,6 +105,7 @@ void X11WindowBase::Create() {
   XISetMask(mask, XI_Motion);
   XISetMask(mask, XI_KeyPress);
   XISetMask(mask, XI_KeyRelease);
+  XISetMask(mask, XI_HierarchyChanged);
 
   XIEventMask evmask;
   evmask.deviceid = XIAllDevices;
@@ -218,7 +221,11 @@ void X11WindowBase::Minimize() {}
 
 void X11WindowBase::Restore() {}
 
-void X11WindowBase::MoveCursorTo(const gfx::Point& location) {}
+void X11WindowBase::MoveCursorTo(const gfx::Point& location) {
+  XWarpPointer(xdisplay_, None, xroot_window_, 0, 0, 0, 0,
+               confirmed_bounds_.x() + location.x(),
+               confirmed_bounds_.y() + location.y());
+}
 
 void X11WindowBase::ConfineCursorToBounds(const gfx::Rect& bounds) {}
 
@@ -247,7 +254,18 @@ void X11WindowBase::ProcessXWindowEvent(XEvent* xev) {
     case ConfigureNotify: {
       DCHECK_EQ(xwindow_, xev->xconfigure.event);
       DCHECK_EQ(xwindow_, xev->xconfigure.window);
-      gfx::Rect bounds(xev->xconfigure.x, xev->xconfigure.y,
+      // It's possible that the X window may be resized by some other means than
+      // from within aura (e.g. the X window manager can change the size). Make
+      // sure the root window size is maintained properly.
+      int translated_x_in_pixels = xev->xconfigure.x;
+      int translated_y_in_pixels = xev->xconfigure.y;
+      if (!xev->xconfigure.send_event && !xev->xconfigure.override_redirect) {
+        Window unused;
+        XTranslateCoordinates(xdisplay_, xwindow_, xroot_window_, 0, 0,
+                              &translated_x_in_pixels, &translated_y_in_pixels,
+                              &unused);
+      }
+      gfx::Rect bounds(translated_x_in_pixels, translated_y_in_pixels,
                        xev->xconfigure.width, xev->xconfigure.height);
       if (confirmed_bounds_ != bounds) {
         confirmed_bounds_ = bounds;

@@ -29,10 +29,15 @@
 #include "core/html/parser/HTMLDocumentParser.h"
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/html/parser/XSSAuditor.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
+#include "platform/Histogram.h"
+#include "platform/TraceEvent.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebTaskRunner.h"
+#include "wtf/CurrentTime.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/TextPosition.h"
+#include <memory>
 
 namespace blink {
 
@@ -79,9 +84,9 @@ static void checkThatXSSInfosAreSafeToSendToAnotherThread(const XSSInfoStream& i
 
 #endif
 
-void BackgroundHTMLParser::start(PassRefPtr<WeakReference<BackgroundHTMLParser>> reference, PassOwnPtr<Configuration> config, const KURL& documentURL, PassOwnPtr<CachedDocumentParameters> cachedDocumentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData, PassOwnPtr<WebTaskRunner> loadingTaskRunner)
+void BackgroundHTMLParser::start(PassRefPtr<WeakReference<BackgroundHTMLParser>> reference, std::unique_ptr<Configuration> config, const KURL& documentURL, std::unique_ptr<CachedDocumentParameters> cachedDocumentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData, std::unique_ptr<WebTaskRunner> loadingTaskRunner)
 {
-    new BackgroundHTMLParser(reference, config, documentURL, cachedDocumentParameters, mediaValuesCachedData, loadingTaskRunner);
+    new BackgroundHTMLParser(reference, std::move(config), documentURL, std::move(cachedDocumentParameters), mediaValuesCachedData, std::move(loadingTaskRunner));
     // Caller must free by calling stop().
 }
 
@@ -91,22 +96,23 @@ BackgroundHTMLParser::Configuration::Configuration()
 {
 }
 
-BackgroundHTMLParser::BackgroundHTMLParser(PassRefPtr<WeakReference<BackgroundHTMLParser>> reference, PassOwnPtr<Configuration> config, const KURL& documentURL, PassOwnPtr<CachedDocumentParameters> cachedDocumentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData, PassOwnPtr<WebTaskRunner> loadingTaskRunner)
+BackgroundHTMLParser::BackgroundHTMLParser(PassRefPtr<WeakReference<BackgroundHTMLParser>> reference, std::unique_ptr<Configuration> config, const KURL& documentURL, std::unique_ptr<CachedDocumentParameters> cachedDocumentParameters, const MediaValuesCached::MediaValuesCachedData& mediaValuesCachedData, std::unique_ptr<WebTaskRunner> loadingTaskRunner)
     : m_weakFactory(reference, this)
-    , m_token(adoptPtr(new HTMLToken))
+    , m_token(wrapUnique(new HTMLToken))
     , m_tokenizer(HTMLTokenizer::create(config->options))
     , m_treeBuilderSimulator(config->options)
     , m_options(config->options)
     , m_outstandingTokenLimit(config->outstandingTokenLimit)
     , m_parser(config->parser)
-    , m_pendingTokens(adoptPtr(new CompactHTMLTokenStream))
+    , m_pendingTokens(wrapUnique(new CompactHTMLTokenStream))
     , m_pendingTokenLimit(config->pendingTokenLimit)
-    , m_xssAuditor(config->xssAuditor.release())
-    , m_preloadScanner(adoptPtr(new TokenPreloadScanner(documentURL, cachedDocumentParameters, mediaValuesCachedData)))
-    , m_decoder(config->decoder.release())
-    , m_loadingTaskRunner(loadingTaskRunner)
+    , m_xssAuditor(std::move(config->xssAuditor))
+    , m_preloadScanner(wrapUnique(new TokenPreloadScanner(documentURL, std::move(cachedDocumentParameters), mediaValuesCachedData)))
+    , m_decoder(std::move(config->decoder))
+    , m_loadingTaskRunner(std::move(loadingTaskRunner))
     , m_parsedChunkQueue(config->parsedChunkQueue.release())
     , m_startingScript(false)
+    , m_lastBytesReceivedTime(0.0)
 {
     ASSERT(m_outstandingTokenLimit > 0);
     ASSERT(m_pendingTokenLimit > 0);
@@ -117,15 +123,12 @@ BackgroundHTMLParser::~BackgroundHTMLParser()
 {
 }
 
-void BackgroundHTMLParser::appendRawBytesFromParserThread(const char* data, int dataLength)
+void BackgroundHTMLParser::appendRawBytesFromMainThread(std::unique_ptr<Vector<char>> buffer, double bytesReceivedTime)
 {
     ASSERT(m_decoder);
-    updateDocument(m_decoder->decode(data, dataLength));
-}
-
-void BackgroundHTMLParser::appendRawBytesFromMainThread(PassOwnPtr<Vector<char>> buffer)
-{
-    ASSERT(m_decoder);
+    m_lastBytesReceivedTime = bytesReceivedTime;
+    DEFINE_STATIC_LOCAL(CustomCountHistogram, queueDelay, ("Parser.AppendBytesDelay", 1, 5000, 50));
+    queueDelay.count(monotonicallyIncreasingTimeMS() - bytesReceivedTime);
     updateDocument(m_decoder->decode(buffer->data(), buffer->size()));
 }
 
@@ -136,10 +139,10 @@ void BackgroundHTMLParser::appendDecodedBytes(const String& input)
     pumpTokenizer();
 }
 
-void BackgroundHTMLParser::setDecoder(PassOwnPtr<TextResourceDecoder> decoder)
+void BackgroundHTMLParser::setDecoder(std::unique_ptr<TextResourceDecoder> decoder)
 {
     ASSERT(decoder);
-    m_decoder = decoder;
+    m_decoder = std::move(decoder);
 }
 
 void BackgroundHTMLParser::flush()
@@ -156,9 +159,7 @@ void BackgroundHTMLParser::updateDocument(const String& decodedData)
         m_lastSeenEncodingData = encodingData;
 
         m_xssAuditor->setEncoding(encodingData.encoding());
-        m_loadingTaskRunner->postTask(
-            BLINK_FROM_HERE,
-            threadSafeBind(&HTMLDocumentParser::didReceiveEncodingDataFromBackgroundParser, AllowCrossThreadAccess(m_parser), encodingData));
+        runOnMainThread(&HTMLDocumentParser::didReceiveEncodingDataFromBackgroundParser, m_parser, encodingData);
     }
 
     if (decodedData.isEmpty())
@@ -167,16 +168,17 @@ void BackgroundHTMLParser::updateDocument(const String& decodedData)
     appendDecodedBytes(decodedData);
 }
 
-void BackgroundHTMLParser::resumeFrom(PassOwnPtr<Checkpoint> checkpoint)
+void BackgroundHTMLParser::resumeFrom(std::unique_ptr<Checkpoint> checkpoint)
 {
     m_parser = checkpoint->parser;
-    m_token = checkpoint->token.release();
-    m_tokenizer = checkpoint->tokenizer.release();
+    m_token = std::move(checkpoint->token);
+    m_tokenizer = std::move(checkpoint->tokenizer);
     m_treeBuilderSimulator.setState(checkpoint->treeBuilderState);
     m_input.rewindTo(checkpoint->inputCheckpoint, checkpoint->unparsedInput);
     m_preloadScanner->rewindTo(checkpoint->preloadScannerCheckpoint);
     m_startingScript = false;
     m_parsedChunkQueue->clear();
+    m_lastBytesReceivedTime = monotonicallyIncreasingTimeMS();
     pumpTokenizer();
 }
 
@@ -216,6 +218,7 @@ void BackgroundHTMLParser::markEndOfFile()
 
 void BackgroundHTMLParser::pumpTokenizer()
 {
+    TRACE_EVENT0("loading", "BackgroundHTMLParser::pumpTokenizer");
     HTMLTreeBuilderSimulator::SimulatedToken simulatedToken = HTMLTreeBuilderSimulator::OtherToken;
 
     // No need to start speculating until the main thread has almost caught up.
@@ -238,14 +241,16 @@ void BackgroundHTMLParser::pumpTokenizer()
         {
             TextPosition position = TextPosition(m_input.current().currentLine(), m_input.current().currentColumn());
 
-            if (OwnPtr<XSSInfo> xssInfo = m_xssAuditor->filterToken(FilterTokenRequest(*m_token, m_sourceTracker, m_tokenizer->shouldAllowCDATA()))) {
+            if (std::unique_ptr<XSSInfo> xssInfo = m_xssAuditor->filterToken(FilterTokenRequest(*m_token, m_sourceTracker, m_tokenizer->shouldAllowCDATA()))) {
                 xssInfo->m_textPosition = position;
-                m_pendingXSSInfos.append(xssInfo.release());
+                m_pendingXSSInfos.append(std::move(xssInfo));
             }
 
             CompactHTMLToken token(m_token.get(), position);
 
-            m_preloadScanner->scan(token, m_input.current(), m_pendingPreloads);
+            bool shouldEvaluateForDocumentWrite = false;
+            m_preloadScanner->scan(token, m_input.current(), m_pendingPreloads, &m_viewportDescription, &shouldEvaluateForDocumentWrite);
+
             simulatedToken = m_treeBuilderSimulator.simulate(token, m_tokenizer.get());
 
             // Break chunks before a script tag is inserted and flag the chunk as starting a script
@@ -256,6 +261,9 @@ void BackgroundHTMLParser::pumpTokenizer()
             }
 
             m_pendingTokens->append(token);
+            if (shouldEvaluateForDocumentWrite) {
+                m_likelyDocumentWriteScriptIndices.append(m_pendingTokens->size() - 1);
+            }
         }
 
         m_token->clear();
@@ -280,25 +288,54 @@ void BackgroundHTMLParser::sendTokensToMainThread()
     checkThatXSSInfosAreSafeToSendToAnotherThread(m_pendingXSSInfos);
 #endif
 
-    OwnPtr<HTMLDocumentParser::ParsedChunk> chunk = adoptPtr(new HTMLDocumentParser::ParsedChunk);
+    double chunkStartTime = monotonicallyIncreasingTimeMS();
+    std::unique_ptr<HTMLDocumentParser::ParsedChunk> chunk = wrapUnique(new HTMLDocumentParser::ParsedChunk);
+    TRACE_EVENT_WITH_FLOW0("blink,loading", "BackgroundHTMLParser::sendTokensToMainThread", chunk.get(), TRACE_EVENT_FLAG_FLOW_OUT);
+
+    if (!m_pendingPreloads.isEmpty()) {
+        double delay = monotonicallyIncreasingTimeMS() - m_lastBytesReceivedTime;
+        DEFINE_STATIC_LOCAL(CustomCountHistogram, preloadTokenizeDelay, ("Parser.PreloadTokenizeDelay", 1, 10000, 50));
+        preloadTokenizeDelay.count(delay);
+    }
+
     chunk->preloads.swap(m_pendingPreloads);
+    if (m_viewportDescription.set)
+        chunk->viewport = m_viewportDescription;
     chunk->xssInfos.swap(m_pendingXSSInfos);
     chunk->tokenizerState = m_tokenizer->getState();
     chunk->treeBuilderState = m_treeBuilderSimulator.state();
     chunk->inputCheckpoint = m_input.createCheckpoint(m_pendingTokens->size());
     chunk->preloadScannerCheckpoint = m_preloadScanner->createCheckpoint();
-    chunk->tokens = m_pendingTokens.release();
+    chunk->tokens = std::move(m_pendingTokens);
     chunk->startingScript = m_startingScript;
+    chunk->likelyDocumentWriteScriptIndices.swap(m_likelyDocumentWriteScriptIndices);
     m_startingScript = false;
 
-    bool isEmpty = m_parsedChunkQueue->enqueue(chunk.release());
+    bool isEmpty = m_parsedChunkQueue->enqueue(std::move(chunk));
+
+    DEFINE_STATIC_LOCAL(CustomCountHistogram, chunkEnqueueTime, ("Parser.ChunkEnqueueTime", 1, 10000, 50));
+    chunkEnqueueTime.count(monotonicallyIncreasingTimeMS() - chunkStartTime);
+
     if (isEmpty) {
-        m_loadingTaskRunner->postTask(
-            BLINK_FROM_HERE,
-            threadSafeBind(&HTMLDocumentParser::notifyPendingParsedChunks, AllowCrossThreadAccess(m_parser)));
+        runOnMainThread(&HTMLDocumentParser::notifyPendingParsedChunks, m_parser);
     }
 
-    m_pendingTokens = adoptPtr(new CompactHTMLTokenStream);
+    m_pendingTokens = wrapUnique(new CompactHTMLTokenStream);
+}
+
+// If the background parser is already running on the main thread, then it is
+// not necessary to post a task to the main thread to run asynchronously. The
+// main parser deals with chunking up its own work.
+// TODO(csharrison): This is a pretty big hack because we don't actually need a
+// CrossThreadClosure in these cases. This is just experimental.
+template <typename FunctionType, typename... Ps>
+void BackgroundHTMLParser::runOnMainThread(FunctionType function, Ps&&... parameters)
+{
+    if (isMainThread()) {
+        (*WTF::bind(function, std::forward<Ps>(parameters)...))();
+    } else {
+        m_loadingTaskRunner->postTask(BLINK_FROM_HERE, crossThreadBind(function, std::forward<Ps>(parameters)...));
+    }
 }
 
 } // namespace blink

@@ -35,14 +35,9 @@
 #include "core/editing/TextAffinity.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/html/HTMLElement.h"
-#include "core/layout/LayoutBlock.h"
-#include "core/layout/line/RootInlineBox.h"
 #include "platform/geometry/FloatQuad.h"
 #include "wtf/text/CString.h"
-
-#ifndef NDEBUG
-#include <stdio.h>
-#endif
+#include <ostream> // NOLINT
 
 namespace blink {
 
@@ -62,6 +57,9 @@ VisiblePositionTemplate<Strategy>::VisiblePositionTemplate(const PositionWithAff
 template<typename Strategy>
 VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::create(const PositionWithAffinityTemplate<Strategy>& positionWithAffinity)
 {
+    if (positionWithAffinity.isNull())
+        return VisiblePositionTemplate<Strategy>();
+    DCHECK(positionWithAffinity.position().inShadowIncludingDocument()) << positionWithAffinity;
     const PositionTemplate<Strategy> deepPosition = canonicalPositionOf(positionWithAffinity.position());
     if (deepPosition.isNull())
         return VisiblePositionTemplate<Strategy>();
@@ -75,6 +73,42 @@ VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::create(cons
     if (inSameLine(downstreamPosition, upstreamPosition))
         return VisiblePositionTemplate<Strategy>(downstreamPosition);
     return VisiblePositionTemplate<Strategy>(upstreamPosition);
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::afterNode(Node* node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::afterNode(node)));
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::beforeNode(Node* node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::beforeNode(node)));
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::firstPositionInNode(Node* node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::firstPositionInNode(node)));
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::inParentAfterNode(const Node& node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::inParentAfterNode(node)));
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::inParentBeforeNode(const Node& node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::inParentBeforeNode(node)));
+}
+
+template <typename Strategy>
+VisiblePositionTemplate<Strategy> VisiblePositionTemplate<Strategy>::lastPositionInNode(Node* node)
+{
+    return create(PositionWithAffinityTemplate<Strategy>(PositionTemplate<Strategy>::lastPositionInNode(node)));
 }
 
 VisiblePosition createVisiblePosition(const Position& position, TextAffinity affinity)
@@ -126,16 +160,27 @@ void VisiblePositionTemplate<Strategy>::showTreeForThis() const
 template class CORE_TEMPLATE_EXPORT VisiblePositionTemplate<EditingStrategy>;
 template class CORE_TEMPLATE_EXPORT VisiblePositionTemplate<EditingInFlatTreeStrategy>;
 
+std::ostream& operator<<(std::ostream& ostream, const VisiblePosition& position)
+{
+    return ostream << position.deepEquivalent() << '/' << position.affinity();
+}
+
+std::ostream& operator<<(std::ostream& ostream, const VisiblePositionInFlatTree& position)
+{
+    return ostream << position.deepEquivalent() << '/' << position.affinity();
+}
+
 } // namespace blink
 
 #ifndef NDEBUG
 
 void showTree(const blink::VisiblePosition* vpos)
 {
-    if (vpos)
+    if (vpos) {
         vpos->showTreeForThis();
-    else
-        fprintf(stderr, "Cannot showTree for (nil) VisiblePosition.\n");
+        return;
+    }
+    DVLOG(0) << "Cannot showTree for (nil) VisiblePosition.";
 }
 
 void showTree(const blink::VisiblePosition& vpos)

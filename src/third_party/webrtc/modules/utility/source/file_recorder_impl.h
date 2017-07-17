@@ -8,7 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-// This file contains a class that can write audio and/or video to file in
+// This file contains a class that can write audio to file in
 // multiple file formats. The unencoded input data is written to file in the
 // encoded format specified.
 
@@ -27,7 +27,6 @@
 #include "webrtc/modules/utility/include/file_recorder.h"
 #include "webrtc/modules/utility/source/coder.h"
 #include "webrtc/system_wrappers/include/event_wrapper.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 #include "webrtc/typedefs.h"
 
 namespace webrtc {
@@ -45,33 +44,20 @@ public:
     virtual ~FileRecorderImpl();
 
     // FileRecorder functions.
-    virtual int32_t RegisterModuleFileCallback(FileCallback* callback);
-    virtual FileFormats RecordingFileFormat() const;
-    virtual int32_t StartRecordingAudioFile(
+    int32_t RegisterModuleFileCallback(FileCallback* callback) override;
+    FileFormats RecordingFileFormat() const override;
+    int32_t StartRecordingAudioFile(
         const char* fileName,
         const CodecInst& codecInst,
         uint32_t notificationTimeMs) override;
-    virtual int32_t StartRecordingAudioFile(
+    int32_t StartRecordingAudioFile(
         OutStream& destStream,
         const CodecInst& codecInst,
         uint32_t notificationTimeMs) override;
-    virtual int32_t StopRecording();
-    virtual bool IsRecording() const;
-    virtual int32_t codec_info(CodecInst& codecInst) const;
-    virtual int32_t RecordAudioToFile(
-        const AudioFrame& frame,
-        const TickTime* playoutTS = NULL);
-    virtual int32_t StartRecordingVideoFile(
-        const char* fileName,
-        const CodecInst& audioCodecInst,
-        const VideoCodec& videoCodecInst,
-        bool videoOnly = false) override
-    {
-        return -1;
-    }
-    virtual int32_t RecordVideoToFile(const VideoFrame& videoFrame) {
-        return -1;
-    }
+    int32_t StopRecording() override;
+    bool IsRecording() const override;
+    int32_t codec_info(CodecInst& codecInst) const override;
+    int32_t RecordAudioToFile(const AudioFrame& frame) override;
 
 protected:
     int32_t WriteEncodedAudioData(const int8_t* audioBuffer,

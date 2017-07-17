@@ -4,6 +4,7 @@
 
 #include "cc/blink/web_external_texture_layer_impl.h"
 
+#include "base/memory/ptr_util.h"
 #include "cc/blink/web_external_bitmap_impl.h"
 #include "cc/blink/web_layer_impl.h"
 #include "cc/layers/texture_layer.h"
@@ -12,7 +13,6 @@
 #include "third_party/WebKit/public/platform/WebExternalTextureLayerClient.h"
 #include "third_party/WebKit/public/platform/WebExternalTextureMailbox.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
@@ -24,8 +24,7 @@ WebExternalTextureLayerImpl::WebExternalTextureLayerImpl(
     blink::WebExternalTextureLayerClient* client)
     : client_(client) {
   cc::TextureLayerClient* cc_client = client_ ? this : nullptr;
-  scoped_refptr<TextureLayer> layer =
-      TextureLayer::CreateForMailbox(WebLayerImpl::LayerSettings(), cc_client);
+  scoped_refptr<TextureLayer> layer = TextureLayer::CreateForMailbox(cc_client);
   layer->SetIsDrawable(true);
   layer_.reset(new WebLayerImpl(layer));
 }
@@ -64,7 +63,7 @@ void WebExternalTextureLayerImpl::setNearestNeighbor(bool nearest_neighbor) {
 
 bool WebExternalTextureLayerImpl::PrepareTextureMailbox(
     cc::TextureMailbox* mailbox,
-    scoped_ptr<cc::SingleReleaseCallback>* release_callback,
+    std::unique_ptr<cc::SingleReleaseCallback>* release_callback,
     bool use_shared_memory) {
   blink::WebExternalTextureMailbox client_mailbox;
   WebExternalBitmapImpl* bitmap = nullptr;
@@ -73,7 +72,7 @@ bool WebExternalTextureLayerImpl::PrepareTextureMailbox(
     bitmap = AllocateBitmap();
   if (!client_->prepareMailbox(&client_mailbox, bitmap)) {
     if (bitmap)
-      free_bitmaps_.push_back(make_scoped_ptr(bitmap));
+      free_bitmaps_.push_back(base::WrapUnique(bitmap));
     return false;
   }
   gpu::Mailbox name;
@@ -88,12 +87,14 @@ bool WebExternalTextureLayerImpl::PrepareTextureMailbox(
       memcpy(&sync_token, client_mailbox.syncToken, sizeof(sync_token));
 
     gfx::Size size;
-    if (client_mailbox.allowOverlay)
-      size = gfx::Size(layer_->bounds().width, layer_->bounds().height);
+    if (client_mailbox.allowOverlay) {
+      size = gfx::Size(client_mailbox.textureSize.width,
+                       client_mailbox.textureSize.height);
+    }
 
-    *mailbox =
-        cc::TextureMailbox(name, sync_token, client_mailbox.textureTarget, size,
-                           client_mailbox.allowOverlay);
+    *mailbox = cc::TextureMailbox(
+        name, sync_token, client_mailbox.textureTarget, size,
+        client_mailbox.allowOverlay, false);
   }
   mailbox->set_nearest_neighbor(client_mailbox.nearestNeighbor);
 
@@ -133,7 +134,7 @@ void WebExternalTextureLayerImpl::DidReleaseMailbox(
          sizeof(sync_token));
   available_mailbox.validSyncToken = sync_token.HasData();
   if (bitmap)
-    layer->free_bitmaps_.push_back(make_scoped_ptr(bitmap));
+    layer->free_bitmaps_.push_back(base::WrapUnique(bitmap));
   layer->client_->mailboxReleased(available_mailbox, lost_resource);
 }
 

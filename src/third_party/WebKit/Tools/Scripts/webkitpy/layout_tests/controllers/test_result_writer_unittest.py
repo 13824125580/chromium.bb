@@ -29,7 +29,9 @@
 import optparse
 import unittest
 
+from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.system.systemhost_mock import MockSystemHost
+from webkitpy.layout_tests.controllers.test_result_writer import baseline_name
 from webkitpy.layout_tests.controllers.test_result_writer import write_test_result
 from webkitpy.layout_tests.port.driver import DriverOutput
 from webkitpy.layout_tests.port.test import TestPort
@@ -37,6 +39,7 @@ from webkitpy.layout_tests.models import test_failures
 
 
 class TestResultWriterTests(unittest.TestCase):
+
     def run_test(self, failures=None, files=None):
         failures = failures or []
         host = MockSystemHost()
@@ -75,3 +78,9 @@ class TestResultWriterTests(unittest.TestCase):
         failure.reference_filename = 'notfound.html'
         written_files = self.run_test(failures=[failure], files={})
         self.assertEqual(written_files, {})
+
+    def test_baseline_name(self):
+        fs = MockFileSystem()
+        self.assertEqual(baseline_name(fs, 'x/y/foo.html', 'txt'), 'x/y/foo-expected.txt')
+        self.assertEqual(baseline_name(fs, 'foo.html', 'txt'), 'foo-expected.txt')
+        self.assertEqual(baseline_name(fs, 'foo', 'txt'), 'foo-expected.txt')

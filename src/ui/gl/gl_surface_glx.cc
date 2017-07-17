@@ -2,24 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/gl/gl_surface_glx.h"
+
 extern "C" {
 #include <X11/Xlib.h>
 }
-
-#include "ui/gl/gl_surface_glx.h"
+#include <memory>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/cancellation_flag.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -30,7 +30,7 @@ extern "C" {
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/sync_control_vsync_provider.h"
 
-namespace gfx {
+namespace gl {
 
 namespace {
 
@@ -115,8 +115,7 @@ GLXFBConfig GetConfigForWindow(Display* display,
   return nullptr;
 }
 
-class OMLSyncControlVSyncProvider
-    : public gfx::SyncControlVSyncProvider {
+class OMLSyncControlVSyncProvider : public SyncControlVSyncProvider {
  public:
   explicit OMLSyncControlVSyncProvider(GLXWindow glx_window)
       : SyncControlVSyncProvider(),
@@ -223,7 +222,8 @@ class SGIVideoSyncProviderThreadShim {
     DCHECK(nullptr != context_);
   }
 
-  void GetVSyncParameters(const VSyncProvider::UpdateVSyncCallback& callback) {
+  void GetVSyncParameters(
+      const gfx::VSyncProvider::UpdateVSyncCallback& callback) {
     base::TimeTicks now;
     {
       // Don't allow |window_| destruction while we're probing vsync.
@@ -254,7 +254,7 @@ class SGIVideoSyncProviderThreadShim {
  private:
   // For initialization of display_ in GLSurface::InitializeOneOff before
   // the sandbox goes up.
-  friend class gfx::GLSurfaceGLX;
+  friend class gl::GLSurfaceGLX;
 
   static Display* display_;
 
@@ -298,7 +298,7 @@ class SGIVideoSyncVSyncProvider
   }
 
   void GetVSyncParameters(
-      const VSyncProvider::UpdateVSyncCallback& callback) override {
+      const gfx::VSyncProvider::UpdateVSyncCallback& callback) override {
     if (kGetVSyncParametersMinSeconds > 0) {
       base::TimeTicks now = base::TimeTicks::Now();
       base::TimeDelta delta = now - last_get_vsync_parameters_time_;
@@ -310,7 +310,7 @@ class SGIVideoSyncVSyncProvider
     // Only one outstanding request per surface.
     if (!pending_callback_) {
       pending_callback_.reset(
-          new VSyncProvider::UpdateVSyncCallback(callback));
+          new gfx::VSyncProvider::UpdateVSyncCallback(callback));
       vsync_thread_->message_loop()->PostTask(
           FROM_HERE,
           base::Bind(&SGIVideoSyncProviderThreadShim::GetVSyncParameters,
@@ -332,9 +332,9 @@ class SGIVideoSyncVSyncProvider
   scoped_refptr<SGIVideoSyncThread> vsync_thread_;
 
   // Thread shim through which the sync provider is accessed on |vsync_thread_|.
-  scoped_ptr<SGIVideoSyncProviderThreadShim> shim_;
+  std::unique_ptr<SGIVideoSyncProviderThreadShim> shim_;
 
-  scoped_ptr<VSyncProvider::UpdateVSyncCallback> pending_callback_;
+  std::unique_ptr<gfx::VSyncProvider::UpdateVSyncCallback> pending_callback_;
 
   // Raw pointers to sync primitives owned by the shim_.
   // These will only be referenced before we post a task to destroy
@@ -554,7 +554,7 @@ void* NativeViewGLSurfaceGLX::GetHandle() {
 }
 
 bool NativeViewGLSurfaceGLX::SupportsPostSubBuffer() {
-  return gfx::g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer;
+  return g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer;
 }
 
 void* NativeViewGLSurfaceGLX::GetConfig() {
@@ -567,12 +567,12 @@ gfx::SwapResult NativeViewGLSurfaceGLX::PostSubBuffer(int x,
                                                       int y,
                                                       int width,
                                                       int height) {
-  DCHECK(gfx::g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer);
+  DCHECK(g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer);
   glXCopySubBufferMESA(g_display, GetDrawableHandle(), x, y, width, height);
   return gfx::SwapResult::SWAP_ACK;
 }
 
-VSyncProvider* NativeViewGLSurfaceGLX::GetVSyncProvider() {
+gfx::VSyncProvider* NativeViewGLSurfaceGLX::GetVSyncProvider() {
   return vsync_provider_.get();
 }
 
@@ -645,4 +645,4 @@ UnmappedNativeViewGLSurfaceGLX::~UnmappedNativeViewGLSurfaceGLX() {
   Destroy();
 }
 
-}  // namespace gfx
+}  // namespace gl

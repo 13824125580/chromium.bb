@@ -10,10 +10,12 @@
 #include "core/css/CSSValue.h"
 #include "core/css/parser/CSSParserMode.h"
 #include "platform/graphics/Color.h"
+#include <memory>
 
 namespace blink {
 
 class CSSParserObserver;
+class CSSParserTokenRange;
 class CSSSelectorList;
 class Element;
 class ImmutableStylePropertySet;
@@ -28,7 +30,7 @@ class CORE_EXPORT CSSParser {
     STATIC_ONLY(CSSParser);
 public:
     // As well as regular rules, allows @import and @namespace but not @charset
-    static PassRefPtrWillBeRawPtr<StyleRuleBase> parseRule(const CSSParserContext&, StyleSheetContents*, const String&);
+    static StyleRuleBase* parseRule(const CSSParserContext&, StyleSheetContents*, const String&);
     static void parseSheet(const CSSParserContext&, StyleSheetContents*, const String&);
     static CSSSelectorList parseSelector(const CSSParserContext&, StyleSheetContents*, const String&);
     static CSSSelectorList parsePageSelector(const CSSParserContext&, StyleSheetContents*, const String&);
@@ -37,16 +39,17 @@ public:
     static bool parseValue(MutableStylePropertySet*, CSSPropertyID unresolvedProperty, const String&, bool important, StyleSheetContents*);
 
     static bool parseValueForCustomProperty(MutableStylePropertySet*, const AtomicString& propertyName, const String& value, bool important, StyleSheetContents*);
+    static ImmutableStylePropertySet* parseCustomPropertySet(CSSParserTokenRange);
 
     // This is for non-shorthands only
-    static PassRefPtrWillBeRawPtr<CSSValue> parseSingleValue(CSSPropertyID, const String&, const CSSParserContext& = strictCSSParserContext());
+    static CSSValue* parseSingleValue(CSSPropertyID, const String&, const CSSParserContext& = strictCSSParserContext());
 
-    static PassRefPtrWillBeRawPtr<CSSValue> parseFontFaceDescriptor(CSSPropertyID, const String&, const CSSParserContext&);
+    static const CSSValue* parseFontFaceDescriptor(CSSPropertyID, const String&, const CSSParserContext&);
 
-    static PassRefPtrWillBeRawPtr<ImmutableStylePropertySet> parseInlineStyleDeclaration(const String&, Element*);
+    static ImmutableStylePropertySet* parseInlineStyleDeclaration(const String&, Element*);
 
-    static PassOwnPtr<Vector<double>> parseKeyframeKeyList(const String&);
-    static PassRefPtrWillBeRawPtr<StyleRuleKeyframe> parseKeyframeRule(const CSSParserContext&, const String&);
+    static std::unique_ptr<Vector<double>> parseKeyframeKeyList(const String&);
+    static StyleRuleKeyframe* parseKeyframeRule(const CSSParserContext&, const String&);
 
     static bool parseSupportsCondition(const String&);
 

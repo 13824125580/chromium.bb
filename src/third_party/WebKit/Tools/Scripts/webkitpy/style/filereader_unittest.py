@@ -20,7 +20,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import unittest
 
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.system.logtesting import LoggingTestCase
@@ -80,7 +79,7 @@ class TextFileReaderTest(LoggingTestCase):
     def test_process_file__does_not_exist(self):
         try:
             self._file_reader.process_file('does_not_exist.txt')
-        except SystemExit, err:
+        except SystemExit as err:
             self.assertEqual(str(err), '1')
         else:
             self.fail('No Exception raised.')

@@ -34,6 +34,10 @@ BluetoothTestAndroid::~BluetoothTestAndroid() {
 void BluetoothTestAndroid::SetUp() {
   // Register in SetUp so that ASSERT can be used.
   ASSERT_TRUE(RegisterNativesImpl(AttachCurrentThread()));
+
+  // Set the permission to true so that we can use the API.
+  Java_Fakes_setLocationServicesState(
+      AttachCurrentThread(), true /* hasPermission */, true /* isEnabled */);
 }
 
 void BluetoothTestAndroid::TearDown() {
@@ -68,17 +72,22 @@ void BluetoothTestAndroid::InitWithFakeAdapter() {
 }
 
 bool BluetoothTestAndroid::DenyPermission() {
-  Java_FakeBluetoothAdapter_denyPermission(AttachCurrentThread(),
-                                           j_fake_bluetooth_adapter_.obj());
+  Java_Fakes_setLocationServicesState(
+      AttachCurrentThread(), false /* hasPermission */, true /* isEnabled */);
   return true;
 }
 
-BluetoothDevice* BluetoothTestAndroid::DiscoverLowEnergyDevice(
+BluetoothDevice* BluetoothTestAndroid::SimulateLowEnergyDevice(
     int device_ordinal) {
   TestBluetoothAdapterObserver observer(adapter_);
-  Java_FakeBluetoothAdapter_discoverLowEnergyDevice(
+  Java_FakeBluetoothAdapter_simulateLowEnergyDevice(
       AttachCurrentThread(), j_fake_bluetooth_adapter_.obj(), device_ordinal);
   return observer.last_device();
+}
+
+void BluetoothTestAndroid::SimulateLocationServicesOff() {
+  Java_Fakes_setLocationServicesState(
+      AttachCurrentThread(), true /* hasPermission */, false /* isEnabled */);
 }
 
 void BluetoothTestAndroid::ForceIllegalStateException() {
@@ -152,7 +161,7 @@ void BluetoothTestAndroid::SimulateGattServicesDiscoveryError(
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristic(
-    BluetoothGattService* service,
+    BluetoothRemoteGattService* service,
     const std::string& uuid,
     int properties) {
   BluetoothRemoteGattServiceAndroid* service_android =
@@ -165,7 +174,7 @@ void BluetoothTestAndroid::SimulateGattCharacteristic(
 }
 
 void BluetoothTestAndroid::RememberCharacteristicForSubsequentAction(
-    BluetoothGattCharacteristic* characteristic) {
+    BluetoothRemoteGattCharacteristic* characteristic) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
 
@@ -174,17 +183,53 @@ void BluetoothTestAndroid::RememberCharacteristicForSubsequentAction(
       characteristic_android->GetJavaObject().obj());
 }
 
+void BluetoothTestAndroid::RememberCCCDescriptorForSubsequentAction(
+    BluetoothRemoteGattCharacteristic* characteristic) {
+  remembered_ccc_descriptor_ =
+      characteristic
+          ->GetDescriptorsByUUID(BluetoothRemoteGattDescriptor::
+                                     ClientCharacteristicConfigurationUuid())
+          .at(0);
+  DCHECK(remembered_ccc_descriptor_);
+  RememberDescriptorForSubsequentAction(remembered_ccc_descriptor_);
+}
+
 void BluetoothTestAndroid::SimulateGattNotifySessionStarted(
-    BluetoothGattCharacteristic* characteristic) {
-  // Android doesn't provide any sort of callback for when notifications have
-  // been enabled. So, just run the message loop to process the success
-  // callback.
-  base::RunLoop().RunUntilIdle();
+    BluetoothRemoteGattCharacteristic* characteristic) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android = nullptr;
+  if (characteristic) {
+    descriptor_android = static_cast<BluetoothRemoteGattDescriptorAndroid*>(
+        characteristic
+            ->GetDescriptorsByUUID(BluetoothRemoteGattDescriptor::
+                                       ClientCharacteristicConfigurationUuid())
+            .at(0));
+  }
+  Java_FakeBluetoothGattDescriptor_valueWrite(
+      base::android::AttachCurrentThread(),
+      descriptor_android ? descriptor_android->GetJavaObject().obj() : nullptr,
+      0);  // android.bluetooth.BluetoothGatt.GATT_SUCCESS
+}
+
+void BluetoothTestAndroid::SimulateGattNotifySessionStartError(
+    BluetoothRemoteGattCharacteristic* characteristic,
+    BluetoothRemoteGattService::GattErrorCode error_code) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android = nullptr;
+  if (characteristic) {
+    descriptor_android = static_cast<BluetoothRemoteGattDescriptorAndroid*>(
+        characteristic
+            ->GetDescriptorsByUUID(BluetoothRemoteGattDescriptor::
+                                       ClientCharacteristicConfigurationUuid())
+            .at(0));
+  }
+  Java_FakeBluetoothGattDescriptor_valueWrite(
+      base::android::AttachCurrentThread(),
+      descriptor_android ? descriptor_android->GetJavaObject().obj() : nullptr,
+      BluetoothRemoteGattServiceAndroid::GetAndroidErrorCode(error_code));
 }
 
 void BluetoothTestAndroid::
     SimulateGattCharacteristicSetNotifyWillFailSynchronouslyOnce(
-        BluetoothGattCharacteristic* characteristic) {
+        BluetoothRemoteGattCharacteristic* characteristic) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -194,7 +239,7 @@ void BluetoothTestAndroid::
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristicChanged(
-    BluetoothGattCharacteristic* characteristic,
+    BluetoothRemoteGattCharacteristic* characteristic,
     const std::vector<uint8_t>& value) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
@@ -208,7 +253,7 @@ void BluetoothTestAndroid::SimulateGattCharacteristicChanged(
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristicRead(
-    BluetoothGattCharacteristic* characteristic,
+    BluetoothRemoteGattCharacteristic* characteristic,
     const std::vector<uint8_t>& value) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
@@ -223,8 +268,8 @@ void BluetoothTestAndroid::SimulateGattCharacteristicRead(
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristicReadError(
-    BluetoothGattCharacteristic* characteristic,
-    BluetoothGattService::GattErrorCode error_code) {
+    BluetoothRemoteGattCharacteristic* characteristic,
+    BluetoothRemoteGattService::GattErrorCode error_code) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -238,7 +283,7 @@ void BluetoothTestAndroid::SimulateGattCharacteristicReadError(
 
 void BluetoothTestAndroid::
     SimulateGattCharacteristicReadWillFailSynchronouslyOnce(
-        BluetoothGattCharacteristic* characteristic) {
+        BluetoothRemoteGattCharacteristic* characteristic) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -248,7 +293,7 @@ void BluetoothTestAndroid::
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristicWrite(
-    BluetoothGattCharacteristic* characteristic) {
+    BluetoothRemoteGattCharacteristic* characteristic) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   Java_FakeBluetoothGattCharacteristic_valueWrite(
@@ -259,8 +304,8 @@ void BluetoothTestAndroid::SimulateGattCharacteristicWrite(
 }
 
 void BluetoothTestAndroid::SimulateGattCharacteristicWriteError(
-    BluetoothGattCharacteristic* characteristic,
-    BluetoothGattService::GattErrorCode error_code) {
+    BluetoothRemoteGattCharacteristic* characteristic,
+    BluetoothRemoteGattService::GattErrorCode error_code) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   Java_FakeBluetoothGattCharacteristic_valueWrite(
@@ -271,7 +316,7 @@ void BluetoothTestAndroid::SimulateGattCharacteristicWriteError(
 
 void BluetoothTestAndroid::
     SimulateGattCharacteristicWriteWillFailSynchronouslyOnce(
-        BluetoothGattCharacteristic* characteristic) {
+        BluetoothRemoteGattCharacteristic* characteristic) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
   Java_FakeBluetoothGattCharacteristic_setWriteCharacteristicWillFailSynchronouslyOnce(
@@ -280,7 +325,7 @@ void BluetoothTestAndroid::
 }
 
 void BluetoothTestAndroid::SimulateGattDescriptor(
-    BluetoothGattCharacteristic* characteristic,
+    BluetoothRemoteGattCharacteristic* characteristic,
     const std::string& uuid) {
   BluetoothRemoteGattCharacteristicAndroid* characteristic_android =
       static_cast<BluetoothRemoteGattCharacteristicAndroid*>(characteristic);
@@ -291,8 +336,77 @@ void BluetoothTestAndroid::SimulateGattDescriptor(
       base::android::ConvertUTF8ToJavaString(env, uuid).obj());
 }
 
+void BluetoothTestAndroid::RememberDescriptorForSubsequentAction(
+    BluetoothRemoteGattDescriptor* descriptor) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+
+  Java_FakeBluetoothGattDescriptor_rememberDescriptorForSubsequentAction(
+      base::android::AttachCurrentThread(),
+      descriptor_android->GetJavaObject().obj());
+}
+
+void BluetoothTestAndroid::SimulateGattDescriptorRead(
+    BluetoothRemoteGattDescriptor* descriptor,
+    const std::vector<uint8_t>& value) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+  JNIEnv* env = base::android::AttachCurrentThread();
+
+  Java_FakeBluetoothGattDescriptor_valueRead(
+      env,
+      descriptor_android ? descriptor_android->GetJavaObject().obj() : nullptr,
+      0,  // android.bluetooth.BluetoothGatt.GATT_SUCCESS
+      base::android::ToJavaByteArray(env, value).obj());
+}
+
+void BluetoothTestAndroid::SimulateGattDescriptorReadError(
+    BluetoothRemoteGattDescriptor* descriptor,
+    BluetoothRemoteGattService::GattErrorCode error_code) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+  JNIEnv* env = base::android::AttachCurrentThread();
+  std::vector<uint8_t> empty_value;
+
+  Java_FakeBluetoothGattDescriptor_valueRead(
+      env, descriptor_android->GetJavaObject().obj(),
+      BluetoothRemoteGattServiceAndroid::GetAndroidErrorCode(error_code),
+      base::android::ToJavaByteArray(env, empty_value).obj());
+}
+
+void BluetoothTestAndroid::SimulateGattDescriptorReadWillFailSynchronouslyOnce(
+    BluetoothRemoteGattDescriptor* descriptor) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+  JNIEnv* env = base::android::AttachCurrentThread();
+
+  Java_FakeBluetoothGattDescriptor_setReadDescriptorWillFailSynchronouslyOnce(
+      env, descriptor_android->GetJavaObject().obj());
+}
+
+void BluetoothTestAndroid::SimulateGattDescriptorWrite(
+    BluetoothRemoteGattDescriptor* descriptor) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+  Java_FakeBluetoothGattDescriptor_valueWrite(
+      base::android::AttachCurrentThread(),
+      descriptor_android ? descriptor_android->GetJavaObject().obj() : nullptr,
+      0);  // android.bluetooth.BluetoothGatt.GATT_SUCCESS
+}
+
+void BluetoothTestAndroid::SimulateGattDescriptorWriteError(
+    BluetoothRemoteGattDescriptor* descriptor,
+    BluetoothRemoteGattService::GattErrorCode error_code) {
+  BluetoothRemoteGattDescriptorAndroid* descriptor_android =
+      static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
+  Java_FakeBluetoothGattDescriptor_valueWrite(
+      base::android::AttachCurrentThread(),
+      descriptor_android->GetJavaObject().obj(),
+      BluetoothRemoteGattServiceAndroid::GetAndroidErrorCode(error_code));
+}
+
 void BluetoothTestAndroid::SimulateGattDescriptorWriteWillFailSynchronouslyOnce(
-    BluetoothGattDescriptor* descriptor) {
+    BluetoothRemoteGattDescriptor* descriptor) {
   BluetoothRemoteGattDescriptorAndroid* descriptor_android =
       static_cast<BluetoothRemoteGattDescriptorAndroid*>(descriptor);
   Java_FakeBluetoothGattDescriptor_setWriteDescriptorWillFailSynchronouslyOnce(
@@ -348,6 +462,12 @@ void BluetoothTestAndroid::OnFakeBluetoothGattWriteCharacteristic(
   base::android::JavaByteArrayToByteVector(env, value, &last_write_value_);
 }
 
+void BluetoothTestAndroid::OnFakeBluetoothGattReadDescriptor(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& caller) {
+  gatt_read_descriptor_attempts_++;
+}
+
 void BluetoothTestAndroid::OnFakeBluetoothGattWriteDescriptor(
     JNIEnv* env,
     const JavaParamRef<jobject>& caller,
@@ -360,7 +480,7 @@ void BluetoothTestAndroid::OnFakeAdapterStateChanged(
     JNIEnv* env,
     const JavaParamRef<jobject>& caller,
     const bool powered) {
-  adapter_->NotifyAdapterStateChanged(powered);
+  adapter_->NotifyAdapterPoweredChanged(powered);
 }
 
 }  // namespace device

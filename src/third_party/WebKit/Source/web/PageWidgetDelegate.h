@@ -34,7 +34,7 @@
 #include "public/platform/WebCanvas.h"
 #include "public/web/WebInputEvent.h"
 #include "public/web/WebWidget.h"
-#include "wtf/OwnPtr.h"
+#include "web/WebExport.h"
 
 namespace blink {
 
@@ -47,7 +47,7 @@ class WebMouseEvent;
 class WebMouseWheelEvent;
 class WebTouchEvent;
 
-class PageWidgetEventHandler {
+class WEB_EXPORT PageWidgetEventHandler {
 public:
     virtual void handleMouseMove(LocalFrame& mainFrame, const WebMouseEvent&);
     virtual void handleMouseLeave(LocalFrame& mainFrame, const WebMouseEvent&);

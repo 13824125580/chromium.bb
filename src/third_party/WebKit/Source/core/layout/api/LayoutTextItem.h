@@ -23,22 +23,12 @@ public:
     explicit LayoutTextItem(const LayoutItem& item)
         : LayoutItem(item)
     {
-        ASSERT(!item || item.isText());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isText());
     }
 
     explicit LayoutTextItem(std::nullptr_t) : LayoutItem(nullptr) { }
 
     LayoutTextItem() { }
-
-    bool isTextFragment() const
-    {
-        return toText()->isTextFragment();
-    }
-
-    void dirtyLineBoxes()
-    {
-        toText()->dirtyLineBoxes();
-    }
 
     void setStyle(PassRefPtr<ComputedStyle> style)
     {
@@ -48,6 +38,16 @@ public:
     void setText(PassRefPtr<StringImpl> text, bool force = false)
     {
         toText()->setText(text, force);
+    }
+
+    bool isTextFragment() const
+    {
+        return toText()->isTextFragment();
+    }
+
+    void dirtyLineBoxes()
+    {
+        toText()->dirtyLineBoxes();
     }
 
 private:

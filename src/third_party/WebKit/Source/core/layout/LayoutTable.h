@@ -30,6 +30,7 @@
 #include "core/layout/LayoutBlock.h"
 #include "core/style/CollapsedBorderValue.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
@@ -213,7 +214,6 @@ public:
     void recalcBordersInRowDirection();
 
     void addChild(LayoutObject* child, LayoutObject* beforeChild = nullptr) override;
-    void addChildIgnoringContinuation(LayoutObject* newChild, LayoutObject* beforeChild = nullptr) override;
 
     struct ColumnStruct {
         DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
@@ -401,8 +401,9 @@ public:
 protected:
     void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) override;
     void simplifiedNormalFlowLayout() override;
-    PaintInvalidationReason invalidatePaintIfNeeded(PaintInvalidationState&, const LayoutBoxModelObject& paintInvalidationContainer) override;
-    void invalidatePaintOfSubtreesIfNeeded(PaintInvalidationState&) override;
+    bool recalcChildOverflowAfterStyleChange() override;
+    PaintInvalidationReason invalidatePaintIfNeeded(const PaintInvalidationState&) override;
+    void invalidatePaintOfSubtreesIfNeeded(const PaintInvalidationState&) override;
 
 private:
     bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectTable || LayoutBlock::isOfType(type); }
@@ -427,7 +428,7 @@ private:
     LayoutUnit convertStyleLogicalWidthToComputedWidth(const Length& styleLogicalWidth, LayoutUnit availableWidth);
     LayoutUnit convertStyleLogicalHeightToComputedHeight(const Length& styleLogicalHeight);
 
-    LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = IgnoreOverlayScrollbarSize) const override;
+    LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarClipBehavior = IgnoreOverlayScrollbarSize) const override;
 
     void addOverflowFromChildren() override;
 
@@ -474,7 +475,7 @@ private:
     //
     // As the algorithm is dependent on the style, this field is nullptr before
     // the first style is applied in styleDidChange().
-    OwnPtr<TableLayoutAlgorithm> m_tableLayout;
+    std::unique_ptr<TableLayoutAlgorithm> m_tableLayout;
 
     // A sorted list of all unique border values that we want to paint.
     //

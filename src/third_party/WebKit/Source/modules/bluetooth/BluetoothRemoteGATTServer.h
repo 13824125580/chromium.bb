@@ -6,11 +6,10 @@
 #define BluetoothRemoteGATTServer_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/modules/v8/UnionTypesModules.h"
+#include "bindings/modules/v8/StringOrUnsignedLong.h"
 #include "modules/bluetooth/BluetoothDevice.h"
 #include "platform/heap/Heap.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "public/platform/modules/bluetooth/WebBluetoothError.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -22,7 +21,7 @@ class ScriptState;
 
 // BluetoothRemoteGATTServer provides a way to interact with a connected bluetooth peripheral.
 class BluetoothRemoteGATTServer final
-    : public GarbageCollectedFinalized<BluetoothRemoteGATTServer>
+    : public GarbageCollected<BluetoothRemoteGATTServer>
     , public ScriptWrappable {
     DEFINE_WRAPPERTYPEINFO();
 public:
@@ -41,8 +40,12 @@ public:
     ScriptPromise connect(ScriptState*);
     void disconnect(ScriptState*);
     ScriptPromise getPrimaryService(ScriptState*, const StringOrUnsignedLong& service, ExceptionState&);
+    ScriptPromise getPrimaryServices(ScriptState*, const StringOrUnsignedLong& service, ExceptionState&);
+    ScriptPromise getPrimaryServices(ScriptState*, ExceptionState&);
 
 private:
+    ScriptPromise getPrimaryServicesImpl(ScriptState*, mojom::WebBluetoothGATTQueryQuantity, String serviceUUID = String());
+
     Member<BluetoothDevice> m_device;
     bool m_connected;
 };

@@ -230,6 +230,31 @@ chrome.automation.StateType = {
 };
 
 /**
+ * @enum {number}
+ */
+chrome.automation.NameFromType = {
+  0: '',
+  1: 'uninitialized',
+  2: 'attribute',
+  3: 'contents',
+  4: 'placeholder',
+  5: 'relatedElement',
+  6: 'value'
+};
+
+/**
+ * @enum {number}
+ */
+chrome.automation.DescriptionFromType = {
+  0: '',
+  1: 'uninitialized',
+  2: 'attribute',
+  3: 'contents',
+  4: 'placeholder',
+  5: 'relatedElement'
+};
+
+/**
  * @enum {string}
  */
 chrome.automation.TreeChangeType = {
@@ -260,8 +285,10 @@ chrome.automation.FindParams;
 
 /**
  * @constructor
+ * @param {chrome.automation.EventType} type
+ * @param {chrome.automation.AutomationNode} node
  */
-chrome.automation.AutomationEvent = function() {};
+chrome.automation.AutomationEvent = function(type, node) {};
 
 /**
  * @type {!chrome.automation.AutomationNode}
@@ -332,6 +359,18 @@ chrome.automation.AutomationNode.prototype.state;
 
 
 /**
+ * @type {chrome.automation.NameFromType}
+ */
+chrome.automation.AutomationNode.prototype.nameFrom;
+
+
+/**
+ * @type {chrome.automation.DescriptionFromType}
+ */
+chrome.automation.AutomationNode.prototype.descriptionFrom;
+
+
+/**
  * @type {number}
  */
 chrome.automation.AutomationNode.prototype.indexInParent;
@@ -391,7 +430,7 @@ chrome.automation.AutomationNode.prototype.wordEnds;
 
 
 /**
- * @type {!chrome.automation.AutomationNode}
+ * @type {chrome.automation.AutomationNode}
  */
 chrome.automation.AutomationNode.prototype.root;
 
@@ -497,7 +536,6 @@ chrome.automation.AutomationNode.prototype.showContextMenu = function() {};
 chrome.automation.AutomationNode.prototype.setSelection =
     function(start, end) {};
 
-
 /** @type {string} */
 chrome.automation.AutomationNode.prototype.containerLiveStatus;
 
@@ -509,6 +547,9 @@ chrome.automation.AutomationNode.prototype.containerLiveAtomic;
 
 /** @type {boolean} */
 chrome.automation.AutomationNode.prototype.containerLiveBusy;
+
+/** @type {string} */
+chrome.automation.AutomationNode.prototype.language;
 
 /** @type {string} */
 chrome.automation.AutomationNode.prototype.liveStatus;
@@ -529,6 +570,12 @@ chrome.automation.AutomationNode.prototype.liveBusy;
 chrome.automation.AutomationNode.prototype.find = function(findParams) {};
 
 /**
+ * @param {Object} findParams
+ * @return {Array<chrome.automation.AutomationNode>}
+ */
+chrome.automation.AutomationNode.prototype.findAll = function(findParams) {};
+
+/**
  * @type {string}
  */
 chrome.automation.AutomationNode.prototype.inputType;
@@ -537,6 +584,14 @@ chrome.automation.AutomationNode.prototype.inputType;
  * @type {(chrome.automation.AutomationNode|undefined)}
  */
 chrome.automation.AutomationNode.prototype.anchorObject;
+
+/**
+ * @param {{anchorObject: !chrome.automation.AutomationNode,
+ *          anchorOffset: number,
+ *          focusObject: !chrome.automation.AutomationNode,
+ *          focusOffset: number}} selectionParams
+ */
+chrome.automation.setDocumentSelection = function(selectionParams) {};
 
 /**
  * @type {(number|undefined)}
@@ -557,6 +612,11 @@ chrome.automation.AutomationNode.prototype.lineBreaks;
  * @type {(number|undefined)}
  */
 chrome.automation.focusOffset;
+
+/**
+ * @type {(chrome.automation.AutomationNode|undefined)}
+ */
+chrome.automation.AutomationNode.prototype.activeDescendant;
 
 /** @type {function() : !Object} */
 chrome.app.getDetails;

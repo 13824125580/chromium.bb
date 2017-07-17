@@ -7,6 +7,8 @@
 #include <dirent.h>
 #include <stdio.h>
 
+#include <memory>
+
 #include "base/strings/string_util.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
@@ -65,7 +67,7 @@ TEST(QuicClientTest, DoNotLeakFDs) {
   // in additional FDs being opened.
   const int kNumClients = 50;
   for (int i = 0; i < kNumClients; ++i) {
-    scoped_ptr<QuicClient> client(
+    std::unique_ptr<QuicClient> client(
         CreateAndInitializeQuicClient(&eps, net::test::kTestPort + i));
 
     // Initializing the client will create a new FD.
@@ -84,13 +86,13 @@ TEST(QuicClientTest, CreateAndCleanUpUDPSockets) {
   EpollServer eps;
   int number_of_open_fds = NumOpenFDs();
 
-  scoped_ptr<QuicClient> client(
+  std::unique_ptr<QuicClient> client(
       CreateAndInitializeQuicClient(&eps, net::test::kTestPort));
   EXPECT_EQ(number_of_open_fds + 1, NumOpenFDs());
   // Create more UDP sockets.
-  EXPECT_TRUE(QuicClientPeer::CreateUDPSocket(client.get()));
+  EXPECT_TRUE(QuicClientPeer::CreateUDPSocketAndBind(client.get()));
   EXPECT_EQ(number_of_open_fds + 2, NumOpenFDs());
-  EXPECT_TRUE(QuicClientPeer::CreateUDPSocket(client.get()));
+  EXPECT_TRUE(QuicClientPeer::CreateUDPSocketAndBind(client.get()));
   EXPECT_EQ(number_of_open_fds + 3, NumOpenFDs());
 
   // Clean up UDP sockets.

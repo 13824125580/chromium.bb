@@ -9,28 +9,34 @@
 
 #include "base/callback.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "cc/test/pixel_test_delegating_output_surface.h"
+#include "components/scheduler/test/renderer_scheduler_test_support.h"
 #include "components/test_runner/test_common.h"
 #include "components/test_runner/web_frame_test_proxy.h"
 #include "components/test_runner/web_test_proxy.h"
-#include "content/browser/bluetooth/bluetooth_dispatcher_host.h"
+#include "content/browser/bluetooth/bluetooth_adapter_factory_wrapper.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/child/geofencing/web_geofencing_provider_impl.h"
-#include "content/common/gpu/image_transport_surface.h"
+#include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/common/site_isolation_policy.h"
 #include "content/public/common/page_state.h"
 #include "content/public/renderer/renderer_gamepad_provider.h"
 #include "content/renderer/fetchers/manifest_fetcher.h"
+#include "content/renderer/gpu/render_widget_compositor.h"
 #include "content/renderer/history_entry.h"
 #include "content/renderer/history_serialization.h"
+#include "content/renderer/layout_test_dependencies.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
 #include "content/renderer/renderer_blink_platform_impl.h"
 #include "content/shell/common/shell_switches.h"
 #include "device/bluetooth/bluetooth_adapter.h"
+#include "gpu/ipc/service/image_transport_surface.h"
+#include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebGamepads.h"
 #include "third_party/WebKit/public/platform/modules/device_orientation/WebDeviceMotionData.h"
 #include "third_party/WebKit/public/platform/modules/device_orientation/WebDeviceOrientationData.h"
@@ -41,7 +47,6 @@
 #include "content/browser/frame_host/popup_menu_helper_mac.h"
 #elif defined(OS_WIN)
 #include "content/child/font_warmup_win.h"
-#include "content/public/common/dwrite_font_platform_win.h"
 #include "third_party/WebKit/public/web/win/WebFontRendering.h"
 #include "third_party/skia/include/ports/SkFontMgr.h"
 #include "third_party/skia/include/ports/SkTypeface_win.h"
@@ -59,38 +64,35 @@ namespace content {
 
 namespace {
 
-base::LazyInstance<
-    base::Callback<void(RenderView*, test_runner::WebTestProxyBase*)>>::Leaky
-    g_callback = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<ViewProxyCreationCallback>::Leaky
+    g_view_test_proxy_callback = LAZY_INSTANCE_INITIALIZER;
+
+base::LazyInstance<FrameProxyCreationCallback>::Leaky
+    g_frame_test_proxy_callback = LAZY_INSTANCE_INITIALIZER;
+
+using WebTestProxyType = test_runner::WebTestProxy<RenderViewImpl,
+                                                   CompositorDependencies*,
+                                                   const ViewMsg_New_Params&>;
+using WebFrameTestProxyType =
+    test_runner::WebFrameTestProxy<RenderFrameImpl,
+                                   const RenderFrameImpl::CreateParams&>;
 
 RenderViewImpl* CreateWebTestProxy(CompositorDependencies* compositor_deps,
                                    const ViewMsg_New_Params& params) {
-  typedef test_runner::WebTestProxy<RenderViewImpl, CompositorDependencies*,
-                                    const ViewMsg_New_Params&> ProxyType;
-  ProxyType* render_view_proxy = new ProxyType(compositor_deps, params);
-  if (g_callback == 0)
+  WebTestProxyType* render_view_proxy =
+      new WebTestProxyType(compositor_deps, params);
+  if (g_view_test_proxy_callback == 0)
     return render_view_proxy;
-  g_callback.Get().Run(render_view_proxy, render_view_proxy);
+  g_view_test_proxy_callback.Get().Run(render_view_proxy, render_view_proxy);
   return render_view_proxy;
-}
-
-test_runner::WebTestProxyBase* GetWebTestProxyBase(
-    RenderViewImpl* render_view) {
-  typedef test_runner::WebTestProxy<RenderViewImpl, const ViewMsg_New_Params&>
-      ViewProxy;
-
-  ViewProxy* render_view_proxy = static_cast<ViewProxy*>(render_view);
-  return static_cast<test_runner::WebTestProxyBase*>(render_view_proxy);
 }
 
 RenderFrameImpl* CreateWebFrameTestProxy(
     const RenderFrameImpl::CreateParams& params) {
-  typedef test_runner::WebFrameTestProxy<
-      RenderFrameImpl, const RenderFrameImpl::CreateParams&> FrameProxy;
-
-  FrameProxy* render_frame_proxy = new FrameProxy(params);
-  render_frame_proxy->set_base_proxy(GetWebTestProxyBase(params.render_view));
-
+  WebFrameTestProxyType* render_frame_proxy = new WebFrameTestProxyType(params);
+  if (g_frame_test_proxy_callback == 0)
+    return render_frame_proxy;
+  g_frame_test_proxy_callback.Get().Run(render_frame_proxy, render_frame_proxy);
   return render_frame_proxy;
 }
 
@@ -98,14 +100,11 @@ RenderFrameImpl* CreateWebFrameTestProxy(
 // DirectWrite only has access to %WINDIR%\Fonts by default. For developer
 // side-loading, support kRegisterFontFiles to allow access to additional fonts.
 void RegisterSideloadedTypefaces(SkFontMgr* fontmgr) {
-  RenderThreadImpl::current()->EnsureWebKitInitialized();
   std::vector<std::string> files = switches::GetSideloadFontFiles();
   for (std::vector<std::string>::const_iterator i(files.begin());
        i != files.end();
        ++i) {
     SkTypeface* typeface = fontmgr->createFromFile(i->c_str());
-    if (!ShouldUseDirectWriteFontProxyFieldTrial())
-      DoPreSandboxWarmupForTypeface(typeface);
     blink::WebFontRendering::addSideloadedFontForTesting(typeface);
   }
 }
@@ -113,19 +112,32 @@ void RegisterSideloadedTypefaces(SkFontMgr* fontmgr) {
 
 }  // namespace
 
+test_runner::WebTestProxyBase* GetWebTestProxyBase(RenderView* render_view) {
+  WebTestProxyType* render_view_proxy =
+      static_cast<WebTestProxyType*>(render_view);
+  return static_cast<test_runner::WebTestProxyBase*>(render_view_proxy);
+}
+
+test_runner::WebFrameTestProxyBase* GetWebFrameTestProxyBase(
+    RenderFrame* render_frame) {
+  WebFrameTestProxyType* render_frame_proxy =
+      static_cast<WebFrameTestProxyType*>(render_frame);
+  return static_cast<test_runner::WebFrameTestProxyBase*>(render_frame_proxy);
+}
+
 void EnableWebTestProxyCreation(
-    const base::Callback<void(RenderView*, test_runner::WebTestProxyBase*)>&
-        callback) {
-  g_callback.Get() = callback;
+    const ViewProxyCreationCallback& view_proxy_creation_callback,
+    const FrameProxyCreationCallback& frame_proxy_creation_callback) {
+  g_view_test_proxy_callback.Get() = view_proxy_creation_callback;
+  g_frame_test_proxy_callback.Get() = frame_proxy_creation_callback;
   RenderViewImpl::InstallCreateHook(CreateWebTestProxy);
   RenderFrameImpl::InstallCreateHook(CreateWebFrameTestProxy);
 }
 
-void FetchManifestDoneCallback(
-    scoped_ptr<ManifestFetcher> fetcher,
-    const FetchManifestCallback& callback,
-    const blink::WebURLResponse& response,
-    const std::string& data) {
+void FetchManifestDoneCallback(std::unique_ptr<ManifestFetcher> fetcher,
+                               const FetchManifestCallback& callback,
+                               const blink::WebURLResponse& response,
+                               const std::string& data) {
   // |fetcher| will be autodeleted here as it is going out of scope.
   callback.Run(response, data);
 }
@@ -133,7 +145,7 @@ void FetchManifestDoneCallback(
 void FetchManifest(blink::WebView* view, const GURL& url,
                    const FetchManifestCallback& callback) {
   ManifestFetcher* fetcher = new ManifestFetcher(url);
-  scoped_ptr<ManifestFetcher> autodeleter(fetcher);
+  std::unique_ptr<ManifestFetcher> autodeleter(fetcher);
 
   // Start is called on fetcher which is also bound to the callback.
   // A raw pointer is used instead of a scoped_ptr as base::Passes passes
@@ -146,7 +158,7 @@ void FetchManifest(blink::WebView* view, const GURL& url,
                             callback));
 }
 
-void SetMockGamepadProvider(scoped_ptr<RendererGamepadProvider> provider) {
+void SetMockGamepadProvider(std::unique_ptr<RendererGamepadProvider> provider) {
   RenderThreadImpl::current()
       ->blink_platform_impl()
       ->SetPlatformEventObserverForTesting(blink::WebPlatformEventTypeGamepad,
@@ -165,22 +177,61 @@ void SetMockDeviceOrientationData(const WebDeviceOrientationData& data) {
   RendererBlinkPlatformImpl::SetMockDeviceOrientationDataForTesting(data);
 }
 
+class LayoutTestDependenciesImpl : public LayoutTestDependencies {
+ public:
+  std::unique_ptr<cc::OutputSurface> CreateOutputSurface(
+      scoped_refptr<gpu::GpuChannelHost> gpu_channel,
+      scoped_refptr<cc::ContextProvider> compositor_context_provider,
+      scoped_refptr<cc::ContextProvider> worker_context_provider,
+      CompositorDependencies* deps) override {
+    // This is for an offscreen context for the compositor. So the default
+    // framebuffer doesn't need alpha, depth, stencil, antialiasing.
+    gpu::gles2::ContextCreationAttribHelper attributes;
+    attributes.alpha_size = -1;
+    attributes.depth_size = 0;
+    attributes.stencil_size = 0;
+    attributes.samples = 0;
+    attributes.sample_buffers = 0;
+    attributes.bind_generates_resource = false;
+    attributes.lose_context_when_out_of_memory = true;
+    const bool automatic_flushes = false;
+    const bool support_locking = false;
+
+    scoped_refptr<cc::ContextProvider> display_context_provider(
+        new ContextProviderCommandBuffer(
+            std::move(gpu_channel), gpu::GPU_STREAM_DEFAULT,
+            gpu::GpuStreamPriority::NORMAL, gpu::kNullSurfaceHandle,
+            GURL(
+                "chrome://gpu/LayoutTestDependenciesImpl::CreateOutputSurface"),
+            automatic_flushes, support_locking, gpu::SharedMemoryLimits(),
+            attributes, nullptr,
+            command_buffer_metrics::OFFSCREEN_CONTEXT_FOR_TESTING));
+
+    cc::LayerTreeSettings settings =
+        RenderWidgetCompositor::GenerateLayerTreeSettings(
+            *base::CommandLine::ForCurrentProcess(), deps, 1.f);
+
+    return base::MakeUnique<cc::PixelTestDelegatingOutputSurface>(
+        std::move(compositor_context_provider),
+        std::move(worker_context_provider), std::move(display_context_provider),
+        settings.renderer_settings, deps->GetSharedBitmapManager(),
+        deps->GetGpuMemoryBufferManager(), gfx::Size(), false,
+        !deps->GetCompositorImplThreadTaskRunner());
+  }
+};
+
 void EnableRendererLayoutTestMode() {
-  RenderThreadImpl::current()->set_layout_test_mode(true);
+  RenderThreadImpl::current()->set_layout_test_dependencies(
+      base::MakeUnique<LayoutTestDependenciesImpl>());
 
 #if defined(OS_WIN)
-  if (gfx::win::ShouldUseDirectWrite()) {
-    if (ShouldUseDirectWriteFontProxyFieldTrial())
-      RegisterSideloadedTypefaces(SkFontMgr_New_DirectWrite());
-    else
-      RegisterSideloadedTypefaces(GetPreSandboxWarmupFontMgr());
-  }
+  RegisterSideloadedTypefaces(SkFontMgr_New_DirectWrite());
 #endif
 }
 
 void EnableBrowserLayoutTestMode() {
 #if defined(OS_MACOSX)
-  ImageTransportSurface::SetAllowOSMesaForTesting(true);
+  gpu::ImageTransportSurface::SetAllowOSMesaForTesting(true);
   PopupMenuHelper::DontShowPopupMenuForTesting();
 #endif
   RenderWidgetHostImpl::DisableResizeAckCheckForTesting();
@@ -215,10 +266,15 @@ void SetDeviceScaleFactor(RenderView* render_view, float factor) {
       SetDeviceScaleFactorForTesting(factor);
 }
 
+float GetWindowToViewportScale(RenderView* render_view) {
+  blink::WebFloatRect rect(0, 0, 1.0f, 0.0);
+  static_cast<RenderViewImpl*>(render_view)->convertWindowToViewport(&rect);
+  return rect.width;
+}
+
 void SetDeviceColorProfile(RenderView* render_view, const std::string& name) {
   if (name == "reset") {
-    static_cast<RenderViewImpl*>(render_view)->
-        ResetDeviceColorProfileForTesting();
+    render_view->GetWidget()->ResetDeviceColorProfileForTesting();
     return;
   }
 
@@ -350,8 +406,7 @@ void SetDeviceColorProfile(RenderView* render_view, const std::string& name) {
     color_profile.assign(test.data(), test.data() + test.size());
   }
 
-  static_cast<RenderViewImpl*>(render_view)->
-      SetDeviceColorProfileForTesting(color_profile);
+  render_view->GetWidget()->SetDeviceColorProfileForTesting(color_profile);
 }
 
 void SetBluetoothAdapter(int render_process_id,
@@ -360,29 +415,8 @@ void SetBluetoothAdapter(int render_process_id,
       static_cast<RenderProcessHostImpl*>(
           RenderProcessHost::FromID(render_process_id));
 
-  BluetoothDispatcherHost* dispatcher_host =
-      render_process_host_impl->GetBluetoothDispatcherHost();
-
-  if (dispatcher_host != NULL)
-    dispatcher_host->SetBluetoothAdapterForTesting(std::move(adapter));
-}
-
-void SetGeofencingMockProvider(bool service_available) {
-  static_cast<WebGeofencingProviderImpl*>(
-      RenderThreadImpl::current()->blink_platform_impl()->geofencingProvider())
-          ->SetMockProvider(service_available);
-}
-
-void ClearGeofencingMockProvider() {
-  static_cast<WebGeofencingProviderImpl*>(
-      RenderThreadImpl::current()->blink_platform_impl()->geofencingProvider())
-          ->ClearMockProvider();
-}
-
-void SetGeofencingMockPosition(double latitude, double longitude) {
-  static_cast<WebGeofencingProviderImpl*>(
-      RenderThreadImpl::current()->blink_platform_impl()->geofencingProvider())
-          ->SetMockPosition(latitude, longitude);
+  render_process_host_impl->GetBluetoothAdapterFactoryWrapper()
+      ->SetBluetoothAdapterForTesting(std::move(adapter));
 }
 
 void UseSynchronousResizeMode(RenderView* render_view, bool enable) {
@@ -448,7 +482,7 @@ std::string DumpBackForwardList(std::vector<PageState>& page_state,
   std::string result;
   result.append("\n============== Back Forward List ==============\n");
   for (size_t index = 0; index < page_state.size(); ++index) {
-    scoped_ptr<HistoryEntry> entry(
+    std::unique_ptr<HistoryEntry> entry(
         PageStateToHistoryEntry(page_state[index]));
     result.append(
         DumpHistoryItem(entry->root_history_node(),
@@ -457,6 +491,12 @@ std::string DumpBackForwardList(std::vector<PageState>& page_state,
   }
   result.append("===============================================\n");
   return result;
+}
+
+void SchedulerRunIdleTasks(const base::Closure& callback) {
+    scheduler::RendererScheduler* scheduler =
+        content::RenderThreadImpl::current()->GetRendererScheduler();
+    scheduler::RunIdleTasksForTesting(scheduler, callback);
 }
 
 }  // namespace content

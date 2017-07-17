@@ -5,6 +5,7 @@
 #include "remoting/client/client_status_logger.h"
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "remoting/protocol/performance_tracker.h"
 #include "remoting/signaling/mock_signal_strategy.h"
 #include "remoting/signaling/server_log_entry_unittest.h"
@@ -76,7 +77,7 @@ class ClientStatusLoggerTest : public testing::Test {
  protected:
   base::MessageLoop message_loop_;
   MockSignalStrategy signal_strategy_;
-  scoped_ptr<ClientStatusLogger> client_status_logger_;
+  std::unique_ptr<ClientStatusLogger> client_status_logger_;
 };
 
 TEST_F(ClientStatusLoggerTest, LogStateChange) {
@@ -101,7 +102,7 @@ TEST_F(ClientStatusLoggerTest, LogStateChange) {
   // which removes the listener and terminates the test.
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(ClientStatusLoggerTest, LogStateChangeError) {
@@ -123,7 +124,7 @@ TEST_F(ClientStatusLoggerTest, LogStateChangeError) {
 
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(ClientStatusLoggerTest, LogStatistics) {
@@ -146,7 +147,7 @@ TEST_F(ClientStatusLoggerTest, LogStatistics) {
 
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
   client_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 }  // namespace remoting

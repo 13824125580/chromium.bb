@@ -1,17 +1,23 @@
 <link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/html/cr/ui.html">
 <link rel="import" href="chrome://resources/html/cr/ui/command.html">
+<link rel="import" href="chrome://resources/html/polymer.html">
 <link rel="import" href="chrome://resources/html/util.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/polymer/polymer.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-list/iron-list.html">
 <link rel="import" href="chrome://downloads/action_service.html">
 <link rel="import" href="chrome://downloads/constants.html">
 <link rel="import" href="chrome://downloads/i18n_setup.html">
 <link rel="import" href="chrome://downloads/item.html">
 <link rel="import" href="chrome://downloads/toolbar.html">
+<link rel="stylesheet" href="chrome://resources/css/md_colors.css">
 
 <dom-module id="downloads-manager">
   <template>
+    <style no-process>
+      #toolbar {
+        background: var(--md-toolbar-color);
+      }
+    </style>
     <downloads-toolbar id="toolbar"></downloads-toolbar>
     <iron-list id="downloads-list" items="{{items_}}"
         hidden="[[!hasDownloads_]]">

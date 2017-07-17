@@ -13,6 +13,7 @@
 #include "content/common/content_export.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
+#include "third_party/WebKit/public/platform/WebLoadingBehaviorFlag.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebMeaningfulLayout.h"
 #include "v8/include/v8.h"
@@ -36,9 +37,10 @@ class RenderFrameImpl;
 class CONTENT_EXPORT RenderFrameObserver : public IPC::Listener,
                                            public IPC::Sender {
  public:
-  // By default, observers will be deleted when the RenderFrame goes away.  If
-  // they want to outlive it, they can override this function.
-  virtual void OnDestruct();
+  // A subclass can use this to delete itself. If it does not, the subclass must
+  // always null-check each call to render_frame() becase the RenderFrame can
+  // go away at any time.
+  virtual void OnDestruct() = 0;
 
   // Called when a Pepper plugin is created.
   virtual void DidCreatePepperPlugin(RendererPpapiHost* host) {}
@@ -111,6 +113,11 @@ class CONTENT_EXPORT RenderFrameObserver : public IPC::Listener,
 
   // Notifications when |PerformanceTiming| data becomes available
   virtual void DidChangePerformanceTiming() {}
+
+  // Notification when the renderer uses a particular code path during a page
+  // load. This is used for metrics collection.
+  virtual void DidObserveLoadingBehavior(
+      blink::WebLoadingBehaviorFlag behavior) {}
 
   // Called when the focused node has changed to |node|.
   virtual void FocusedNodeChanged(const blink::WebNode& node) {}

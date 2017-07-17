@@ -23,7 +23,6 @@
 #include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
-#include "base/template_util.h"
 #include "base/third_party/valgrind/valgrind.h"
 #include "build/build_config.h"
 #include "sandbox/linux/services/namespace_utils.h"
@@ -97,7 +96,7 @@ bool ChrootToSafeEmptyDir() {
   pid_t pid = -1;
   char stack_buf[PTHREAD_STACK_MIN] ALIGNAS(16);
 #if defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARM_FAMILY) || \
-    defined(ARCH_CPU_MIPS64_FAMILY) || defined(ARCH_CPU_MIPS_FAMILY)
+    defined(ARCH_CPU_MIPS_FAMILY)
   // The stack grows downward.
   void* stack = stack_buf + sizeof(stack_buf);
 #else

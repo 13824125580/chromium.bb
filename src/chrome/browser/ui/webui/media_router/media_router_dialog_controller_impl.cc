@@ -288,7 +288,8 @@ void MediaRouterDialogControllerImpl::OnDialogNavigated(
 
   // New |media_router_dialog| is created.
   DCHECK(media_router_dialog_pending_);
-  DCHECK(transition_type == ui::PAGE_TRANSITION_AUTO_TOPLEVEL &&
+  DCHECK(ui::PageTransitionCoreTypeIs(transition_type,
+                                      ui::PAGE_TRANSITION_AUTO_TOPLEVEL) &&
       nav_type == content::NAVIGATION_TYPE_NEW_PAGE)
       << "transition_type: " << transition_type << ", "
       << "nav_type: " << nav_type;
@@ -311,8 +312,8 @@ void MediaRouterDialogControllerImpl::PopulateDialog(
       media_router_dialog->GetWebUI()->GetController());
   DCHECK(media_router_ui);
 
-  scoped_ptr<CreatePresentationConnectionRequest> create_connection_request(
-      TakeCreateConnectionRequest());
+  std::unique_ptr<CreatePresentationConnectionRequest>
+      create_connection_request(TakeCreateConnectionRequest());
   // TODO(imcheng): Don't create PresentationServiceDelegateImpl if it doesn't
   // exist (crbug.com/508695).
   base::WeakPtr<PresentationServiceDelegateImpl> delegate =

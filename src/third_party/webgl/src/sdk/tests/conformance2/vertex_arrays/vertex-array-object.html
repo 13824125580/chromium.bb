@@ -75,26 +75,27 @@ if (!gl) {
     runAttributeTests();
     runAttributeValueTests();
     runDrawTests();
-    runDeleteTests();
+    runUnboundDeleteTests();
+    runBoundDeleteTests();
     runArrayBufferBindTests();
     wtu.glErrorShouldBe(gl, gl.NO_ERROR, "there should be no errors");
 }
 
 function runBindingTest() {
     debug("Testing binding enum");
-    
+
     shouldBe("gl.VERTEX_ARRAY_BINDING", "0x85B5");
-    
+
     gl.getParameter(gl.VERTEX_ARRAY_BINDING);
     wtu.glErrorShouldBe(gl, gl.NO_ERROR, "VERTEX_ARRAY_BINDING query should succeed");
-    
+
     // Default value is null
     if (gl.getParameter(gl.VERTEX_ARRAY_BINDING) === null) {
         testPassed("Default value of VERTEX_ARRAY_BINDING is null");
     } else {
         testFailed("Default value of VERTEX_ARRAY_BINDING is not null");
     }
-    
+
     debug("Testing binding a VAO");
     var vao0 = gl.createVertexArray();
     var vao1 = gl.createVertexArray();
@@ -122,77 +123,77 @@ function runBindingTest() {
 
 function runObjectTest() {
     debug("Testing object creation");
-    
+
     vao = gl.createVertexArray();
     wtu.glErrorShouldBe(gl, gl.NO_ERROR, "createVertexArray should not set an error");
     shouldBeNonNull("vao");
-    
+
     // Expect false if never bound
     shouldBeFalse("gl.isVertexArray(vao)");
     gl.bindVertexArray(vao);
     shouldBeTrue("gl.isVertexArray(vao)");
     gl.bindVertexArray(null);
     shouldBeTrue("gl.isVertexArray(vao)");
-    
+
     shouldBeFalse("gl.isVertexArray(null)");
-    
+
     gl.deleteVertexArray(vao);
     vao = null;
 }
 
 function runAttributeTests() {
     debug("Testing attributes work across bindings");
-    
+
     var states = [];
-    
+
     var attrCount = gl.getParameter(gl.MAX_VERTEX_ATTRIBS);
     for (var n = 0; n < attrCount; n++) {
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-        
+
         var state = {};
         states.push(state);
-        
+
         var vao = state.vao = gl.createVertexArray();
         gl.bindVertexArray(vao);
-        
+
         var enableArray = (n % 2 == 0);
         if (enableArray) {
             gl.enableVertexAttribArray(n);
         } else {
             gl.disableVertexAttribArray(n);
         }
-        
+
         if (enableArray) {
             var buffer = state.buffer = gl.createBuffer();
             gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
             gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.STATIC_DRAW);
-            
+
             gl.vertexAttribPointer(n, 1 + n % 4, gl.FLOAT, true, n * 4, n * 4);
         }
-        
+
         if (enableArray) {
             var elbuffer = state.elbuffer = gl.createBuffer();
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, elbuffer);
             gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 1024, gl.STATIC_DRAW);
         }
-        
+
         gl.bindVertexArray(null);
     }
-    
+
     var anyMismatch = false;
     for (var n = 0; n < attrCount; n++) {
         var state = states[n];
-        
+
         gl.bindVertexArray(state.vao);
-        
+
         var shouldBeEnabled = (n % 2 == 0);
         var isEnabled = gl.getVertexAttrib(n, gl.VERTEX_ATTRIB_ARRAY_ENABLED);
         if (shouldBeEnabled != isEnabled) {
             testFailed("VERTEX_ATTRIB_ARRAY_ENABLED not preserved");
             anyMismatch = true;
         }
-        
+
         var buffer = gl.getVertexAttrib(n, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
         if (shouldBeEnabled) {
             if (buffer == state.buffer) {
@@ -218,7 +219,7 @@ function runAttributeTests() {
                 anyMismatch = true;
             }
         }
-        
+
         var elbuffer = gl.getParameter(gl.ELEMENT_ARRAY_BUFFER_BINDING);
         if (shouldBeEnabled) {
             if (elbuffer == state.elbuffer) {
@@ -240,7 +241,7 @@ function runAttributeTests() {
     if (!anyMismatch) {
         testPassed("All attributes preserved across bindings");
     }
-    
+
     for (var n = 0; n < attrCount; n++) {
         var state = states[n];
         gl.deleteVertexArray(state.vao);
@@ -249,59 +250,59 @@ function runAttributeTests() {
 
 function runAttributeValueTests() {
     debug("Testing that attribute values are not attached to bindings");
-    
+
     var v;
     var vao0 = gl.createVertexArray();
     var anyFailed = false;
-    
+
     gl.bindVertexArray(null);
     gl.vertexAttrib4f(0, 0, 1, 2, 3);
-    
+
     v = gl.getVertexAttrib(0, gl.CURRENT_VERTEX_ATTRIB);
     if (!(v[0] == 0 && v[1] == 1 && v[2] == 2 && v[3] == 3)) {
         testFailed("Vertex attrib value not round-tripped?");
         anyFailed = true;
     }
-    
+
     gl.bindVertexArray(vao0);
-    
+
     v = gl.getVertexAttrib(0, gl.CURRENT_VERTEX_ATTRIB);
     if (!(v[0] == 0 && v[1] == 1 && v[2] == 2 && v[3] == 3)) {
         testFailed("Vertex attrib value reset across bindings");
         anyFailed = true;
     }
-    
+
     gl.vertexAttrib4f(0, 4, 5, 6, 7);
     gl.bindVertexArray(null);
-    
+
     v = gl.getVertexAttrib(0, gl.CURRENT_VERTEX_ATTRIB);
     if (!(v[0] == 4 && v[1] == 5 && v[2] == 6 && v[3] == 7)) {
         testFailed("Vertex attrib value bound to buffer");
         anyFailed = true;
     }
-    
+
     if (!anyFailed) {
         testPassed("Vertex attribute values are not attached to bindings")
     }
-    
+
     gl.bindVertexArray(null);
     gl.deleteVertexArray(vao0);
 }
 
 function runDrawTests() {
     debug("Testing draws with various VAO bindings");
-    
+
     canvas.width = 50; canvas.height = 50;
     gl.viewport(0, 0, canvas.width, canvas.height);
-    
+
     var vao0 = gl.createVertexArray();
     var vao1 = gl.createVertexArray();
 
     var opt_positionLocation = 0;
     var opt_texcoordLocation = 1;
-    
+
     var program = wtu.setupSimpleTextureProgram(gl, opt_positionLocation, opt_texcoordLocation);
-    
+
     function setupQuad(s) {
         var vertexObject = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, vertexObject);
@@ -327,7 +328,7 @@ function runDrawTests() {
         gl.enableVertexAttribArray(opt_texcoordLocation);
         gl.vertexAttribPointer(opt_texcoordLocation, 2, gl.FLOAT, false, 0, 0);
     };
-    
+
     function readLocation(x, y) {
         var pixels = new Uint8Array(1 * 1 * 4);
         gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
@@ -366,14 +367,14 @@ function runDrawTests() {
             testFailed("Draw " + drawNumber + " failed pixel test");
         }
     };
-    
+
     // Setup all bindings
     setupQuad(1);
     gl.bindVertexArray(vao0);
     setupQuad(0.5);
     gl.bindVertexArray(vao1);
     setupQuad(0.25);
-    
+
     // Verify drawing
     gl.bindVertexArray(null);
     verifyDraw(0, 1);
@@ -381,7 +382,7 @@ function runDrawTests() {
     verifyDraw(1, 0.5);
     gl.bindVertexArray(vao1);
     verifyDraw(2, 0.25);
-    
+
     gl.bindVertexArray(null);
     gl.deleteVertexArray(vao0);
     gl.deleteVertexArray(vao1);
@@ -411,8 +412,8 @@ function runDrawTests() {
     wtu.checkCanvas(gl, [0, 255, 0, 255], "should be green")
 }
 
-function runDeleteTests() {
-    debug("Testing using deleted buffers referenced by VAOs");
+function runUnboundDeleteTests() {
+    debug("Testing using buffers that are deleted when attached to unbound VAOs");
 
     var program = wtu.setupProgram(gl, ["vshader", "fshader"], ["a_position", "a_color"]);
     gl.useProgram(program);
@@ -478,11 +479,14 @@ function runDeleteTests() {
     for (var ii = 0; ii < colorBuffers.length; ++ii) {
       gl.deleteBuffer(colorBuffers[ii]);
       gl.deleteBuffer(elementBuffers[ii]);
+      gl.bindVertexArray(vaos[ii]);
+      var boundBuffer = gl.getVertexAttrib(1, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
       // The buffers should still be valid at this point, since it was attached to the VAO
-      if(!gl.isBuffer(colorBuffers[ii])) {
+      if(boundBuffer != colorBuffers[ii]) {
         testFailed("buffer removed too early");
       }
     }
+    gl.bindVertexArray(null);
     gl.deleteBuffer(positionBuffer);
 
     // Render with the deleted buffers. As they are referenced by VAOs they
@@ -504,6 +508,86 @@ function runDeleteTests() {
       if(gl.isBuffer(colorBuffers[ii])) {
         testFailed("buffer not properly cleaned up after VAO deletion");
       }
+    }
+}
+
+function runBoundDeleteTests() {
+    debug("Testing using buffers that are deleted when attached to bound VAOs");
+
+    var program = wtu.setupProgram(gl, ["vshader", "fshader"], ["a_position", "a_color"]);
+    gl.useProgram(program);
+
+    var positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([
+           1.0,  1.0,
+          -1.0,  1.0,
+          -1.0, -1.0,
+           1.0, -1.0]),
+        gl.STATIC_DRAW);
+
+    // Setup the color attrib
+    var colorBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(
+      [ 255,   0,   0, 255,
+          0, 255,   0, 255,
+          0,   0, 255, 255,
+          0, 255, 255, 255
+      ]), gl.STATIC_DRAW);
+
+    var vaos = [];
+    var elementBuffers = [];
+    for (var ii = 0; ii < 4; ++ii) {
+      var vao = gl.createVertexArray();
+      vaos.push(vao);
+      gl.bindVertexArray(vao);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+      var elementBuffer = gl.createBuffer();
+      elementBuffers.push(elementBuffer);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, elementBuffer);
+      gl.bufferData(
+          gl.ELEMENT_ARRAY_BUFFER,
+          new Uint8Array([0, 1, 2, 0, 2, 3]),
+          gl.STATIC_DRAW);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    }
+
+    // delete the color buffers AND the position buffer, that are bound to the current VAO
+    for (var ii = 0; ii < vaos.length; ++ii) {
+      gl.bindVertexArray(vaos[ii]);
+
+      gl.deleteBuffer(colorBuffer);
+      gl.deleteBuffer(positionBuffer);
+
+      // The buffers should not be accessible at this point. Deleted objects that are bound
+      // in the current context undergo an automatic unbinding
+      var boundPositionBuffer = gl.getVertexAttrib(0, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
+      if(boundPositionBuffer == positionBuffer) {
+        testFailed("Position buffer should be automatically unbound when deleted");
+      }
+      var boundColorBuffer = gl.getVertexAttrib(1, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
+      if(boundColorBuffer == colorBuffer) {
+        testFailed("Color buffer should be automatically unbound when deleted");
+      }
+
+      gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_BYTE, 0);
+      wtu.glErrorShouldBe(gl, gl.INVALID_OPERATION, "Draw call should fail with unbound position and color buffers");
+
+      var isPositionBuffer = gl.isBuffer(positionBuffer);
+      var isColorBuffer    = gl.isBuffer(colorBuffer);
+
+      if(isPositionBuffer)  testFailed("Position buffer should no longer exist after last ref removed");
+      if(isColorBuffer)     testFailed("Color buffer should no longer exist after last ref removed");
     }
 }
 

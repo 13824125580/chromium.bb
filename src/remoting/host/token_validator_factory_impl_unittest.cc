@@ -4,10 +4,14 @@
 //
 // A set of unit tests for TokenValidatorFactoryImpl
 
+#include "remoting/host/token_validator_factory_impl.h"
+
+#include <memory>
 #include <string>
 
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_request_job_factory.h"
@@ -17,7 +21,6 @@
 #include "net/url_request/url_request_test_util.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/base/test_rsa_key_pair.h"
-#include "remoting/host/token_validator_factory_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -56,10 +59,10 @@ class FakeProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
 class SetResponseURLRequestContext: public net::TestURLRequestContext {
  public:
   void SetResponse(const std::string& headers, const std::string& response) {
-    scoped_ptr<net::URLRequestJobFactoryImpl> factory =
-        make_scoped_ptr(new net::URLRequestJobFactoryImpl());
+    std::unique_ptr<net::URLRequestJobFactoryImpl> factory =
+        base::WrapUnique(new net::URLRequestJobFactoryImpl());
     factory->SetProtocolHandler(
-        "https", make_scoped_ptr(new FakeProtocolHandler(headers, response)));
+        "https", base::WrapUnique(new FakeProtocolHandler(headers, response)));
     context_storage_.set_job_factory(std::move(factory));
   }
 };
@@ -93,13 +96,13 @@ class TokenValidatorFactoryImplTest : public testing::Test {
     key_pair_ = RsaKeyPair::FromString(kTestRsaKeyPair);
     request_context_getter_ = new net::TestURLRequestContextGetter(
         message_loop_.task_runner(),
-        make_scoped_ptr(new SetResponseURLRequestContext()));
+        base::WrapUnique(new SetResponseURLRequestContext()));
     ThirdPartyAuthConfig config;
     config.token_url = GURL(kTokenUrl);
     config.token_validation_url = GURL(kTokenValidationUrl);
     config.token_validation_cert_issuer = kTokenValidationCertIssuer;
-    token_validator_factory_.reset(new TokenValidatorFactoryImpl(
-        config, key_pair_, request_context_getter_));
+    token_validator_factory_ = new TokenValidatorFactoryImpl(
+        config, key_pair_, request_context_getter_);
   }
 
   static std::string CreateResponse(const std::string& scope) {
@@ -131,8 +134,8 @@ class TokenValidatorFactoryImplTest : public testing::Test {
   base::MessageLoop message_loop_;
   scoped_refptr<RsaKeyPair> key_pair_;
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  scoped_ptr<TokenValidatorFactoryImpl> token_validator_factory_;
-  scoped_ptr<protocol::TokenValidator> token_validator_;
+  scoped_refptr<TokenValidatorFactoryImpl> token_validator_factory_;
+  std::unique_ptr<protocol::TokenValidator> token_validator_;
 };
 
 TEST_F(TokenValidatorFactoryImplTest, Success) {
@@ -145,7 +148,7 @@ TEST_F(TokenValidatorFactoryImplTest, Success) {
   token_validator_->ValidateThirdPartyToken(
       kToken, base::Bind(&TokenValidatorFactoryImplTest::SuccessCallback,
                              base::Unretained(this)));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(TokenValidatorFactoryImplTest, BadToken) {
@@ -157,7 +160,7 @@ TEST_F(TokenValidatorFactoryImplTest, BadToken) {
   token_validator_->ValidateThirdPartyToken(
       kToken, base::Bind(&TokenValidatorFactoryImplTest::FailureCallback,
                              base::Unretained(this)));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(TokenValidatorFactoryImplTest, BadScope) {
@@ -170,7 +173,7 @@ TEST_F(TokenValidatorFactoryImplTest, BadScope) {
   token_validator_->ValidateThirdPartyToken(
       kToken, base::Bind(&TokenValidatorFactoryImplTest::FailureCallback,
                          base::Unretained(this)));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(TokenValidatorFactoryImplTest, DeleteOnFailure) {
@@ -183,7 +186,7 @@ TEST_F(TokenValidatorFactoryImplTest, DeleteOnFailure) {
       kToken, base::Bind(
           &TokenValidatorFactoryImplTest::DeleteOnFailureCallback,
           base::Unretained(this)));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 }  // namespace remoting

@@ -18,14 +18,15 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate.h"
-#include "net/base/network_quality_estimator.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/sdch_manager.h"
 #include "net/base/sdch_net_log_params.h"
 #include "net/base/url_util.h"
@@ -40,7 +41,11 @@
 #include "net/http/http_transaction.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/http/http_util.h"
+#include "net/nqe/network_quality_estimator.h"
 #include "net/proxy/proxy_info.h"
+#include "net/proxy/proxy_retry_info.h"
+#include "net/proxy/proxy_service.h"
+#include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_config_service.h"
 #include "net/url_request/http_user_agent_settings.h"
@@ -62,6 +67,112 @@ namespace {
 bool IsMethodSafe(const std::string& method) {
   return method == "GET" || method == "HEAD" || method == "OPTIONS" ||
          method == "TRACE";
+}
+
+// Logs whether the CookieStore used for this request matches the
+// ChannelIDService used when establishing the connection that this request is
+// sent over. This logging is only done for requests to accounts.google.com, and
+// only for requests where Channel ID was sent when establishing the connection.
+void LogChannelIDAndCookieStores(const GURL& url,
+                                 const net::URLRequestContext* context,
+                                 const net::SSLInfo& ssl_info) {
+  if (url.host() != "accounts.google.com" || !ssl_info.channel_id_sent)
+    return;
+  // This enum is used for an UMA histogram - don't reuse or renumber entries.
+  enum {
+    // Value 0 was removed (CID_EPHEMERAL_COOKIE_EPHEMERAL)
+    // ChannelIDStore is ephemeral, but CookieStore is persistent.
+    CID_EPHEMERAL_COOKIE_PERSISTENT = 1,
+    // ChannelIDStore is persistent, but CookieStore is ephemeral.
+    CID_PERSISTENT_COOKIE_EPHEMERAL = 2,
+    // Value 3 was removed (CID_PERSISTENT_COOKIE_PERSISTENT)
+    // There is no CookieStore for this request.
+    NO_COOKIE_STORE = 4,
+    // There is no ChannelIDStore for this request. This should never happen,
+    // because we only log if Channel ID was sent.
+    NO_CHANNEL_ID_STORE = 5,
+    // Value 6 was removed (KNOWN_MISMATCH).
+    // Both stores are ephemeral, and the ChannelIDService used when
+    // establishing the connection is the same one that the CookieStore was
+    // created to be used with.
+    EPHEMERAL_MATCH = 7,
+    // Both stores are ephemeral, but a different CookieStore should have been
+    // used on this request.
+    EPHEMERAL_MISMATCH = 8,
+    // Both stores are persistent, and the ChannelIDService used when
+    // establishing the connection is the same one that the CookieStore was
+    // created to be used with.
+    PERSISTENT_MATCH = 9,
+    // Both stores are persistent, but a different CookieStore should have been
+    // used on this request.
+    PERSISTENT_MISMATCH = 10,
+    // Both stores are ephemeral, but it was never recorded in the CookieStore
+    // which ChannelIDService it was created for, so it is unknown whether the
+    // stores match.
+    EPHEMERAL_UNKNOWN = 11,
+    // Both stores are persistent, but it was never recorded in the CookieStore
+    // which ChannelIDService it was created for, so it is unknown whether the
+    // stores match.
+    PERSISTENT_UNKNOWN = 12,
+    EPHEMERALITY_MAX
+  } ephemerality;
+  const net::HttpNetworkSession::Params* params =
+      context->GetNetworkSessionParams();
+  net::CookieStore* cookie_store = context->cookie_store();
+  if (params == nullptr || params->channel_id_service == nullptr) {
+    ephemerality = NO_CHANNEL_ID_STORE;
+  } else if (cookie_store == nullptr) {
+    ephemerality = NO_COOKIE_STORE;
+  } else if (params->channel_id_service->GetChannelIDStore()->IsEphemeral()) {
+    if (cookie_store->IsEphemeral()) {
+      if (cookie_store->GetChannelIDServiceID() == -1) {
+        ephemerality = EPHEMERAL_UNKNOWN;
+      } else if (cookie_store->GetChannelIDServiceID() ==
+                 params->channel_id_service->GetUniqueID()) {
+        ephemerality = EPHEMERAL_MATCH;
+      } else {
+        NOTREACHED();
+        ephemerality = EPHEMERAL_MISMATCH;
+      }
+    } else {
+      NOTREACHED();
+      ephemerality = CID_EPHEMERAL_COOKIE_PERSISTENT;
+    }
+  } else if (cookie_store->IsEphemeral()) {
+    NOTREACHED();
+    ephemerality = CID_PERSISTENT_COOKIE_EPHEMERAL;
+  } else if (cookie_store->GetChannelIDServiceID() == -1) {
+    ephemerality = PERSISTENT_UNKNOWN;
+  } else if (cookie_store->GetChannelIDServiceID() ==
+             params->channel_id_service->GetUniqueID()) {
+    ephemerality = PERSISTENT_MATCH;
+  } else {
+    NOTREACHED();
+    ephemerality = PERSISTENT_MISMATCH;
+  }
+  UMA_HISTOGRAM_ENUMERATION("Net.TokenBinding.StoreEphemerality", ephemerality,
+                            EPHEMERALITY_MAX);
+}
+
+net::URLRequestRedirectJob* MaybeInternallyRedirect(
+    net::URLRequest* request,
+    net::NetworkDelegate* network_delegate) {
+  const GURL& url = request->url();
+  if (url.SchemeIsCryptographic())
+    return nullptr;
+
+  net::TransportSecurityState* hsts =
+      request->context()->transport_security_state();
+  if (!hsts || !hsts->ShouldUpgradeToSSL(url.host()))
+    return nullptr;
+
+  GURL::Replacements replacements;
+  replacements.SetSchemeStr(url.SchemeIs(url::kHttpScheme) ? url::kHttpsScheme
+                                                           : url::kWssScheme);
+  return new net::URLRequestRedirectJob(
+      request, network_delegate, url.ReplaceComponents(replacements),
+      // Use status code 307 to preserve the method, so POST requests work.
+      net::URLRequestRedirectJob::REDIRECT_307_TEMPORARY_REDIRECT, "HSTS");
 }
 
 }  // namespace
@@ -164,13 +275,11 @@ URLRequestJob* URLRequestHttpJob::Factory(URLRequest* request,
         request, network_delegate, ERR_INVALID_ARGUMENT);
   }
 
-  GURL redirect_url;
-  if (request->GetHSTSRedirect(&redirect_url)) {
-    return new URLRequestRedirectJob(
-        request, network_delegate, redirect_url,
-        // Use status code 307 to preserve the method, so POST requests work.
-        URLRequestRedirectJob::REDIRECT_307_TEMPORARY_REDIRECT, "HSTS");
-  }
+  URLRequestRedirectJob* redirect =
+      MaybeInternallyRedirect(request, network_delegate);
+  if (redirect)
+    return redirect;
+
   return new URLRequestHttpJob(request,
                                network_delegate,
                                request->context()->http_user_agent_settings());
@@ -188,7 +297,7 @@ URLRequestHttpJob::URLRequestHttpJob(
       start_callback_(base::Bind(&URLRequestHttpJob::OnStartCompleted,
                                  base::Unretained(this))),
       notify_before_headers_sent_callback_(
-          base::Bind(&URLRequestHttpJob::NotifyBeforeSendHeadersCallback,
+          base::Bind(&URLRequestHttpJob::NotifyBeforeStartTransactionCallback,
                      base::Unretained(this))),
       read_in_progress_(false),
       throttling_entry_(nullptr),
@@ -278,6 +387,8 @@ void URLRequestHttpJob::Start() {
                                           referrer.spec());
   }
 
+  request_info_.token_binding_referrer = request_->token_binding_referrer();
+
   request_info_.extra_headers.SetHeaderIfMissing(
       HttpRequestHeaders::kUserAgent,
       http_user_agent_settings_ ?
@@ -301,15 +412,15 @@ void URLRequestHttpJob::GetConnectionAttempts(ConnectionAttempts* out) const {
     out->clear();
 }
 
-void URLRequestHttpJob::NotifyBeforeSendProxyHeadersCallback(
+void URLRequestHttpJob::NotifyBeforeSendHeadersCallback(
     const ProxyInfo& proxy_info,
     HttpRequestHeaders* request_headers) {
   DCHECK(request_headers);
   DCHECK_NE(URLRequestStatus::CANCELED, GetStatus().status());
   if (network_delegate()) {
-    network_delegate()->NotifyBeforeSendProxyHeaders(
-        request_,
-        proxy_info,
+    network_delegate()->NotifyBeforeSendHeaders(
+        request_, proxy_info,
+        request_->context()->proxy_service()->proxy_retry_info(),
         request_headers);
   }
 }
@@ -322,7 +433,7 @@ void URLRequestHttpJob::NotifyBeforeNetworkStart(bool* defer) {
         backoff_manager_->ShouldRejectRequest(request()->url(),
                                               request()->request_time())) {
       *defer = true;
-      base::MessageLoop::current()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
           base::Bind(&URLRequestHttpJob::OnStartCompleted,
                      weak_factory_.GetWeakPtr(), ERR_TEMPORARY_BACKOFF));
@@ -350,6 +461,7 @@ void URLRequestHttpJob::NotifyHeadersComplete() {
   // The ordering of these calls is not important.
   ProcessStrictTransportSecurityHeader();
   ProcessPublicKeyPinsHeader();
+  ProcessExpectCTHeader();
 
   // Handle the server notification of a new SDCH dictionary.
   SdchManager* sdch_manager(request()->context()->sdch_manager());
@@ -417,8 +529,8 @@ void URLRequestHttpJob::NotifyHeadersComplete() {
     DCHECK(!response_info_->auth_challenge.get());
     // TODO(battre): This breaks the webrequest API for
     // URLRequestTestHTTP.BasicAuthWithCookies
-    // where OnBeforeSendHeaders -> OnSendHeaders -> OnBeforeSendHeaders
-    // occurs.
+    // where OnBeforeStartTransaction -> OnStartTransaction ->
+    // OnBeforeStartTransaction occurs.
     RestartTransactionWithAuth(AuthCredentials());
     return;
   }
@@ -448,7 +560,7 @@ void URLRequestHttpJob::StartTransaction() {
 
   if (network_delegate()) {
     OnCallToDelegate();
-    int rv = network_delegate()->NotifyBeforeSendHeaders(
+    int rv = network_delegate()->NotifyBeforeStartTransaction(
         request_, notify_before_headers_sent_callback_,
         &request_info_.extra_headers);
     // If an extension blocks the request, we rely on the callback to
@@ -461,7 +573,7 @@ void URLRequestHttpJob::StartTransaction() {
   StartTransactionInternal();
 }
 
-void URLRequestHttpJob::NotifyBeforeSendHeadersCallback(int result) {
+void URLRequestHttpJob::NotifyBeforeStartTransactionCallback(int result) {
   // Check that there are no callbacks to already canceled requests.
   DCHECK_NE(URLRequestStatus::CANCELED, GetStatus().status());
 
@@ -494,22 +606,17 @@ void URLRequestHttpJob::StartTransactionInternal() {
   // If we already have a transaction, then we should restart the transaction
   // with auth provided by auth_credentials_.
 
-  bool invalid_header_values_in_rfc7230 = false;
-  for (HttpRequestHeaders::Iterator it(request_info_.extra_headers);
-       it.GetNext();) {
-    if (!HttpUtil::IsValidHeaderValueRFC7230(it.value())) {
-      invalid_header_values_in_rfc7230 = true;
-      break;
-    }
-  }
-  UMA_HISTOGRAM_BOOLEAN("Net.HttpRequest.ContainsInvalidHeaderValuesInRFC7230",
-                        invalid_header_values_in_rfc7230);
-
   int rv;
 
+  // Notify NetworkQualityEstimator.
+  NetworkQualityEstimator* network_quality_estimator =
+      request()->context()->network_quality_estimator();
+  if (network_quality_estimator)
+    network_quality_estimator->NotifyStartTransaction(*request_);
+
   if (network_delegate()) {
-    network_delegate()->NotifySendHeaders(
-        request_, request_info_.extra_headers);
+    network_delegate()->NotifyStartTransaction(request_,
+                                               request_info_.extra_headers);
   }
 
   if (transaction_.get()) {
@@ -536,8 +643,8 @@ void URLRequestHttpJob::StartTransactionInternal() {
       transaction_->SetBeforeNetworkStartCallback(
           base::Bind(&URLRequestHttpJob::NotifyBeforeNetworkStart,
                      base::Unretained(this)));
-      transaction_->SetBeforeProxyHeadersSentCallback(
-          base::Bind(&URLRequestHttpJob::NotifyBeforeSendProxyHeadersCallback,
+      transaction_->SetBeforeHeadersSentCallback(
+          base::Bind(&URLRequestHttpJob::NotifyBeforeSendHeadersCallback,
                      base::Unretained(this)));
 
       if (!throttling_entry_.get() ||
@@ -615,9 +722,7 @@ void URLRequestHttpJob::AddExtraHeaders() {
 
     // Advertise "br" encoding only if transferred data is opaque to proxy.
     bool advertise_brotli = false;
-    const HttpNetworkSession::Params* network_session_params =
-        request()->context()->GetNetworkSessionParams();
-    if (network_session_params && network_session_params->enable_brotli)
+    if (request()->context()->enable_brotli())
       advertise_brotli = request()->url().SchemeIsCryptographic();
 
     // Supply Accept-Encoding headers first so that it is more likely that they
@@ -670,19 +775,36 @@ void URLRequestHttpJob::AddCookieHeaderAndStart() {
     CookieOptions options;
     options.set_include_httponly();
 
-    // TODO(mkwst): If same-site cookies aren't enabled, pretend the request is
-    // same-site regardless, in order to include all cookies. Drop this check
-    // once we decide whether or not we're shipping this feature:
-    // https://crbug.com/459154
+    // Set SameSiteCookieMode according to the rules laid out in
+    // https://tools.ietf.org/html/draft-west-first-party-cookies:
+    //
+    // * Include both "strict" and "lax" same-site cookies if the request's
+    //   |url|, |initiator|, and |first_party_for_cookies| all have the same
+    //   registrable domain.
+    //
+    // * Include only "lax" same-site cookies if the request's |URL| and
+    //   |first_party_for_cookies| have the same registrable domain, _and_ the
+    //   request's |method| is "safe" ("GET" or "HEAD").
+    //
+    //   Note that this will generally be the case only for cross-site requests
+    //   which target a top-level browsing context.
+    //
+    // * Otherwise, do not include same-site cookies.
     url::Origin requested_origin(request_->url());
-    if (!network_delegate() ||
-        !network_delegate()->AreExperimentalCookieFeaturesEnabled()) {
-      options.set_include_same_site();
-    } else if (requested_origin.IsSameOriginWith(
-                   url::Origin(request_->first_party_for_cookies())) &&
-               (IsMethodSafe(request_->method()) ||
-                requested_origin.IsSameOriginWith(request_->initiator()))) {
-      options.set_include_same_site();
+    url::Origin site_for_cookies(request_->first_party_for_cookies());
+
+    if (registry_controlled_domains::SameDomainOrHost(
+            requested_origin, site_for_cookies,
+            registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
+      if (registry_controlled_domains::SameDomainOrHost(
+              requested_origin, request_->initiator(),
+              registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
+        options.set_same_site_cookie_mode(
+            CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+      } else if (IsMethodSafe(request_->method())) {
+        options.set_same_site_cookie_mode(
+            CookieOptions::SameSiteCookieMode::INCLUDE_LAX);
+      }
     }
 
     cookie_store->GetCookieListWithOptionsAsync(
@@ -850,7 +972,31 @@ void URLRequestHttpJob::ProcessPublicKeyPinsHeader() {
   }
 }
 
+void URLRequestHttpJob::ProcessExpectCTHeader() {
+  DCHECK(response_info_);
+  TransportSecurityState* security_state =
+      request_->context()->transport_security_state();
+  const SSLInfo& ssl_info = response_info_->ssl_info;
+
+  // Only accept Expect CT headers on HTTPS connections that have no
+  // certificate errors.
+  if (!ssl_info.is_valid() || IsCertStatusError(ssl_info.cert_status) ||
+      !security_state) {
+    return;
+  }
+
+  // Only process the first Expect-CT header value.
+  HttpResponseHeaders* headers = GetResponseHeaders();
+  std::string value;
+  if (headers->EnumerateHeader(nullptr, "Expect-CT", &value)) {
+    security_state->ProcessExpectCTHeader(
+        value, HostPortPair::FromURL(request_info_.url), ssl_info);
+  }
+}
+
 void URLRequestHttpJob::OnStartCompleted(int result) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "URLRequestHttpJob::OnStartCompleted");
   RecordTimer();
 
   // If the request was destroyed, then there is no more work to do.
@@ -871,22 +1017,6 @@ void URLRequestHttpJob::OnStartCompleted(int result) {
       SetProxyServer(transaction_->GetResponseInfo()->proxy_server);
     }
     scoped_refptr<HttpResponseHeaders> headers = GetResponseHeaders();
-
-    if (headers) {
-      size_t iter = 0;
-      std::string name;
-      std::string value;
-      bool invalid_header_values_in_rfc7230 = false;
-      while (headers->EnumerateHeaderLines(&iter, &name, &value)) {
-        if (!HttpUtil::IsValidHeaderValueRFC7230(value)) {
-          invalid_header_values_in_rfc7230 = true;
-          break;
-        }
-      }
-      UMA_HISTOGRAM_BOOLEAN(
-          "Net.HttpResponse.ContainsInvalidHeaderValuesInRFC7230",
-          invalid_header_values_in_rfc7230);
-    }
 
     if (network_delegate()) {
       // Note that |this| may not be deleted until
@@ -914,25 +1044,19 @@ void URLRequestHttpJob::OnStartCompleted(int result) {
         return;
       }
     }
+    if (transaction_ && transaction_->GetResponseInfo()) {
+      LogChannelIDAndCookieStores(request_->url(), request_->context(),
+                                  transaction_->GetResponseInfo()->ssl_info);
+    }
 
     SaveCookiesAndNotifyHeadersComplete(OK);
   } else if (IsCertificateError(result)) {
     // We encountered an SSL certificate error.
-    if (result == ERR_SSL_WEAK_SERVER_EPHEMERAL_DH_KEY ||
-        result == ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN) {
-      // These are hard failures. They're handled separately and don't have
-      // the correct cert status, so set it here.
-      SSLInfo info(transaction_->GetResponseInfo()->ssl_info);
-      info.cert_status = MapNetErrorToCertStatus(result);
-      NotifySSLCertificateError(info, true);
-    } else {
-      // Maybe overridable, maybe not. Ask the delegate to decide.
-      TransportSecurityState* state = context->transport_security_state();
-      const bool fatal =
-          state && state->ShouldSSLErrorsBeFatal(request_info_.url.host());
-      NotifySSLCertificateError(
-          transaction_->GetResponseInfo()->ssl_info, fatal);
-    }
+    // Maybe overridable, maybe not. Ask the delegate to decide.
+    TransportSecurityState* state = context->transport_security_state();
+    NotifySSLCertificateError(
+        transaction_->GetResponseInfo()->ssl_info,
+        state->ShouldSSLErrorsBeFatal(request_info_.url.host()));
   } else if (result == ERR_SSL_CLIENT_AUTH_CERT_NEEDED) {
     NotifyCertificateRequested(
         transaction_->GetResponseInfo()->cert_request_info.get());
@@ -955,6 +1079,8 @@ void URLRequestHttpJob::OnHeadersReceivedCallback(int result) {
 }
 
 void URLRequestHttpJob::OnReadCompleted(int result) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("net"),
+               "URLRequestHttpJob::OnReadCompleted");
   read_in_progress_ = false;
 
   DCHECK_NE(ERR_IO_PENDING, result);
@@ -1058,17 +1184,6 @@ bool URLRequestHttpJob::GetRemoteEndpoint(IPEndPoint* endpoint) const {
   return transaction_->GetRemoteEndpoint(endpoint);
 }
 
-bool URLRequestHttpJob::GetResponseCookies(std::vector<std::string>* cookies) {
-  DCHECK(transaction_.get());
-
-  if (!response_info_)
-    return false;
-
-  cookies->clear();
-  FetchResponseCookies(cookies);
-  return true;
-}
-
 int URLRequestHttpJob::GetResponseCode() const {
   DCHECK(transaction_.get());
 
@@ -1085,10 +1200,10 @@ void URLRequestHttpJob::PopulateNetErrorDetails(
   return transaction_->PopulateNetErrorDetails(details);
 }
 
-Filter* URLRequestHttpJob::SetupFilter() const {
+std::unique_ptr<Filter> URLRequestHttpJob::SetupFilter() const {
   DCHECK(transaction_.get());
   if (!response_info_)
-    return NULL;
+    return nullptr;
 
   std::vector<Filter::FilterType> encoding_types;
   std::string encoding_type;
@@ -1477,7 +1592,9 @@ void URLRequestHttpJob::RecordPerfHistograms(CompletionCause reason) {
               "Net.HttpJob.TotalTimeCached.Secure.NotQuic", total_time);
         }
       }
-    } else  {
+      if (response_info_->unused_since_prefetch)
+        UMA_HISTOGRAM_COUNTS("Net.Prefetch.HitBytes", prefilter_bytes_read());
+    } else {
       UMA_HISTOGRAM_TIMES("Net.HttpJob.TotalTimeNotCached", total_time);
       if (is_https_google) {
         if (used_quic) {
@@ -1504,7 +1621,7 @@ void URLRequestHttpJob::DoneWithRequest(CompletionCause reason) {
   done_ = true;
 
   // Notify NetworkQualityEstimator.
-  if (request() && (reason == FINISHED || reason == ABORTED)) {
+  if (request()) {
     NetworkQualityEstimator* network_quality_estimator =
         request()->context()->network_quality_estimator();
     if (network_quality_estimator)
@@ -1526,6 +1643,14 @@ HttpResponseHeaders* URLRequestHttpJob::GetResponseHeaders() const {
 
 void URLRequestHttpJob::NotifyURLRequestDestroyed() {
   awaiting_callback_ = false;
+
+  // Notify NetworkQualityEstimator.
+  if (request()) {
+    NetworkQualityEstimator* network_quality_estimator =
+        request()->context()->network_quality_estimator();
+    if (network_quality_estimator)
+      network_quality_estimator->NotifyURLRequestDestroyed(*request());
+  }
 }
 
 }  // namespace net

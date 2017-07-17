@@ -12,7 +12,7 @@
 #include "core/testing/DummyPageHolder.h"
 #include "platform/ContextMenu.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -32,7 +32,7 @@ protected:
     }
 
 private:
-    OwnPtr<DummyPageHolder> m_pageHolder;
+    std::unique_ptr<DummyPageHolder> m_pageHolder;
 };
 
 TEST_F(ContextMenuControllerTest, TestCustomMenu)
@@ -68,11 +68,12 @@ TEST_F(ContextMenuControllerTest, TestCustomMenu)
         "</button>");
 
     // Create right button click event and pass it to context menu controller.
-    RefPtrWillBeRawPtr<Event> event = MouseEvent::create(EventTypeNames::click, false, false,
-        document().domWindow(), 50, 50, 0, 0, 0, 0, 0, PlatformEvent::NoModifiers, 1, 0, nullptr, 0);
+    Event* event = MouseEvent::create(EventTypeNames::click, false, false,
+        document().domWindow(), 50, 50, 0, 0, 0, 0, 0, PlatformEvent::NoModifiers, 1, 0, nullptr, 0,
+        PlatformMouseEvent::RealOrIndistinguishable, String());
     document().getElementById("button_id")->focus();
     event->setTarget(document().getElementById("button_id"));
-    document().page()->contextMenuController().handleContextMenuEvent(event.get());
+    document().page()->contextMenuController().handleContextMenuEvent(event);
 
     // Item 1
     // Item 2

@@ -38,13 +38,14 @@
 #include "core/frame/Settings.h"
 #include "core/frame/VisualViewport.h"
 #include "core/input/EventHandler.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutAPIShim.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/loader/EmptyClients.h"
 #include "core/loader/FrameLoadRequest.h"
-#include "core/page/DOMWindowPagePopup.h"
 #include "core/page/FocusController.h"
 #include "core/page/Page.h"
 #include "core/page/PagePopupClient.h"
+#include "core/page/PagePopupSupplement.h"
 #include "modules/accessibility/AXObject.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 #include "platform/EventDispatchForbiddenScope.h"
@@ -62,14 +63,15 @@
 #include "web/WebLocalFrameImpl.h"
 #include "web/WebSettingsImpl.h"
 #include "web/WebViewImpl.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
 class PagePopupChromeClient final : public EmptyChromeClient {
 public:
-    static PassOwnPtrWillBeRawPtr<PagePopupChromeClient> create(WebPagePopupImpl* popup)
+    static PagePopupChromeClient* create(WebPagePopupImpl* popup)
     {
-        return adoptPtrWillBeNoop(new PagePopupChromeClient(popup));
+        return new PagePopupChromeClient(popup);
     }
 
     void setWindowRect(const IntRect& rect) override
@@ -81,7 +83,7 @@ private:
     explicit PagePopupChromeClient(WebPagePopupImpl* popup)
         : m_popup(popup)
     {
-        ASSERT(m_popup->widgetClient());
+        DCHECK(m_popup->widgetClient());
     }
 
     void closeWindowSoon() override
@@ -91,15 +93,16 @@ private:
 
     IntRect windowRect() override
     {
-        return m_popup->m_windowRectInScreen;
+        return m_popup->windowRectInScreen();
     }
 
-    IntRect viewportToScreen(const IntRect& rect) const override
+    IntRect viewportToScreen(const IntRect& rect, const Widget* widget) const override
     {
         WebRect rectInScreen(rect);
+        WebRect windowRect = m_popup->windowRectInScreen();
         m_popup->widgetClient()->convertViewportToWindow(&rectInScreen);
-        rectInScreen.x += m_popup->m_windowRectInScreen.x;
-        rectInScreen.y += m_popup->m_windowRectInScreen.y;
+        rectInScreen.x += windowRect.x;
+        rectInScreen.y += windowRect.y;
         return rectInScreen;
     }
 
@@ -123,7 +126,7 @@ private:
             m_popup->m_webView->scheduleAnimation();
 
         if (m_popup->isAcceleratedCompositingActive()) {
-            ASSERT(m_popup->m_layerTreeView);
+            DCHECK(m_popup->m_layerTreeView);
             m_popup->m_layerTreeView->setNeedsBeginFrame();
             return;
         }
@@ -165,10 +168,16 @@ private:
 
     void setEventListenerProperties(WebEventListenerClass eventClass, WebEventListenerProperties properties) override
     {
-        if (eventClass == WebEventListenerClass::Touch)
-            m_popup->widgetClient()->hasTouchEventHandlers(properties != WebEventListenerProperties::Nothing);
-        if (m_popup->m_layerTreeView)
+        if (m_popup->m_layerTreeView) {
             m_popup->m_layerTreeView->setEventListenerProperties(eventClass, properties);
+            if (eventClass == WebEventListenerClass::TouchStartOrMove) {
+                m_popup->widgetClient()->hasTouchEventHandlers(properties != WebEventListenerProperties::Nothing || eventListenerProperties(WebEventListenerClass::TouchEndOrCancel) != WebEventListenerProperties::Nothing);
+            } else if (eventClass == WebEventListenerClass::TouchEndOrCancel) {
+                m_popup->widgetClient()->hasTouchEventHandlers(properties != WebEventListenerProperties::Nothing || eventListenerProperties(WebEventListenerClass::TouchStartOrMove) != WebEventListenerProperties::Nothing);
+            }
+        } else {
+            m_popup->widgetClient()->hasTouchEventHandlers(true);
+        }
     }
     WebEventListenerProperties eventListenerProperties(WebEventListenerClass eventClass) const override
     {
@@ -177,13 +186,13 @@ private:
         return WebEventListenerProperties::Nothing;
     }
 
-    void setHaveScrollEventHandlers(bool hasEventHandlers) override
+    void setHasScrollEventHandlers(bool hasEventHandlers) override
     {
         if (m_popup->m_layerTreeView)
             m_popup->m_layerTreeView->setHaveScrollEventHandlers(hasEventHandlers);
     }
 
-    bool haveScrollEventHandlers() const override
+    bool hasScrollEventHandlers() const override
     {
         if (m_popup->m_layerTreeView)
             return m_popup->m_layerTreeView->haveScrollEventHandlers();
@@ -194,11 +203,6 @@ private:
     {
         if (WebViewClient* client = m_popup->m_webView->client())
             client->setTouchAction(static_cast<WebTouchAction>(touchAction));
-    }
-
-    GraphicsLayerFactory* graphicsLayerFactory() const override
-    {
-        return m_popup->m_webView->graphicsLayerFactory();
     }
 
     void attachRootGraphicsLayer(GraphicsLayer* graphicsLayer, LocalFrame* localRoot) override
@@ -243,18 +247,18 @@ WebPagePopupImpl::WebPagePopupImpl(WebWidgetClient* client)
     , m_rootGraphicsLayer(0)
     , m_isAcceleratedCompositingActive(false)
 {
-    ASSERT(client);
+    DCHECK(client);
 }
 
 WebPagePopupImpl::~WebPagePopupImpl()
 {
-    ASSERT(!m_page);
+    DCHECK(!m_page);
 }
 
 bool WebPagePopupImpl::initialize(WebViewImpl* webView, PagePopupClient* popupClient)
 {
-    ASSERT(webView);
-    ASSERT(popupClient);
+    DCHECK(webView);
+    DCHECK(popupClient);
     m_webView = webView;
     m_popupClient = popupClient;
 
@@ -281,11 +285,11 @@ bool WebPagePopupImpl::initializePage()
     m_page->settings().setAccessibilityEnabled(m_webView->page()->settings().accessibilityEnabled());
     m_page->settings().setScrollAnimatorEnabled(m_webView->page()->settings().scrollAnimatorEnabled());
 
-    provideContextFeaturesTo(*m_page, adoptPtr(new PagePopupFeaturesClient()));
-    DEFINE_STATIC_LOCAL(OwnPtrWillBePersistent<FrameLoaderClient>, emptyFrameLoaderClient, (EmptyFrameLoaderClient::create()));
-    RefPtrWillBeRawPtr<LocalFrame> frame = LocalFrame::create(emptyFrameLoaderClient.get(), &m_page->frameHost(), 0);
+    provideContextFeaturesTo(*m_page, wrapUnique(new PagePopupFeaturesClient()));
+    DEFINE_STATIC_LOCAL(FrameLoaderClient, emptyFrameLoaderClient, (EmptyFrameLoaderClient::create()));
+    LocalFrame* frame = LocalFrame::create(&emptyFrameLoaderClient, &m_page->frameHost(), 0);
     frame->setPagePopupOwner(m_popupClient->ownerElement());
-    frame->setView(FrameView::create(frame.get()));
+    frame->setView(FrameView::create(frame));
     frame->init();
     frame->view()->setParentVisible(true);
     frame->view()->setSelfVisible(true);
@@ -293,9 +297,9 @@ bool WebPagePopupImpl::initializePage()
     if (AXObjectCache* cache = m_popupClient->ownerElement().document().existingAXObjectCache())
         cache->childrenChanged(&m_popupClient->ownerElement());
 
-    ASSERT(frame->localDOMWindow());
-    DOMWindowPagePopup::install(*frame->localDOMWindow(), *this, m_popupClient);
-    ASSERT(m_popupClient->ownerElement().document().existingAXObjectCache() == frame->document()->existingAXObjectCache());
+    DCHECK(frame->localDOMWindow());
+    PagePopupSupplement::install(*frame, *this, m_popupClient);
+    DCHECK_EQ(m_popupClient->ownerElement().document().existingAXObjectCache(), frame->document()->existingAXObjectCache());
 
     RefPtr<SharedBuffer> data = SharedBuffer::create();
     m_popupClient->writeDocument(data.get());
@@ -330,14 +334,13 @@ AXObject* WebPagePopupImpl::rootAXObject()
     if (!document)
         return 0;
     AXObjectCache* cache = document->axObjectCache();
-    ASSERT(cache);
-    return toAXObjectCacheImpl(cache)->getOrCreate(document->layoutView());
+    DCHECK(cache);
+    return toAXObjectCacheImpl(cache)->getOrCreate(toLayoutView(LayoutAPIShim::layoutObjectFrom(document->layoutViewItem())));
 }
 
 void WebPagePopupImpl::setWindowRect(const IntRect& rectInScreen)
 {
-    m_windowRectInScreen = rectInScreen;
-    widgetClient()->setWindowRect(m_windowRectInScreen);
+    widgetClient()->setWindowRect(rectInScreen);
 }
 
 void WebPagePopupImpl::setRootGraphicsLayer(GraphicsLayer* layer)
@@ -415,7 +418,14 @@ void WebPagePopupImpl::resize(const WebSize& newSizeInViewport)
     WebRect newSize(0, 0, newSizeInViewport.width, newSizeInViewport.height);
     widgetClient()->convertViewportToWindow(&newSize);
 
-    setWindowRect(WebRect(m_windowRectInScreen.x, m_windowRectInScreen.y, newSize.width, newSize.height));
+    WebRect windowRect = windowRectInScreen();
+
+    // TODO(bokan): We should only call into this if the bounds actually changed
+    // but this reveals a bug in Aura. crbug.com/633140.
+    windowRect.width = newSize.width;
+    windowRect.height = newSize.height;
+    setWindowRect(windowRect);
+
     if (m_page) {
         toLocalFrame(m_page->mainFrame())->view()->resize(newSizeInViewport);
         m_page->frameHost().visualViewport().setSize(newSizeInViewport);
@@ -466,7 +476,8 @@ bool WebPagePopupImpl::isViewportPointInWindow(int x, int y)
 {
     WebRect pointInWindow(x, y, 0, 0);
     widgetClient()->convertViewportToWindow(&pointInWindow);
-    return IntRect(0, 0, m_windowRectInScreen.width, m_windowRectInScreen.height).contains(IntPoint(pointInWindow.x, pointInWindow.y));
+    WebRect windowRect = windowRectInScreen();
+    return IntRect(0, 0, windowRect.width, windowRect.height).contains(IntPoint(pointInWindow.x, pointInWindow.y));
 }
 
 WebInputEventResult WebPagePopupImpl::handleInputEvent(const WebInputEvent& event)
@@ -496,12 +507,9 @@ void WebPagePopupImpl::close()
 {
     m_closing = true;
     // In case closePopup() was not called.
-    if (m_page) {
-        destroyPage();
-        m_popupClient->didClosePopup();
-        m_webView->cleanupPagePopup();
-    }
-    m_widgetClient = 0;
+    if (m_page)
+        cancel();
+    m_widgetClient = nullptr;
     deref();
 }
 
@@ -514,20 +522,21 @@ void WebPagePopupImpl::closePopup()
 
     if (m_page) {
         toLocalFrame(m_page->mainFrame())->loader().stopAllLoaders();
-        ASSERT(m_page->deprecatedLocalMainFrame()->localDOMWindow());
-        DOMWindowPagePopup::uninstall(*m_page->deprecatedLocalMainFrame()->localDOMWindow());
+        PagePopupSupplement::uninstall(*toLocalFrame(m_page->mainFrame()));
     }
+    bool closeAlreadyCalled = m_closing;
     m_closing = true;
 
     destroyPage();
 
     // m_widgetClient might be 0 because this widget might be already closed.
-    if (m_widgetClient) {
+    if (m_widgetClient && !closeAlreadyCalled) {
         // closeWidgetSoon() will call this->close() later.
         m_widgetClient->closeWidgetSoon();
     }
 
     m_popupClient->didClosePopup();
+    m_webView->cleanupPagePopup();
 }
 
 LocalDOMWindow* WebPagePopupImpl::window()
@@ -542,20 +551,26 @@ void WebPagePopupImpl::layoutAndPaintAsync(WebLayoutAndPaintAsyncCallback* callb
 
 void WebPagePopupImpl::compositeAndReadbackAsync(WebCompositeAndReadbackAsyncCallback* callback)
 {
-    ASSERT(isAcceleratedCompositingActive());
+    DCHECK(isAcceleratedCompositingActive());
     m_layerTreeView->compositeAndReadbackAsync(callback);
 }
 
 WebPoint WebPagePopupImpl::positionRelativeToOwner()
 {
-    WebRect windowRect = m_webView->client()->rootWindowRect();
-    return WebPoint(m_windowRectInScreen.x - windowRect.x, m_windowRectInScreen.y - windowRect.y);
+    WebRect rootWindowRect = m_webView->client()->rootWindowRect();
+    WebRect windowRect = windowRectInScreen();
+    return WebPoint(windowRect.x - rootWindowRect.x, windowRect.y - rootWindowRect.y);
 }
 
 void WebPagePopupImpl::cancel()
 {
     if (m_popupClient)
         m_popupClient->closePopup();
+}
+
+WebRect WebPagePopupImpl::windowRectInScreen() const
+{
+    return widgetClient()->windowRect();
 }
 
 // WebPagePopup ----------------------------------------------------------------

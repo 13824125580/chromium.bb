@@ -10,7 +10,6 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/debug/stack_trace.h"
 #include "base/lazy_instance.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
@@ -21,7 +20,6 @@
 #include "base/synchronization/lock.h"
 #include "base/values.h"
 #include "net/base/auth.h"
-#include "net/base/chunked_upload_data_stream.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
@@ -191,23 +189,7 @@ URLRequest::~URLRequest() {
   net_log_.EndEventWithNetErrorCode(NetLog::TYPE_REQUEST_ALIVE, net_error);
 }
 
-void URLRequest::EnableChunkedUpload() {
-  DCHECK(!upload_data_stream_ || upload_data_stream_->is_chunked());
-  if (!upload_data_stream_) {
-    upload_chunked_data_stream_ = new ChunkedUploadDataStream(0);
-    upload_data_stream_.reset(upload_chunked_data_stream_);
-  }
-}
-
-void URLRequest::AppendChunkToUpload(const char* bytes,
-                                     int bytes_len,
-                                     bool is_last_chunk) {
-  DCHECK(upload_data_stream_);
-  DCHECK(upload_data_stream_->is_chunked());
-  upload_chunked_data_stream_->AppendData(bytes, bytes_len, is_last_chunk);
-}
-
-void URLRequest::set_upload(scoped_ptr<UploadDataStream> upload) {
+void URLRequest::set_upload(std::unique_ptr<UploadDataStream> upload) {
   upload_data_stream_ = std::move(upload);
 }
 
@@ -265,6 +247,13 @@ int64_t URLRequest::GetTotalSentBytes() const {
   return job_->GetTotalSentBytes();
 }
 
+int64_t URLRequest::GetRawBodyBytes() const {
+  if (!job_.get())
+    return 0;
+
+  return job_->prefilter_bytes_read();
+}
+
 LoadStateWithParam URLRequest::GetLoadState() const {
   // The !blocked_by_.empty() check allows |this| to report it's blocked on a
   // delegate before it has been started.
@@ -278,12 +267,12 @@ LoadStateWithParam URLRequest::GetLoadState() const {
                             base::string16());
 }
 
-scoped_ptr<base::Value> URLRequest::GetStateAsValue() const {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+std::unique_ptr<base::Value> URLRequest::GetStateAsValue() const {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("url", original_url().possibly_invalid_spec());
 
   if (url_chain_.size() > 1) {
-    scoped_ptr<base::ListValue> list(new base::ListValue());
+    std::unique_ptr<base::ListValue> list(new base::ListValue());
     for (const GURL& url : url_chain_) {
       list->AppendString(url.possibly_invalid_spec());
     }
@@ -370,7 +359,8 @@ UploadProgress URLRequest::GetUploadProgress() const {
   return job_->GetUploadProgress();
 }
 
-void URLRequest::GetResponseHeaderByName(const string& name, string* value) {
+void URLRequest::GetResponseHeaderByName(const string& name,
+                                         string* value) const {
   DCHECK(value);
   if (response_info_.headers.get()) {
     response_info_.headers->GetNormalizedHeader(name, value);
@@ -403,11 +393,6 @@ bool URLRequest::GetRemoteEndpoint(IPEndPoint* endpoint) const {
     return false;
 
   return job_->GetRemoteEndpoint(endpoint);
-}
-
-bool URLRequest::GetResponseCookies(ResponseCookies* cookies) {
-  DCHECK(job_.get());
-  return job_->GetResponseCookies(cookies);
 }
 
 void URLRequest::GetMimeType(string* mime_type) const {
@@ -494,6 +479,15 @@ void URLRequest::SetReferrer(const std::string& referrer) {
 
 void URLRequest::set_referrer_policy(ReferrerPolicy referrer_policy) {
   DCHECK(!is_pending_);
+  // External callers shouldn't be setting NO_REFERRER or
+  // ORIGIN. |referrer_policy_| is only applied during server redirects,
+  // so external callers must set the referrer themselves using
+  // SetReferrer() for the initial request. Once the referrer has been
+  // set to an origin or to an empty string, there is no point in
+  // setting the policy to NO_REFERRER or ORIGIN as it would have the
+  // same effect as using NEVER_CLEAR_REFERRER across redirects.
+  DCHECK_NE(referrer_policy, NO_REFERRER);
+  DCHECK_NE(referrer_policy, ORIGIN);
   referrer_policy_ = referrer_policy;
 }
 
@@ -524,7 +518,6 @@ void URLRequest::Start() {
   load_timing_info_.request_start_time = response_info_.request_time;
   load_timing_info_.request_start = base::TimeTicks::Now();
 
-  // Only notify the delegate for the initial request.
   if (network_delegate_) {
     // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
     tracked_objects::ScopedTracker tracking_profile25(
@@ -870,12 +863,18 @@ void URLRequest::ContinueWithCertificate(X509Certificate* client_cert,
                                          SSLPrivateKey* client_private_key) {
   DCHECK(job_.get());
 
+  // Matches the call in NotifyCertificateRequested.
+  OnCallToDelegateComplete();
+
   status_ = URLRequestStatus::FromError(ERR_IO_PENDING);
   job_->ContinueWithCertificate(client_cert, client_private_key);
 }
 
 void URLRequest::ContinueDespiteLastError() {
   DCHECK(job_.get());
+
+  // Matches the call in NotifySSLCertificateError.
+  OnCallToDelegateComplete();
 
   status_ = URLRequestStatus::FromError(ERR_IO_PENDING);
   job_->ContinueDespiteLastError();
@@ -988,7 +987,9 @@ int URLRequest::Redirect(const RedirectInfo& redirect_info) {
   }
 
   referrer_ = redirect_info.new_referrer;
+  referrer_policy_ = redirect_info.new_referrer_policy;
   first_party_for_cookies_ = redirect_info.new_first_party_for_cookies;
+  token_binding_referrer_ = redirect_info.referred_token_binding_host;
 
   url_chain_.push_back(redirect_info.new_url);
   --redirect_limit_;
@@ -1025,26 +1026,11 @@ void URLRequest::SetPriority(RequestPriority priority) {
 
   priority_ = priority;
   if (job_.get()) {
-    net_log_.AddEvent(NetLog::TYPE_URL_REQUEST_SET_PRIORITY,
-                      NetLog::IntCallback("priority", priority_));
+    net_log_.AddEvent(
+        NetLog::TYPE_URL_REQUEST_SET_PRIORITY,
+        NetLog::StringCallback("priority", RequestPriorityToString(priority_)));
     job_->SetPriority(priority_);
   }
-}
-
-bool URLRequest::GetHSTSRedirect(GURL* redirect_url) const {
-  const GURL& url = this->url();
-  bool scheme_is_http = url.SchemeIs("http");
-  if (!scheme_is_http && !url.SchemeIs("ws"))
-    return false;
-  TransportSecurityState* state = context()->transport_security_state();
-  if (state && state->ShouldUpgradeToSSL(url.host())) {
-    GURL::Replacements replacements;
-    const char* new_scheme = scheme_is_http ? "https" : "wss";
-    replacements.SetSchemeStr(new_scheme);
-    *redirect_url = url.ReplaceComponents(replacements);
-    return true;
-  }
-  return false;
 }
 
 void URLRequest::NotifyAuthRequired(AuthChallengeInfo* auth_info) {
@@ -1105,12 +1091,14 @@ void URLRequest::NotifyAuthRequiredComplete(
 void URLRequest::NotifyCertificateRequested(
     SSLCertRequestInfo* cert_request_info) {
   status_ = URLRequestStatus();
+  OnCallToDelegate();
   delegate_->OnCertificateRequested(this, cert_request_info);
 }
 
 void URLRequest::NotifySSLCertificateError(const SSLInfo& ssl_info,
                                            bool fatal) {
   status_ = URLRequestStatus();
+  OnCallToDelegate();
   delegate_->OnSSLCertificateError(this, ssl_info, fatal);
 }
 
@@ -1205,14 +1193,6 @@ void URLRequest::OnCallToDelegateComplete() {
     return;
   calling_delegate_ = false;
   net_log_.EndEvent(NetLog::TYPE_URL_REQUEST_DELEGATE);
-}
-
-void URLRequest::set_stack_trace(const base::debug::StackTrace& stack_trace) {
-  stack_trace_.reset(new base::debug::StackTrace(stack_trace));
-}
-
-const base::debug::StackTrace* URLRequest::stack_trace() const {
-  return stack_trace_.get();
 }
 
 void URLRequest::GetConnectionAttempts(ConnectionAttempts* out) const {

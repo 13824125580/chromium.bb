@@ -42,10 +42,9 @@ class CONTENT_EXPORT NavigationControllerImpl
   // NavigationController implementation:
   WebContents* GetWebContents() const override;
   BrowserContext* GetBrowserContext() const override;
-  void SetBrowserContext(BrowserContext* browser_context) override;
   void Restore(int selected_navigation,
                RestoreType type,
-               std::vector<scoped_ptr<NavigationEntry>>* entries) override;
+               std::vector<std::unique_ptr<NavigationEntry>>* entries) override;
   NavigationEntryImpl* GetActiveEntry() const override;
   NavigationEntryImpl* GetVisibleEntry() const override;
   int GetCurrentEntryIndex() const override;
@@ -59,7 +58,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   NavigationEntryImpl* GetPendingEntry() const override;
   int GetPendingEntryIndex() const override;
   NavigationEntryImpl* GetTransientEntry() const override;
-  void SetTransientEntry(scoped_ptr<NavigationEntry> entry) override;
+  void SetTransientEntry(std::unique_ptr<NavigationEntry> entry) override;
   void LoadURL(const GURL& url,
                const Referrer& referrer,
                ui::PageTransition type,
@@ -87,7 +86,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   bool IsInitialBlankNavigation() const override;
   void Reload(bool check_for_repost) override;
   void ReloadToRefreshContent(bool check_for_repost) override;
-  void ReloadIgnoringCache(bool check_for_repost) override;
+  void ReloadBypassingCache(bool check_for_repost) override;
   void ReloadOriginalRequestURL(bool check_for_repost) override;
   void ReloadDisableLoFi(bool check_for_repost) override;
   void NotifyEntryChanged(const NavigationEntry* entry) override;
@@ -134,7 +133,7 @@ class CONTENT_EXPORT NavigationControllerImpl
 
   // Allow renderer-initiated navigations to create a pending entry when the
   // provisional load starts.
-  void SetPendingEntry(scoped_ptr<NavigationEntryImpl> entry);
+  void SetPendingEntry(std::unique_ptr<NavigationEntryImpl> entry);
 
   // Handles updating the navigation state after the renderer has navigated.
   // This is used by the WebContentsImpl.
@@ -155,10 +154,10 @@ class CONTENT_EXPORT NavigationControllerImpl
   // so that we know to load URLs that were pending as "lazy" loads.
   void SetActive(bool is_active);
 
-  // Returns true if the given URL would be an in-page navigation (i.e. only the
-  // reference fragment is different) from the last committed URL in the
-  // specified frame. If there is no last committed entry, then nothing will be
-  // in-page.
+  // Returns true if the given URL would be an in-page navigation (e.g., if the
+  // reference fragment is different, or after a pushState) from the last
+  // committed URL in the specified frame. If there is no last committed entry,
+  // then nothing will be in-page.
   //
   // Special note: if the URLs are the same, it does NOT automatically count as
   // an in-page navigation. Neither does an input URL that has no ref, even if
@@ -170,11 +169,12 @@ class CONTENT_EXPORT NavigationControllerImpl
   // The situation is made murkier by history.replaceState(), which could
   // provide the same URL as part of an in-page navigation, not a reload. So
   // we need to let the (untrustworthy) renderer resolve the ambiguity, but
-  // only when the URLs are on the same origin.
-  bool IsURLInPageNavigation(
-      const GURL& url,
-      bool renderer_says_in_page,
-      RenderFrameHost* rfh) const;
+  // only when the URLs are on the same origin. We rely on |origin|, which
+  // matters in cases like about:blank that otherwise look cross-origin.
+  bool IsURLInPageNavigation(const GURL& url,
+                             const url::Origin& origin,
+                             bool renderer_says_in_page,
+                             RenderFrameHost* rfh) const;
 
   // Sets the SessionStorageNamespace for the given |partition_id|. This is
   // used during initialization of a new NavigationController to allow
@@ -207,7 +207,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // Sets the screenshot manager for this NavigationControllerImpl. Setting a
   // NULL manager recreates the default screenshot manager and uses that.
   void SetScreenshotManager(
-      scoped_ptr<NavigationEntryScreenshotManager> manager);
+      std::unique_ptr<NavigationEntryScreenshotManager> manager);
 
   // Discards only the pending entry. |was_failure| should be set if the pending
   // entry is being discarded because it failed to load.
@@ -244,7 +244,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // Causes the controller to load the specified entry. The function assumes
   // ownership of the pointer since it is put in the navigation list.
   // NOTE: Do not pass an entry that the controller already owns!
-  void LoadEntry(scoped_ptr<NavigationEntryImpl> entry);
+  void LoadEntry(std::unique_ptr<NavigationEntryImpl> entry);
 
   // Identifies which frames need to be navigated for the pending
   // NavigationEntry and instructs their Navigator to navigate them.  Returns
@@ -257,6 +257,10 @@ class CONTENT_EXPORT NavigationControllerImpl
   void FindFramesToNavigate(FrameTreeNode* frame,
                             FrameLoadVector* sameDocumentLoads,
                             FrameLoadVector* differentDocumentLoads);
+
+  // Returns whether there is a pending NavigationEntry whose unique ID matches
+  // the given NavigationHandle's pending_nav_entry_id.
+  bool PendingEntryMatchesHandle(NavigationHandleImpl* handle) const;
 
   // Classifies the given renderer navigation (see the NavigationType enum).
   NavigationType ClassifyNavigation(
@@ -295,7 +299,8 @@ class CONTENT_EXPORT NavigationControllerImpl
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
 
-  // Helper function for code shared between Reload() and ReloadIgnoringCache().
+  // Helper function for code shared between Reload() and
+  // ReloadBypassingCache().
   void ReloadInternal(bool check_for_repost, ReloadType reload_type);
 
   // Actually issues the navigation held in pending_entry.
@@ -317,7 +322,7 @@ class CONTENT_EXPORT NavigationControllerImpl
 
   // Inserts a new entry or replaces the current entry with a new one, removing
   // all entries after it. The new entry will become the active one.
-  void InsertOrReplaceEntry(scoped_ptr<NavigationEntryImpl> entry,
+  void InsertOrReplaceEntry(std::unique_ptr<NavigationEntryImpl> entry,
                             bool replace);
 
   // Removes the entry at |index|, as long as it is not the current entry.
@@ -360,7 +365,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   BrowserContext* browser_context_;
 
   // List of |NavigationEntry|s for this controller.
-  std::vector<scoped_ptr<NavigationEntryImpl>> entries_;
+  std::vector<std::unique_ptr<NavigationEntryImpl>> entries_;
 
   // An entry we haven't gotten a response for yet.  This will be discarded
   // when we navigate again.  It's used only so we know what the currently
@@ -372,8 +377,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   NavigationEntryImpl* pending_entry_;
 
   // If a new entry fails loading, details about it are temporarily held here
-  // until the error page is shown. These variables are only valid if
-  // |failed_pending_entry_id_| is not 0.
+  // until the error page is shown (or 0 otherwise).
   //
   // TODO(avi): We need a better way to handle the connection between failed
   // loads and the subsequent load of the error page. This current approach has
@@ -381,7 +385,6 @@ class CONTENT_EXPORT NavigationControllerImpl
   // error page loaded, and 2. This doesn't work very well for frames.
   // http://crbug.com/474261
   int failed_pending_entry_id_;
-  bool failed_pending_entry_should_replace_;
 
   // The index of the currently visible entry.
   int last_committed_entry_index_;
@@ -431,7 +434,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // The maximum number of entries that a navigation controller can store.
   static size_t max_entry_count_for_testing_;
 
-  // If a repost is pending, its type (RELOAD or RELOAD_IGNORING_CACHE),
+  // If a repost is pending, its type (RELOAD or RELOAD_BYPASSING_CACHE),
   // NO_RELOAD otherwise.
   ReloadType pending_reload_;
 
@@ -445,7 +448,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // the wrong order in the history view.
   TimeSmoother time_smoother_;
 
-  scoped_ptr<NavigationEntryScreenshotManager> screenshot_manager_;
+  std::unique_ptr<NavigationEntryScreenshotManager> screenshot_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationControllerImpl);
 };

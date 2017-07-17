@@ -30,35 +30,41 @@
 
 #include "core/workers/SharedWorkerGlobalScope.h"
 
-#include "bindings/core/v8/ScriptCallStack.h"
+#include "bindings/core/v8/SourceLocation.h"
 #include "core/events/MessageEvent.h"
-#include "core/inspector/ConsoleMessage.h"
 #include "core/frame/LocalDOMWindow.h"
+#include "core/inspector/ConsoleMessage.h"
+#include "core/origin_trials/OriginTrialContext.h"
 #include "core/workers/SharedWorkerThread.h"
 #include "core/workers/WorkerClients.h"
 #include "wtf/CurrentTime.h"
+#include <memory>
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<MessageEvent> createConnectEvent(MessagePort* port)
+MessageEvent* createConnectEvent(MessagePort* port)
 {
-    RefPtrWillBeRawPtr<MessageEvent> event = MessageEvent::create(new MessagePortArray(1, port), String(), String(), port);
+    MessageEvent* event = MessageEvent::create(new MessagePortArray(1, port), String(), String(), port);
     event->initEvent(EventTypeNames::connect, false, false);
-    return event.release();
+    return event;
 }
 
 // static
-PassRefPtrWillBeRawPtr<SharedWorkerGlobalScope> SharedWorkerGlobalScope::create(const String& name, SharedWorkerThread* thread, PassOwnPtr<WorkerThreadStartupData> startupData)
+SharedWorkerGlobalScope* SharedWorkerGlobalScope::create(const String& name, SharedWorkerThread* thread, std::unique_ptr<WorkerThreadStartupData> startupData)
 {
     // Note: startupData is finalized on return. After the relevant parts has been
     // passed along to the created 'context'.
-    RefPtrWillBeRawPtr<SharedWorkerGlobalScope> context = adoptRefWillBeNoop(new SharedWorkerGlobalScope(name, startupData->m_scriptURL, startupData->m_userAgent, thread, startupData->m_starterOriginPrivilegeData.release(), startupData->m_workerClients.release()));
+    SharedWorkerGlobalScope* context = new SharedWorkerGlobalScope(name, startupData->m_scriptURL, startupData->m_userAgent, thread, std::move(startupData->m_starterOriginPrivilegeData), startupData->m_workerClients.release());
     context->applyContentSecurityPolicyFromVector(*startupData->m_contentSecurityPolicyHeaders);
-    return context.release();
+    if (!startupData->m_referrerPolicy.isNull())
+        context->parseAndSetReferrerPolicy(startupData->m_referrerPolicy);
+    context->setAddressSpace(startupData->m_addressSpace);
+    OriginTrialContext::addTokens(context, startupData->m_originTrialTokens.get());
+    return context;
 }
 
-SharedWorkerGlobalScope::SharedWorkerGlobalScope(const String& name, const KURL& url, const String& userAgent, SharedWorkerThread* thread, PassOwnPtr<SecurityOrigin::PrivilegeData> starterOriginPrivilegeData, PassOwnPtrWillBeRawPtr<WorkerClients> workerClients)
-    : WorkerGlobalScope(url, userAgent, thread, monotonicallyIncreasingTime(), starterOriginPrivilegeData, workerClients)
+SharedWorkerGlobalScope::SharedWorkerGlobalScope(const String& name, const KURL& url, const String& userAgent, SharedWorkerThread* thread, std::unique_ptr<SecurityOrigin::PrivilegeData> starterOriginPrivilegeData, WorkerClients* workerClients)
+    : WorkerGlobalScope(url, userAgent, thread, monotonicallyIncreasingTime(), std::move(starterOriginPrivilegeData), workerClients)
     , m_name(name)
 {
 }
@@ -77,13 +83,11 @@ SharedWorkerThread* SharedWorkerGlobalScope::thread()
     return static_cast<SharedWorkerThread*>(Base::thread());
 }
 
-void SharedWorkerGlobalScope::logExceptionToConsole(const String& errorMessage, int scriptId, const String& sourceURL, int lineNumber, int columnNumber, PassRefPtr<ScriptCallStack> callStack)
+void SharedWorkerGlobalScope::logExceptionToConsole(const String& errorMessage, std::unique_ptr<SourceLocation> location)
 {
-    WorkerGlobalScope::logExceptionToConsole(errorMessage, scriptId, sourceURL, lineNumber, columnNumber, callStack);
-    RefPtrWillBeRawPtr<ConsoleMessage> consoleMessage = ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage, sourceURL, lineNumber, columnNumber);
-    consoleMessage->setScriptId(scriptId);
-    consoleMessage->setCallStack(callStack);
-    addMessageToWorkerConsole(consoleMessage.release());
+    WorkerGlobalScope::logExceptionToConsole(errorMessage, location->clone());
+    ConsoleMessage* consoleMessage = ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage, std::move(location));
+    addMessageToWorkerConsole(consoleMessage);
 }
 
 DEFINE_TRACE(SharedWorkerGlobalScope)

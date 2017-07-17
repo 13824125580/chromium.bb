@@ -31,6 +31,7 @@
 #include "platform/fonts/shaping/CachingWordShapeIterator.h"
 #include "platform/fonts/shaping/HarfBuzzShaper.h"
 #include "platform/fonts/shaping/ShapeCache.h"
+#include "platform/fonts/shaping/ShapeResultSpacing.h"
 #include "wtf/Allocator.h"
 #include "wtf/text/CharacterNames.h"
 
@@ -43,26 +44,18 @@ public:
     CachingWordShapeIterator(ShapeCache* cache, const TextRun& run,
         const Font* font)
         : m_shapeCache(cache), m_textRun(run), m_font(font)
+        , m_spacing(run, font->getFontDescription())
         , m_widthSoFar(0), m_startIndex(0)
     {
         ASSERT(font);
-        const FontDescription& fontDescription = font->fontDescription();
-
-        // Word and letter spacing can change the width of a word, as can tabs
-        // as we segment solely based on on space characters.
-        // If expansion is used (for justified text) the spacing between words
-        // change and thus we need to shape the entire run.
-        m_wordResultCachable = !fontDescription.wordSpacing()
-            && !fontDescription.letterSpacing()
-            && m_textRun.expansion() == 0.0f;
 
         // Shaping word by word is faster as each word is cached. If we cannot
         // use the cache or if the font doesn't support word by word shaping
         // fall back on shaping the entire run.
-        m_shapeByWord = m_wordResultCachable && m_font->canShapeWordByWord();
+        m_shapeByWord = m_font->canShapeWordByWord();
     }
 
-    bool next(RefPtr<ShapeResult>* wordResult)
+    bool next(RefPtr<const ShapeResult>* wordResult)
     {
         if (UNLIKELY(m_textRun.allowTabs()))
             return nextForAllowTabs(wordResult);
@@ -72,23 +65,23 @@ public:
                 return false;
             *wordResult = shapeWord(m_textRun, m_font);
             m_startIndex = 1;
-            return *wordResult;
+            return wordResult->get();
         }
 
         return nextWord(wordResult);
     }
 
 private:
-    PassRefPtr<ShapeResult> shapeWord(const TextRun& wordRun, const Font* font)
+    PassRefPtr<const ShapeResult> shapeWordWithoutSpacing(
+        const TextRun& wordRun, const Font* font)
     {
-        ShapeCacheEntry* cacheEntry = m_wordResultCachable
-            ? m_shapeCache->add(wordRun, ShapeCacheEntry())
-            : nullptr;
+        ShapeCacheEntry* cacheEntry = m_shapeCache->add(wordRun,
+            ShapeCacheEntry());
         if (cacheEntry && cacheEntry->m_shapeResult)
             return cacheEntry->m_shapeResult;
 
         HarfBuzzShaper shaper(font, wordRun);
-        RefPtr<ShapeResult> shapeResult = shaper.shapeResult();
+        RefPtr<const ShapeResult> shapeResult = shaper.shapeResult();
         if (!shapeResult)
             return nullptr;
 
@@ -98,7 +91,17 @@ private:
         return shapeResult.release();
     }
 
-    bool nextWord(RefPtr<ShapeResult>* wordResult)
+    PassRefPtr<const ShapeResult> shapeWord(const TextRun& wordRun,
+        const Font* font)
+    {
+        if (LIKELY(!m_spacing.hasSpacing()))
+            return shapeWordWithoutSpacing(wordRun, font);
+
+        RefPtr<const ShapeResult> result = shapeWordWithoutSpacing(wordRun, font);
+        return result->applySpacingToCopy(m_spacing, wordRun);
+    }
+
+    bool nextWord(RefPtr<const ShapeResult>* wordResult)
     {
         return shapeToEndIndex(wordResult, nextWordEndIndex());
     }
@@ -127,9 +130,9 @@ private:
                 bool hasAnyScript = !Character::isCommonOrInheritedScript(ch);
                 for (unsigned i = end; i < length; end = i) {
                     U16_NEXT(m_textRun.characters16(), i, length, ch);
-                    // ZWJ check in order not to split Emoji ZWJ sequences.
+                    // ZWJ and modifier check in order not to split those Emoji sequences.
                     if (U_GET_GC_MASK(ch) & (U_GC_M_MASK | U_GC_LM_MASK | U_GC_SK_MASK)
-                        || ch == zeroWidthJoinerCharacter)
+                        || ch == zeroWidthJoinerCharacter || Character::isModifier(ch))
                         continue;
                     // Avoid delimiting COMMON/INHERITED alone, which makes harder to
                     // identify the script.
@@ -154,13 +157,13 @@ private:
             if (!m_textRun.is8Bit()) {
                 UChar32 nextChar;
                 U16_GET(m_textRun.characters16(), 0, i, length, nextChar);
-                if (Character::isCJKIdeographOrSymbol(nextChar))
+                if (Character::isCJKIdeographOrSymbolBase(nextChar))
                     return i;
             }
         }
     }
 
-    bool shapeToEndIndex(RefPtr<ShapeResult>* result, unsigned endIndex)
+    bool shapeToEndIndex(RefPtr<const ShapeResult>* result, unsigned endIndex)
     {
         if (!endIndex || endIndex <= m_startIndex)
             return false;
@@ -174,7 +177,7 @@ private:
             *result = shapeWord(subRun, m_font);
         }
         m_startIndex = endIndex;
-        return *result;
+        return result->get();
     }
 
     unsigned endIndexUntil(UChar ch)
@@ -187,7 +190,7 @@ private:
         }
     }
 
-    bool nextForAllowTabs(RefPtr<ShapeResult>* wordResult)
+    bool nextForAllowTabs(RefPtr<const ShapeResult>* wordResult)
     {
         unsigned length = m_textRun.length();
         if (m_startIndex >= length)
@@ -217,9 +220,9 @@ private:
     ShapeCache* m_shapeCache;
     const TextRun& m_textRun;
     const Font* m_font;
+    ShapeResultSpacing m_spacing;
     float m_widthSoFar; // Used only when allowTabs()
-    unsigned m_startIndex : 30;
-    unsigned m_wordResultCachable : 1;
+    unsigned m_startIndex : 31;
     unsigned m_shapeByWord : 1;
 };
 

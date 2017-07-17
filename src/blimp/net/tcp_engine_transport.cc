@@ -4,10 +4,14 @@
 
 #include "blimp/net/tcp_engine_transport.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/callback_helpers.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "blimp/net/stream_socket_connection.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
@@ -15,8 +19,13 @@
 namespace blimp {
 
 TCPEngineTransport::TCPEngineTransport(const net::IPEndPoint& address,
+                                       BlimpConnectionStatistics* statistics,
                                        net::NetLog* net_log)
-    : address_(address), net_log_(net_log) {}
+    : address_(address),
+      blimp_connection_statistics_(statistics),
+      net_log_(net_log) {
+  DCHECK(blimp_connection_statistics_);
+}
 
 TCPEngineTransport::~TCPEngineTransport() {}
 
@@ -30,8 +39,8 @@ void TCPEngineTransport::Connect(const net::CompletionCallback& callback) {
     int result = server_socket_->Listen(address_, 5);
     if (result != net::OK) {
       server_socket_.reset();
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(callback, result));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(callback, result));
       return;
     }
   }
@@ -50,23 +59,22 @@ void TCPEngineTransport::Connect(const net::CompletionCallback& callback) {
     server_socket_.reset();
   }
 
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(callback, result));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(callback, result));
 }
 
-scoped_ptr<BlimpConnection> TCPEngineTransport::TakeConnection() {
+std::unique_ptr<BlimpConnection> TCPEngineTransport::TakeConnection() {
   DCHECK(connect_callback_.is_null());
   DCHECK(accepted_socket_);
-  return make_scoped_ptr(
-      new StreamSocketConnection(std::move(accepted_socket_)));
+  return base::WrapUnique(new StreamSocketConnection(
+      std::move(accepted_socket_), blimp_connection_statistics_));
 }
 
-const std::string TCPEngineTransport::GetName() const {
+const char* TCPEngineTransport::GetName() const {
   return "TCP";
 }
 
-int TCPEngineTransport::GetLocalAddressForTesting(
-    net::IPEndPoint* address) const {
+int TCPEngineTransport::GetLocalAddress(net::IPEndPoint* address) const {
   DCHECK(server_socket_);
   return server_socket_->GetLocalAddress(address);
 }

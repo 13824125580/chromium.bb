@@ -6,10 +6,10 @@
 #define COMPONENTS_GCM_DRIVER_INSTANCE_ID_INSTANCE_ID_DRIVER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace gcm {
 class GCMDriver;
@@ -42,8 +42,11 @@ class InstanceIDDriver {
   bool ExistsInstanceID(const std::string& app_id) const;
 
  private:
-  gcm::GCMDriver* gcm_driver_;  // Not owned.
-  std::map<std::string, scoped_ptr<InstanceID>> instance_id_map_;
+  // Owned by GCMProfileServiceFactory, which is a dependency of
+  // InstanceIDProfileServiceFactory, which owns this.
+  gcm::GCMDriver* gcm_driver_;
+
+  std::map<std::string, std::unique_ptr<InstanceID>> instance_id_map_;
 
   DISALLOW_COPY_AND_ASSIGN(InstanceIDDriver);
 };

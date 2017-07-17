@@ -7,6 +7,7 @@
 #include "core/layout/LayoutPart.h"
 #include "core/paint/BoxPainter.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
+#include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
 #include "core/paint/ReplacedPainter.h"
@@ -62,7 +63,10 @@ void PartPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& paintOffs
     if (paintInfo.phase != PaintPhaseForeground)
         return;
 
-    {
+    if (m_layoutPart.widget()) {
+        // TODO(schenney) crbug.com/93805 Speculative release assert to verify that the crashes
+        // we see in widget painting are due to a destroyed LayoutPart object.
+        RELEASE_ASSERT(m_layoutPart.node());
         Optional<RoundedInnerRectClipper> clipper;
         if (m_layoutPart.style()->hasBorderRadius()) {
             if (borderRect.isEmpty())
@@ -78,21 +82,20 @@ void PartPainter::paint(const PaintInfo& paintInfo, const LayoutPoint& paintOffs
             clipper.emplace(m_layoutPart, paintInfo, borderRect, roundedInnerRect, ApplyToDisplayList);
         }
 
-        if (m_layoutPart.widget())
-            m_layoutPart.paintContents(paintInfo, paintOffset);
+        m_layoutPart.paintContents(paintInfo, paintOffset);
     }
 
     // Paint a partially transparent wash over selected widgets.
-    if (isSelected() && !paintInfo.isPrinting() && !LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutPart, paintInfo.phase, adjustedPaintOffset)) {
+    if (isSelected() && !paintInfo.isPrinting() && !LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutPart, paintInfo.phase)) {
         LayoutRect rect = m_layoutPart.localSelectionRect();
         rect.moveBy(adjustedPaintOffset);
         IntRect selectionRect = pixelSnappedIntRect(rect);
-        LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutPart, paintInfo.phase, selectionRect, adjustedPaintOffset);
+        LayoutObjectDrawingRecorder drawingRecorder(paintInfo.context, m_layoutPart, paintInfo.phase, selectionRect);
         paintInfo.context.fillRect(selectionRect, m_layoutPart.selectionBackgroundColor());
     }
 
     if (m_layoutPart.canResize())
-        ScrollableAreaPainter(*m_layoutPart.layer()->scrollableArea()).paintResizer(paintInfo.context, roundedIntPoint(adjustedPaintOffset), paintInfo.cullRect());
+        ScrollableAreaPainter(*m_layoutPart.layer()->getScrollableArea()).paintResizer(paintInfo.context, roundedIntPoint(adjustedPaintOffset), paintInfo.cullRect());
 }
 
 void PartPainter::paintContents(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -105,8 +108,7 @@ void PartPainter::paintContents(const PaintInfo& paintInfo, const LayoutPoint& p
     // Tell the widget to paint now. This is the only time the widget is allowed
     // to paint itself. That way it will composite properly with z-indexed layers.
     IntPoint widgetLocation = widget->frameRect().location();
-    IntPoint paintLocation(roundToInt(adjustedPaintOffset.x() + m_layoutPart.borderLeft() + m_layoutPart.paddingLeft()),
-        roundToInt(adjustedPaintOffset.y() + m_layoutPart.borderTop() + m_layoutPart.paddingTop()));
+    IntPoint paintLocation(roundedIntPoint(adjustedPaintOffset + m_layoutPart.contentBoxOffset()));
 
     IntSize widgetPaintOffset = paintLocation - widgetLocation;
     // When painting widgets into compositing layers, tx and ty are relative to the enclosing compositing layer,

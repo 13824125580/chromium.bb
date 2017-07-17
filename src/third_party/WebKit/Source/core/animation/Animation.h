@@ -31,6 +31,7 @@
 #ifndef Animation_h
 #define Animation_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseProperty.h"
@@ -40,10 +41,11 @@
 #include "core/dom/ActiveDOMObject.h"
 #include "core/dom/DOMException.h"
 #include "core/events/EventTarget.h"
+#include "platform/animation/CompositorAnimationDelegate.h"
 #include "platform/animation/CompositorAnimationPlayerClient.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -53,13 +55,14 @@ class Element;
 class ExceptionState;
 
 class CORE_EXPORT Animation final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<Animation>
+    : public EventTargetWithInlineData
+    , public ActiveScriptWrappable
     , public ActiveDOMObject
-    , public WebCompositorAnimationDelegate
+    , public CompositorAnimationDelegate
     , public CompositorAnimationPlayerClient {
     DEFINE_WRAPPERTYPEINFO();
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(Animation);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(Animation);
+    USING_GARBAGE_COLLECTED_MIXIN(Animation);
+    USING_PRE_FINALIZER(Animation, dispose);
 public:
     enum AnimationPlayState {
         Unset,
@@ -114,8 +117,8 @@ public:
     DEFINE_ATTRIBUTE_EVENT_LISTENER(cancel);
 
     const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
-    bool hasPendingActivity() const override;
+    ExecutionContext* getExecutionContext() const override;
+    bool hasPendingActivity() const final;
     void stop() override;
 
     double playbackRate() const;
@@ -176,11 +179,16 @@ public:
         return animation1->sequenceNumber() < animation2->sequenceNumber();
     }
 
+    bool effectSuppressed() const { return m_effectSuppressed; }
+    void setEffectSuppressed(bool);
+
+    void invalidateKeyframeEffect();
+
     DECLARE_VIRTUAL_TRACE();
 
 protected:
-    DispatchEventResult dispatchEventInternal(PassRefPtrWillBeRawPtr<Event>) override;
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
+    DispatchEventResult dispatchEventInternal(Event*) override;
+    void addedEventListener(const AtomicString& eventType, RegisteredEventListener&) override;
 
 private:
     Animation(ExecutionContext*, AnimationTimeline&, AnimationEffect*);
@@ -206,7 +214,7 @@ private:
     void detachCompositorTimeline();
     void attachCompositedLayers();
     void detachCompositedLayers();
-    // WebCompositorAnimationDelegate implementation.
+    // CompositorAnimationDelegate implementation.
     void notifyAnimationStarted(double monotonicTime, int group) override;
     void notifyAnimationFinished(double monotonicTime, int group) override { }
     void notifyAnimationAborted(double monotonicTime, int group) override { }
@@ -241,9 +249,9 @@ private:
     // Holds a 'finished' event queued for asynchronous dispatch via the
     // ScriptedAnimationController. This object remains active until the
     // event is actually dispatched.
-    RefPtrWillBeMember<Event> m_pendingFinishedEvent;
+    Member<Event> m_pendingFinishedEvent;
 
-    RefPtrWillBeMember<Event> m_pendingCancelledEvent;
+    Member<Event> m_pendingCancelledEvent;
 
     enum CompositorAction {
         None,
@@ -290,14 +298,17 @@ private:
     // This mirrors the known compositor state. It is created when a compositor
     // animation is started. Updated once the start time is known and each time
     // modifications are pushed to the compositor.
-    OwnPtr<CompositorState> m_compositorState;
+    std::unique_ptr<CompositorState> m_compositorState;
     bool m_compositorPending;
     int m_compositorGroup;
 
-    OwnPtr<CompositorAnimationPlayer> m_compositorPlayer;
+    std::unique_ptr<CompositorAnimationPlayer> m_compositorPlayer;
+    bool m_preFinalizerRegistered;
 
     bool m_currentTimePending;
     bool m_stateIsBeingUpdated;
+
+    bool m_effectSuppressed;
 };
 
 } // namespace blink

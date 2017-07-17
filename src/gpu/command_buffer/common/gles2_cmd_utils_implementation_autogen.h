@@ -646,13 +646,16 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         0x78F2, "GL_READ_WRITE_CHROMIUM",
     },
     {
-        0x78FA, "GL_RGB_YUV_420_CHROMIUM",
+        0x78FA, "GL_RGB_YCRCB_420_CHROMIUM",
     },
     {
         0x78FB, "GL_RGB_YCBCR_422_CHROMIUM",
     },
     {
         0x78FC, "GL_RGB_YCBCR_420V_CHROMIUM",
+    },
+    {
+        0x78FD, "GL_GPU_MEMORY_BUFFER_ID",
     },
     {
         0x8, "GL_CA_LAYER_EDGE_TOP_CHROMIUM",
@@ -3004,12 +3007,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         0x924A, "GL_OVERLAY_TRANSFORM_ROTATE_270_CHROMIUM",
     },
     {
-        0x924B, "GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM",
-    },
-    {
-        0x924C, "GL_MOUSE_POSITION_CHROMIUM",
-    },
-    {
         0x9250, "GL_SHADER_BINARY_DMP",
     },
     {
@@ -3687,6 +3684,7 @@ std::string GLES2Util::GetStringDstBlendFactor(uint32_t value) {
       {GL_ONE_MINUS_CONSTANT_COLOR, "GL_ONE_MINUS_CONSTANT_COLOR"},
       {GL_CONSTANT_ALPHA, "GL_CONSTANT_ALPHA"},
       {GL_ONE_MINUS_CONSTANT_ALPHA, "GL_ONE_MINUS_CONSTANT_ALPHA"},
+      {GL_SRC_ALPHA_SATURATE, "GL_SRC_ALPHA_SATURATE"},
   };
   return GLES2Util::GetQualifiedEnumString(string_table,
                                            arraysize(string_table), value);
@@ -3998,7 +3996,7 @@ std::string GLES2Util::GetStringHintTarget(uint32_t value) {
 std::string GLES2Util::GetStringImageInternalFormat(uint32_t value) {
   static const EnumToString string_table[] = {
       {GL_RGB, "GL_RGB"},
-      {GL_RGB_YUV_420_CHROMIUM, "GL_RGB_YUV_420_CHROMIUM"},
+      {GL_RGB_YCRCB_420_CHROMIUM, "GL_RGB_YCRCB_420_CHROMIUM"},
       {GL_RGB_YCBCR_422_CHROMIUM, "GL_RGB_YCBCR_422_CHROMIUM"},
       {GL_RGB_YCBCR_420V_CHROMIUM, "GL_RGB_YCBCR_420V_CHROMIUM"},
       {GL_RGBA, "GL_RGBA"},
@@ -4506,14 +4504,6 @@ std::string GLES2Util::GetStringStringType(uint32_t value) {
                                            arraysize(string_table), value);
 }
 
-std::string GLES2Util::GetStringSubscriptionTarget(uint32_t value) {
-  static const EnumToString string_table[] = {
-      {GL_MOUSE_POSITION_CHROMIUM, "GL_MOUSE_POSITION_CHROMIUM"},
-  };
-  return GLES2Util::GetQualifiedEnumString(string_table,
-                                           arraysize(string_table), value);
-}
-
 std::string GLES2Util::GetStringSyncCondition(uint32_t value) {
   static const EnumToString string_table[] = {
       {GL_SYNC_GPU_COMMANDS_COMPLETE, "GL_SYNC_GPU_COMMANDS_COMPLETE"},
@@ -4851,7 +4841,7 @@ std::string GLES2Util::GetStringTextureSizedTextureFilterableInternalFormat(
       {GL_RGBA4, "GL_RGBA4"},
       {GL_RGB10_A2, "GL_RGB10_A2"},
       {GL_RGBA16F, "GL_RGBA16F"},
-      {GL_RGB_YUV_420_CHROMIUM, "GL_RGB_YUV_420_CHROMIUM"},
+      {GL_RGB_YCRCB_420_CHROMIUM, "GL_RGB_YCRCB_420_CHROMIUM"},
       {GL_RGB_YCBCR_422_CHROMIUM, "GL_RGB_YCBCR_422_CHROMIUM"},
       {GL_RGB_YCBCR_420V_CHROMIUM, "GL_RGB_YCBCR_420V_CHROMIUM"},
   };
@@ -4865,6 +4855,15 @@ std::string GLES2Util::GetStringTextureStencilRenderableInternalFormat(
       {GL_STENCIL_INDEX8, "GL_STENCIL_INDEX8"},
       {GL_DEPTH24_STENCIL8, "GL_DEPTH24_STENCIL8"},
       {GL_DEPTH32F_STENCIL8, "GL_DEPTH32F_STENCIL8"},
+  };
+  return GLES2Util::GetQualifiedEnumString(string_table,
+                                           arraysize(string_table), value);
+}
+
+std::string GLES2Util::GetStringTextureSwizzle(uint32_t value) {
+  static const EnumToString string_table[] = {
+      {GL_RED, "GL_RED"},     {GL_GREEN, "GL_GREEN"}, {GL_BLUE, "GL_BLUE"},
+      {GL_ALPHA, "GL_ALPHA"}, {GL_ZERO, "GL_ZERO"},   {GL_ONE, "GL_ONE"},
   };
   return GLES2Util::GetQualifiedEnumString(string_table,
                                            arraysize(string_table), value);
@@ -4960,15 +4959,6 @@ std::string GLES2Util::GetStringUniformParameter(uint32_t value) {
       {GL_UNIFORM_ARRAY_STRIDE, "GL_UNIFORM_ARRAY_STRIDE"},
       {GL_UNIFORM_MATRIX_STRIDE, "GL_UNIFORM_MATRIX_STRIDE"},
       {GL_UNIFORM_IS_ROW_MAJOR, "GL_UNIFORM_IS_ROW_MAJOR"},
-  };
-  return GLES2Util::GetQualifiedEnumString(string_table,
-                                           arraysize(string_table), value);
-}
-
-std::string GLES2Util::GetStringValueBufferTarget(uint32_t value) {
-  static const EnumToString string_table[] = {
-      {GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM,
-       "GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM"},
   };
   return GLES2Util::GetQualifiedEnumString(string_table,
                                            arraysize(string_table), value);

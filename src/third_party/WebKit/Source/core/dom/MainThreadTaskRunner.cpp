@@ -29,7 +29,7 @@
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/ExecutionContextTask.h"
 #include "core/inspector/InspectorInstrumentation.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
 #include "public/platform/Platform.h"
 #include "wtf/Assertions.h"
 
@@ -37,11 +37,9 @@ namespace blink {
 
 MainThreadTaskRunner::MainThreadTaskRunner(ExecutionContext* context)
     : m_context(context)
-#if !ENABLE(OILPAN)
-    , m_weakFactory(this)
-#endif
     , m_pendingTasksTimer(this, &MainThreadTaskRunner::pendingTasksTimerFired)
     , m_suspended(false)
+    , m_weakFactory(this)
 {
 }
 
@@ -49,61 +47,55 @@ MainThreadTaskRunner::~MainThreadTaskRunner()
 {
 }
 
-DEFINE_TRACE(MainThreadTaskRunner)
+void MainThreadTaskRunner::postTaskInternal(const WebTraceLocation& location, std::unique_ptr<ExecutionContextTask> task, bool isInspectorTask, bool instrumenting)
 {
-    visitor->trace(m_context);
-}
-
-void MainThreadTaskRunner::postTaskInternal(const WebTraceLocation& location, PassOwnPtr<ExecutionContextTask> task, bool isInspectorTask)
-{
-    Platform::current()->mainThread()->taskRunner()->postTask(location, threadSafeBind(
+    Platform::current()->mainThread()->getWebTaskRunner()->postTask(location, crossThreadBind(
         &MainThreadTaskRunner::perform,
-#if ENABLE(OILPAN)
-        CrossThreadWeakPersistentThisPointer<MainThreadTaskRunner>(this),
-#else
-        AllowCrossThreadAccess(m_weakFactory.createWeakPtr()),
-#endif
-        task,
-        isInspectorTask));
+        m_weakFactory.createWeakPtr(),
+        passed(std::move(task)),
+        isInspectorTask,
+        instrumenting));
 }
 
-void MainThreadTaskRunner::postTask(const WebTraceLocation& location, PassOwnPtr<ExecutionContextTask> task)
+void MainThreadTaskRunner::postTask(const WebTraceLocation& location, std::unique_ptr<ExecutionContextTask> task, const String& taskNameForInstrumentation)
 {
-    if (!task->taskNameForInstrumentation().isEmpty())
-        InspectorInstrumentation::didPostExecutionContextTask(m_context, task.get());
-    postTaskInternal(location, task, false);
+    if (!taskNameForInstrumentation.isEmpty())
+        InspectorInstrumentation::asyncTaskScheduled(m_context, taskNameForInstrumentation, task.get());
+    const bool instrumenting = !taskNameForInstrumentation.isEmpty();
+    postTaskInternal(location, std::move(task), false, instrumenting);
 }
 
-void MainThreadTaskRunner::postInspectorTask(const WebTraceLocation& location, PassOwnPtr<ExecutionContextTask> task)
+void MainThreadTaskRunner::postInspectorTask(const WebTraceLocation& location, std::unique_ptr<ExecutionContextTask> task)
 {
-    postTaskInternal(location, task, true);
+    postTaskInternal(location, std::move(task), true, false);
 }
 
-void MainThreadTaskRunner::perform(PassOwnPtr<ExecutionContextTask> task, bool isInspectorTask)
+void MainThreadTaskRunner::perform(std::unique_ptr<ExecutionContextTask> task, bool isInspectorTask, bool instrumenting)
 {
+    // If the owner m_context is about to be swept then it
+    // is no longer safe to access.
+    if (ThreadHeap::willObjectBeLazilySwept(m_context.get()))
+        return;
+
     if (!isInspectorTask && (m_context->tasksNeedSuspension() || !m_pendingTasks.isEmpty())) {
-        m_pendingTasks.append(task);
+        m_pendingTasks.append(make_pair(std::move(task), instrumenting));
         return;
     }
 
-    const bool instrumenting = !isInspectorTask && !task->taskNameForInstrumentation().isEmpty();
-    if (instrumenting)
-        InspectorInstrumentation::willPerformExecutionContextTask(m_context, task.get());
+    InspectorInstrumentation::AsyncTask asyncTask(m_context, task.get(), !isInspectorTask);
     task->performTask(m_context);
-    if (instrumenting)
-        InspectorInstrumentation::didPerformExecutionContextTask(m_context);
 }
 
 void MainThreadTaskRunner::suspend()
 {
-    ASSERT(!m_suspended);
+    DCHECK(!m_suspended);
     m_pendingTasksTimer.stop();
     m_suspended = true;
 }
 
 void MainThreadTaskRunner::resume()
 {
-    ASSERT(m_suspended);
+    DCHECK(m_suspended);
     if (!m_pendingTasks.isEmpty())
         m_pendingTasksTimer.startOneShot(0, BLINK_FROM_HERE);
 
@@ -112,15 +104,17 @@ void MainThreadTaskRunner::resume()
 
 void MainThreadTaskRunner::pendingTasksTimerFired(Timer<MainThreadTaskRunner>*)
 {
+    // If the owner m_context is about to be swept then it
+    // is no longer safe to access.
+    if (ThreadHeap::willObjectBeLazilySwept(m_context.get()))
+        return;
+
     while (!m_pendingTasks.isEmpty()) {
-        OwnPtr<ExecutionContextTask> task = m_pendingTasks[0].release();
+        std::unique_ptr<ExecutionContextTask> task = std::move(m_pendingTasks[0].first);
+        const bool instrumenting = m_pendingTasks[0].second;
         m_pendingTasks.remove(0);
-        const bool instrumenting = !task->taskNameForInstrumentation().isEmpty();
-        if (instrumenting)
-            InspectorInstrumentation::willPerformExecutionContextTask(m_context, task.get());
+        InspectorInstrumentation::AsyncTask asyncTask(m_context, task.get(), instrumenting);
         task->performTask(m_context);
-        if (instrumenting)
-            InspectorInstrumentation::didPerformExecutionContextTask(m_context);
     }
 }
 

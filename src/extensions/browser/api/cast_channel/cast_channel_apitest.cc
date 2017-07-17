@@ -5,6 +5,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/timer/mock_timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -23,6 +24,7 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "net/base/completion_callback.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/log/test_net_log.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -93,14 +95,12 @@ class CastChannelAPITest : public ExtensionApiTest {
   void SetUpMockCastSocket() {
     extensions::CastChannelAPI* api = GetApi();
     timeout_timer_ = new base::MockTimer(true, false);
-    api->SetPingTimeoutTimerForTest(make_scoped_ptr(timeout_timer_));
+    api->SetPingTimeoutTimerForTest(base::WrapUnique(timeout_timer_));
 
-    net::IPAddressNumber ip_number;
-    net::ParseIPLiteralToNumber("192.168.1.1", &ip_number);
-    net::IPEndPoint ip_endpoint(ip_number, 8009);
+    net::IPEndPoint ip_endpoint(net::IPAddress(192, 168, 1, 1), 8009);
     mock_cast_socket_ = new MockCastSocket;
     // Transfers ownership of the socket.
-    api->SetSocketForTest(make_scoped_ptr<CastSocket>(mock_cast_socket_));
+    api->SetSocketForTest(base::WrapUnique<CastSocket>(mock_cast_socket_));
     ON_CALL(*mock_cast_socket_, set_id(_))
         .WillByDefault(SaveArg<0>(&channel_id_));
     ON_CALL(*mock_cast_socket_, id())
@@ -473,7 +473,11 @@ IN_PROC_BROWSER_TEST_F(CastChannelAPITest, TestSetAuthorityKeysInvalid) {
       extensions::test_util::CreateEmptyExtension());
   scoped_refptr<extensions::CastChannelSetAuthorityKeysFunction>
       cast_channel_set_authority_keys_function;
-  std::string errorResult = "Unable to set authority keys.";
+  // TODO(eroman): crbug.com/601171: Delete this test once the API has
+  // been removed. The API is deprecated and will trivially return
+  // success. So this is just testing that it succeeds for all inputs
+  // (even invalid ones).
+  std::string errorResult = "";
 
   cast_channel_set_authority_keys_function =
       CreateSetAuthorityKeysFunction(empty_extension);

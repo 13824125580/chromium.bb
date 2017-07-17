@@ -34,7 +34,7 @@ class FileBugHandler(request_handler.RequestHandler):
   """Uses oauth2 to file a new bug with a set of alerts."""
 
   def post(self):
-    """Make all the functions available via POST as well as GET."""
+    """A POST request for this endpoint is the same as a GET request."""
     self.get()
 
   @oauth2_decorator.DECORATOR.oauth_required
@@ -190,7 +190,7 @@ def _FetchLabelsAndComponents(alert_keys):
     # more general (maybe there should be a list in datastore of bug
     # labels to add for internal bugs).
     labels.add('Restrict-View-Google')
-  for test in {a.test for a in alerts}:
+  for test in {a.GetTestMetadataKey() for a in alerts}:
     labels_components = bug_label_patterns.GetBugLabelsForTest(test)
     for item in labels_components:
       if item.startswith('Cr-'):

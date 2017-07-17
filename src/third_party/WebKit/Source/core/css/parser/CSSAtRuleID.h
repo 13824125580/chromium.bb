@@ -5,9 +5,10 @@
 #ifndef CSSAtRuleID_h
 #define CSSAtRuleID_h
 
+#include "wtf/text/StringView.h"
+
 namespace blink {
 
-struct CSSParserString;
 class UseCounter;
 
 enum CSSAtRuleID {
@@ -24,9 +25,10 @@ enum CSSAtRuleID {
     CSSAtRuleViewport = 9,
 
     CSSAtRuleWebkitKeyframes = 10,
+    CSSAtRuleApply = 11,
 };
 
-CSSAtRuleID cssAtRuleID(const CSSParserString&);
+CSSAtRuleID cssAtRuleID(StringView name);
 
 void countAtRule(UseCounter*, CSSAtRuleID);
 

@@ -8,7 +8,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "chrome/browser/chromeos/login/saml/saml_offline_signin_limiter_factory.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
@@ -20,6 +20,7 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "extensions/browser/quota_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -52,13 +53,16 @@ class SAMLOfflineSigninLimiterTest : public testing::Test {
 
   TestingPrefServiceSimple* GetTestingLocalState();
 
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
+
   scoped_refptr<base::TestSimpleTaskRunner> runner_;
   base::ThreadTaskRunnerHandle runner_handle_;
 
   MockUserManager* user_manager_;  // Not owned.
   ScopedUserManagerEnabler user_manager_enabler_;
 
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   base::SimpleTestClock clock_;
 
   SAMLOfflineSigninLimiter* limiter_;  // Owned.

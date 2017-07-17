@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #include <limits>
+#include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/common/common_param_traits.h"
 #include "extensions/renderer/request_sender.h"
@@ -18,7 +18,6 @@
 #include "ipc/ipc_message_utils.h"
 #include "third_party/WebKit/public/web/WebArrayBufferConverter.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/gfx/ipc/gfx_param_traits.h"
 
 namespace {
 

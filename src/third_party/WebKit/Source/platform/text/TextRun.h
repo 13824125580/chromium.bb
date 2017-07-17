@@ -32,7 +32,7 @@
 #include "platform/text/TextDirection.h"
 #include "platform/text/TextPath.h"
 #include "wtf/Allocator.h"
-#include "wtf/RefCounted.h"
+#include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 
 class SkTextBlob;
@@ -102,33 +102,6 @@ public:
         m_data.characters16 = c;
     }
 
-    TextRun(const String& string, float xpos = 0, float expansion = 0, ExpansionBehavior expansionBehavior = AllowTrailingExpansion | ForbidLeadingExpansion, TextDirection direction = LTR, bool directionalOverride = false)
-        : m_charactersLength(string.length())
-        , m_len(string.length())
-        , m_xpos(xpos)
-        , m_horizontalGlyphStretch(1)
-        , m_expansion(expansion)
-        , m_expansionBehavior(expansionBehavior)
-        , m_allowTabs(false)
-        , m_direction(direction)
-        , m_directionalOverride(directionalOverride)
-        , m_disableSpacing(false)
-        , m_textJustify(TextJustifyAuto)
-        , m_normalizeSpace(false)
-        , m_tabSize(0)
-    {
-        if (!m_charactersLength) {
-            m_is8Bit = true;
-            m_data.characters8 = 0;
-        } else if (string.is8Bit()) {
-            m_data.characters8 = string.characters8();
-            m_is8Bit = true;
-        } else {
-            m_data.characters16 = string.characters16();
-            m_is8Bit = false;
-        }
-    }
-
     TextRun(const StringView& string, float xpos = 0, float expansion = 0, ExpansionBehavior expansionBehavior = AllowTrailingExpansion | ForbidLeadingExpansion, TextDirection direction = LTR, bool directionalOverride = false)
         : m_charactersLength(string.length())
         , m_len(string.length())
@@ -178,8 +151,8 @@ public:
     const UChar* characters16() const { ASSERT(!is8Bit()); return m_data.characters16; }
 
     bool is8Bit() const { return m_is8Bit; }
-    int length() const { return m_len; }
-    int charactersLength() const { return m_charactersLength; }
+    unsigned length() const { return m_len; }
+    unsigned charactersLength() const { return m_charactersLength; }
 
     bool normalizeSpace() const { return m_normalizeSpace; }
     void setNormalizeSpace(bool normalizeSpace) { m_normalizeSpace = normalizeSpace; }
@@ -194,7 +167,7 @@ public:
     void setHorizontalGlyphStretch(float scale) { m_horizontalGlyphStretch = scale; }
 
     bool allowTabs() const { return m_allowTabs; }
-    TabSize tabSize() const { return m_tabSize; }
+    TabSize getTabSize() const { return m_tabSize; }
     void setTabSize(bool, TabSize);
 
     float xPos() const { return m_xpos; }
@@ -213,7 +186,7 @@ public:
     void setDirectionalOverride(bool override) { m_directionalOverride = override; }
 
     void setTextJustify(TextJustify textJustify) { m_textJustify = static_cast<unsigned>(textJustify); }
-    TextJustify textJustify() const { return static_cast<TextJustify>(m_textJustify); }
+    TextJustify getTextJustify() const { return static_cast<TextJustify>(m_textJustify); }
 
 private:
     union {
@@ -260,8 +233,8 @@ public:
     }
 
     const TextRun& run;
-    int from;
-    int to;
+    unsigned from;
+    unsigned to;
     FloatRect bounds;
     RefPtr<const SkTextBlob>* cachedTextBlob;
 };

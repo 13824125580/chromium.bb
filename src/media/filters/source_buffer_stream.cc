@@ -1401,6 +1401,15 @@ Ranges<base::TimeDelta> SourceBufferStream::GetBufferedTime() const {
   return ranges;
 }
 
+base::TimeDelta SourceBufferStream::GetHighestPresentationTimestamp() const {
+  if (ranges_.empty())
+    return base::TimeDelta();
+
+  // TODO(wolenetz): Report actual highest PTS here, not DTS cast to PTS. See
+  // https://crbug.com/398130.
+  return ranges_.back()->GetEndTimestamp().ToPresentationTime();
+}
+
 base::TimeDelta SourceBufferStream::GetBufferedDuration() const {
   if (ranges_.empty())
     return base::TimeDelta();
@@ -1410,7 +1419,7 @@ base::TimeDelta SourceBufferStream::GetBufferedDuration() const {
 
 size_t SourceBufferStream::GetBufferedSize() const {
   size_t ranges_size = 0;
-  for (const auto& range : ranges_)
+  for (auto* range : ranges_)
     ranges_size += range->size_in_bytes();
   return ranges_size;
 }
@@ -1476,7 +1485,8 @@ bool SourceBufferStream::UpdateAudioConfig(const AudioDecoderConfig& config) {
     return false;
   }
 
-  if (audio_configs_[0].is_encrypted() != config.is_encrypted()) {
+  if (!audio_configs_[0].encryption_scheme().Matches(
+          config.encryption_scheme())) {
     MEDIA_LOG(ERROR, media_log_) << "Audio encryption changes not allowed.";
     return false;
   }
@@ -1507,7 +1517,8 @@ bool SourceBufferStream::UpdateVideoConfig(const VideoDecoderConfig& config) {
     return false;
   }
 
-  if (video_configs_[0].is_encrypted() != config.is_encrypted()) {
+  if (!video_configs_[0].encryption_scheme().Matches(
+          config.encryption_scheme())) {
     MEDIA_LOG(ERROR, media_log_) << "Video encryption changes not allowed.";
     return false;
   }
@@ -1598,68 +1609,33 @@ DecodeTimestamp SourceBufferStream::FindNewSelectedRangeSeekTimestamp(
 
   RangeList::iterator itr = ranges_.begin();
 
-  for (; itr != ranges_.end(); ++itr) {
-    if ((*itr)->GetEndTimestamp() >= start_timestamp) {
-      break;
-    }
-  }
-
-  if (itr == ranges_.end()) {
-    DVLOG(2) << __FUNCTION__ << " " << GetStreamTypeName()
-             << " no buffered data for dts=" << start_timestamp.InSecondsF();
-    return kNoDecodeTimestamp();
-  }
-
-  // First check for a keyframe timestamp >= |start_timestamp|
-  // in the current range.
-  DecodeTimestamp keyframe_timestamp =
-      (*itr)->NextKeyframeTimestamp(start_timestamp);
-
-  if (keyframe_timestamp != kNoDecodeTimestamp())
-    return keyframe_timestamp;
-
-  // If a keyframe was not found then look for a keyframe that is
-  // "close enough" in the current or next range.
-  DecodeTimestamp end_timestamp =
+  // When checking a range to see if it has or begins soon enough after
+  // |start_timestamp|, use the fudge room to determine "soon enough".
+  DecodeTimestamp start_timestamp_plus_fudge =
       start_timestamp + ComputeFudgeRoom(GetMaxInterbufferDistance());
-  DCHECK(start_timestamp < end_timestamp);
 
-  // Make sure the current range doesn't start beyond |end_timestamp|.
-  if ((*itr)->GetStartTimestamp() >= end_timestamp)
-    return kNoDecodeTimestamp();
-
-  keyframe_timestamp = (*itr)->KeyframeBeforeTimestamp(end_timestamp);
-
-  // Check to see if the keyframe is within the acceptable range
-  // (|start_timestamp|, |end_timestamp|].
-  if (keyframe_timestamp != kNoDecodeTimestamp() &&
-      start_timestamp < keyframe_timestamp  &&
-      keyframe_timestamp <= end_timestamp) {
-    return keyframe_timestamp;
+  // Multiple ranges could be within the fudge room, because the fudge room is
+  // dynamic based on max inter-buffer distance seen so far. Optimistically
+  // check the earliest ones first.
+  for (; itr != ranges_.end(); ++itr) {
+    DecodeTimestamp range_start = (*itr)->GetStartTimestamp();
+    if (range_start >= start_timestamp_plus_fudge)
+      break;
+    if ((*itr)->GetEndTimestamp() < start_timestamp)
+      continue;
+    DecodeTimestamp search_timestamp = start_timestamp;
+    if (start_timestamp < range_start &&
+        start_timestamp_plus_fudge >= range_start) {
+      search_timestamp = range_start;
+    }
+    DecodeTimestamp keyframe_timestamp =
+        (*itr)->NextKeyframeTimestamp(search_timestamp);
+    if (keyframe_timestamp != kNoDecodeTimestamp())
+      return keyframe_timestamp;
   }
 
-  // If |end_timestamp| is within this range, then no other checks are
-  // necessary.
-  if (end_timestamp <= (*itr)->GetEndTimestamp())
-    return kNoDecodeTimestamp();
-
-  // Move on to the next range.
-  ++itr;
-
-  // Return early if the next range does not contain |end_timestamp|.
-  if (itr == ranges_.end() || (*itr)->GetStartTimestamp() >= end_timestamp)
-    return kNoDecodeTimestamp();
-
-  keyframe_timestamp = (*itr)->KeyframeBeforeTimestamp(end_timestamp);
-
-  // Check to see if the keyframe is within the acceptable range
-  // (|start_timestamp|, |end_timestamp|].
-  if (keyframe_timestamp != kNoDecodeTimestamp() &&
-      start_timestamp < keyframe_timestamp  &&
-      keyframe_timestamp <= end_timestamp) {
-    return keyframe_timestamp;
-  }
-
+  DVLOG(2) << __FUNCTION__ << " " << GetStreamTypeName()
+           << " no buffered data for dts=" << start_timestamp.InSecondsF();
   return kNoDecodeTimestamp();
 }
 

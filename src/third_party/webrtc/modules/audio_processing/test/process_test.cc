@@ -19,13 +19,13 @@
 #include <memory>
 
 #include "webrtc/base/format_macros.h"
+#include "webrtc/base/timeutils.h"
 #include "webrtc/common.h"
 #include "webrtc/modules/audio_processing/include/audio_processing.h"
 #include "webrtc/modules/audio_processing/test/protobuf_utils.h"
 #include "webrtc/modules/audio_processing/test/test_utils.h"
 #include "webrtc/modules/include/module_common_types.h"
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
-#include "webrtc/system_wrappers/include/tick_util.h"
 #include "webrtc/test/testsupport/fileutils.h"
 #include "webrtc/test/testsupport/perf_test.h"
 #ifdef WEBRTC_ANDROID_PLATFORM_BUILD
@@ -81,7 +81,7 @@ void usage() {
   printf("  --aec_suppression_level LEVEL  [0 - 2]\n");
   printf("  --extended_filter\n");
   printf("  --no_reported_delay\n");
-  printf("  --next_generation_aec\n");
+  printf("  --aec3\n");
   printf("  --refined_adaptive_filter\n");
   printf("\n  -aecm    Echo control mobile\n");
   printf("  --aecm_echo_path_in_file FILE\n");
@@ -269,8 +269,8 @@ void void_main(int argc, char* argv[]) {
     } else if (strcmp(argv[i], "--delay_agnostic") == 0) {
       config.Set<DelayAgnostic>(new DelayAgnostic(true));
 
-    } else if (strcmp(argv[i], "--next_generation_aec") == 0) {
-      config.Set<NextGenerationAec>(new NextGenerationAec(true));
+    } else if (strcmp(argv[i], "--aec3") == 0) {
+      config.Set<EchoCanceller3>(new EchoCanceller3(true));
 
     } else if (strcmp(argv[i], "--refined_adaptive_filter") == 0) {
       config.Set<RefinedAdaptiveFilter>(new RefinedAdaptiveFilter(true));
@@ -562,7 +562,7 @@ void void_main(int argc, char* argv[]) {
   int reverse_count = 0;
   int primary_count = 0;
   int near_read_bytes = 0;
-  TickInterval acc_ticks;
+  int64_t acc_nanos = 0;
 
   AudioFrame far_frame;
   AudioFrame near_frame;
@@ -573,8 +573,8 @@ void void_main(int argc, char* argv[]) {
   int8_t stream_has_voice = 0;
   float ns_speech_prob = 0.0f;
 
-  TickTime t0 = TickTime::Now();
-  TickTime t1 = t0;
+  int64_t t0 = rtc::TimeNanos();
+  int64_t t1 = t0;
   int64_t max_time_us = 0;
   int64_t max_time_reverse_us = 0;
   int64_t min_time_us = 1e6;
@@ -676,12 +676,12 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t0 = TickTime::Now();
+          t0 = rtc::TimeNanos();
         }
 
         if (msg.has_data()) {
           ASSERT_EQ(apm->kNoError,
-                    apm->AnalyzeReverseStream(&far_frame));
+                    apm->ProcessReverseStream(&far_frame));
         } else {
           ASSERT_EQ(apm->kNoError,
                     apm->AnalyzeReverseStream(
@@ -692,14 +692,15 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t1 = TickTime::Now();
-          TickInterval tick_diff = t1 - t0;
-          acc_ticks += tick_diff;
-          if (tick_diff.Microseconds() > max_time_reverse_us) {
-            max_time_reverse_us = tick_diff.Microseconds();
+          t1 = rtc::TimeNanos();
+          int64_t diff_nanos = t1 - t0;
+          acc_nanos += diff_nanos;
+          int64_t diff_us = diff_nanos / rtc::kNumNanosecsPerMicrosec;
+          if (diff_us > max_time_reverse_us) {
+            max_time_reverse_us = diff_us;
           }
-          if (tick_diff.Microseconds() < min_time_reverse_us) {
-            min_time_reverse_us = tick_diff.Microseconds();
+          if (diff_us < min_time_reverse_us) {
+            min_time_reverse_us = diff_us;
           }
         }
 
@@ -707,9 +708,6 @@ void void_main(int argc, char* argv[]) {
         ASSERT_TRUE(event_msg.has_stream());
         const Stream msg = event_msg.stream();
         primary_count++;
-
-        // ProcessStream could have changed this for the output frame.
-        near_frame.num_channels_ = apm->num_input_channels();
 
         ASSERT_TRUE(msg.has_input_data() ^ (msg.input_channel_size() > 0));
         if (msg.has_input_data()) {
@@ -737,7 +735,7 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t0 = TickTime::Now();
+          t0 = rtc::TimeNanos();
         }
 
         ASSERT_EQ(apm->kNoError,
@@ -795,14 +793,15 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t1 = TickTime::Now();
-          TickInterval tick_diff = t1 - t0;
-          acc_ticks += tick_diff;
-          if (tick_diff.Microseconds() > max_time_us) {
-            max_time_us = tick_diff.Microseconds();
+          t1 = rtc::TimeNanos();
+          int64_t diff_nanos = t1 - t0;
+          acc_nanos += diff_nanos;
+          int64_t diff_us = diff_nanos / rtc::kNumNanosecsPerMicrosec;
+          if (diff_us > max_time_us) {
+            max_time_us = diff_us;
           }
-          if (tick_diff.Microseconds() < min_time_us) {
-            min_time_us = tick_diff.Microseconds();
+          if (diff_us < min_time_us) {
+            min_time_us = diff_us;
           }
         }
 
@@ -925,21 +924,22 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t0 = TickTime::Now();
+          t0 = rtc::TimeNanos();
         }
 
         ASSERT_EQ(apm->kNoError,
-                  apm->AnalyzeReverseStream(&far_frame));
+                  apm->ProcessReverseStream(&far_frame));
 
         if (perf_testing) {
-          t1 = TickTime::Now();
-          TickInterval tick_diff = t1 - t0;
-          acc_ticks += tick_diff;
-          if (tick_diff.Microseconds() > max_time_reverse_us) {
-            max_time_reverse_us = tick_diff.Microseconds();
+          t1 = rtc::TimeNanos();
+          int64_t diff_nanos = t1 - t0;
+          acc_nanos += diff_nanos;
+          int64_t diff_us = diff_nanos / rtc::kNumNanosecsPerMicrosec;
+          if (diff_us > max_time_reverse_us) {
+            max_time_reverse_us = diff_us;
           }
-          if (tick_diff.Microseconds() < min_time_reverse_us) {
-            min_time_reverse_us = tick_diff.Microseconds();
+          if (diff_us < min_time_reverse_us) {
+            min_time_reverse_us = diff_us;
           }
         }
 
@@ -982,7 +982,7 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t0 = TickTime::Now();
+          t0 = rtc::TimeNanos();
         }
 
         const int capture_level_in = capture_level;
@@ -1030,14 +1030,15 @@ void void_main(int argc, char* argv[]) {
         }
 
         if (perf_testing) {
-          t1 = TickTime::Now();
-          TickInterval tick_diff = t1 - t0;
-          acc_ticks += tick_diff;
-          if (tick_diff.Microseconds() > max_time_us) {
-            max_time_us = tick_diff.Microseconds();
+          t1 = rtc::TimeNanos();
+          int64_t diff_nanos = t1 - t0;
+          acc_nanos += diff_nanos;
+          int64_t diff_us = diff_nanos / rtc::kNumNanosecsPerMicrosec;
+          if (diff_us > max_time_us) {
+            max_time_us = diff_us;
           }
-          if (tick_diff.Microseconds() < min_time_us) {
-            min_time_us = tick_diff.Microseconds();
+          if (diff_us < min_time_us) {
+            min_time_us = diff_us;
           }
         }
 
@@ -1130,7 +1131,7 @@ void void_main(int argc, char* argv[]) {
 
   if (perf_testing) {
     if (primary_count > 0) {
-      int64_t exec_time = acc_ticks.Milliseconds();
+      int64_t exec_time = acc_nanos / rtc::kNumNanosecsPerMillisec;
       printf("\nTotal time: %.3f s, file time: %.2f s\n",
         exec_time * 0.001, primary_count * 0.01);
       printf("Time per frame: %.3f ms (average), %.3f ms (max),"

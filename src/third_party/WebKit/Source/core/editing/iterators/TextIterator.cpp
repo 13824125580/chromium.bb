@@ -28,6 +28,7 @@
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/HTMLNames.h"
+#include "core/InputTypeNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/FirstLetterPseudoElement.h"
 #include "core/dom/shadow/ShadowRoot.h"
@@ -46,7 +47,6 @@
 #include "core/html/HTMLTextFormControlElement.h"
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutTableRow.h"
-#include "core/layout/LayoutTextControl.h"
 #include "core/layout/LayoutTextFragment.h"
 #include "core/layout/line/InlineTextBox.h"
 #include "platform/fonts/Font.h"
@@ -107,7 +107,7 @@ template <>
 int shadowDepthOf<EditingStrategy>(const Node& startContainer, const Node& endContainer)
 {
     const TreeScope* commonAncestorTreeScope = startContainer.treeScope().commonAncestorTreeScope(endContainer.treeScope());
-    ASSERT(commonAncestorTreeScope);
+    DCHECK(commonAncestorTreeScope);
     int shadowDepth = 0;
     for (const TreeScope* treeScope = &startContainer.treeScope(); treeScope != commonAncestorTreeScope; treeScope = treeScope->parentTreeScope())
         ++shadowDepth;
@@ -143,11 +143,15 @@ TextIteratorAlgorithm<Strategy>::TextIteratorAlgorithm(const PositionTemplate<St
     // The call to emitsOriginalText() must occur after m_behavior is initialized.
     , m_textState(emitsOriginalText())
 {
-    ASSERT(start.isNotNull());
-    ASSERT(end.isNotNull());
-    // Updates layout here since, |Position.compareTo()| and |initialize()|
-    // assume layout tree is up-to-date.
-    start.document()->updateLayoutIgnorePendingStylesheets();
+    DCHECK(start.isNotNull());
+    DCHECK(end.isNotNull());
+
+
+    // TODO(dglazkov): TextIterator should not be created for documents that don't have a frame,
+    // but it currently still happens in some cases. See http://crbug.com/591877 for details.
+    DCHECK(!start.document()->view() || !start.document()->view()->needsLayout());
+    DCHECK(!start.document()->needsLayoutTreeUpdate());
+
     if (start.compareTo(end) > 0) {
         initialize(end.computeContainerNode(), end.computeOffsetInContainerNode(), start.computeContainerNode(), start.computeOffsetInContainerNode());
         return;
@@ -158,8 +162,8 @@ TextIteratorAlgorithm<Strategy>::TextIteratorAlgorithm(const PositionTemplate<St
 template<typename Strategy>
 void TextIteratorAlgorithm<Strategy>::initialize(Node* startContainer, int startOffset, Node* endContainer, int endOffset)
 {
-    ASSERT(startContainer);
-    ASSERT(endContainer);
+    DCHECK(startContainer);
+    DCHECK(endContainer);
 
     // Remember the range - this does not change.
     m_startContainer = startContainer;
@@ -225,7 +229,8 @@ void TextIteratorAlgorithm<Strategy>::advance()
     if (m_shouldStop)
         return;
 
-    ASSERT(!m_node || !m_node->document().needsLayoutTreeUpdate());
+    if (m_node)
+        DCHECK(!m_node->document().needsLayoutTreeUpdate()) << m_node;
 
     m_textState.resetRunInformation();
 
@@ -285,7 +290,7 @@ void TextIteratorAlgorithm<Strategy>::advance()
             if (m_iterationProgress < HandledOpenShadowRoots) {
                 if (entersOpenShadowRoots() && m_node->isElementNode() && toElement(m_node)->openShadowRoot()) {
                     ShadowRoot* youngestShadowRoot = toElement(m_node)->openShadowRoot();
-                    ASSERT(youngestShadowRoot->type() == ShadowRootType::V0 || youngestShadowRoot->type() == ShadowRootType::Open);
+                    DCHECK(youngestShadowRoot->type() == ShadowRootType::V0 || youngestShadowRoot->type() == ShadowRootType::Open);
                     m_node = youngestShadowRoot;
                     m_iterationProgress = HandledNone;
                     ++m_shadowDepth;
@@ -300,7 +305,7 @@ void TextIteratorAlgorithm<Strategy>::advance()
             if (m_iterationProgress < HandledUserAgentShadowRoot) {
                 if (entersTextControls() && layoutObject->isTextControl()) {
                     ShadowRoot* userAgentShadowRoot = toElement(m_node)->userAgentShadowRoot();
-                    ASSERT(userAgentShadowRoot->type() == ShadowRootType::UserAgent);
+                    DCHECK(userAgentShadowRoot->type() == ShadowRootType::UserAgent);
                     m_node = userAgentShadowRoot;
                     m_iterationProgress = HandledNone;
                     ++m_shadowDepth;
@@ -369,7 +374,7 @@ void TextIteratorAlgorithm<Strategy>::advance()
                     // 4. Reached the top of a shadow root. If it's created by author, then try to visit the next
                     // sibling shadow root, if any.
                     if (!m_node->isShadowRoot()) {
-                        ASSERT_NOT_REACHED();
+                        NOTREACHED();
                         m_shouldStop = true;
                         return;
                     }
@@ -384,7 +389,7 @@ void TextIteratorAlgorithm<Strategy>::advance()
                             m_fullyClippedStack.pushFullyClippedState(m_node);
                         } else {
                             // We are the last shadow root; exit from here and go back to where we were.
-                            m_node = shadowRoot->host();
+                            m_node = &shadowRoot->host();
                             m_iterationProgress = HandledOpenShadowRoots;
                             --m_shadowDepth;
                             m_fullyClippedStack.pop();
@@ -392,8 +397,8 @@ void TextIteratorAlgorithm<Strategy>::advance()
                     } else {
                         // If we are in a closed or user-agent shadow root, then go back to the host.
                         // TODO(kochi): Make sure we treat closed shadow as user agent shadow here.
-                        ASSERT(shadowRoot->type() == ShadowRootType::Closed || shadowRoot->type() == ShadowRootType::UserAgent);
-                        m_node = shadowRoot->host();
+                        DCHECK(shadowRoot->type() == ShadowRootType::Closed || shadowRoot->type() == ShadowRootType::UserAgent);
+                        m_node = &shadowRoot->host();
                         m_iterationProgress = HandledUserAgentShadowRoot;
                         --m_shadowDepth;
                         m_fullyClippedStack.pop();
@@ -432,7 +437,7 @@ static bool hasVisibleTextNode(LayoutText* layoutObject)
     if (!fragment->isRemainingTextLayoutObject())
         return false;
 
-    ASSERT(fragment->firstLetterPseudoElement());
+    DCHECK(fragment->firstLetterPseudoElement());
     LayoutObject* pseudoElementLayoutObject = fragment->firstLetterPseudoElement()->layoutObject();
     return pseudoElementLayoutObject && pseudoElementLayoutObject->style()->visibility() == VISIBLE;
 }
@@ -574,7 +579,7 @@ void TextIteratorAlgorithm<Strategy>::handleTextBox()
                 m_textBox = 0;
                 return;
             }
-            ASSERT(!nextTextBox || nextTextBox->getLineLayoutItem().isEqual(layoutObject));
+            DCHECK(!nextTextBox || nextTextBox->getLineLayoutItem().isEqual(layoutObject));
 
             if (runStart < runEnd) {
                 // Handle either a single newline character (which becomes a space),
@@ -640,7 +645,7 @@ void TextIteratorAlgorithm<Strategy>::handleTextNodeFirstLetter(LayoutTextFragme
         return;
 
     LayoutObject* firstLetter = pseudoLayoutObject->slowFirstChild();
-    ASSERT(firstLetter);
+    DCHECK(firstLetter);
 
     m_remainingTextBox = m_textBox;
     m_textBox = toLayoutText(firstLetter)->firstTextBox();
@@ -658,7 +663,7 @@ bool TextIteratorAlgorithm<Strategy>::supportsAltText(Node* node)
     // FIXME: Add isSVGImageElement.
     if (isHTMLImageElement(element))
         return true;
-    if (isHTMLInputElement(toHTMLElement(*node)) && toHTMLInputElement(*node).isImage())
+    if (isHTMLInputElement(toHTMLElement(*node)) && toHTMLInputElement(*node).type() == InputTypeNames::image)
         return true;
     return false;
 }
@@ -834,7 +839,7 @@ static bool shouldEmitExtraNewlineForNode(Node* node)
         const ComputedStyle* style = r->style();
         if (style) {
             int bottomMargin = toLayoutBox(r)->collapsedMarginAfter();
-            int fontSize = style->fontDescription().computedPixelSize();
+            int fontSize = style->getFontDescription().computedPixelSize();
             if (bottomMargin * 2 >= fontSize)
                 return true;
         }
@@ -897,7 +902,7 @@ bool TextIteratorAlgorithm<Strategy>::shouldRepresentNodeOffsetZero()
     // The currPos.isNotNull() check is needed because positions in non-HTML content
     // (like SVG) do not have visible positions, and we don't want to emit for them either.
     VisiblePosition startPos = createVisiblePosition(Position(m_startContainer, m_startOffset));
-    VisiblePosition currPos = createVisiblePosition(positionBeforeNode(m_node));
+    VisiblePosition currPos = VisiblePosition::beforeNode(m_node);
     return startPos.isNotNull() && currPos.isNotNull() && !inSameLine(startPos, currPos);
 }
 
@@ -971,7 +976,7 @@ void TextIteratorAlgorithm<Strategy>::exitNode()
             // insert a newline with a position following this block's contents.
             spliceBuffer(newlineCharacter, Strategy::parent(*baseNode), baseNode, 1, 1);
             // remember whether to later add a newline for the current node
-            ASSERT(!m_needsAnotherNewline);
+            DCHECK(!m_needsAnotherNewline);
             m_needsAnotherNewline = addNewline;
         } else if (addNewline) {
             // insert a newline with a position following this block's contents.
@@ -1049,7 +1054,7 @@ int TextIteratorAlgorithm<Strategy>::startOffsetInCurrentContainer() const
         m_textState.flushPositionOffsets();
         return m_textState.positionStartOffset();
     }
-    ASSERT(m_endContainer);
+    DCHECK(m_endContainer);
     return m_endOffset;
 }
 
@@ -1060,7 +1065,7 @@ int TextIteratorAlgorithm<Strategy>::endOffsetInCurrentContainer() const
         m_textState.flushPositionOffsets();
         return m_textState.positionEndOffset();
     }
-    ASSERT(m_endContainer);
+    DCHECK(m_endContainer);
     return m_endOffset;
 }
 
@@ -1070,7 +1075,7 @@ Node* TextIteratorAlgorithm<Strategy>::currentContainer() const
     if (m_textState.positionNode()) {
         return m_textState.positionNode();
     }
-    ASSERT(m_endContainer);
+    DCHECK(m_endContainer);
     return m_endContainer;
 }
 
@@ -1089,6 +1094,10 @@ PositionTemplate<Strategy> TextIteratorAlgorithm<Strategy>::endPositionInCurrent
 template<typename Strategy>
 int TextIteratorAlgorithm<Strategy>::rangeLength(const PositionTemplate<Strategy>& start, const PositionTemplate<Strategy>& end, bool forSelectionPreservation)
 {
+    // TODO(dglazkov): The use of updateStyleAndLayoutIgnorePendingStylesheets needs to be audited.
+    // see http://crbug.com/590369 for more details.
+    start.document()->updateStyleAndLayoutIgnorePendingStylesheets();
+
     int length = 0;
     TextIteratorBehaviorFlags behaviorFlags = TextIteratorEmitsObjectReplacementCharacter;
     if (forSelectionPreservation)
@@ -1108,7 +1117,7 @@ bool TextIteratorAlgorithm<Strategy>::isInTextSecurityMode() const
 template <typename Strategy>
 bool TextIteratorAlgorithm<Strategy>::isBetweenSurrogatePair(int position) const
 {
-    ASSERT(position >= 0);
+    DCHECK_GE(position, 0);
     return position > 0 && position < length() && U16_IS_LEAD(characterAt(position - 1)) && U16_IS_TRAIL(characterAt(position));
 }
 
@@ -1142,6 +1151,11 @@ static String createPlainText(const EphemeralRangeTemplate<Strategy>& range, Tex
 {
     if (range.isNull())
         return emptyString();
+
+
+    // TODO(dglazkov): The use of updateStyleAndLayoutIgnorePendingStylesheets needs to be audited.
+    // see http://crbug.com/590369 for more details.
+    range.startPosition().document()->updateStyleAndLayoutIgnorePendingStylesheets();
 
     TextIteratorAlgorithm<Strategy> it(range.startPosition(), range.endPosition(), behavior);
 

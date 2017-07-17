@@ -8,13 +8,16 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
+#include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "components/sync_driver/device_info_tracker.h"
+#include "sync/api/sync_change.h"
 #include "sync/api/sync_change_processor.h"
 #include "sync/api/sync_data.h"
 #include "sync/api/sync_error_factory.h"
@@ -36,8 +39,8 @@ class DeviceInfoSyncService : public syncer::SyncableService,
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -46,13 +49,16 @@ class DeviceInfoSyncService : public syncer::SyncableService,
 
   // DeviceInfoTracker implementation.
   bool IsSyncing() const override;
-  scoped_ptr<DeviceInfo> GetDeviceInfo(
+  std::unique_ptr<DeviceInfo> GetDeviceInfo(
       const std::string& client_id) const override;
   ScopedVector<DeviceInfo> GetAllDeviceInfo() const override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
+  int CountActiveDevices() const override;
 
  private:
+  friend class DeviceInfoSyncServiceTest;
+
   // Create SyncData from local DeviceInfo.
   syncer::SyncData CreateLocalData(const DeviceInfo* info);
   // Create SyncData from EntitySpecifics.
@@ -69,13 +75,23 @@ class DeviceInfoSyncService : public syncer::SyncableService,
   // Notify all registered observers.
   void NotifyObservers();
 
+  // Sends a copy of the current device's state to the processor/sync.
+  void SendLocalData(const syncer::SyncChange::SyncChangeType change_type);
+
+  // Finds the number of active devices give the current time, which allows for
+  // better unit tests.
+  int CountActiveDevices(const base::Time now) const;
+
+  // Find the timestamp for the last time this |device_info| was edited.
+  static base::Time GetLastUpdateTime(const syncer::SyncData& device_info);
+
   // |local_device_info_provider_| isn't owned.
   const LocalDeviceInfoProvider* const local_device_info_provider_;
 
   // Receives ownership of |sync_processor_| and |error_handler_| in
   // MergeDataAndStartSyncing() and destroy them in StopSyncing().
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
-  scoped_ptr<syncer::SyncErrorFactory> error_handler_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncErrorFactory> error_handler_;
 
   // Cache of all syncable and local data.
   typedef std::map<std::string, syncer::SyncData> SyncDataMap;
@@ -83,6 +99,9 @@ class DeviceInfoSyncService : public syncer::SyncableService,
 
   // Registered observers, not owned.
   base::ObserverList<Observer, true> observers_;
+
+  // Used to update our local device info once every pulse interval.
+  base::OneShotTimer pulse_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceInfoSyncService);
 };

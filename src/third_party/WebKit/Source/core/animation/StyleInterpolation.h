@@ -9,6 +9,7 @@
 #include "core/CoreExport.h"
 #include "core/animation/Interpolation.h"
 #include "core/animation/PropertyHandle.h"
+#include <memory>
 
 namespace blink {
 
@@ -39,7 +40,7 @@ public:
 
     CSSPropertyID id() const { return m_id; }
 
-    PropertyHandle property() const final
+    PropertyHandle getProperty() const final
     {
         return PropertyHandle(id());
     }
@@ -47,7 +48,7 @@ public:
 protected:
     CSSPropertyID m_id;
 
-    StyleInterpolation(PassOwnPtr<InterpolableValue> start, PassOwnPtr<InterpolableValue> end, CSSPropertyID id)
+    StyleInterpolation(std::unique_ptr<InterpolableValue> start, std::unique_ptr<InterpolableValue> end, CSSPropertyID id)
         : Interpolation(std::move(start), std::move(end))
         , m_id(id)
     {

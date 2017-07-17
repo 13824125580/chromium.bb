@@ -5,8 +5,9 @@
 #include "blimp/client/feature/compositor/blimp_compositor_manager.h"
 
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "blimp/client/feature/compositor/blimp_layer_tree_settings.h"
-#include "blimp/common/compositor/blimp_image_serialization_processor.h"
+#include "blimp/client/feature/compositor/blob_image_serialization_processor.h"
 #include "blimp/common/compositor/blimp_task_graph_runner.h"
 #include "cc/proto/compositor_message.pb.h"
 
@@ -21,15 +22,14 @@ const int kDummyTabId = 0;
 }  // namespace
 
 BlimpCompositorManager::BlimpCompositorManager(
-    RenderWidgetFeature* render_widget_feature)
+    RenderWidgetFeature* render_widget_feature,
+    BlimpCompositorManagerClient* client)
     : visible_(false),
       window_(gfx::kNullAcceleratedWidget),
       gpu_memory_buffer_manager_(new BlimpGpuMemoryBufferManager),
-      image_serialization_processor_(
-          new BlimpImageSerializationProcessor(
-              BlimpImageSerializationProcessor::Mode::DESERIALIZATION)),
       active_compositor_(nullptr),
-      render_widget_feature_(render_widget_feature) {
+      render_widget_feature_(render_widget_feature),
+      client_(client) {
   DCHECK(render_widget_feature_);
   render_widget_feature_->SetDelegate(kDummyTabId, this);
 }
@@ -70,14 +70,14 @@ void BlimpCompositorManager::GenerateLayerTreeSettings(
   PopulateCommonLayerTreeSettings(settings);
 }
 
-scoped_ptr<BlimpCompositor> BlimpCompositorManager::CreateBlimpCompositor(
-    int render_widget_id, BlimpCompositorClient* client) {
-  return make_scoped_ptr(
-      new BlimpCompositor(render_widget_id, client));
+std::unique_ptr<BlimpCompositor> BlimpCompositorManager::CreateBlimpCompositor(
+    int render_widget_id,
+    BlimpCompositorClient* client) {
+  return base::WrapUnique(new BlimpCompositor(render_widget_id, client));
 }
 
 void BlimpCompositorManager::OnRenderWidgetCreated(int render_widget_id) {
-  DCHECK(!GetCompositor(render_widget_id));
+  CHECK(!GetCompositor(render_widget_id));
 
   compositors_[render_widget_id] = CreateBlimpCompositor(render_widget_id,
                                                          this);
@@ -89,12 +89,14 @@ void BlimpCompositorManager::OnRenderWidgetInitialized(int render_widget_id) {
     return;
 
   if (active_compositor_) {
+    VLOG(1) << "Hiding currently active compositor for render widget: "
+            << active_compositor_->render_widget_id();
     active_compositor_->SetVisible(false);
     active_compositor_->ReleaseAcceleratedWidget();
   }
 
   active_compositor_ = GetCompositor(render_widget_id);
-  DCHECK(active_compositor_);
+  CHECK(active_compositor_);
 
   active_compositor_->SetVisible(visible_);
   active_compositor_->SetAcceleratedWidget(window_);
@@ -102,7 +104,7 @@ void BlimpCompositorManager::OnRenderWidgetInitialized(int render_widget_id) {
 
 void BlimpCompositorManager::OnRenderWidgetDeleted(int render_widget_id) {
   CompositorMap::const_iterator it = compositors_.find(render_widget_id);
-  DCHECK(it != compositors_.end());
+  CHECK(it != compositors_.end());
 
   // Reset the |active_compositor_| if that is what we're destroying right now.
   if (active_compositor_ == it->second.get())
@@ -113,9 +115,9 @@ void BlimpCompositorManager::OnRenderWidgetDeleted(int render_widget_id) {
 
 void BlimpCompositorManager::OnCompositorMessageReceived(
     int render_widget_id,
-    scoped_ptr<cc::proto::CompositorMessage> message) {
+    std::unique_ptr<cc::proto::CompositorMessage> message) {
   BlimpCompositor* compositor = GetCompositor(render_widget_id);
-  DCHECK(compositor);
+  CHECK(compositor);
 
   compositor->OnCompositorMessageReceived(std::move(message));
 }
@@ -129,9 +131,21 @@ cc::LayerTreeSettings* BlimpCompositorManager::GetLayerTreeSettings() {
     // client. Since it currently overrides all settings, ignore them.
     // See crbug/577985.
     GenerateLayerTreeSettings(settings_.get());
+    settings_
+      ->abort_commit_before_output_surface_creation = false;
   }
 
   return settings_.get();
+}
+
+void BlimpCompositorManager::DidCompleteSwapBuffers() {
+  DCHECK(client_);
+  client_->OnSwapBuffersCompleted();
+}
+
+void BlimpCompositorManager::DidCommitAndDrawFrame() {
+  DCHECK(client_);
+  client_->DidCommitAndDrawFrame();
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
@@ -168,7 +182,7 @@ BlimpCompositorManager::GetGpuMemoryBufferManager() {
 
 cc::ImageSerializationProcessor*
 BlimpCompositorManager::GetImageSerializationProcessor() {
-  return image_serialization_processor_.get();
+  return BlobImageSerializationProcessor::current();
 }
 
 void BlimpCompositorManager::SendWebGestureEvent(

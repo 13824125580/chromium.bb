@@ -7,6 +7,8 @@ package org.chromium.chrome.browser.precache;
 import android.content.Context;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.google.android.gms.gcm.Task;
+
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
@@ -23,6 +25,7 @@ import java.util.concurrent.Callable;
 public class PrecacheLauncherTest extends NativeLibraryTestBase {
     private StubProfileSyncService mSync;
     private PrecacheLauncherUnderTest mLauncher;
+    private MockPrecacheTaskScheduler mPrecacheTaskScheduler;
 
     private class PrecacheLauncherUnderTest extends PrecacheLauncher {
         private boolean mShouldRun = false;
@@ -63,18 +66,32 @@ public class PrecacheLauncherTest extends NativeLibraryTestBase {
         }
     }
 
+    static class MockPrecacheTaskScheduler extends PrecacheTaskScheduler {
+        @Override
+        boolean scheduleTask(Context context, Task task) {
+            return true;
+        }
+
+        @Override
+        boolean cancelTask(Context context, String tag) {
+            return true;
+        }
+    }
+
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-
         // This is a PrecacheLauncher with a stubbed out nativeShouldRun so we can change that on
         // the fly without needing to set up a sync backend.
         mLauncher = new PrecacheLauncherUnderTest();
 
+        mPrecacheTaskScheduler = new MockPrecacheTaskScheduler();
+        PrecacheController.setTaskScheduler(mPrecacheTaskScheduler);
+
         // The target context persists throughout the entire test run, and so leaks state between
         // tests. We reset the is_precaching_enabled pref to false to make the test run consistent,
         // in case another test class has modified this pref.
-        PrecacheServiceLauncher.setIsPrecachingEnabled(getTargetContext(), false);
+        PrecacheController.setIsPrecachingEnabled(getTargetContext(), false);
 
         // ProfileSyncService needs the browser process to be running.
         loadNativeLibraryAndInitBrowserProcess();
@@ -95,7 +112,7 @@ public class PrecacheLauncherTest extends NativeLibraryTestBase {
     @Override
     protected void tearDown() throws Exception {
         ProfileSyncService.overrideForTests(null);
-        PrecacheServiceLauncher.setIsPrecachingEnabled(getTargetContext(), false);
+        PrecacheController.setIsPrecachingEnabled(getTargetContext(), false);
         super.tearDown();
     }
 
@@ -192,7 +209,7 @@ public class PrecacheLauncherTest extends NativeLibraryTestBase {
 
     /** Return the value of the is_precaching_enabled pref, as set by updateEnabledSync. */
     private boolean isPrecachingEnabled() {
-        return PrecacheServiceLauncher.isPrecachingEnabled(getTargetContext());
+        return PrecacheController.get(getTargetContext()).isPrecachingEnabled();
     }
 
     /** Return the set of failure reasons for mLauncher. */

@@ -5,11 +5,11 @@
 #ifndef CC_TREES_PROXY_H_
 #define CC_TREES_PROXY_H_
 
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -26,6 +26,7 @@ class Vector2d;
 namespace cc {
 class BeginFrameSource;
 class LayerTreeDebugState;
+class LayerTreeMutator;
 class OutputSurface;
 struct RendererCapabilities;
 
@@ -48,8 +49,6 @@ class CC_EXPORT Proxy {
 
   virtual void SetVisible(bool visible) = 0;
 
-  virtual void SetThrottleFrameProduction(bool throttle) = 0;
-
   virtual const RendererCapabilities& GetRendererCapabilities() const = 0;
 
   virtual void SetNeedsAnimate() = 0;
@@ -71,15 +70,12 @@ class CC_EXPORT Proxy {
 
   // Must be called before using the proxy.
   virtual void Start(
-      scoped_ptr<BeginFrameSource> external_begin_frame_source) = 0;
+      std::unique_ptr<BeginFrameSource> external_begin_frame_source) = 0;
   virtual void Stop() = 0;   // Must be called before deleting the proxy.
 
+  virtual void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) = 0;
+
   virtual bool SupportsImplScrolling() const = 0;
-
-  virtual void SetChildrenNeedBeginFrames(bool children_need_begin_frames) = 0;
-
-  virtual void SetAuthoritativeVSyncInterval(
-      const base::TimeDelta& interval) = 0;
 
   virtual void UpdateTopControlsState(TopControlsState constraints,
                                       TopControlsState current,

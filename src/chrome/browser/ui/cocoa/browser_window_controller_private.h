@@ -7,7 +7,7 @@
 
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_layout.h"
-#import "chrome/browser/ui/cocoa/presentation_mode_controller.h"
+#import "chrome/browser/ui/cocoa/fullscreen_toolbar_controller.h"
 
 @class BrowserWindowLayout;
 class PermissionBubbleManager;
@@ -27,6 +27,10 @@ class WebContents;
 // Create the appropriate tab strip controller based on whether or not side
 // tabs are enabled. Replaces the current controller.
 - (void)createTabStripController;
+
+// Sets the window's collection behavior to the appropriate
+// fullscreen behavior.
+- (void)updateFullscreenCollectionBehavior;
 
 // Saves the window's position in the local state preferences.
 - (void)saveWindowPositionIfNeeded;
@@ -52,7 +56,6 @@ class WebContents;
 // otherwise.
 - (BOOL)placeBookmarkBarBelowInfoBar;
 
-
 // Lays out the tab content area in the given frame. If the height changes,
 // sends a message to the renderer to resize.
 - (void)layoutTabContentArea:(NSRect)frame;
@@ -70,7 +73,7 @@ class WebContents;
                           regularWindow:(NSWindow*)regularWindow
                        fullscreenWindow:(NSWindow*)fullscreenWindow;
 
-// Called when a permission bubble closes, and informs the presentation
+// Called when a permission bubble closes, and informs the fullscreen toolbar
 // controller that the dropdown can be hidden.  (The dropdown should never be
 // hidden while a permissions bubble is visible.)
 - (void)permissionBubbleWindowWillClose:(NSNotification*)notification;
@@ -105,8 +108,8 @@ class WebContents;
 // The min Y of the bubble point in the coordinate space of the toolbar.
 - (NSInteger)pageInfoBubblePointY;
 
-// Configures the presentationModeController_ right after it is constructed.
-- (void)configurePresentationModeController;
+// Configures the fullscreenToolbarController_ right after it is constructed.
+- (void)configureFullscreenToolbarController;
 
 // Allows the omnibox to slide. Also prepares UI for several fullscreen modes.
 // This method gets called when entering AppKit fullscren, or when entering
@@ -119,8 +122,8 @@ class WebContents;
 - (void)adjustUIForExitingFullscreenAndStopOmniboxSliding;
 
 // Exposed for testing.
-// Creates a PresentationModeController with the given style.
-- (PresentationModeController*)newPresentationModeControllerWithStyle:
+// Creates a FullscreenToolbarController with the given style.
+- (FullscreenToolbarController*)newFullscreenToolbarControllerWithStyle:
     (fullscreen_mac::SlidingStyle)style;
 
 // Toggles the AppKit Fullscreen API. By default, doing so enters Canonical
@@ -175,14 +178,6 @@ class WebContents;
 - (content::WebContents*)webContents;
 - (PermissionBubbleManager*)permissionBubbleManager;
 
-#if defined(MAC_OS_X_VERSION_10_7) && \
-    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
-// Redeclare some methods from NSWindowDelegate to suppress
-// -Wpartial-availability warnings.
-- (void)windowDidEnterFullScreen:(NSNotification*)notification;
-- (void)windowDidExitFullScreen:(NSNotification*)notification;
-- (void)windowWillExitFullScreen:(NSNotification*)notification;
-
 // Hides or unhides any displayed modal sheet for fullscreen transition.
 // Modal sheets should be hidden at the beginning and then shown at the end.
 - (void)setSheetHiddenForFullscreenTransition:(BOOL)shoudHide;
@@ -194,10 +189,8 @@ class WebContents;
 // it when we are entering fullscreen.
 - (void)adjustUIForEnteringFullscreen;
 
-// Returns YES if the fullscreen is for tab content.
-- (BOOL)isFullscreenForTabContent;
-
-#endif
+// Returns YES if the fullscreen is for tab content or an extension.
+- (BOOL)isFullscreenForTabContentOrExtension;
 
 @end  // @interface BrowserWindowController(Private)
 

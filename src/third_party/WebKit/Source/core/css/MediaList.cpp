@@ -25,6 +25,7 @@
 #include "core/css/MediaQueryExp.h"
 #include "core/css/parser/MediaQueryParser.h"
 #include "wtf/text/StringBuilder.h"
+#include <memory>
 
 namespace blink {
 
@@ -59,9 +60,7 @@ MediaQuerySet::MediaQuerySet(const MediaQuerySet& o)
         m_queries[i] = o.m_queries[i]->copy();
 }
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(MediaQuerySet);
-
-PassRefPtrWillBeRawPtr<MediaQuerySet> MediaQuerySet::create(const String& mediaString)
+MediaQuerySet* MediaQuerySet::create(const String& mediaString)
 {
     if (mediaString.isEmpty())
         return MediaQuerySet::create();
@@ -69,7 +68,7 @@ PassRefPtrWillBeRawPtr<MediaQuerySet> MediaQuerySet::create(const String& mediaS
     return MediaQueryParser::parseMediaQuerySet(mediaString);
 }
 
-PassRefPtrWillBeRawPtr<MediaQuerySet> MediaQuerySet::createOffMainThread(const String& mediaString)
+MediaQuerySet* MediaQuerySet::createOffMainThread(const String& mediaString)
 {
     if (mediaString.isEmpty())
         return MediaQuerySet::create();
@@ -79,7 +78,7 @@ PassRefPtrWillBeRawPtr<MediaQuerySet> MediaQuerySet::createOffMainThread(const S
 
 bool MediaQuerySet::set(const String& mediaString)
 {
-    RefPtrWillBeRawPtr<MediaQuerySet> result = create(mediaString);
+    MediaQuerySet* result = create(mediaString);
     m_queries.swap(result->m_queries);
     return true;
 }
@@ -89,13 +88,13 @@ bool MediaQuerySet::add(const String& queryString)
     // To "parse a media query" for a given string means to follow "the parse
     // a media query list" steps and return "null" if more than one media query
     // is returned, or else the returned media query.
-    RefPtrWillBeRawPtr<MediaQuerySet> result = create(queryString);
+    MediaQuerySet* result = create(queryString);
 
     // Only continue if exactly one media query is found, as described above.
     if (result->m_queries.size() != 1)
         return true;
 
-    OwnPtrWillBeRawPtr<MediaQuery> newQuery = result->m_queries[0].release();
+    MediaQuery* newQuery = result->m_queries[0].release();
     ASSERT(newQuery);
 
     // If comparing with any of the media queries in the collection of media
@@ -106,7 +105,7 @@ bool MediaQuerySet::add(const String& queryString)
             return true;
     }
 
-    m_queries.append(newQuery.release());
+    m_queries.append(newQuery);
     return true;
 }
 
@@ -115,13 +114,13 @@ bool MediaQuerySet::remove(const String& queryStringToRemove)
     // To "parse a media query" for a given string means to follow "the parse
     // a media query list" steps and return "null" if more than one media query
     // is returned, or else the returned media query.
-    RefPtrWillBeRawPtr<MediaQuerySet> result = create(queryStringToRemove);
+    MediaQuerySet* result = create(queryStringToRemove);
 
     // Only continue if exactly one media query is found, as described above.
     if (result->m_queries.size() != 1)
         return true;
 
-    OwnPtrWillBeRawPtr<MediaQuery> newQuery = result->m_queries[0].release();
+    MediaQuery* newQuery = result->m_queries[0].release();
     ASSERT(newQuery);
 
     // Remove any media query from the collection of media queries for which
@@ -139,7 +138,7 @@ bool MediaQuerySet::remove(const String& queryStringToRemove)
     return found;
 }
 
-void MediaQuerySet::addMediaQuery(PassOwnPtrWillBeRawPtr<MediaQuery> mediaQuery)
+void MediaQuerySet::addMediaQuery(MediaQuery* mediaQuery)
 {
     m_queries.append(mediaQuery);
 }
@@ -151,7 +150,7 @@ String MediaQuerySet::mediaText() const
     bool first = true;
     for (size_t i = 0; i < m_queries.size(); ++i) {
         if (!first)
-            text.appendLiteral(", ");
+            text.append(", ");
         else
             first = false;
         text.append(m_queries[i]->cssText());
@@ -161,11 +160,9 @@ String MediaQuerySet::mediaText() const
 
 DEFINE_TRACE(MediaQuerySet)
 {
-    // We don't support tracing of vectors of OwnPtrs (ie. OwnPtr<Vector<OwnPtr<MediaQuery>>>).
+    // We don't support tracing of vectors of OwnPtrs (ie. std::unique_ptr<Vector<std::unique_ptr<MediaQuery>>>).
     // Since this is a transitional object we are just ifdef'ing it out when oilpan is not enabled.
-#if ENABLE(OILPAN)
     visitor->trace(m_queries);
-#endif
 }
 
 MediaList::MediaList(MediaQuerySet* mediaQueries, CSSStyleSheet* parentSheet)
@@ -182,8 +179,6 @@ MediaList::MediaList(MediaQuerySet* mediaQueries, CSSRule* parentRule)
 {
 }
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(MediaList);
-
 void MediaList::setMediaText(const String& value)
 {
     CSSStyleSheet::RuleMutationScope mutationScope(m_parentRule);
@@ -196,7 +191,7 @@ void MediaList::setMediaText(const String& value)
 
 String MediaList::item(unsigned index) const
 {
-    const WillBeHeapVector<OwnPtrWillBeMember<MediaQuery>>& queries = m_mediaQueries->queryVector();
+    const HeapVector<Member<MediaQuery>>& queries = m_mediaQueries->queryVector();
     if (index < queries.size())
         return queries[index]->cssText();
     return String();

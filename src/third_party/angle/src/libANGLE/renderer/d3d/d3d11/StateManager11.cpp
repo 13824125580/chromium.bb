@@ -11,6 +11,7 @@
 #include "common/BitSetIterator.h"
 #include "common/utilities.h"
 #include "libANGLE/Query.h"
+#include "libANGLE/VertexArray.h"
 #include "libANGLE/renderer/d3d/d3d11/Framebuffer11.h"
 #include "libANGLE/renderer/d3d/d3d11/Renderer11.h"
 #include "libANGLE/renderer/d3d/d3d11/RenderTarget11.h"
@@ -130,7 +131,8 @@ void StateManager11::SRVCache::clear()
 }
 
 static const GLenum QueryTypes[] = {GL_ANY_SAMPLES_PASSED, GL_ANY_SAMPLES_PASSED_CONSERVATIVE,
-                                    GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, GL_TIME_ELAPSED_EXT};
+                                    GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, GL_TIME_ELAPSED_EXT,
+                                    GL_COMMANDS_COMPLETED_CHROMIUM};
 
 StateManager11::StateManager11(Renderer11 *renderer)
     : mRenderer(renderer),
@@ -150,7 +152,9 @@ StateManager11::StateManager11(Renderer11 *renderer)
       mCurNear(0.0f),
       mCurFar(0.0f),
       mViewportBounds(),
-      mRenderTargetIsDirty(false)
+      mRenderTargetIsDirty(false),
+      mDirtyCurrentValueAttribs(),
+      mCurrentValueAttribs()
 {
     mCurBlendState.blend                 = false;
     mCurBlendState.sourceBlendRGB        = GL_ONE;
@@ -191,6 +195,9 @@ StateManager11::StateManager11(Renderer11 *renderer)
     mCurRasterState.polygonOffsetUnits  = 0.0f;
     mCurRasterState.pointDrawMode       = false;
     mCurRasterState.multiSample         = false;
+
+    // Initially all current value attributes must be updated on first use.
+    mDirtyCurrentValueAttribs.flip();
 }
 
 StateManager11::~StateManager11()
@@ -241,7 +248,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
         return;
     }
 
-    for (unsigned int dirtyBit : angle::IterateBitSet(dirtyBits))
+    for (auto dirtyBit : angle::IterateBitSet(dirtyBits))
     {
         switch (dirtyBit)
         {
@@ -461,6 +468,13 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 mRenderTargetIsDirty = true;
                 break;
             default:
+                if (dirtyBit >= gl::State::DIRTY_BIT_CURRENT_VALUE_0 &&
+                    dirtyBit < gl::State::DIRTY_BIT_CURRENT_VALUE_MAX)
+                {
+                    size_t attribIndex =
+                        static_cast<size_t>(dirtyBit - gl::State::DIRTY_BIT_CURRENT_VALUE_0);
+                    mDirtyCurrentValueAttribs.set(attribIndex);
+                }
                 break;
         }
     }
@@ -799,10 +813,22 @@ void StateManager11::invalidateEverything()
     invalidateBoundViews();
 }
 
-void StateManager11::setRenderTarget(ID3D11RenderTargetView *renderTarget,
-                                     ID3D11DepthStencilView *depthStencil)
+void StateManager11::setOneTimeRenderTarget(ID3D11RenderTargetView *renderTarget,
+                                            ID3D11DepthStencilView *depthStencil)
 {
     mRenderer->getDeviceContext()->OMSetRenderTargets(1, &renderTarget, depthStencil);
+    mRenderTargetIsDirty = true;
+}
+
+void StateManager11::setOneTimeRenderTargets(
+    const std::vector<ID3D11RenderTargetView *> &renderTargets,
+    ID3D11DepthStencilView *depthStencil)
+{
+    UINT count               = static_cast<UINT>(renderTargets.size());
+    auto renderTargetPointer = (!renderTargets.empty() ? renderTargets.data() : nullptr);
+
+    mRenderer->getDeviceContext()->OMSetRenderTargets(count, renderTargetPointer, depthStencil);
+    mRenderTargetIsDirty = true;
 }
 
 void StateManager11::onBeginQuery(Query11 *query)
@@ -815,9 +841,9 @@ void StateManager11::onDeleteQueryObject(Query11 *query)
     mCurrentQueries.erase(query);
 }
 
-gl::Error StateManager11::onMakeCurrent(const gl::Data &data)
+gl::Error StateManager11::onMakeCurrent(const gl::ContextState &data)
 {
-    const gl::State &state = *data.state;
+    const gl::State &state = data.getState();
 
     for (Query11 *query : mCurrentQueries)
     {
@@ -946,11 +972,18 @@ void StateManager11::initialize(const gl::Caps &caps)
 
     // Initialize cached NULL SRV block
     mNullSRVs.resize(caps.maxTextureImageUnits, nullptr);
+
+    mCurrentValueAttribs.resize(caps.maxVertexAttributes);
 }
 
-gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
+void StateManager11::deinitialize()
 {
-    const Framebuffer11 *framebuffer11 = GetImplAs<Framebuffer11>(framebuffer);
+    mCurrentValueAttribs.clear();
+}
+
+gl::Error StateManager11::syncFramebuffer(gl::Framebuffer *framebuffer)
+{
+    Framebuffer11 *framebuffer11 = GetImplAs<Framebuffer11>(framebuffer);
     gl::Error error = framebuffer11->invalidateSwizzles();
     if (error.isError())
     {
@@ -1052,7 +1085,7 @@ gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
     }
 
     // TODO(jmadill): Use context caps?
-    UINT drawBuffers = mRenderer->getRendererCaps().maxDrawBuffers;
+    UINT drawBuffers = mRenderer->getNativeCaps().maxDrawBuffers;
 
     // Apply the render target and depth stencil
     mRenderer->getDeviceContext()->OMSetRenderTargets(drawBuffers, framebufferRTVs.data(),
@@ -1064,6 +1097,42 @@ gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
     setViewportBounds(renderTargetWidth, renderTargetHeight);
 
     return gl::Error(GL_NO_ERROR);
+}
+
+gl::Error StateManager11::updateCurrentValueAttribs(const gl::State &state,
+                                                    VertexDataManager *vertexDataManager)
+{
+    const auto &activeAttribsMask  = state.getProgram()->getActiveAttribLocationsMask();
+    const auto &dirtyActiveAttribs = (activeAttribsMask & mDirtyCurrentValueAttribs);
+    const auto &vertexAttributes   = state.getVertexArray()->getVertexAttributes();
+
+    for (auto attribIndex : angle::IterateBitSet(dirtyActiveAttribs))
+    {
+        if (vertexAttributes[attribIndex].enabled)
+            continue;
+
+        mDirtyCurrentValueAttribs.reset(attribIndex);
+
+        const auto &currentValue =
+            state.getVertexAttribCurrentValue(static_cast<unsigned int>(attribIndex));
+        auto currentValueAttrib              = &mCurrentValueAttribs[attribIndex];
+        currentValueAttrib->currentValueType = currentValue.Type;
+        currentValueAttrib->attribute        = &vertexAttributes[attribIndex];
+
+        gl::Error error = vertexDataManager->storeCurrentValue(currentValue, currentValueAttrib,
+                                                               static_cast<size_t>(attribIndex));
+        if (error.isError())
+        {
+            return error;
+        }
+    }
+
+    return gl::Error(GL_NO_ERROR);
+}
+
+const std::vector<TranslatedAttribute> &StateManager11::getCurrentValueAttribs() const
+{
+    return mCurrentValueAttribs;
 }
 
 }  // namespace rx

@@ -7,11 +7,11 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "sync/internal_api/public/base/model_type.h"
 #include "sync/test/fake_server/fake_server.h"
@@ -76,7 +76,7 @@ FakeServerVerifier::~FakeServerVerifier() {}
 AssertionResult FakeServerVerifier::VerifyEntityCountByType(
     size_t expected_count,
     syncer::ModelType model_type) const {
-  scoped_ptr<base::DictionaryValue> entities =
+  std::unique_ptr<base::DictionaryValue> entities =
       fake_server_->GetEntitiesAsDictionaryValue();
   if (!entities.get()) {
     return DictionaryCreationAssertionFailure();
@@ -100,7 +100,7 @@ AssertionResult FakeServerVerifier::VerifyEntityCountByTypeAndName(
     size_t expected_count,
     syncer::ModelType model_type,
     const string& name) const {
-  scoped_ptr<base::DictionaryValue> entities =
+  std::unique_ptr<base::DictionaryValue> entities =
       fake_server_->GetEntitiesAsDictionaryValue();
   if (!entities.get()) {
     return DictionaryCreationAssertionFailure();
@@ -110,12 +110,10 @@ AssertionResult FakeServerVerifier::VerifyEntityCountByTypeAndName(
   base::ListValue* entity_list = NULL;
   size_t actual_count = 0;
   if (entities->GetList(model_type_string, &entity_list)) {
-    scoped_ptr<base::Value> name_value(new base::StringValue(name));
-    for (base::ListValue::const_iterator it = entity_list->begin();
-         it != entity_list->end(); ++it) {
-      if (name_value->Equals(*it)) {
+    base::StringValue name_value(name);
+    for (const auto& entity : *entity_list) {
+      if (name_value.Equals(entity.get()))
         actual_count++;
-      }
     }
   }
 

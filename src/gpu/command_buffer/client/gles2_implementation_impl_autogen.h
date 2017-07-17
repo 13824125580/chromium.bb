@@ -228,7 +228,7 @@ void GLES2Implementation::ClearBufferfi(GLenum buffer,
                                         GLint stencil) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glClearBufferfi("
-                     << GLES2Util::GetStringBufferfv(buffer) << ", "
+                     << GLES2Util::GetStringBufferfi(buffer) << ", "
                      << drawbuffers << ", " << depth << ", " << stencil << ")");
   helper_->ClearBufferfi(buffer, drawbuffers, depth, stencil);
   CheckGLError();
@@ -3075,6 +3075,14 @@ void GLES2Implementation::BindVertexArrayOES(GLuint array) {
   CheckGLError();
 }
 
+void GLES2Implementation::DescheduleUntilFinishedCHROMIUM() {
+  GPU_CLIENT_SINGLE_THREAD_CHECK();
+  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glDescheduleUntilFinishedCHROMIUM("
+                     << ")");
+  helper_->DescheduleUntilFinishedCHROMIUM();
+  CheckGLError();
+}
+
 void GLES2Implementation::GetTranslatedShaderSourceANGLE(GLuint shader,
                                                          GLsizei bufsize,
                                                          GLsizei* length,
@@ -3102,29 +3110,6 @@ void GLES2Implementation::GetTranslatedShaderSourceANGLE(GLuint shader,
   }
   CheckGLError();
 }
-void GLES2Implementation::TexImageIOSurface2DCHROMIUM(GLenum target,
-                                                      GLsizei width,
-                                                      GLsizei height,
-                                                      GLuint ioSurfaceId,
-                                                      GLuint plane) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glTexImageIOSurface2DCHROMIUM("
-                     << GLES2Util::GetStringTextureBindTarget(target) << ", "
-                     << width << ", " << height << ", " << ioSurfaceId << ", "
-                     << plane << ")");
-  if (width < 0) {
-    SetGLError(GL_INVALID_VALUE, "glTexImageIOSurface2DCHROMIUM", "width < 0");
-    return;
-  }
-  if (height < 0) {
-    SetGLError(GL_INVALID_VALUE, "glTexImageIOSurface2DCHROMIUM", "height < 0");
-    return;
-  }
-  helper_->TexImageIOSurface2DCHROMIUM(target, width, height, ioSurfaceId,
-                                       plane);
-  CheckGLError();
-}
-
 void GLES2Implementation::CopyTextureCHROMIUM(
     GLenum source_id,
     GLenum dest_id,
@@ -3190,118 +3175,6 @@ void GLES2Implementation::CompressedCopyTextureCHROMIUM(GLenum source_id,
                      << GLES2Util::GetStringEnum(source_id) << ", "
                      << GLES2Util::GetStringEnum(dest_id) << ")");
   helper_->CompressedCopyTextureCHROMIUM(source_id, dest_id);
-  CheckGLError();
-}
-
-void GLES2Implementation::GenValuebuffersCHROMIUM(GLsizei n, GLuint* buffers) {
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glGenValuebuffersCHROMIUM(" << n
-                     << ", " << static_cast<const void*>(buffers) << ")");
-  if (n < 0) {
-    SetGLError(GL_INVALID_VALUE, "glGenValuebuffersCHROMIUM", "n < 0");
-    return;
-  }
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GetIdHandler(id_namespaces::kValuebuffers)->MakeIds(this, 0, n, buffers);
-  GenValuebuffersCHROMIUMHelper(n, buffers);
-  helper_->GenValuebuffersCHROMIUMImmediate(n, buffers);
-  if (share_group_->bind_generates_resource())
-    helper_->CommandBufferHelper::Flush();
-  GPU_CLIENT_LOG_CODE_BLOCK({
-    for (GLsizei i = 0; i < n; ++i) {
-      GPU_CLIENT_LOG("  " << i << ": " << buffers[i]);
-    }
-  });
-  CheckGLError();
-}
-
-void GLES2Implementation::DeleteValuebuffersCHROMIUM(
-    GLsizei n,
-    const GLuint* valuebuffers) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glDeleteValuebuffersCHROMIUM(" << n
-                     << ", " << static_cast<const void*>(valuebuffers) << ")");
-  GPU_CLIENT_LOG_CODE_BLOCK({
-    for (GLsizei i = 0; i < n; ++i) {
-      GPU_CLIENT_LOG("  " << i << ": " << valuebuffers[i]);
-    }
-  });
-  GPU_CLIENT_DCHECK_CODE_BLOCK({
-    for (GLsizei i = 0; i < n; ++i) {
-      DCHECK(valuebuffers[i] != 0);
-    }
-  });
-  if (n < 0) {
-    SetGLError(GL_INVALID_VALUE, "glDeleteValuebuffersCHROMIUM", "n < 0");
-    return;
-  }
-  DeleteValuebuffersCHROMIUMHelper(n, valuebuffers);
-  CheckGLError();
-}
-
-GLboolean GLES2Implementation::IsValuebufferCHROMIUM(GLuint valuebuffer) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  TRACE_EVENT0("gpu", "GLES2Implementation::IsValuebufferCHROMIUM");
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glIsValuebufferCHROMIUM("
-                     << valuebuffer << ")");
-  typedef cmds::IsValuebufferCHROMIUM::Result Result;
-  Result* result = GetResultAs<Result*>();
-  if (!result) {
-    return GL_FALSE;
-  }
-  *result = 0;
-  helper_->IsValuebufferCHROMIUM(valuebuffer, GetResultShmId(),
-                                 GetResultShmOffset());
-  WaitForCmd();
-  GLboolean result_value = *result != 0;
-  GPU_CLIENT_LOG("returned " << result_value);
-  CheckGLError();
-  return result_value;
-}
-
-void GLES2Implementation::BindValuebufferCHROMIUM(GLenum target,
-                                                  GLuint valuebuffer) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glBindValuebufferCHROMIUM("
-                     << GLES2Util::GetStringValueBufferTarget(target) << ", "
-                     << valuebuffer << ")");
-  if (IsValuebufferReservedId(valuebuffer)) {
-    SetGLError(GL_INVALID_OPERATION, "BindValuebufferCHROMIUM",
-               "valuebuffer reserved id");
-    return;
-  }
-  BindValuebufferCHROMIUMHelper(target, valuebuffer);
-  CheckGLError();
-}
-
-void GLES2Implementation::SubscribeValueCHROMIUM(GLenum target,
-                                                 GLenum subscription) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glSubscribeValueCHROMIUM("
-                     << GLES2Util::GetStringValueBufferTarget(target) << ", "
-                     << GLES2Util::GetStringSubscriptionTarget(subscription)
-                     << ")");
-  helper_->SubscribeValueCHROMIUM(target, subscription);
-  CheckGLError();
-}
-
-void GLES2Implementation::PopulateSubscribedValuesCHROMIUM(GLenum target) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix()
-                     << "] glPopulateSubscribedValuesCHROMIUM("
-                     << GLES2Util::GetStringValueBufferTarget(target) << ")");
-  helper_->PopulateSubscribedValuesCHROMIUM(target);
-  CheckGLError();
-}
-
-void GLES2Implementation::UniformValuebufferCHROMIUM(GLint location,
-                                                     GLenum target,
-                                                     GLenum subscription) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG(
-      "[" << GetLogPrefix() << "] glUniformValuebufferCHROMIUM(" << location
-          << ", " << GLES2Util::GetStringValueBufferTarget(target) << ", "
-          << GLES2Util::GetStringSubscriptionTarget(subscription) << ")");
-  helper_->UniformValuebufferCHROMIUM(location, target, subscription);
   CheckGLError();
 }
 
@@ -3400,6 +3273,27 @@ void GLES2Implementation::ScheduleOverlayPlaneCHROMIUM(
   helper_->ScheduleOverlayPlaneCHROMIUM(
       plane_z_order, plane_transform, overlay_texture_id, bounds_x, bounds_y,
       bounds_width, bounds_height, uv_x, uv_y, uv_width, uv_height);
+  CheckGLError();
+}
+
+void GLES2Implementation::ScheduleCALayerInUseQueryCHROMIUM(
+    GLsizei count,
+    const GLuint* textures) {
+  GPU_CLIENT_SINGLE_THREAD_CHECK();
+  GPU_CLIENT_LOG("[" << GetLogPrefix()
+                     << "] glScheduleCALayerInUseQueryCHROMIUM(" << count
+                     << ", " << static_cast<const void*>(textures) << ")");
+  GPU_CLIENT_LOG_CODE_BLOCK({
+    for (GLsizei i = 0; i < count; ++i) {
+      GPU_CLIENT_LOG("  " << i << ": " << textures[0 + i * 1]);
+    }
+  });
+  if (count < 0) {
+    SetGLError(GL_INVALID_VALUE, "glScheduleCALayerInUseQueryCHROMIUM",
+               "count < 0");
+    return;
+  }
+  helper_->ScheduleCALayerInUseQueryCHROMIUMImmediate(count, textures);
   CheckGLError();
 }
 

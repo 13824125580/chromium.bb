@@ -4,20 +4,27 @@
 
 #include "content/browser/dom_storage/dom_storage_area.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
+#include <cctype>  // for std::isalnum
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/process/process_info.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "content/browser/dom_storage/dom_storage_namespace.h"
 #include "content/browser/dom_storage/dom_storage_task_runner.h"
 #include "content/browser/dom_storage/local_storage_database_adapter.h"
 #include "content/browser/dom_storage/session_storage_database.h"
 #include "content/browser/dom_storage/session_storage_database_adapter.h"
+#include "content/browser/leveldb_wrapper_impl.h"
 #include "content/common/dom_storage/dom_storage_map.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/public/browser/browser_thread.h"
@@ -94,6 +101,7 @@ GURL DOMStorageArea::OriginFromDatabaseFileName(const base::FilePath& name) {
 
 void DOMStorageArea::EnableAggressiveCommitDelay() {
   s_aggressive_flushing_enabled_ = true;
+  LevelDBWrapperImpl::EnableAggressiveCommitDelay();
 }
 
 DOMStorageArea::DOMStorageArea(const GURL& origin,
@@ -328,6 +336,47 @@ void DOMStorageArea::Shutdown() {
       DOMStorageTaskRunner::COMMIT_SEQUENCE,
       base::Bind(&DOMStorageArea::ShutdownInCommitSequence, this));
   DCHECK(success);
+}
+
+void DOMStorageArea::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
+  DCHECK(task_runner_->IsRunningOnPrimarySequence());
+  if (!is_initial_import_done_)
+    return;
+
+  // Limit the url length to 50 and strip special characters.
+  std::string url = origin_.spec().substr(0, 50);
+  for (size_t index = 0; index < url.size(); ++index) {
+    if (!std::isalnum(url[index]))
+      url[index] = '_';
+  }
+  std::string name =
+      base::StringPrintf("dom_storage/%s/0x%" PRIXPTR, url.c_str(),
+                         reinterpret_cast<uintptr_t>(this));
+
+  const char* system_allocator_name =
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->system_allocator_pool_name();
+  if (commit_batch_) {
+    auto commit_batch_mad = pmd->CreateAllocatorDump(name + "/commit_batch");
+    commit_batch_mad->AddScalar(
+        base::trace_event::MemoryAllocatorDump::kNameSize,
+        base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+        commit_batch_->GetDataSize());
+    if (system_allocator_name)
+      pmd->AddSuballocation(commit_batch_mad->guid(), system_allocator_name);
+  }
+
+  // Do not add storage map usage if less than 1KB.
+  if (map_->bytes_used() < 1024)
+    return;
+
+  auto map_mad = pmd->CreateAllocatorDump(name + "/storage_map");
+  map_mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                     base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                     map_->bytes_used());
+  if (system_allocator_name)
+    pmd->AddSuballocation(map_mad->guid(), system_allocator_name);
+  // TODO(ssid): Add memory usage of local backing storage crbug.com/605785.
 }
 
 void DOMStorageArea::InitialImportIfNeeded() {

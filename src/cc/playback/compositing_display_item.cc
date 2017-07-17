@@ -21,13 +21,12 @@
 #include "ui/gfx/skia_util.h"
 
 namespace cc {
-class ImageSerializationProcessor;
 
 CompositingDisplayItem::CompositingDisplayItem(
     uint8_t alpha,
     SkXfermode::Mode xfermode,
     SkRect* bounds,
-    skia::RefPtr<SkColorFilter> cf,
+    sk_sp<SkColorFilter> cf,
     bool lcd_text_requires_opaque_layer) {
   SetNew(alpha, xfermode, bounds, std::move(cf),
          lcd_text_requires_opaque_layer);
@@ -40,18 +39,18 @@ CompositingDisplayItem::CompositingDisplayItem(
   const proto::CompositingDisplayItem& details = proto.compositing_item();
   uint8_t alpha = static_cast<uint8_t>(details.alpha());
   SkXfermode::Mode xfermode = SkXfermodeModeFromProto(details.mode());
-  scoped_ptr<SkRect> bounds;
+  std::unique_ptr<SkRect> bounds;
   if (details.has_bounds()) {
     bounds.reset(
         new SkRect(gfx::RectFToSkRect(ProtoToRectF(details.bounds()))));
   }
 
-  skia::RefPtr<SkColorFilter> filter;
+  sk_sp<SkColorFilter> filter;
   if (details.has_color_filter()) {
     SkFlattenable* flattenable = SkValidatingDeserializeFlattenable(
         details.color_filter().c_str(), details.color_filter().size(),
         SkColorFilter::GetFlattenableType());
-    filter = skia::AdoptRef(static_cast<SkColorFilter*>(flattenable));
+    filter.reset(static_cast<SkColorFilter*>(flattenable));
   }
 
   bool lcd_text_requires_opaque_layer =
@@ -67,7 +66,7 @@ CompositingDisplayItem::~CompositingDisplayItem() {
 void CompositingDisplayItem::SetNew(uint8_t alpha,
                                     SkXfermode::Mode xfermode,
                                     SkRect* bounds,
-                                    skia::RefPtr<SkColorFilter> cf,
+                                    sk_sp<SkColorFilter> cf,
                                     bool lcd_text_requires_opaque_layer) {
   alpha_ = alpha;
   xfermode_ = xfermode;
@@ -78,9 +77,7 @@ void CompositingDisplayItem::SetNew(uint8_t alpha,
   lcd_text_requires_opaque_layer_ = lcd_text_requires_opaque_layer;
 }
 
-void CompositingDisplayItem::ToProtobuf(
-    proto::DisplayItem* proto,
-    ImageSerializationProcessor* image_serialization_processor) const {
+void CompositingDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   proto->set_type(proto::DisplayItem::Type_Compositing);
 
   proto::CompositingDisplayItem* details = proto->mutable_compositing_item();
@@ -90,8 +87,7 @@ void CompositingDisplayItem::ToProtobuf(
     RectFToProto(gfx::SkRectToRectF(bounds_), details->mutable_bounds());
 
   if (color_filter_) {
-    skia::RefPtr<SkData> data =
-        skia::AdoptRef(SkValidatingSerializeFlattenable(color_filter_.get()));
+    sk_sp<SkData> data(SkValidatingSerializeFlattenable(color_filter_.get()));
     if (data->size() > 0)
       details->set_color_filter(data->data(), data->size());
   }
@@ -101,12 +97,11 @@ void CompositingDisplayItem::ToProtobuf(
 
 void CompositingDisplayItem::Raster(
     SkCanvas* canvas,
-    const gfx::Rect& canvas_target_playback_rect,
     SkPicture::AbortCallback* callback) const {
   SkPaint paint;
   paint.setXfermodeMode(xfermode_);
   paint.setAlpha(alpha_);
-  paint.setColorFilter(color_filter_.get());
+  paint.setColorFilter(color_filter_);
   const SkRect* bounds = has_bounds_ ? &bounds_ : nullptr;
   if (lcd_text_requires_opaque_layer_)
     canvas->saveLayer(bounds, &paint);
@@ -117,14 +112,16 @@ void CompositingDisplayItem::Raster(
 void CompositingDisplayItem::AsValueInto(
     const gfx::Rect& visual_rect,
     base::trace_event::TracedValue* array) const {
-  array->AppendString(base::StringPrintf(
+  std::string info = base::StringPrintf(
       "CompositingDisplayItem alpha: %d, xfermode: %d, visualRect: [%s]",
-      alpha_, xfermode_, visual_rect.ToString().c_str()));
-  if (has_bounds_)
-    array->AppendString(base::StringPrintf(
-        ", bounds: [%f, %f, %f, %f]", static_cast<float>(bounds_.x()),
+      alpha_, xfermode_, visual_rect.ToString().c_str());
+  if (has_bounds_) {
+    base::StringAppendF(
+        &info, ", bounds: [%f, %f, %f, %f]", static_cast<float>(bounds_.x()),
         static_cast<float>(bounds_.y()), static_cast<float>(bounds_.width()),
-        static_cast<float>(bounds_.height())));
+        static_cast<float>(bounds_.height()));
+  }
+  array->AppendString(info);
 }
 
 size_t CompositingDisplayItem::ExternalMemoryUsage() const {
@@ -142,15 +139,12 @@ EndCompositingDisplayItem::EndCompositingDisplayItem(
 EndCompositingDisplayItem::~EndCompositingDisplayItem() {
 }
 
-void EndCompositingDisplayItem::ToProtobuf(
-    proto::DisplayItem* proto,
-    ImageSerializationProcessor* image_serialization_processor) const {
+void EndCompositingDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   proto->set_type(proto::DisplayItem::Type_EndCompositing);
 }
 
 void EndCompositingDisplayItem::Raster(
     SkCanvas* canvas,
-    const gfx::Rect& canvas_target_playback_rect,
     SkPicture::AbortCallback* callback) const {
   canvas->restore();
 }

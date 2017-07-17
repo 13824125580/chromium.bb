@@ -7,11 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
@@ -59,11 +59,12 @@ class TextureManagerTest : public GpuServiceTest {
   static const GLint kMaxCubeMapTextureSize = 8;
   static const GLint kMaxRectangleTextureSize = 32;
   static const GLint kMaxExternalTextureSize = 32;
-  static const GLint kMax3DTextureSize = 256;
+  static const GLint kMax3DTextureSize = 512;
+  static const GLint kMaxArrayTextureLayers = 256;
   static const GLint kMax2dLevels = 6;
   static const GLint kMaxCubeMapLevels = 4;
   static const GLint kMaxExternalLevels = 1;
-  static const GLint kMax3dLevels = 9;
+  static const GLint kMax3dLevels = 10;
   static const bool kUseDefaultTextures = false;
 
   TextureManagerTest() {
@@ -71,7 +72,8 @@ class TextureManagerTest : public GpuServiceTest {
     // enabled without FeatureInfo::EnableES3Validators().
     base::CommandLine command_line(0, nullptr);
     command_line.AppendSwitch(switches::kEnableUnsafeES3APIs);
-    feature_info_ = new FeatureInfo(command_line);
+    GpuDriverBugWorkarounds gpu_driver_bug_workaround(&command_line);
+    feature_info_ = new FeatureInfo(command_line, gpu_driver_bug_workaround);
   }
 
   ~TextureManagerTest() override {}
@@ -85,9 +87,10 @@ class TextureManagerTest : public GpuServiceTest {
                                       kMaxCubeMapTextureSize,
                                       kMaxRectangleTextureSize,
                                       kMax3DTextureSize,
+                                      kMaxArrayTextureLayers,
                                       kUseDefaultTextures));
     TestHelper::SetupTextureManagerInitExpectations(
-        gl_.get(), false, "", kUseDefaultTextures);
+        gl_.get(), false, false, "", kUseDefaultTextures);
     manager_->Initialize();
     error_state_.reset(new ::testing::StrictMock<gles2::MockErrorState>());
   }
@@ -109,7 +112,7 @@ class TextureManagerTest : public GpuServiceTest {
                         const char* gl_version,
                         bool enable_es3) {
     TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
-        gl_.get(), gl_extensions, "", gl_version);
+        gl_.get(), gl_extensions, "", gl_version, enable_es3);
     feature_info_->InitializeForTesting();
     if (enable_es3) {
       EXPECT_CALL(*gl_, GetIntegerv(GL_MAX_COLOR_ATTACHMENTS, _))
@@ -123,8 +126,8 @@ class TextureManagerTest : public GpuServiceTest {
   }
 
   scoped_refptr<FeatureInfo> feature_info_;
-  scoped_ptr<TextureManager> manager_;
-  scoped_ptr<MockErrorState> error_state_;
+  std::unique_ptr<TextureManager> manager_;
+  std::unique_ptr<MockErrorState> error_state_;
 };
 
 // GCC requires these declarations, but MSVC requires they not be present
@@ -134,6 +137,7 @@ const GLint TextureManagerTest::kMaxCubeMapTextureSize;
 const GLint TextureManagerTest::kMaxRectangleTextureSize;
 const GLint TextureManagerTest::kMaxExternalTextureSize;
 const GLint TextureManagerTest::kMax3DTextureSize;
+const GLint TextureManagerTest::kMaxArrayTextureLayers;
 const GLint TextureManagerTest::kMax2dLevels;
 const GLint TextureManagerTest::kMaxCubeMapLevels;
 const GLint TextureManagerTest::kMaxExternalLevels;
@@ -166,6 +170,7 @@ class GLStreamTextureImageStub : public GLStreamTextureImage {
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override {}
+  bool EmulatingRGB() const override { return false; }
   void GetTextureMatrix(float matrix[16]) override {}
 
  protected:
@@ -232,18 +237,21 @@ TEST_F(TextureManagerTest, SetParameter) {
   SetParameter(texture_ref, GL_TEXTURE_WRAP_T, GL_NEAREST, GL_INVALID_ENUM);
   EXPECT_EQ(static_cast<GLenum>(GL_CLAMP_TO_EDGE), texture->wrap_t());
   SetParameter(texture_ref, GL_TEXTURE_MAX_ANISOTROPY_EXT, 0, GL_INVALID_VALUE);
+  SetParameter(texture_ref, GL_TEXTURE_IMMUTABLE_FORMAT, 0, GL_INVALID_ENUM);
+  SetParameter(texture_ref, GL_TEXTURE_IMMUTABLE_LEVELS, 0, GL_INVALID_ENUM);
 }
 
 TEST_F(TextureManagerTest, UseDefaultTexturesTrue) {
   bool use_default_textures = true;
   TestHelper::SetupTextureManagerInitExpectations(gl_.get(),
-      false, "GL_ANGLE_texture_usage", use_default_textures);
+      false, false, "GL_ANGLE_texture_usage", use_default_textures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          use_default_textures);
   manager.Initialize();
 
@@ -258,13 +266,14 @@ TEST_F(TextureManagerTest, UseDefaultTexturesTrue) {
 TEST_F(TextureManagerTest, UseDefaultTexturesFalse) {
   bool use_default_textures = false;
   TestHelper::SetupTextureManagerInitExpectations(gl_.get(),
-      false, "GL_ANGLE_texture_usage", use_default_textures);
+      false, false, "GL_ANGLE_texture_usage", use_default_textures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          use_default_textures);
   manager.Initialize();
 
@@ -280,13 +289,14 @@ TEST_F(TextureManagerTest, UseDefaultTexturesTrueES3) {
   bool use_default_textures = true;
   SetupFeatureInfo("", "OpenGL ES 3.0", true);
   TestHelper::SetupTextureManagerInitExpectations(gl_.get(),
-      true, "", use_default_textures);
+      true, false, "", use_default_textures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          use_default_textures);
   manager.Initialize();
 
@@ -300,13 +310,14 @@ TEST_F(TextureManagerTest, UseDefaultTexturesFalseES3) {
   bool use_default_textures = false;
   SetupFeatureInfo("", "OpenGL ES 3.0", true);
   TestHelper::SetupTextureManagerInitExpectations(gl_.get(),
-      true, "", use_default_textures);
+      true, false, "", use_default_textures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          use_default_textures);
   manager.Initialize();
 
@@ -318,13 +329,14 @@ TEST_F(TextureManagerTest, UseDefaultTexturesFalseES3) {
 
 TEST_F(TextureManagerTest, TextureUsageExt) {
   TestHelper::SetupTextureManagerInitExpectations(
-      gl_.get(), false, "GL_ANGLE_texture_usage", kUseDefaultTextures);
+      gl_.get(), false, false, "GL_ANGLE_texture_usage", kUseDefaultTextures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.Initialize();
   const GLuint kClient1Id = 1;
@@ -346,13 +358,14 @@ TEST_F(TextureManagerTest, Destroy) {
   const GLuint kClient1Id = 1;
   const GLuint kService1Id = 11;
   TestHelper::SetupTextureManagerInitExpectations(
-      gl_.get(), false, "", kUseDefaultTextures);
+      gl_.get(), false, false, "", kUseDefaultTextures);
   TextureManager manager(NULL,
                          feature_info_.get(),
                          kMaxTextureSize,
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.Initialize();
   // Check we can create texture.
@@ -364,7 +377,7 @@ TEST_F(TextureManagerTest, Destroy) {
       .Times(1)
       .RetiresOnSaturation();
   TestHelper::SetupTextureManagerDestructionExpectations(
-      gl_.get(), false, "", kUseDefaultTextures);
+      gl_.get(), false, false, "", kUseDefaultTextures);
   manager.Destroy(true);
   // Check that resources got freed.
   texture = manager.GetTexture(kClient1Id);
@@ -413,6 +426,7 @@ TEST_F(TextureManagerTest, MaxValues) {
             manager_->MaxSizeForTarget(GL_TEXTURE_EXTERNAL_OES));
   EXPECT_EQ(kMaxTextureSize, manager_->MaxSizeForTarget(GL_TEXTURE_2D_ARRAY));
   EXPECT_EQ(kMax3DTextureSize, manager_->MaxSizeForTarget(GL_TEXTURE_3D));
+  EXPECT_EQ(kMaxArrayTextureLayers, manager_->max_array_texture_layers());
 }
 
 TEST_F(TextureManagerTest, ValidForTarget) {
@@ -439,6 +453,19 @@ TEST_F(TextureManagerTest, ValidForTarget) {
   EXPECT_FALSE(manager_->ValidForTarget(GL_TEXTURE_2D, 1, 5, 2, 1));
   // Check NPOT height on level 1
   EXPECT_FALSE(manager_->ValidForTarget(GL_TEXTURE_2D, 1, 2, 5, 1));
+
+  // check array textures.
+  EXPECT_TRUE(manager_->ValidForTarget(
+      GL_TEXTURE_2D_ARRAY, 0, kMaxTextureSize, kMaxTextureSize,
+      kMaxArrayTextureLayers));
+  EXPECT_FALSE(manager_->ValidForTarget(
+      GL_TEXTURE_2D_ARRAY, 1, kMaxTextureSize, kMaxTextureSize,
+      kMaxArrayTextureLayers));
+  EXPECT_TRUE(manager_->ValidForTarget(
+      GL_TEXTURE_2D_ARRAY, 1, kMaxTextureSize / 2, kMaxTextureSize / 2,
+      kMaxArrayTextureLayers));
+  EXPECT_TRUE(manager_->ValidForTarget(
+      GL_TEXTURE_2D_ARRAY, kMax2dLevels - 1, 0, 0, kMaxArrayTextureLayers));
 
   // check cube
   EXPECT_TRUE(manager_->ValidForTarget(
@@ -497,6 +524,7 @@ TEST_F(TextureManagerTest, ValidForTargetNPOT) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   // Check NPOT width on level 0
   EXPECT_TRUE(manager.ValidForTarget(GL_TEXTURE_2D, 0, 5, 2, 1));
@@ -509,46 +537,150 @@ TEST_F(TextureManagerTest, ValidForTargetNPOT) {
   manager.Destroy(false);
 }
 
-TEST_F(TextureManagerTest, OverrideServiceID) {
-  // Create a texture.
+TEST_F(TextureManagerTest, AlphaLuminanceCompatibilityProfile) {
   const GLuint kClientId = 1;
   const GLuint kServiceId = 11;
-  manager_->CreateTexture(kClientId, kServiceId);
-  scoped_refptr<TextureRef> texture_ref(manager_->GetTexture(kClientId));
-  manager_->SetTarget(texture_ref.get(), GL_TEXTURE_EXTERNAL_OES);
+
+  SetupFeatureInfo("", "2.1", false);
+  TestHelper::SetupTextureManagerInitExpectations(gl_.get(), false, false, "",
+      kUseDefaultTextures);
+  TextureManager manager(NULL,
+                         feature_info_.get(),
+                         kMaxTextureSize,
+                         kMaxCubeMapTextureSize,
+                         kMaxRectangleTextureSize,
+                         kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
+                         kUseDefaultTextures);
+  manager.Initialize();
+
+  // Create a texture.
+  manager.CreateTexture(kClientId, kServiceId);
+  scoped_refptr<TextureRef> texture_ref(manager.GetTexture(kClientId));
+  manager.SetTarget(texture_ref.get(), GL_TEXTURE_2D);
 
   Texture* texture = texture_ref->texture();
-  GLuint owned_service_id = TextureTestHelper::owned_service_id(texture);
-  GLuint service_id = texture->service_id();
-  // Initially, the texture should use the same service id that it owns.
-  EXPECT_EQ(owned_service_id, service_id);
 
-  // Override the service_id.
-  GLuint unowned_service_id = service_id + 1;
-  texture->SetUnownedServiceId(unowned_service_id);
+  // GL_ALPHA emulation
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_ALPHA, 1, 1, 1,
+      0, GL_ALPHA, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
 
-  // Make sure that service_id() changed but owned_service_id() didn't.
-  EXPECT_EQ(unowned_service_id, texture->service_id());
-  EXPECT_EQ(owned_service_id, TextureTestHelper::owned_service_id(texture));
+  // GL_LUMINANCE emulation
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_LUMINANCE, 1, 1,
+      1, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
 
-  // Undo the override.
-  texture->SetUnownedServiceId(0);
+  // GL_LUMINANCE_ALPHA emulation
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA,
+      1, 1, 1, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
 
-  // The service IDs should be back as they were.
-  EXPECT_EQ(service_id, texture->service_id());
-  EXPECT_EQ(owned_service_id, TextureTestHelper::owned_service_id(texture));
-
-  // Override again, so that we can check delete behavior.
-  texture->SetUnownedServiceId(unowned_service_id);
-  EXPECT_EQ(unowned_service_id, texture->service_id());
-  EXPECT_EQ(owned_service_id, TextureTestHelper::owned_service_id(texture));
-
-  // Remove the texture.  It should delete the texture id that it owns, even
-  // though it is overridden.
-  EXPECT_CALL(*gl_, DeleteTextures(1, ::testing::Pointee(owned_service_id)))
+  EXPECT_CALL(*gl_, DeleteTextures(1, ::testing::Pointee(kServiceId)))
       .Times(1)
       .RetiresOnSaturation();
-  manager_->RemoveTexture(kClientId);
+  manager.RemoveTexture(kClientId);
+}
+
+TEST_F(TextureManagerTest, AlphaLuminanceCoreProfileEmulation) {
+  const GLuint kClientId = 1;
+  const GLuint kServiceId = 11;
+
+  SetupFeatureInfo("", "4.2", true);
+  TestHelper::SetupTextureManagerInitExpectations(gl_.get(), true, true, "",
+      kUseDefaultTextures);
+  TextureManager manager(NULL,
+                         feature_info_.get(),
+                         kMaxTextureSize,
+                         kMaxCubeMapTextureSize,
+                         kMaxRectangleTextureSize,
+                         kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
+                         kUseDefaultTextures);
+  manager.Initialize();
+
+  // Create a texture.
+  manager.CreateTexture(kClientId, kServiceId);
+  scoped_refptr<TextureRef> texture_ref(manager.GetTexture(kClientId));
+  manager.SetTarget(texture_ref.get(), GL_TEXTURE_2D);
+
+  Texture* texture = texture_ref->texture();
+
+  // GL_ALPHA emulation
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_NONE))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_NONE))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_NONE))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_ALPHA, 1, 1, 1,
+      0, GL_ALPHA, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
+
+  // GL_LUMINANCE emulation
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE))
+      .Times(1)
+      .RetiresOnSaturation();
+
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_LUMINANCE, 1, 1,
+      1, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
+
+  // GL_LUMINANCE_ALPHA emulation
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A,
+              GL_GREEN))
+      .Times(1)
+      .RetiresOnSaturation();
+
+  manager.SetLevelInfo(texture_ref.get(), GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA,
+      1, 1, 1, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, gfx::Rect(1, 1));
+  texture->ApplyFormatWorkarounds(feature_info_.get());
+
+  // Ensure explicitly setting swizzles while using emulated settings properly
+  // swizzles the swizzle.
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R,
+              GL_GREEN))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A,
+              GL_RED))
+      .Times(1)
+      .RetiresOnSaturation();
+
+  manager.SetParameteri("TexParameteri", error_state_.get(), texture_ref.get(),
+      GL_TEXTURE_SWIZZLE_R, GL_ALPHA);
+  manager.SetParameteri("TexParameteri", error_state_.get(), texture_ref.get(),
+      GL_TEXTURE_SWIZZLE_A, GL_GREEN);
+
+  EXPECT_CALL(*gl_, DeleteTextures(1, ::testing::Pointee(kServiceId)))
+      .Times(1)
+      .RetiresOnSaturation();
+  manager.RemoveTexture(kClientId);
 }
 
 class TextureTestBase : public GpuServiceTest {
@@ -556,7 +688,8 @@ class TextureTestBase : public GpuServiceTest {
   static const GLint kMaxTextureSize = 32;
   static const GLint kMaxCubeMapTextureSize = 8;
   static const GLint kMaxRectangleTextureSize = 32;
-  static const GLint kMax3DTextureSize = 256;
+  static const GLint kMax3DTextureSize = 512;
+  static const GLint kMaxArrayTextureLayers = 256;
   static const GLint kMax2dLevels = 6;
   static const GLint kMaxCubeMapLevels = 4;
   static const GLuint kClient1Id = 1;
@@ -583,6 +716,7 @@ class TextureTestBase : public GpuServiceTest {
                                       kMaxCubeMapTextureSize,
                                       kMaxRectangleTextureSize,
                                       kMax3DTextureSize,
+                                      kMaxArrayTextureLayers,
                                       kUseDefaultTextures));
     decoder_.reset(new ::testing::StrictMock<gles2::MockGLES2Decoder>());
     error_state_.reset(new ::testing::StrictMock<gles2::MockErrorState>());
@@ -616,10 +750,10 @@ class TextureTestBase : public GpuServiceTest {
         texture_ref, pname, value, error);
   }
 
-  scoped_ptr<MockGLES2Decoder> decoder_;
-  scoped_ptr<MockErrorState> error_state_;
+  std::unique_ptr<MockGLES2Decoder> decoder_;
+  std::unique_ptr<MockErrorState> error_state_;
   scoped_refptr<FeatureInfo> feature_info_;
-  scoped_ptr<TextureManager> manager_;
+  std::unique_ptr<TextureManager> manager_;
   scoped_refptr<TextureRef> texture_ref_;
 };
 
@@ -888,6 +1022,7 @@ TEST_F(TextureTest, NPOT2DNPOTOK) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1189,6 +1324,7 @@ TEST_F(TextureTest, FloatNotLinear) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1221,6 +1357,7 @@ TEST_F(TextureTest, FloatLinear) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1245,6 +1382,7 @@ TEST_F(TextureTest, HalfFloatNotLinear) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1277,6 +1415,7 @@ TEST_F(TextureTest, HalfFloatLinear) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1301,6 +1440,7 @@ TEST_F(TextureTest, EGLImageExternal) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1323,6 +1463,7 @@ TEST_F(TextureTest, DepthTexture) {
                          kMaxCubeMapTextureSize,
                          kMaxRectangleTextureSize,
                          kMax3DTextureSize,
+                         kMaxArrayTextureLayers,
                          kUseDefaultTextures);
   manager.CreateTexture(kClient1Id, kService1Id);
   TextureRef* texture_ref = manager.GetTexture(kClient1Id);
@@ -1467,6 +1608,10 @@ TEST_F(TextureTest, SafeUnsafe) {
 TEST_F(TextureTest, ClearTexture) {
   EXPECT_CALL(*decoder_, ClearLevel(_, _, _, _, _, _, _, _, _))
       .WillRepeatedly(Return(true));
+  // The code path taken when IsCompressedTextureFormat returns true
+  // is covered best by the WebGL 2.0 conformance tests.
+  EXPECT_CALL(*decoder_, IsCompressedTextureFormat(_))
+      .WillRepeatedly(Return(false));
   manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_2D);
   manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 1,
                          0, GL_RGBA, GL_UNSIGNED_BYTE, gfx::Rect());
@@ -1566,13 +1711,15 @@ TEST_F(TextureTest, GetLevelStreamTextureImage) {
   scoped_refptr<GLStreamTextureImage> image(new GLStreamTextureImageStub);
   manager_->SetLevelStreamTextureImage(texture_ref_.get(),
                                        GL_TEXTURE_EXTERNAL_OES, 0, image.get(),
-                                       Texture::BOUND);
+                                       Texture::BOUND, 0);
   EXPECT_FALSE(texture->GetLevelImage(GL_TEXTURE_EXTERNAL_OES, 0) == NULL);
   EXPECT_FALSE(
       texture->GetLevelStreamTextureImage(GL_TEXTURE_EXTERNAL_OES, 0) == NULL);
+
   // Replace it as a normal image.
+  scoped_refptr<gl::GLImage> image2(new gl::GLImageStub);
   manager_->SetLevelImage(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0,
-                          image.get(), Texture::BOUND);
+                          image2.get(), Texture::BOUND);
   EXPECT_FALSE(texture->GetLevelImage(GL_TEXTURE_EXTERNAL_OES, 0) == NULL);
   EXPECT_TRUE(texture->GetLevelStreamTextureImage(GL_TEXTURE_EXTERNAL_OES, 0) ==
               NULL);
@@ -1580,13 +1727,77 @@ TEST_F(TextureTest, GetLevelStreamTextureImage) {
   // Image should be reset when SetLevelInfo is called.
   manager_->SetLevelStreamTextureImage(texture_ref_.get(),
                                        GL_TEXTURE_EXTERNAL_OES, 0, image.get(),
-                                       Texture::UNBOUND);
+                                       Texture::UNBOUND, 0);
   manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0,
                          GL_RGBA, 2, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                          gfx::Rect(2, 2));
   EXPECT_TRUE(texture->GetLevelImage(GL_TEXTURE_EXTERNAL_OES, 0) == NULL);
   EXPECT_TRUE(texture->GetLevelStreamTextureImage(GL_TEXTURE_EXTERNAL_OES, 0) ==
               NULL);
+}
+
+TEST_F(TextureTest, SetLevelImageState) {
+  manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_2D);
+  manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 1,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, gfx::Rect(2, 2));
+  Texture* texture = texture_ref_->texture();
+  // Set image, initially BOUND.
+  scoped_refptr<gl::GLImage> image(new gl::GLImageStub);
+  manager_->SetLevelImage(texture_ref_.get(), GL_TEXTURE_2D, 0, image.get(),
+                          Texture::BOUND);
+  Texture::ImageState state;
+  texture->GetLevelImage(GL_TEXTURE_2D, 0, &state);
+  EXPECT_EQ(state, Texture::BOUND);
+  // Change the state.
+  texture->SetLevelImageState(GL_TEXTURE_2D, 0, Texture::COPIED);
+  texture->GetLevelImage(GL_TEXTURE_2D, 0, &state);
+  EXPECT_EQ(state, Texture::COPIED);
+}
+
+TEST_F(TextureTest, SetStreamTextureImageServiceID) {
+  manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES);
+  manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0,
+                         GL_RGBA, 2, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         gfx::Rect(2, 2));
+  Texture* texture = texture_ref_->texture();
+
+  GLuint owned_service_id = TextureTestHelper::owned_service_id(texture);
+  GLuint service_id = texture->service_id();
+  // Initially, the texture should use the same service id that it owns.
+  EXPECT_EQ(owned_service_id, service_id);
+
+  // Override the service_id.
+  GLuint stream_texture_service_id = service_id + 1;
+  scoped_refptr<GLStreamTextureImage> image(new GLStreamTextureImageStub);
+  manager_->SetLevelStreamTextureImage(
+      texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0, image.get(),
+      Texture::BOUND, stream_texture_service_id);
+
+  // Make sure that service_id() changed but owned_service_id() didn't.
+  EXPECT_EQ(stream_texture_service_id, texture->service_id());
+  EXPECT_EQ(owned_service_id, TextureTestHelper::owned_service_id(texture));
+
+  // Undo the override.
+  manager_->SetLevelStreamTextureImage(texture_ref_.get(),
+                                       GL_TEXTURE_EXTERNAL_OES, 0, image.get(),
+                                       Texture::BOUND, 0);
+
+  // The service IDs should be back as they were.
+  EXPECT_EQ(service_id, texture->service_id());
+  EXPECT_EQ(owned_service_id, TextureTestHelper::owned_service_id(texture));
+
+  // Override again, so that we can check delete behavior.
+  manager_->SetLevelStreamTextureImage(
+      texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0, image.get(),
+      Texture::BOUND, stream_texture_service_id);
+
+  // Remove the Texture.  It should delete the texture id that it owns, even
+  // though it is overridden.
+  EXPECT_CALL(*gl_, DeleteTextures(1, ::testing::Pointee(owned_service_id)))
+      .Times(1)
+      .RetiresOnSaturation();
+  manager_->RemoveTexture(kClient1Id);
+  texture_ref_ = nullptr;
 }
 
 namespace {
@@ -1893,6 +2104,10 @@ TEST_F(ProduceConsumeTextureTest, ProduceConsumeClearRectangle) {
             GetLevelInfo(restored_texture.get(), GL_TEXTURE_RECTANGLE_ARB, 0));
   EXPECT_CALL(*decoder_, ClearLevel(_, _, _, _, _, _, _, _, _))
       .WillRepeatedly(Return(true));
+  // The code path taken when IsCompressedTextureFormat returns true
+  // is covered best by the WebGL 2.0 conformance tests.
+  EXPECT_CALL(*decoder_, IsCompressedTextureFormat(_))
+      .WillRepeatedly(Return(false));
   EXPECT_TRUE(manager_->ClearTextureLevel(
       decoder_.get(), restored_texture.get(), GL_TEXTURE_RECTANGLE_ARB, 0));
 }
@@ -2021,6 +2236,7 @@ class SharedTextureTest : public GpuServiceTest {
                            TextureManagerTest::kMaxCubeMapTextureSize,
                            TextureManagerTest::kMaxRectangleTextureSize,
                            TextureManagerTest::kMax3DTextureSize,
+                           TextureManagerTest::kMaxArrayTextureLayers,
                            kUseDefaultTextures));
     memory_tracker2_ = new CountingMemoryTracker;
     texture_manager2_.reset(
@@ -2030,12 +2246,13 @@ class SharedTextureTest : public GpuServiceTest {
                            TextureManagerTest::kMaxCubeMapTextureSize,
                            TextureManagerTest::kMaxRectangleTextureSize,
                            TextureManagerTest::kMax3DTextureSize,
+                           TextureManagerTest::kMaxArrayTextureLayers,
                            kUseDefaultTextures));
     TestHelper::SetupTextureManagerInitExpectations(
-        gl_.get(), false, "", kUseDefaultTextures);
+        gl_.get(), false, false, "", kUseDefaultTextures);
     texture_manager1_->Initialize();
     TestHelper::SetupTextureManagerInitExpectations(
-        gl_.get(), false, "", kUseDefaultTextures);
+        gl_.get(), false, false, "", kUseDefaultTextures);
     texture_manager2_->Initialize();
   }
 
@@ -2050,9 +2267,9 @@ class SharedTextureTest : public GpuServiceTest {
  protected:
   scoped_refptr<FeatureInfo> feature_info_;
   scoped_refptr<CountingMemoryTracker> memory_tracker1_;
-  scoped_ptr<TextureManager> texture_manager1_;
+  std::unique_ptr<TextureManager> texture_manager1_;
   scoped_refptr<CountingMemoryTracker> memory_tracker2_;
-  scoped_ptr<TextureManager> texture_manager2_;
+  std::unique_ptr<TextureManager> texture_manager2_;
 };
 
 TEST_F(SharedTextureTest, DeleteTextures) {
@@ -2278,94 +2495,106 @@ class TextureFormatTypeValidationTest : public TextureManagerTest {
   ~TextureFormatTypeValidationTest() override {}
 
  protected:
-  void ExpectValid(GLenum format, GLenum type, GLint internal_format) {
+  void ExpectValid(
+      bool tex_image_call, GLenum format, GLenum type, GLint internal_format) {
     EXPECT_TRUE(manager_->ValidateTextureParameters(
-        error_state_.get(), "", format, type, internal_format, 0));
+        error_state_.get(), "", tex_image_call,
+        format, type, internal_format, 0));
   }
 
-  void ExpectInvalid(GLenum format, GLenum type, GLint internal_format) {
+  void ExpectInvalid(
+      bool tex_image_call, GLenum format, GLenum type, GLint internal_format) {
     EXPECT_CALL(*error_state_,
                 SetGLError(_, _, _, _, _))
         .Times(1)
         .RetiresOnSaturation();
     EXPECT_FALSE(manager_->ValidateTextureParameters(
-        error_state_.get(), "", format, type, internal_format, 0));
+        error_state_.get(), "", tex_image_call,
+        format, type, internal_format, 0));
   }
 
-  void ExpectInvalidEnum(GLenum format, GLenum type, GLint internal_format) {
+  void ExpectInvalidEnum(
+      bool tex_image_call, GLenum format, GLenum type, GLint internal_format) {
     EXPECT_CALL(*error_state_,
                 SetGLErrorInvalidEnum(_, _, _, _, _))
         .Times(1)
         .RetiresOnSaturation();
     EXPECT_FALSE(manager_->ValidateTextureParameters(
-        error_state_.get(), "", format, type, internal_format, 0));
+        error_state_.get(), "", tex_image_call,
+        format, type, internal_format, 0));
   }
 };
 
 TEST_F(TextureFormatTypeValidationTest, ES2Basic) {
   SetupFeatureInfo("", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
-  ExpectValid(GL_RGB, GL_UNSIGNED_SHORT_5_6_5, GL_RGB);
-  ExpectValid(GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_UNSIGNED_BYTE, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_UNSIGNED_BYTE, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_LUMINANCE_ALPHA);
 
-  ExpectInvalid(GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
+  ExpectInvalid(true, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
 
   // float / half_float.
-  ExpectInvalidEnum(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectInvalidEnum(GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
+  ExpectInvalidEnum(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectInvalidEnum(true, GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
 
   // GL_EXT_bgra
-  ExpectInvalidEnum(GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
+  ExpectInvalidEnum(true, GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
 
   // depth / stencil
-  ExpectInvalidEnum(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
-  ExpectInvalidEnum(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
+  ExpectInvalidEnum(
+      true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
+  ExpectInvalidEnum(
+      true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
 
   // SRGB
-  ExpectInvalidEnum(GL_SRGB_EXT, GL_UNSIGNED_BYTE, GL_SRGB_EXT);
-  ExpectInvalidEnum(GL_SRGB_ALPHA_EXT, GL_UNSIGNED_BYTE, GL_SRGB_ALPHA_EXT);
+  ExpectInvalidEnum(true, GL_SRGB_EXT, GL_UNSIGNED_BYTE, GL_SRGB_EXT);
+  ExpectInvalidEnum(
+      true, GL_SRGB_ALPHA_EXT, GL_UNSIGNED_BYTE, GL_SRGB_ALPHA_EXT);
 
   // ES3
-  ExpectInvalid(GL_RGB, GL_UNSIGNED_BYTE, GL_RGB8);
+  ExpectInvalid(true, GL_RGB, GL_UNSIGNED_BYTE, GL_RGB8);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithExtTextureFormatBGRA8888) {
   SetupFeatureInfo("GL_EXT_texture_format_BGRA8888", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
+  ExpectValid(true, GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithAppleTextureFormatBGRA8888) {
   SetupFeatureInfo("GL_APPLE_texture_format_BGRA8888", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
+  ExpectValid(true, GL_BGRA_EXT, GL_UNSIGNED_BYTE, GL_BGRA_EXT);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithArbDepth) {
   SetupFeatureInfo("GL_ARB_depth_texture", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
-  ExpectInvalidEnum(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
+  ExpectInvalidEnum(
+      true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithOesDepth) {
   SetupFeatureInfo("GL_OES_depth_texture", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
-  ExpectInvalidEnum(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
+  ExpectInvalidEnum(
+      true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithAngleDepth) {
   SetupFeatureInfo("GL_ANGLE_depth_texture", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
-  ExpectInvalidEnum(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
+  ExpectInvalidEnum(
+      true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithExtPackedDepthStencil) {
@@ -2374,9 +2603,9 @@ TEST_F(TextureFormatTypeValidationTest, ES2WithExtPackedDepthStencil) {
       "OpenGL ES 2.0",
       false);
 
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
-  ExpectValid(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT);
+  ExpectValid(true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithRGWithFloat) {
@@ -2385,54 +2614,56 @@ TEST_F(TextureFormatTypeValidationTest, ES2WithRGWithFloat) {
       "OpenGL ES 2.0",
       false);
 
-  ExpectValid(GL_RED_EXT, GL_HALF_FLOAT_OES, GL_RED_EXT);
-  ExpectValid(GL_RG_EXT, GL_HALF_FLOAT_OES, GL_RG_EXT);
-  ExpectValid(GL_RED_EXT, GL_UNSIGNED_BYTE, GL_RED_EXT);
-  ExpectValid(GL_RG_EXT, GL_UNSIGNED_BYTE, GL_RG_EXT);
+  ExpectValid(true, GL_RED_EXT, GL_HALF_FLOAT_OES, GL_RED_EXT);
+  ExpectValid(true, GL_RG_EXT, GL_HALF_FLOAT_OES, GL_RG_EXT);
+  ExpectValid(true, GL_RED_EXT, GL_UNSIGNED_BYTE, GL_RED_EXT);
+  ExpectValid(true, GL_RG_EXT, GL_UNSIGNED_BYTE, GL_RG_EXT);
 
-  ExpectInvalidEnum(GL_RED_EXT, GL_BYTE, GL_RED_EXT);
-  ExpectInvalidEnum(GL_RG_EXT, GL_BYTE, GL_RG_EXT);
-  ExpectInvalidEnum(GL_RED_EXT, GL_SHORT, GL_RED_EXT);
-  ExpectInvalidEnum(GL_RG_EXT, GL_SHORT, GL_RG_EXT);
+  ExpectInvalidEnum(true, GL_RED_EXT, GL_BYTE, GL_RED_EXT);
+  ExpectInvalidEnum(true, GL_RG_EXT, GL_BYTE, GL_RG_EXT);
+  ExpectInvalidEnum(true, GL_RED_EXT, GL_SHORT, GL_RED_EXT);
+  ExpectInvalidEnum(true, GL_RG_EXT, GL_SHORT, GL_RG_EXT);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithRGNoFloat) {
   SetupFeatureInfo("GL_ARB_texture_rg", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_RED_EXT, GL_UNSIGNED_BYTE, GL_RED_EXT);
-  ExpectValid(GL_RG_EXT, GL_UNSIGNED_BYTE, GL_RG_EXT);
+  ExpectValid(true, GL_RED_EXT, GL_UNSIGNED_BYTE, GL_RED_EXT);
+  ExpectValid(true, GL_RG_EXT, GL_UNSIGNED_BYTE, GL_RG_EXT);
 
-  ExpectInvalidEnum(GL_RED_EXT, GL_HALF_FLOAT_OES, GL_RED_EXT);
-  ExpectInvalidEnum(GL_RG_EXT, GL_HALF_FLOAT_OES, GL_RG_EXT);
+  ExpectInvalidEnum(true, GL_RED_EXT, GL_HALF_FLOAT_OES, GL_RED_EXT);
+  ExpectInvalidEnum(true, GL_RG_EXT, GL_HALF_FLOAT_OES, GL_RG_EXT);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2OnTopOfES3) {
   SetupFeatureInfo("", "OpenGL ES 3.0", false);
 
-  ExpectInvalidEnum(GL_RGB, GL_FLOAT, GL_RGB);
-  ExpectInvalidEnum(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectInvalidEnum(GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
-  ExpectInvalidEnum(GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
-  ExpectInvalidEnum(GL_ALPHA, GL_FLOAT, GL_ALPHA);
+  ExpectInvalidEnum(true, GL_RGB, GL_FLOAT, GL_RGB);
+  ExpectInvalidEnum(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectInvalidEnum(true, GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
+  ExpectInvalidEnum(true, GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
+  ExpectInvalidEnum(true, GL_ALPHA, GL_FLOAT, GL_ALPHA);
 
-  ExpectInvalidEnum(GL_SRGB_EXT, GL_UNSIGNED_BYTE, GL_SRGB_EXT);
-  ExpectInvalidEnum(GL_SRGB_ALPHA_EXT, GL_UNSIGNED_BYTE, GL_SRGB_ALPHA_EXT);
+  ExpectInvalidEnum(true, GL_SRGB_EXT, GL_UNSIGNED_BYTE, GL_SRGB_EXT);
+  ExpectInvalidEnum(
+      true, GL_SRGB_ALPHA_EXT, GL_UNSIGNED_BYTE, GL_SRGB_ALPHA_EXT);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureFloat) {
   SetupFeatureInfo("GL_OES_texture_float", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_RGB, GL_FLOAT, GL_RGB);
-  ExpectValid(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
-  ExpectValid(GL_ALPHA, GL_FLOAT, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_FLOAT, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_FLOAT, GL_ALPHA);
 
-  ExpectInvalidEnum(GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
-  ExpectInvalidEnum(GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
-  ExpectInvalidEnum(GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
-  ExpectInvalidEnum(GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
-  ExpectInvalidEnum(GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
+  ExpectInvalidEnum(true, GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
+  ExpectInvalidEnum(true, GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
+  ExpectInvalidEnum(true, GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
+  ExpectInvalidEnum(
+      true, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
+  ExpectInvalidEnum(true, GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureFloatLinear) {
@@ -2441,33 +2672,34 @@ TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureFloatLinear) {
       "OpenGL ES 2.0",
       false);
 
-  ExpectValid(GL_RGB, GL_FLOAT, GL_RGB);
-  ExpectValid(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
-  ExpectValid(GL_ALPHA, GL_FLOAT, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_FLOAT, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_FLOAT, GL_ALPHA);
 
-  ExpectInvalidEnum(GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
-  ExpectInvalidEnum(GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
-  ExpectInvalidEnum(GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
-  ExpectInvalidEnum(GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
-  ExpectInvalidEnum(GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
+  ExpectInvalidEnum(true, GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
+  ExpectInvalidEnum(true, GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
+  ExpectInvalidEnum(true, GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
+  ExpectInvalidEnum(
+      true, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
+  ExpectInvalidEnum(true, GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureHalfFloat) {
   SetupFeatureInfo("GL_OES_texture_half_float", "OpenGL ES 2.0", false);
 
-  ExpectValid(GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
-  ExpectValid(GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
-  ExpectValid(GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
 
-  ExpectInvalidEnum(GL_RGB, GL_FLOAT, GL_RGB);
-  ExpectInvalidEnum(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectInvalidEnum(GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
-  ExpectInvalidEnum(GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
-  ExpectInvalidEnum(GL_ALPHA, GL_FLOAT, GL_ALPHA);
+  ExpectInvalidEnum(true, GL_RGB, GL_FLOAT, GL_RGB);
+  ExpectInvalidEnum(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectInvalidEnum(true, GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
+  ExpectInvalidEnum(true, GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
+  ExpectInvalidEnum(true, GL_ALPHA, GL_FLOAT, GL_ALPHA);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureHalfFloatLinear) {
@@ -2476,44 +2708,46 @@ TEST_F(TextureFormatTypeValidationTest, ES2WithOesTextureHalfFloatLinear) {
       "OpenGL ES 2.0",
       false);
 
-  ExpectValid(GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
-  ExpectValid(GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
-  ExpectValid(GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_HALF_FLOAT_OES, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_HALF_FLOAT_OES, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_HALF_FLOAT_OES, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_HALF_FLOAT_OES, GL_ALPHA);
 
-  ExpectInvalidEnum(GL_RGB, GL_FLOAT, GL_RGB);
-  ExpectInvalidEnum(GL_RGBA, GL_FLOAT, GL_RGBA);
-  ExpectInvalidEnum(GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
-  ExpectInvalidEnum(GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
-  ExpectInvalidEnum(GL_ALPHA, GL_FLOAT, GL_ALPHA);
+  ExpectInvalidEnum(true, GL_RGB, GL_FLOAT, GL_RGB);
+  ExpectInvalidEnum(true, GL_RGBA, GL_FLOAT, GL_RGBA);
+  ExpectInvalidEnum(true, GL_LUMINANCE, GL_FLOAT, GL_LUMINANCE);
+  ExpectInvalidEnum(true, GL_LUMINANCE_ALPHA, GL_FLOAT, GL_LUMINANCE_ALPHA);
+  ExpectInvalidEnum(true, GL_ALPHA, GL_FLOAT, GL_ALPHA);
 }
 
 TEST_F(TextureFormatTypeValidationTest, ES3Basic) {
   SetupFeatureInfo("", "OpenGL ES 3.0", true);
 
-  ExpectValid(GL_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
-  ExpectValid(GL_RGB, GL_UNSIGNED_SHORT_5_6_5, GL_RGB);
-  ExpectValid(GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, GL_RGBA);
-  ExpectValid(GL_LUMINANCE, GL_UNSIGNED_BYTE, GL_LUMINANCE);
-  ExpectValid(GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_LUMINANCE_ALPHA);
+  ExpectValid(true, GL_ALPHA, GL_UNSIGNED_BYTE, GL_ALPHA);
+  ExpectValid(true, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, GL_RGB);
+  ExpectValid(true, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, GL_RGBA);
+  ExpectValid(true, GL_LUMINANCE, GL_UNSIGNED_BYTE, GL_LUMINANCE);
+  ExpectValid(true, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, GL_LUMINANCE_ALPHA);
 
-  ExpectValid(GL_RG, GL_BYTE, GL_RG8_SNORM);
-  ExpectValid(GL_RG_INTEGER, GL_UNSIGNED_INT, GL_RG32UI);
-  ExpectValid(GL_RG_INTEGER, GL_SHORT, GL_RG16I);
-  ExpectValid(GL_RGB, GL_UNSIGNED_BYTE, GL_SRGB8);
-  ExpectValid(GL_RGBA, GL_HALF_FLOAT, GL_RGBA16F);
-  ExpectValid(GL_RGBA, GL_FLOAT, GL_RGBA16F);
-  ExpectValid(GL_RGBA, GL_FLOAT, GL_RGBA32F);
+  ExpectValid(true, GL_RG, GL_BYTE, GL_RG8_SNORM);
+  ExpectValid(true, GL_RG_INTEGER, GL_UNSIGNED_INT, GL_RG32UI);
+  ExpectValid(true, GL_RG_INTEGER, GL_SHORT, GL_RG16I);
+  ExpectValid(true, GL_RGB, GL_UNSIGNED_BYTE, GL_SRGB8);
+  ExpectValid(true, GL_RGBA, GL_HALF_FLOAT, GL_RGBA16F);
+  ExpectValid(true, GL_RGBA, GL_FLOAT, GL_RGBA16F);
+  ExpectValid(true, GL_RGBA, GL_FLOAT, GL_RGBA32F);
 
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT16);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT24);
-  ExpectValid(GL_DEPTH_COMPONENT, GL_FLOAT, GL_DEPTH_COMPONENT32F);
-  ExpectValid(GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH24_STENCIL8);
-  ExpectValid(GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV,
+  ExpectValid(
+      true, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, GL_DEPTH_COMPONENT16);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_DEPTH_COMPONENT24);
+  ExpectValid(true, GL_DEPTH_COMPONENT, GL_FLOAT, GL_DEPTH_COMPONENT32F);
+  ExpectValid(
+      true, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_DEPTH24_STENCIL8);
+  ExpectValid(true, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV,
               GL_DEPTH32F_STENCIL8);
 
-  ExpectInvalid(GL_RGB_INTEGER, GL_INT, GL_RGBA8);
+  ExpectInvalid(true, GL_RGB_INTEGER, GL_INT, GL_RGBA8);
 }
 
 }  // namespace gles2

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/process_singleton.h"
 
+#include <windows.h>
 #include <shellapi.h>
 #include <stddef.h>
 
@@ -23,9 +24,9 @@
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/chrome_process_finder_win.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chrome/browser/win/chrome_process_finder.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_paths_internal.h"
@@ -173,10 +174,9 @@ bool ProcessLaunchNotification(
 }
 
 bool DisplayShouldKillMessageBox() {
-  return chrome::ShowMessageBox(
+  return chrome::ShowQuestionMessageBox(
              NULL, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-             l10n_util::GetStringUTF16(IDS_BROWSER_HUNGBROWSER_MESSAGE),
-             chrome::MESSAGE_BOX_TYPE_QUESTION) !=
+             l10n_util::GetStringUTF16(IDS_BROWSER_HUNGBROWSER_MESSAGE)) !=
          chrome::MESSAGE_BOX_RESULT_NO;
 }
 
@@ -250,15 +250,20 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcess() {
       break;
   }
 
+  // The window is hung.
   DWORD process_id = 0;
   DWORD thread_id = ::GetWindowThreadProcessId(remote_window_, &process_id);
   if (!thread_id || !process_id) {
     remote_window_ = NULL;
     return PROCESS_NONE;
   }
+
+  // Get a handle to the process that created the window.
   base::Process process = base::Process::Open(process_id);
 
-  // The window is hung. Scan for every window to find a visible one.
+  // TODO(manzagop): capture a hang report.
+
+  // Scan for every window to find a visible one.
   bool visible_window = false;
   ::EnumThreadWindows(thread_id,
                       &BrowserWindowEnumeration,

@@ -5,9 +5,10 @@
 #ifndef UI_EVENTS_BLINK_INPUT_HANDLER_PROXY_H_
 #define UI_EVENTS_BLINK_INPUT_HANDLER_PROXY_H_
 
+#include <memory>
+
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/input/input_handler.h"
 #include "third_party/WebKit/public/platform/WebGestureCurve.h"
 #include "third_party/WebKit/public/platform/WebGestureCurveTarget.h"
@@ -46,9 +47,6 @@ class InputHandlerProxy
   }
 
   void set_smooth_scroll_enabled(bool value) { smooth_scroll_enabled_ = value; }
-  void set_use_gesture_events_for_mouse_wheel(bool value) {
-    use_gesture_events_for_mouse_wheel_ = value;
-  }
 
   enum EventDisposition {
     DID_HANDLE,
@@ -80,6 +78,8 @@ class InputHandlerProxy
   void SynchronouslyAnimate(base::TimeTicks time) override;
   void SynchronouslySetRootScrollOffset(
       const gfx::ScrollOffset& root_offset) override;
+  void SynchronouslyZoomBy(float magnify_delta,
+                           const gfx::Point& anchor) override;
 
   // blink::WebGestureCurveTarget implementation.
   bool scrollBy(const blink::WebFloatSize& offset,
@@ -88,6 +88,10 @@ class InputHandlerProxy
   bool gesture_scroll_on_impl_thread_for_testing() const {
     return gesture_scroll_on_impl_thread_;
   }
+
+ protected:
+  void RecordMainThreadScrollingReasons(blink::WebGestureDevice device,
+                                        uint32_t reasons);
 
  private:
   friend class test::InputHandlerProxyTest;
@@ -138,9 +142,14 @@ class InputHandlerProxy
       const cc::InputHandlerScrollResult& scroll_result);
 
   // Whether to use a smooth scroll animation for this event.
-  bool ShouldAnimate(const blink::WebMouseWheelEvent& event) const;
+  bool ShouldAnimate(bool has_precise_scroll_deltas) const;
 
-  scoped_ptr<blink::WebGestureCurve> fling_curve_;
+  // Update the elastic overscroll controller with |gesture_event|.
+  void HandleScrollElasticityOverscroll(
+      const blink::WebGestureEvent& gesture_event,
+      const cc::InputHandlerScrollResult& scroll_result);
+
+  std::unique_ptr<blink::WebGestureCurve> fling_curve_;
   // Parameters for the active fling animation, stored in case we need to
   // transfer it out later.
   blink::WebActiveWheelFlingParameters fling_parameters_;
@@ -187,11 +196,11 @@ class InputHandlerProxy
   gfx::Vector2dF current_fling_velocity_;
 
   // Used to animate rubber-band over-scroll effect on Mac.
-  scoped_ptr<InputScrollElasticityController> scroll_elasticity_controller_;
+  std::unique_ptr<InputScrollElasticityController>
+      scroll_elasticity_controller_;
 
   bool smooth_scroll_enabled_;
   bool uma_latency_reporting_enabled_;
-  bool use_gesture_events_for_mouse_wheel_;
 
   // The merged result of the last touch start with previous touch starts.
   // This value will get returned for subsequent TouchMove events to allow

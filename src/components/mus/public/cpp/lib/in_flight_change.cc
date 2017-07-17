@@ -5,8 +5,7 @@
 #include "components/mus/public/cpp/lib/in_flight_change.h"
 
 #include "components/mus/public/cpp/lib/window_private.h"
-#include "components/mus/public/cpp/lib/window_tree_client_impl.h"
-#include "components/mus/public/cpp/window_tree_connection.h"
+#include "components/mus/public/cpp/window_tree_client.h"
 
 namespace mus {
 
@@ -52,6 +51,7 @@ void CrashInFlightChange::SetRevertValueFrom(const InFlightChange& change) {
 }
 
 void CrashInFlightChange::ChangeFailed() {
+  DLOG(ERROR) << "changed failed, type=" << static_cast<int>(change_type());
   CHECK(false);
 }
 
@@ -62,11 +62,11 @@ void CrashInFlightChange::Revert() {
 // InFlightWindowChange -------------------------------------------------------
 
 InFlightWindowTreeClientChange::InFlightWindowTreeClientChange(
-    WindowTreeClientImpl* client_connection,
+    WindowTreeClient* client,
     Window* revert_value,
     ChangeType type)
     : InFlightChange(nullptr, type),
-      connection_(client_connection),
+      client_(client),
       revert_window_(nullptr) {
   SetRevertWindow(revert_value);
 }
@@ -96,31 +96,30 @@ void InFlightWindowTreeClientChange::OnWindowDestroying(Window* window) {
 // InFlightCaptureChange ------------------------------------------------------
 
 InFlightCaptureChange::InFlightCaptureChange(
-    WindowTreeClientImpl* client_connection,
-    Window* revert_value)
-    : InFlightWindowTreeClientChange(client_connection,
+    WindowTreeClient* client, Window* revert_value)
+    : InFlightWindowTreeClientChange(client,
                                      revert_value,
                                      ChangeType::CAPTURE) {}
 
 InFlightCaptureChange::~InFlightCaptureChange() {}
 
 void InFlightCaptureChange::Revert() {
-  connection()->LocalSetCapture(revert_window());
+  client()->LocalSetCapture(revert_window());
 }
 
 // InFlightFocusChange --------------------------------------------------------
 
 InFlightFocusChange::InFlightFocusChange(
-    WindowTreeClientImpl* client_connection,
+    WindowTreeClient* client,
     Window* revert_value)
-    : InFlightWindowTreeClientChange(client_connection,
+    : InFlightWindowTreeClientChange(client,
                                      revert_value,
                                      ChangeType::FOCUS) {}
 
 InFlightFocusChange::~InFlightFocusChange() {}
 
 void InFlightFocusChange::Revert() {
-  connection()->LocalSetFocus(revert_window());
+  client()->LocalSetFocus(revert_window());
 }
 
 // InFlightPropertyChange -----------------------------------------------------
@@ -177,6 +176,8 @@ InFlightVisibleChange::InFlightVisibleChange(Window* window,
     : InFlightChange(window, ChangeType::VISIBLE),
       revert_visible_(revert_value) {}
 
+InFlightVisibleChange::~InFlightVisibleChange() {}
+
 void InFlightVisibleChange::SetRevertValueFrom(const InFlightChange& change) {
   revert_visible_ =
       static_cast<const InFlightVisibleChange&>(change).revert_visible_;
@@ -184,6 +185,36 @@ void InFlightVisibleChange::SetRevertValueFrom(const InFlightChange& change) {
 
 void InFlightVisibleChange::Revert() {
   WindowPrivate(window()).LocalSetVisible(revert_visible_);
+}
+
+// InFlightOpacityChange -------------------------------------------------------
+
+InFlightOpacityChange::InFlightOpacityChange(Window* window, float revert_value)
+    : InFlightChange(window, ChangeType::OPACITY),
+      revert_opacity_(revert_value) {}
+
+InFlightOpacityChange::~InFlightOpacityChange() {}
+
+void InFlightOpacityChange::SetRevertValueFrom(const InFlightChange& change) {
+  revert_opacity_ =
+      static_cast<const InFlightOpacityChange&>(change).revert_opacity_;
+}
+
+void InFlightOpacityChange::Revert() {
+  WindowPrivate(window()).LocalSetOpacity(revert_opacity_);
+}
+
+// InFlightSetModalChange ------------------------------------------------------
+
+InFlightSetModalChange::InFlightSetModalChange(Window* window)
+    : InFlightChange(window, ChangeType::SET_MODAL) {}
+
+InFlightSetModalChange::~InFlightSetModalChange() {}
+
+void InFlightSetModalChange::SetRevertValueFrom(const InFlightChange& change) {}
+
+void InFlightSetModalChange::Revert() {
+  WindowPrivate(window()).LocalUnsetModal();
 }
 
 }  // namespace mus

@@ -7,10 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
-#include "device/bluetooth/bluetooth_gatt_characteristic.h"
+#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
+#include "device/bluetooth/bluetooth_remote_gatt_service.h"
 
 namespace device {
 
@@ -25,7 +28,7 @@ class BluetoothRemoteGattServiceAndroid;
 // TODO(crbug.com/551634): When notifications are enabled characteristic updates
 // should call observers' GattCharacteristicValueChanged.
 class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
-    : public BluetoothGattCharacteristic {
+    : public BluetoothRemoteGattCharacteristic {
  public:
   // Create a BluetoothRemoteGattCharacteristicAndroid instance and associated
   // Java
@@ -35,7 +38,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
   // The ChromeBluetoothRemoteGattCharacteristic instance will hold a Java
   // reference
   // to |bluetooth_gatt_characteristic_wrapper|.
-  static scoped_ptr<BluetoothRemoteGattCharacteristicAndroid> Create(
+  static std::unique_ptr<BluetoothRemoteGattCharacteristicAndroid> Create(
       BluetoothAdapterAndroid* adapter,
       BluetoothRemoteGattServiceAndroid* service,
       const std::string& instance_id,
@@ -51,20 +54,17 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
   // Returns the associated ChromeBluetoothRemoteGattCharacteristic Java object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
-  // BluetoothGattCharacteristic interface:
+  // BluetoothRemoteGattCharacteristic interface:
   std::string GetIdentifier() const override;
   BluetoothUUID GetUUID() const override;
-  bool IsLocal() const override;
   const std::vector<uint8_t>& GetValue() const override;
-  BluetoothGattService* GetService() const override;
+  BluetoothRemoteGattService* GetService() const override;
   Properties GetProperties() const override;
   Permissions GetPermissions() const override;
   bool IsNotifying() const override;
-  std::vector<BluetoothGattDescriptor*> GetDescriptors() const override;
-  BluetoothGattDescriptor* GetDescriptor(
+  std::vector<BluetoothRemoteGattDescriptor*> GetDescriptors() const override;
+  BluetoothRemoteGattDescriptor* GetDescriptor(
       const std::string& identifier) const override;
-  bool AddDescriptor(BluetoothGattDescriptor* descriptor) override;
-  bool UpdateValue(const std::vector<uint8_t>& value) override;
   void StartNotifySession(const NotifySessionCallback& callback,
                           const ErrorCallback& error_callback) override;
   void ReadRemoteCharacteristic(const ValueCallback& callback,
@@ -73,18 +73,25 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
                                  const base::Closure& callback,
                                  const ErrorCallback& error_callback) override;
 
+  // Called when StartNotifySession operation succeeds.
+  void OnStartNotifySessionSuccess();
+
+  // Called when StartNotifySession operation fails.
+  void OnStartNotifySessionError(
+      BluetoothRemoteGattService::GattErrorCode error);
+
   // Called when value changed event occurs.
   void OnChanged(JNIEnv* env,
                  const base::android::JavaParamRef<jobject>& jcaller,
                  const base::android::JavaParamRef<jbyteArray>& value);
 
-  // Callback after Read operation completes.
+  // Called when Read operation completes.
   void OnRead(JNIEnv* env,
               const base::android::JavaParamRef<jobject>& jcaller,
               int32_t status,
               const base::android::JavaParamRef<jbyteArray>& value);
 
-  // Callback after Write operation completes.
+  // Called when Write operation completes.
   void OnWrite(JNIEnv* env,
                const base::android::JavaParamRef<jobject>& jcaller,
                int32_t status);
@@ -123,6 +130,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
   // Adapter unique instance ID.
   std::string instance_id_;
 
+  // StartNotifySession callbacks and pending state.
+  typedef std::pair<NotifySessionCallback, ErrorCallback>
+      PendingStartNotifyCall;
+  std::vector<PendingStartNotifyCall> pending_start_notify_calls_;
+
   // ReadRemoteCharacteristic callbacks and pending state.
   bool read_pending_ = false;
   ValueCallback read_callback_;
@@ -137,7 +149,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
 
   // Map of descriptors, keyed by descriptor identifier.
   base::ScopedPtrHashMap<std::string,
-                         scoped_ptr<BluetoothRemoteGattDescriptorAndroid>>
+                         std::unique_ptr<BluetoothRemoteGattDescriptorAndroid>>
       descriptors_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothRemoteGattCharacteristicAndroid);

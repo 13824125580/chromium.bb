@@ -4,18 +4,19 @@
 
 #include "chrome/browser/background/background_contents_service.h"
 
+#include <utility>
+
 #include "apps/app_load_service.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
@@ -163,6 +164,9 @@ void NotificationImageReady(
     scoped_refptr<CrashNotificationDelegate> delegate,
     Profile* profile,
     const gfx::Image& icon) {
+  if (g_browser_process->IsShuttingDown())
+    return;
+
   gfx::Image notification_icon(icon);
   if (notification_icon.IsEmpty()) {
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
@@ -519,8 +523,8 @@ void BackgroundContentsService::OnExtensionUninstalled(
 void BackgroundContentsService::RestartForceInstalledExtensionOnCrash(
     const Extension* extension,
     Profile* profile) {
-  base::MessageLoop::current()->PostDelayedTask(FROM_HERE,
-      base::Bind(&ReloadExtension, extension->id(), profile),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&ReloadExtension, extension->id(), profile),
       base::TimeDelta::FromMilliseconds(restart_delay_in_ms_));
 }
 
@@ -648,7 +652,7 @@ void BackgroundContentsService::LoadBackgroundContents(
 }
 
 BackgroundContents* BackgroundContentsService::CreateBackgroundContents(
-    SiteInstance* site,
+    scoped_refptr<SiteInstance> site,
     int32_t routing_id,
     int32_t main_frame_route_id,
     int32_t main_frame_widget_route_id,
@@ -657,9 +661,10 @@ BackgroundContents* BackgroundContentsService::CreateBackgroundContents(
     const base::string16& application_id,
     const std::string& partition_id,
     content::SessionStorageNamespace* session_storage_namespace) {
-  BackgroundContents* contents = new BackgroundContents(
-      site, routing_id, main_frame_route_id, main_frame_widget_route_id, this,
-      partition_id, session_storage_namespace);
+  BackgroundContents* contents =
+      new BackgroundContents(std::move(site), routing_id, main_frame_route_id,
+                             main_frame_widget_route_id, this, partition_id,
+                             session_storage_namespace);
 
   // Register the BackgroundContents internally, then send out a notification
   // to external listeners.

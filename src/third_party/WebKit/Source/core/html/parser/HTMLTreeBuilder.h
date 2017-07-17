@@ -32,7 +32,6 @@
 #include "core/html/parser/HTMLParserOptions.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
@@ -47,16 +46,16 @@ class Element;
 class HTMLDocument;
 class HTMLDocumentParser;
 
-class HTMLTreeBuilder final : public NoBaseWillBeGarbageCollectedFinalized<HTMLTreeBuilder> {
-    WTF_MAKE_NONCOPYABLE(HTMLTreeBuilder); USING_FAST_MALLOC_WILL_BE_REMOVED(HTMLTreeBuilder);
+class HTMLTreeBuilder final : public GarbageCollectedFinalized<HTMLTreeBuilder> {
+    WTF_MAKE_NONCOPYABLE(HTMLTreeBuilder);
 public:
-    static PassOwnPtrWillBeRawPtr<HTMLTreeBuilder> create(HTMLDocumentParser* parser, HTMLDocument* document, ParserContentPolicy parserContentPolicy, bool reportErrors, const HTMLParserOptions& options)
+    static HTMLTreeBuilder* create(HTMLDocumentParser* parser, HTMLDocument* document, ParserContentPolicy parserContentPolicy, const HTMLParserOptions& options)
     {
-        return adoptPtrWillBeNoop(new HTMLTreeBuilder(parser, document, parserContentPolicy, reportErrors, options));
+        return new HTMLTreeBuilder(parser, document, parserContentPolicy, options);
     }
-    static PassOwnPtrWillBeRawPtr<HTMLTreeBuilder> create(HTMLDocumentParser* parser, DocumentFragment* fragment, Element* contextElement, ParserContentPolicy parserContentPolicy, const HTMLParserOptions& options)
+    static HTMLTreeBuilder* create(HTMLDocumentParser* parser, DocumentFragment* fragment, Element* contextElement, ParserContentPolicy parserContentPolicy, const HTMLParserOptions& options)
     {
-        return adoptPtrWillBeNoop(new HTMLTreeBuilder(parser, fragment, contextElement, parserContentPolicy, options));
+        return new HTMLTreeBuilder(parser, fragment, contextElement, parserContentPolicy, options);
     }
     ~HTMLTreeBuilder();
     DECLARE_TRACE();
@@ -73,7 +72,7 @@ public:
 
     bool hasParserBlockingScript() const { return !!m_scriptToProcess; }
     // Must be called to take the parser-blocking script before calling the parser again.
-    PassRefPtrWillBeRawPtr<Element> takeScriptToProcess(TextPosition& scriptStartPosition);
+    Element* takeScriptToProcess(TextPosition& scriptStartPosition);
 
     // Done, close any open tags, etc.
     void finished();
@@ -114,7 +113,7 @@ private:
         AfterAfterFramesetMode,
     };
 
-    HTMLTreeBuilder(HTMLDocumentParser*, HTMLDocument*, ParserContentPolicy, bool reportErrors, const HTMLParserOptions&);
+    HTMLTreeBuilder(HTMLDocumentParser*, HTMLDocument*, ParserContentPolicy, const HTMLParserOptions&);
     HTMLTreeBuilder(HTMLDocumentParser*, DocumentFragment*, Element* contextElement, ParserContentPolicy, const HTMLParserOptions&);
 
     void processToken(AtomicHTMLToken*);
@@ -203,8 +202,8 @@ private:
         DECLARE_TRACE();
 
     private:
-        RawPtrWillBeMember<DocumentFragment> m_fragment;
-        RefPtrWillBeMember<HTMLStackItem> m_contextElementStackItem;
+        Member<DocumentFragment> m_fragment;
+        Member<HTMLStackItem> m_contextElementStackItem;
     };
 
     // https://html.spec.whatwg.org/#frameset-ok-flag
@@ -230,9 +229,9 @@ private:
 
     // We access parser because HTML5 spec requires that we be able to change the state of the tokenizer
     // from within parser actions. We also need it to track the current position.
-    RawPtrWillBeMember<HTMLDocumentParser> m_parser;
+    Member<HTMLDocumentParser> m_parser;
 
-    RefPtrWillBeMember<Element> m_scriptToProcess; // <script> tag which needs processing before resuming the parser.
+    Member<Element> m_scriptToProcess; // <script> tag which needs processing before resuming the parser.
     TextPosition m_scriptToProcessStartPosition; // Starting line number of the script tag needing processing.
 
     HTMLParserOptions m_options;

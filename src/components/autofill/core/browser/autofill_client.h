@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -57,14 +58,6 @@ struct Suggestion;
 // for the tab the AutofillManager is attached to).
 class AutofillClient {
  public:
-  // Copy of blink::WebFormElement::AutocompleteResult.
-  enum RequestAutocompleteResult {
-    AutocompleteResultSuccess,
-    AutocompleteResultErrorDisabled,
-    AutocompleteResultErrorCancel,
-    AutocompleteResultErrorInvalid,
-  };
-
   enum PaymentsRpcResult {
     // Empty result. Used for initializing variables and should generally
     // not be returned nor passed as arguments unless explicitly allowed by
@@ -85,9 +78,13 @@ class AutofillClient {
     NETWORK_ERROR,
   };
 
-  typedef base::Callback<void(RequestAutocompleteResult,
-                              const base::string16&,
-                              const FormStructure*)> ResultCallback;
+  enum UnmaskCardReason {
+    // The card is being unmasked for PaymentRequest.
+    UNMASK_FOR_PAYMENT_REQUEST,
+
+    // The card is being unmasked for Autofill.
+    UNMASK_FOR_AUTOFILL,
+  };
 
   typedef base::Callback<void(const base::string16& /* card number */,
                               int /* exp month */,
@@ -113,15 +110,13 @@ class AutofillClient {
   // Gets the RapporService associated with the client (for metrics).
   virtual rappor::RapporService* GetRapporService() = 0;
 
-  // Hides the associated request autocomplete dialog (if it exists).
-  virtual void HideRequestAutocompleteDialog() = 0;
-
   // Causes the Autofill settings UI to be shown.
   virtual void ShowAutofillSettings() = 0;
 
   // A user has attempted to use a masked card. Prompt them for further
   // information to proceed.
   virtual void ShowUnmaskPrompt(const CreditCard& card,
+                                UnmaskCardReason reason,
                                 base::WeakPtr<CardUnmaskDelegate> delegate) = 0;
   virtual void OnUnmaskVerificationResult(PaymentsRpcResult result) = 0;
 
@@ -134,7 +129,7 @@ class AutofillClient {
   // contents of |legal_message| to the user.
   virtual void ConfirmSaveCreditCardToCloud(
       const CreditCard& card,
-      scoped_ptr<base::DictionaryValue> legal_message,
+      std::unique_ptr<base::DictionaryValue> legal_message,
       const base::Closure& callback) = 0;
 
   // Gathers risk data and provides it to |callback|.
@@ -149,12 +144,6 @@ class AutofillClient {
   // when a credit card is scanned successfully. Should be called only if
   // HasCreditCardScanFeature() returns true.
   virtual void ScanCreditCard(const CreditCardScanCallback& callback) = 0;
-
-  // Causes the dialog for request autocomplete feature to be shown.
-  virtual void ShowRequestAutocompleteDialog(
-      const FormData& form,
-      content::RenderFrameHost* render_frame_host,
-      const ResultCallback& callback) = 0;
 
   // Shows an Autofill popup with the given |values|, |labels|, |icons|, and
   // |identifiers| for the element at |element_bounds|. |delegate| will be

@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
+#include "chrome/browser/extensions/extension_service_test_with_install.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/api/management/management_api_constants.h"
@@ -23,18 +26,21 @@
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/test_util.h"
 
 namespace extensions {
 
 namespace {
 
-scoped_ptr<KeyedService> BuildManagementApi(content::BrowserContext* context) {
-  return make_scoped_ptr(new ManagementAPI(context));
+std::unique_ptr<KeyedService> BuildManagementApi(
+    content::BrowserContext* context) {
+  return base::WrapUnique(new ManagementAPI(context));
 }
 
-scoped_ptr<KeyedService> BuildEventRouter(content::BrowserContext* profile) {
-  return make_scoped_ptr(
+std::unique_ptr<KeyedService> BuildEventRouter(
+    content::BrowserContext* profile) {
+  return base::WrapUnique(
       new extensions::EventRouter(profile, ExtensionPrefs::Get(profile)));
 }
 
@@ -44,7 +50,7 @@ namespace constants = extension_management_api_constants;
 
 // TODO(devlin): Unittests are awesome. Test more with unittests and less with
 // heavy api/browser tests.
-class ManagementApiUnitTest : public ExtensionServiceTestBase {
+class ManagementApiUnitTest : public ExtensionServiceTestWithInstall {
  protected:
   ManagementApiUnitTest() {}
   ~ManagementApiUnitTest() override {}
@@ -62,8 +68,8 @@ class ManagementApiUnitTest : public ExtensionServiceTestBase {
   void TearDown() override;
 
   // The browser (and accompanying window).
-  scoped_ptr<TestBrowserWindow> browser_window_;
-  scoped_ptr<Browser> browser_;
+  std::unique_ptr<TestBrowserWindow> browser_window_;
+  std::unique_ptr<Browser> browser_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagementApiUnitTest);
 };
@@ -72,9 +78,7 @@ bool ManagementApiUnitTest::RunFunction(
     const scoped_refptr<UIThreadExtensionFunction>& function,
     const base::ListValue& args) {
   return extension_function_test_utils::RunFunction(
-      function.get(),
-      make_scoped_ptr(args.DeepCopy()),
-      browser(),
+      function.get(), base::WrapUnique(args.DeepCopy()), browser(),
       extension_function_test_utils::NONE);
 }
 
@@ -140,17 +144,10 @@ TEST_F(ManagementApiUnitTest, ManagementSetEnabled) {
                                            extension_id),
             function->GetError());
   policy->UnregisterProvider(&provider);
-
-  // TODO(devlin): We should also test enabling an extenion that has escalated
-  // permissions, but that needs a web contents (which is a bit of a pain in a
-  // unit test).
 }
 
 // Tests management.uninstall.
-// http://crbug.com/527228 flaky
-TEST_F(ManagementApiUnitTest, DISABLED_ManagementUninstall) {
-  // We need to be on the UI thread for this.
-  ResetThreadBundle(content::TestBrowserThreadBundle::DEFAULT);
+TEST_F(ManagementApiUnitTest, ManagementUninstall) {
   scoped_refptr<const Extension> extension = test_util::CreateEmptyExtension();
   service()->AddExtension(extension.get());
   std::string extension_id = extension->id();
@@ -199,9 +196,9 @@ TEST_F(ManagementApiUnitTest, DISABLED_ManagementUninstall) {
               function->GetError());
 
     // Try again, using showConfirmDialog: false.
-    scoped_ptr<base::DictionaryValue> options(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> options(new base::DictionaryValue());
     options->SetBoolean("showConfirmDialog", false);
-    uninstall_args.Append(options.release());
+    uninstall_args.Append(std::move(options));
     function = new ManagementUninstallFunction();
     EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
     EXPECT_FALSE(RunFunction(function, uninstall_args));
@@ -223,6 +220,165 @@ TEST_F(ManagementApiUnitTest, DISABLED_ManagementUninstall) {
     EXPECT_FALSE(registry()->GetExtensionById(extension_id,
                                               ExtensionRegistry::EVERYTHING));
   }
+}
+
+// Tests uninstalling a blacklisted extension via management.uninstall.
+TEST_F(ManagementApiUnitTest, ManagementUninstallBlacklisted) {
+  scoped_refptr<const Extension> extension = test_util::CreateEmptyExtension();
+  service()->AddExtension(extension.get());
+  std::string id = extension->id();
+
+  service()->BlacklistExtensionForTest(id);
+  EXPECT_NE(nullptr, registry()->GetInstalledExtension(id));
+
+  ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
+  ExtensionFunction::ScopedUserGestureForTests scoped_user_gesture;
+  scoped_refptr<UIThreadExtensionFunction> function(
+      new ManagementUninstallFunction());
+  base::ListValue uninstall_args;
+  uninstall_args.AppendString(id);
+  EXPECT_TRUE(RunFunction(function, uninstall_args)) << function->GetError();
+
+  EXPECT_EQ(nullptr, registry()->GetInstalledExtension(id));
+}
+
+TEST_F(ManagementApiUnitTest, ManagementEnableOrDisableBlacklisted) {
+  scoped_refptr<const Extension> extension = test_util::CreateEmptyExtension();
+  service()->AddExtension(extension.get());
+  std::string id = extension->id();
+
+  service()->BlacklistExtensionForTest(id);
+  EXPECT_NE(nullptr, registry()->GetInstalledExtension(id));
+
+  scoped_refptr<UIThreadExtensionFunction> function;
+
+  // Test enabling it.
+  {
+    base::ListValue enable_args;
+    enable_args.AppendString(id);
+    enable_args.AppendBoolean(true);
+    function = new ManagementSetEnabledFunction();
+    EXPECT_TRUE(RunFunction(function, enable_args)) << function->GetError();
+    EXPECT_FALSE(registry()->enabled_extensions().Contains(id));
+    EXPECT_FALSE(registry()->disabled_extensions().Contains(id));
+  }
+
+  // Test disabling it
+  {
+    base::ListValue disable_args;
+    disable_args.AppendString(id);
+    disable_args.AppendBoolean(false);
+
+    function = new ManagementSetEnabledFunction();
+    EXPECT_TRUE(RunFunction(function, disable_args)) << function->GetError();
+    EXPECT_FALSE(registry()->enabled_extensions().Contains(id));
+    EXPECT_FALSE(registry()->disabled_extensions().Contains(id));
+  }
+}
+
+// Tests enabling an extension via management API after it was disabled due to
+// permission increase.
+TEST_F(ManagementApiUnitTest, SetEnabledAfterIncreasedPermissions) {
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+
+  base::FilePath base_path = data_dir().AppendASCII("permissions_increase");
+  base::FilePath pem_path = base_path.AppendASCII("permissions.pem");
+
+  base::FilePath path = base_path.AppendASCII("v1");
+  const Extension* extension = PackAndInstallCRX(path, pem_path, INSTALL_NEW);
+  // The extension must now be installed and enabled.
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(registry()->enabled_extensions().Contains(extension->id()));
+
+  // Save the id, as |extension| will be destroyed during updating.
+  std::string extension_id = extension->id();
+
+  std::unique_ptr<const PermissionSet> known_perms =
+      prefs->GetGrantedPermissions(extension_id);
+  ASSERT_TRUE(known_perms);
+  // v1 extension doesn't have any permissions.
+  EXPECT_TRUE(known_perms->IsEmpty());
+
+  // Update to a new version with increased permissions.
+  path = base_path.AppendASCII("v2");
+  PackCRXAndUpdateExtension(extension_id, path, pem_path, DISABLED);
+
+  // The extension should be disabled.
+  ASSERT_FALSE(registry()->enabled_extensions().Contains(extension_id));
+
+  // Due to a permission increase, prefs will contain escalation information.
+  EXPECT_TRUE(prefs->DidExtensionEscalatePermissions(extension_id));
+
+  auto enable_extension_via_management_api = [this](
+      const std::string& extension_id, bool use_user_gesture,
+      bool accept_dialog, bool expect_success) {
+    ScopedTestDialogAutoConfirm auto_confirm(
+        accept_dialog ? ScopedTestDialogAutoConfirm::ACCEPT
+                      : ScopedTestDialogAutoConfirm::CANCEL);
+    std::unique_ptr<ExtensionFunction::ScopedUserGestureForTests> gesture;
+    if (use_user_gesture)
+      gesture.reset(new ExtensionFunction::ScopedUserGestureForTests);
+    scoped_refptr<ManagementSetEnabledFunction> function(
+        new ManagementSetEnabledFunction());
+    base::ListValue args;
+    args.AppendString(extension_id);
+    args.AppendBoolean(true);
+    if (expect_success) {
+      EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
+    } else {
+      EXPECT_FALSE(RunFunction(function, args)) << function->GetError();
+    }
+  };
+
+  // 1) Confirm re-enable prompt without user gesture, expect the extension to
+  // stay disabled.
+  {
+    enable_extension_via_management_api(
+        extension_id, false /* use_user_gesture */, true /* accept_dialog */,
+        false /* expect_success */);
+    EXPECT_FALSE(registry()->enabled_extensions().Contains(extension_id));
+    // Prefs should still contain permissions escalation information.
+    EXPECT_TRUE(prefs->DidExtensionEscalatePermissions(extension_id));
+  }
+
+  // 2) Deny re-enable prompt without user gesture, expect the extension to stay
+  // disabled.
+  {
+    enable_extension_via_management_api(
+        extension_id, false /* use_user_gesture */, false /* accept_dialog */,
+        false /* expect_success */);
+    EXPECT_FALSE(registry()->enabled_extensions().Contains(extension_id));
+    // Prefs should still contain permissions escalation information.
+    EXPECT_TRUE(prefs->DidExtensionEscalatePermissions(extension_id));
+  }
+
+  // 3) Deny re-enable prompt with user gesture, expect the extension to stay
+  // disabled.
+  {
+    enable_extension_via_management_api(
+        extension_id, true /* use_user_gesture */, false /* accept_dialog */,
+        false /* expect_success */);
+    EXPECT_FALSE(registry()->enabled_extensions().Contains(extension_id));
+    // Prefs should still contain permissions escalation information.
+    EXPECT_TRUE(prefs->DidExtensionEscalatePermissions(extension_id));
+  }
+
+  // 4) Accept re-enable prompt with user gesture, expect the extension to be
+  // enabled.
+  {
+    enable_extension_via_management_api(
+        extension_id, true /* use_user_gesture */, true /* accept_dialog */,
+        true /* expect_success */);
+    EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
+    // Prefs will no longer contain the escalation information as user has
+    // accepted increased permissions.
+    EXPECT_FALSE(prefs->DidExtensionEscalatePermissions(extension_id));
+  }
+
+  // Some permissions for v2 extension should be granted by now.
+  known_perms = prefs->GetGrantedPermissions(extension_id);
+  ASSERT_TRUE(known_perms);
+  EXPECT_FALSE(known_perms->IsEmpty());
 }
 
 }  // namespace extensions

@@ -6,14 +6,14 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/common/pref_names.h"
@@ -22,6 +22,7 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "extensions/browser/quota_service.h"
 #include "sync/api/fake_sync_change_processor.h"
 #include "sync/api/sync_error_factory_mock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -51,7 +52,7 @@ class MockMessageCenter : public message_center::FakeMessageCenter {
   }
 
   void AddNotification(
-      scoped_ptr<message_center::Notification> notification) override {
+      std::unique_ptr<message_center::Notification> notification) override {
     EXPECT_FALSE(last_notification.get());
     last_notification.swap(notification);
     add_notification_calls_++;
@@ -72,7 +73,7 @@ class MockMessageCenter : public message_center::FakeMessageCenter {
   }
 
  private:
-  scoped_ptr<message_center::Notification> last_notification;
+  std::unique_ptr<message_center::Notification> last_notification;
   int add_notification_calls_;
   int remove_notification_calls_;
   int notifications_with_shown_as_popup_;
@@ -119,7 +120,7 @@ public:
  private:
   const base::Time start_time_;
   base::TimeDelta elapsed_time_;
-  scoped_ptr<MockMessageCenter> message_center_;
+  std::unique_ptr<MockMessageCenter> message_center_;
   base::Closure pending_task_;
 
   DISALLOW_COPY_AND_ASSIGN(WelcomeNotificationDelegate);
@@ -155,11 +156,10 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
   void StartPreferenceSyncing() const {
     PrefServiceSyncableFromProfile(profile_.get())
         ->GetSyncableService(syncer::PREFERENCES)
-        ->MergeDataAndStartSyncing(syncer::PREFERENCES,
-                                   syncer::SyncDataList(),
-                                   scoped_ptr<syncer::SyncChangeProcessor>(
+        ->MergeDataAndStartSyncing(syncer::PREFERENCES, syncer::SyncDataList(),
+                                   std::unique_ptr<syncer::SyncChangeProcessor>(
                                        new syncer::FakeSyncChangeProcessor),
-                                   scoped_ptr<syncer::SyncErrorFactory>(
+                                   std::unique_ptr<syncer::SyncErrorFactory>(
                                        new syncer::SyncErrorFactoryMock()));
   }
 
@@ -234,12 +234,14 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
     welcome_notification_->ShowWelcomeNotificationIfNecessary(notification);
   }
 
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  scoped_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
+  std::unique_ptr<TestingProfile> profile_;
   // Weak Ref owned by welcome_notification_
   WelcomeNotificationDelegate* delegate_;
-  scoped_ptr<ExtensionWelcomeNotification> welcome_notification_;
+  std::unique_ptr<ExtensionWelcomeNotification> welcome_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionWelcomeNotificationTest);
 };

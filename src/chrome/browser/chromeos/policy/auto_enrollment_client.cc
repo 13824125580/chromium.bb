@@ -12,12 +12,11 @@
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/policy/server_backed_device_state.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -57,7 +56,7 @@ void UpdateDict(base::DictionaryValue* dict,
                 const char* pref_path,
                 bool set_or_clear,
                 base::Value* value) {
-  scoped_ptr<base::Value> scoped_value(value);
+  std::unique_ptr<base::Value> scoped_value(value);
   if (set_or_clear)
     dict->Set(pref_path, scoped_value.release());
   else
@@ -104,10 +103,8 @@ AutoEnrollmentClient::AutoEnrollmentClient(
       power_limit_(power_limit),
       modulus_updates_received_(0),
       device_management_service_(service),
-      local_state_(local_state) {
-  request_context_ = new SystemPolicyRequestContext(
-      system_request_context, GetUserAgent());
-
+      local_state_(local_state),
+      request_context_(system_request_context) {
   DCHECK_LE(current_power_, power_limit_);
   DCHECK(!progress_callback_.is_null());
   CHECK(!server_backed_state_key_.empty());
@@ -221,15 +218,16 @@ void AutoEnrollmentClient::ReportProgress(AutoEnrollmentState state) {
 }
 
 void AutoEnrollmentClient::NextStep() {
-  if (!RetryStep()) {
-    // Protocol finished successfully, report result.
-    const RestoreMode restore_mode = GetRestoreMode();
-    bool trigger_enrollment =
-        (restore_mode == RESTORE_MODE_REENROLLMENT_REQUESTED ||
-         restore_mode == RESTORE_MODE_REENROLLMENT_ENFORCED);
+  if (RetryStep())
+    return;
 
-    ReportProgress(trigger_enrollment ? AUTO_ENROLLMENT_STATE_TRIGGER_ENROLLMENT
-                                      : AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
+  // Protocol finished successfully, report result.
+  const RestoreMode restore_mode = GetRestoreMode();
+  if (restore_mode == RESTORE_MODE_REENROLLMENT_REQUESTED ||
+      restore_mode == RESTORE_MODE_REENROLLMENT_ENFORCED) {
+    ReportProgress(AUTO_ENROLLMENT_STATE_TRIGGER_ENROLLMENT);
+  } else {
+    ReportProgress(AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
   }
 }
 
@@ -395,6 +393,9 @@ bool AutoEnrollmentClient::OnDeviceStateRequestCompletion(
                  state_response.has_disabled_state(),
                  new base::StringValue(
                      state_response.disabled_state().message()));
+
+      // Logging as "WARNING" to make sure it's preserved in the logs.
+      LOG(WARNING) << "Restore mode: " << restore_mode;
     }
     local_state_->CommitPendingWrite();
     device_state_available_ = true;

@@ -33,6 +33,7 @@
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/GraphicsLayerClient.h"
 #include "wtf/Allocator.h"
+#include <memory>
 
 namespace blink {
 
@@ -92,11 +93,11 @@ public:
     GraphicsLayer* mainGraphicsLayer() const { return m_graphicsLayer.get(); }
 
     // Layer to clip children
-    bool hasClippingLayer() const { return m_childContainmentLayer; }
+    bool hasClippingLayer() const { return m_childContainmentLayer.get(); }
     GraphicsLayer* clippingLayer() const { return m_childContainmentLayer.get(); }
 
     // Layer to get clipped by ancestor
-    bool hasAncestorClippingLayer() const { return m_ancestorClippingLayer; }
+    bool hasAncestorClippingLayer() const { return m_ancestorClippingLayer.get(); }
     GraphicsLayer* ancestorClippingLayer() const { return m_ancestorClippingLayer.get(); }
 
     GraphicsLayer* foregroundLayer() const { return m_foregroundLayer.get(); }
@@ -104,21 +105,21 @@ public:
     GraphicsLayer* backgroundLayer() const { return m_backgroundLayer.get(); }
     bool backgroundLayerPaintsFixedRootBackground() const { return m_backgroundLayerPaintsFixedRootBackground; }
 
-    bool hasScrollingLayer() const { return m_scrollingLayer; }
+    bool hasScrollingLayer() const { return m_scrollingLayer.get(); }
     GraphicsLayer* scrollingLayer() const { return m_scrollingLayer.get(); }
     GraphicsLayer* scrollingContentsLayer() const { return m_scrollingContentsLayer.get(); }
 
-    bool hasMaskLayer() const { return m_maskLayer; }
+    bool hasMaskLayer() const { return m_maskLayer.get(); }
     GraphicsLayer* maskLayer() const { return m_maskLayer.get(); }
 
-    bool hasChildClippingMaskLayer() const { return m_childClippingMaskLayer; }
+    bool hasChildClippingMaskLayer() const { return m_childClippingMaskLayer.get(); }
     GraphicsLayer* childClippingMaskLayer() const { return m_childClippingMaskLayer.get(); }
 
     GraphicsLayer* parentForSublayers() const;
     GraphicsLayer* childForSuperlayers() const;
     void setSublayers(const GraphicsLayerVector&);
 
-    bool hasChildTransformLayer() const { return m_childTransformLayer; }
+    bool hasChildTransformLayer() const { return m_childTransformLayer.get(); }
     GraphicsLayer* childTransformLayer() const { return m_childTransformLayer.get(); }
 
     GraphicsLayer* squashingContainmentLayer() const { return m_squashingContainmentLayer.get(); }
@@ -127,9 +128,11 @@ public:
     void setSquashingContentsNeedDisplay();
     void setContentsNeedDisplay();
     // LayoutRect is in the coordinate space of the layer's layout object.
-    void setContentsNeedDisplayInRect(const LayoutRect&, PaintInvalidationReason);
-
-    void invalidateDisplayItemClient(const DisplayItemClient&, PaintInvalidationReason);
+    void setContentsNeedDisplayInRect(const LayoutRect&, PaintInvalidationReason, const DisplayItemClient&);
+    // Invalidates just the non-scrolling content layers.
+    void setNonScrollingContentsNeedDisplayInRect(const LayoutRect&, PaintInvalidationReason, const DisplayItemClient&);
+    // Invalidates just scrolling content layers.
+    void setScrollingContentsNeedDisplayInRect(const LayoutRect&, PaintInvalidationReason, const DisplayItemClient&);
 
     // Notification from the layoutObject that its content changed.
     void contentChanged(ContentChangeType);
@@ -152,14 +155,13 @@ public:
     void updateElementIdAndCompositorMutableProperties();
 
     // GraphicsLayerClient interface
-    void notifyAnimationStarted(const GraphicsLayer*, double monotonicTime, int group) override;
     void notifyFirstPaint() override;
     void notifyFirstTextPaint() override;
     void notifyFirstImagePaint() override;
 
     IntRect computeInterestRect(const GraphicsLayer*, const IntRect& previousInterestRect) const override;
     LayoutSize subpixelAccumulation() const final;
-    bool needsRepaint() const override;
+    bool needsRepaint(const GraphicsLayer&) const override;
     void paintContents(const GraphicsLayer*, GraphicsContext&, GraphicsLayerPaintingPhase, const IntRect& interestRect) const override;
 
     bool isTrackingPaintInvalidations() const override;
@@ -215,15 +217,22 @@ public:
 
     void updateScrollingBlockSelection();
 
+    void adjustForCompositedScrolling(const GraphicsLayer*, IntSize& offset) const;
+
 private:
     IntRect recomputeInterestRect(const GraphicsLayer*) const;
     static bool interestRectChangedEnoughToRepaint(const IntRect& previousInterestRect, const IntRect& newInterestRect, const IntSize& layerSize);
 
     static const GraphicsLayerPaintInfo* containingSquashedLayer(const LayoutObject*,  const Vector<GraphicsLayerPaintInfo>& layers, unsigned maxSquashedLayerIndex);
 
+    // Paints the scrollbar part associated with the given graphics layer into the given context.
+    void paintScrollableArea(const GraphicsLayer*, GraphicsContext&, const IntRect& interestRect) const;
+    // Returns whether the given layer is part of the scrollable area, if any, associated with this mapping.
+    bool isScrollableAreaLayer(const GraphicsLayer*) const;
+
     // Helper methods to updateGraphicsLayerGeometry:
     void computeGraphicsLayerParentLocation(const PaintLayer* compositingContainer, const IntRect& ancestorCompositingBounds, IntPoint& graphicsLayerParentLocation);
-    void updateSquashingLayerGeometry(const LayoutPoint& offsetFromCompositedAncestor, const IntPoint& graphicsLayerParentLocation, const PaintLayer& referenceLayer, Vector<GraphicsLayerPaintInfo>& layers, GraphicsLayer*, LayoutPoint* offsetFromTransformedAncestor, Vector<PaintLayer*>& layersNeedingPaintInvalidation);
+    void updateSquashingLayerGeometry(const IntPoint& graphicsLayerParentLocation, const PaintLayer* compositingContainer, Vector<GraphicsLayerPaintInfo>& layers, GraphicsLayer*, LayoutPoint* offsetFromTransformedAncestor, Vector<PaintLayer*>& layersNeedingPaintInvalidation);
     void updateMainGraphicsLayerGeometry(const IntRect& relativeCompositingBounds, const IntRect& localCompositingBounds, const IntPoint& graphicsLayerParentLocation);
     void updateAncestorClippingLayerGeometry(const PaintLayer* compositingContainer, const IntPoint& snappedOffsetFromCompositedAncestor, IntPoint& graphicsLayerParentLocation);
     void updateOverflowControlsHostLayerGeometry(const PaintLayer* compositingStackingContext, const PaintLayer* compositingContainer);
@@ -240,8 +249,8 @@ private:
     void createPrimaryGraphicsLayer();
     void destroyGraphicsLayers();
 
-    PassOwnPtr<GraphicsLayer> createGraphicsLayer(CompositingReasons, SquashingDisallowedReasons = SquashingDisallowedReasonsNone);
-    bool toggleScrollbarLayerIfNeeded(OwnPtr<GraphicsLayer>&, bool needsLayer, CompositingReasons);
+    std::unique_ptr<GraphicsLayer> createGraphicsLayer(CompositingReasons, SquashingDisallowedReasons = SquashingDisallowedReasonsNone);
+    bool toggleScrollbarLayerIfNeeded(std::unique_ptr<GraphicsLayer>&, bool needsLayer, CompositingReasons);
 
     LayoutBoxModelObject* layoutObject() const { return m_owningLayer.layoutObject(); }
     PaintLayerCompositor* compositor() const { return m_owningLayer.compositor(); }
@@ -255,9 +264,9 @@ private:
     bool updateBackgroundLayer(bool needsBackgroundLayer);
     bool updateMaskLayer(bool needsMaskLayer);
     void updateChildClippingMaskLayer(bool needsChildClippingMaskLayer);
-    bool requiresHorizontalScrollbarLayer() const { return m_owningLayer.scrollableArea() && m_owningLayer.scrollableArea()->horizontalScrollbar(); }
-    bool requiresVerticalScrollbarLayer() const { return m_owningLayer.scrollableArea() && m_owningLayer.scrollableArea()->verticalScrollbar(); }
-    bool requiresScrollCornerLayer() const { return m_owningLayer.scrollableArea() && !m_owningLayer.scrollableArea()->scrollCornerAndResizerRect().isEmpty(); }
+    bool requiresHorizontalScrollbarLayer() const { return m_owningLayer.getScrollableArea() && m_owningLayer.getScrollableArea()->horizontalScrollbar(); }
+    bool requiresVerticalScrollbarLayer() const { return m_owningLayer.getScrollableArea() && m_owningLayer.getScrollableArea()->verticalScrollbar(); }
+    bool requiresScrollCornerLayer() const { return m_owningLayer.getScrollableArea() && !m_owningLayer.getScrollableArea()->scrollCornerAndResizerRect().isEmpty(); }
     bool updateScrollingLayers(bool scrollingLayers);
     void updateScrollParent(const PaintLayer*);
     void updateClipParent(const PaintLayer* scrollParent);
@@ -356,18 +365,18 @@ private:
     // In this case B is clipped by another layer that doesn't happen to be its ancestor: A.
     // So we create an ancestor clipping layer for B, [+], which ensures that B is clipped
     // as if it had been A's descendant.
-    OwnPtr<GraphicsLayer> m_ancestorClippingLayer; // Only used if we are clipped by an ancestor which is not a stacking context.
-    OwnPtr<GraphicsLayer> m_graphicsLayer;
-    OwnPtr<GraphicsLayer> m_childContainmentLayer; // Only used if we have clipping on a stacking context with compositing children.
-    OwnPtr<GraphicsLayer> m_childTransformLayer; // Only used if we have perspective.
-    OwnPtr<GraphicsLayer> m_scrollingLayer; // Only used if the layer is using composited scrolling.
-    OwnPtr<GraphicsLayer> m_scrollingContentsLayer; // Only used if the layer is using composited scrolling.
+    std::unique_ptr<GraphicsLayer> m_ancestorClippingLayer; // Only used if we are clipped by an ancestor which is not a stacking context.
+    std::unique_ptr<GraphicsLayer> m_graphicsLayer;
+    std::unique_ptr<GraphicsLayer> m_childContainmentLayer; // Only used if we have clipping on a stacking context with compositing children.
+    std::unique_ptr<GraphicsLayer> m_childTransformLayer; // Only used if we have perspective.
+    std::unique_ptr<GraphicsLayer> m_scrollingLayer; // Only used if the layer is using composited scrolling.
+    std::unique_ptr<GraphicsLayer> m_scrollingContentsLayer; // Only used if the layer is using composited scrolling.
 
     // This layer is also added to the hierarchy by the RLB, but in a different way than
     // the layers above. It's added to m_graphicsLayer as its mask layer (naturally) if
     // we have a mask, and isn't part of the typical hierarchy (it has no children).
-    OwnPtr<GraphicsLayer> m_maskLayer; // Only used if we have a mask.
-    OwnPtr<GraphicsLayer> m_childClippingMaskLayer; // Only used if we have to clip child layers or accelerated contents with border radius or clip-path.
+    std::unique_ptr<GraphicsLayer> m_maskLayer; // Only used if we have a mask.
+    std::unique_ptr<GraphicsLayer> m_childClippingMaskLayer; // Only used if we have to clip child layers or accelerated contents with border radius or clip-path.
 
     // There are two other (optional) layers whose painting is managed by the CompositedLayerMapping,
     // but whose position in the hierarchy is maintained by the PaintLayerCompositor. These
@@ -391,17 +400,17 @@ private:
     //
     // With the hierarchy set up like this, the root content layer is able to scroll without affecting
     // the background layer (or paint invalidation).
-    OwnPtr<GraphicsLayer> m_foregroundLayer; // Only used in cases where we need to draw the foreground separately.
-    OwnPtr<GraphicsLayer> m_backgroundLayer; // Only used in cases where we need to draw the background separately.
+    std::unique_ptr<GraphicsLayer> m_foregroundLayer; // Only used in cases where we need to draw the foreground separately.
+    std::unique_ptr<GraphicsLayer> m_backgroundLayer; // Only used in cases where we need to draw the background separately.
 
-    OwnPtr<GraphicsLayer> m_layerForHorizontalScrollbar;
-    OwnPtr<GraphicsLayer> m_layerForVerticalScrollbar;
-    OwnPtr<GraphicsLayer> m_layerForScrollCorner;
+    std::unique_ptr<GraphicsLayer> m_layerForHorizontalScrollbar;
+    std::unique_ptr<GraphicsLayer> m_layerForVerticalScrollbar;
+    std::unique_ptr<GraphicsLayer> m_layerForScrollCorner;
 
     // This layer contains the scrollbar and scroll corner layers and clips them to the border box
     // bounds of our LayoutObject. It is usually added to m_graphicsLayer, but may be reparented by
     // GraphicsLayerTreeBuilder to ensure that scrollbars appear above scrolling content.
-    OwnPtr<GraphicsLayer> m_overflowControlsHostLayer;
+    std::unique_ptr<GraphicsLayer> m_overflowControlsHostLayer;
 
     // The reparented overflow controls sometimes need to be clipped by a non-ancestor. In just the same
     // way we need an ancestor clipping layer to clip this CLM's internal hierarchy, we add another layer
@@ -409,7 +418,7 @@ private:
     // would require manually intersecting their clips, and shifting the overflow controls to compensate
     // for this clip's offset. By using a separate layer, the overflow controls can remain ignorant of
     // ancestor clipping.
-    OwnPtr<GraphicsLayer> m_overflowControlsAncestorClippingLayer;
+    std::unique_ptr<GraphicsLayer> m_overflowControlsAncestorClippingLayer;
 
     // A squashing CLM has two possible squashing-related structures.
     //
@@ -427,14 +436,19 @@ private:
     //
     // Stacking children of a squashed layer receive graphics layers that are parented to the compositd ancestor of the
     // squashed layer (i.e. nearest enclosing composited layer that is not squashed).
-    OwnPtr<GraphicsLayer> m_squashingContainmentLayer; // Only used if any squashed layers exist and m_squashingContainmentLayer is not present, to contain the squashed layers as siblings to the rest of the GraphicsLayer tree chunk.
-    OwnPtr<GraphicsLayer> m_squashingLayer; // Only used if any squashed layers exist, this is the backing that squashed layers paint into.
+    std::unique_ptr<GraphicsLayer> m_squashingContainmentLayer; // Only used if any squashed layers exist and m_squashingContainmentLayer is not present, to contain the squashed layers as siblings to the rest of the GraphicsLayer tree chunk.
+    std::unique_ptr<GraphicsLayer> m_squashingLayer; // Only used if any squashed layers exist, this is the backing that squashed layers paint into.
     Vector<GraphicsLayerPaintInfo> m_squashedLayers;
     LayoutPoint m_squashingLayerOffsetFromTransformedAncestor;
 
     LayoutRect m_compositedBounds;
 
     LayoutSize m_contentOffsetInCompositingLayer;
+
+    // We keep track of the scrolling contents offset, so that when it changes we can notify the ScrollingCoordinator, which
+    // passes on main-thread scrolling updates to the compositor.
+    DoubleSize m_scrollingContentsOffset;
+
     unsigned m_contentOffsetInCompositingLayerDirty : 1;
 
     unsigned m_pendingUpdateScope : 2;

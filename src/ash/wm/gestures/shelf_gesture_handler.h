@@ -6,7 +6,6 @@
 #define ASH_WM_GESTURES_SHELF_GESTURE_HANDLER_H_
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace aura {
 class Window;
@@ -20,6 +19,8 @@ namespace ash {
 
 // This manages gestures on the shelf (e.g. launcher, status tray) that affects
 // the shelf visibility.
+// TODO(jamescook): Consolidate this with ShelfLayoutManager and its notion of
+// drag status.
 class ShelfGestureHandler {
  public:
   ShelfGestureHandler();

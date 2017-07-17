@@ -7,10 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 
@@ -56,9 +56,6 @@ class NET_EXPORT UploadDataStream {
   // upload data is smaller than size()), zeros are padded to ensure that
   // size() bytes can be read, which can happen for TYPE_FILE payloads.
   //
-  // Reads are currently not allowed to fail - they must either return
-  // a value >= 0 or ERR_IO_PENDING, and call OnReadCompleted with a
-  // value >= 0.
   // TODO(mmenke):  Investigate letting reads fail.
   int Read(IOBuffer* buf, int buf_len, const CompletionCallback& callback);
 
@@ -89,7 +86,7 @@ class NET_EXPORT UploadDataStream {
   virtual bool IsInMemory() const;
 
   // Returns a list of element readers owned by |this|, if it has any.
-  virtual const std::vector<scoped_ptr<UploadElementReader>>*
+  virtual const std::vector<std::unique_ptr<UploadElementReader>>*
   GetElementReaders() const;
 
  protected:

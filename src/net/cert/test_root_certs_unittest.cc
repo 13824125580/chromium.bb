@@ -5,16 +5,16 @@
 #include "base/files/file_path.h"
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(USE_NSS_CERTS) || defined(OS_IOS)
+#if defined(USE_NSS_CERTS)
 #include <nss.h>
 #endif
 
@@ -68,14 +68,13 @@ TEST(TestRootCertsTest, AddFromFile) {
 // the results of the rest of net_unittests, ensuring that the trust status
 // is properly being set and cleared.
 TEST(TestRootCertsTest, OverrideTrust) {
-#if defined(USE_NSS_CERTS) || defined(OS_IOS)
+#if defined(USE_NSS_CERTS)
   if (NSS_VersionCheck("3.14.2") && !NSS_VersionCheck("3.15")) {
     // See http://bugzil.la/863947 for details
     LOG(INFO) << "Skipping test for NSS 3.14.2 - NSS 3.15";
     return;
   }
 #endif
-
   TestRootCerts* test_roots = TestRootCerts::GetInstance();
   ASSERT_NE(static_cast<TestRootCerts*>(NULL), test_roots);
   EXPECT_TRUE(test_roots->IsEmpty());

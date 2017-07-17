@@ -8,6 +8,7 @@
 #include <functional>
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -15,12 +16,11 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_enumerator.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -149,7 +149,7 @@ class CommitLaterTask : public base::RefCounted<CommitLaterTask> {
 };
 
 QueuedHistoryDBTask::QueuedHistoryDBTask(
-    scoped_ptr<HistoryDBTask> task,
+    std::unique_ptr<HistoryDBTask> task,
     scoped_refptr<base::SingleThreadTaskRunner> origin_loop,
     const base::CancelableTaskTracker::IsCanceledCallback& is_canceled)
     : task_(std::move(task)),
@@ -202,7 +202,7 @@ HistoryBackendHelper::~HistoryBackendHelper() {
 
 HistoryBackend::HistoryBackend(
     Delegate* delegate,
-    scoped_ptr<HistoryBackendClient> backend_client,
+    std::unique_ptr<HistoryBackendClient> backend_client,
     scoped_refptr<base::SequencedTaskRunner> task_runner)
     : delegate_(delegate),
       scheduled_kill_db_(false),
@@ -228,7 +228,8 @@ HistoryBackend::~HistoryBackend() {
   if (!backend_destroy_task_.is_null()) {
     // Notify an interested party (typically a unit test) that we're done.
     DCHECK(backend_destroy_message_loop_);
-    backend_destroy_message_loop_->PostTask(FROM_HERE, backend_destroy_task_);
+    backend_destroy_message_loop_->task_runner()->PostTask(
+        FROM_HERE, backend_destroy_task_);
   }
 
 #if defined(OS_ANDROID)
@@ -238,7 +239,6 @@ HistoryBackend::~HistoryBackend() {
 }
 
 void HistoryBackend::Init(
-    const std::string& languages,
     bool force_fail,
     const HistoryDatabaseParams& history_database_params) {
   // HistoryBackend is created on the UI thread by HistoryService, then the
@@ -247,7 +247,7 @@ void HistoryBackend::Init(
   supports_user_data_helper_.reset(new HistoryBackendHelper);
 
   if (!force_fail)
-    InitImpl(languages, history_database_params);
+    InitImpl(history_database_params);
   delegate_->DBLoaded();
   typed_url_syncable_service_.reset(new TypedUrlSyncableService(this));
   memory_pressure_listener_.reset(new base::MemoryPressureListener(
@@ -280,10 +280,6 @@ void HistoryBackend::PersistState() {
 
 void HistoryBackend::ClearCachedDataForContextID(ContextID context_id) {
   tracker_.ClearCachedDataForContextID(context_id);
-}
-
-base::FilePath HistoryBackend::GetThumbnailFileName() const {
-  return history_dir_.Append(kThumbnailsFilename);
 }
 
 base::FilePath HistoryBackend::GetFaviconsFileName() const {
@@ -327,7 +323,6 @@ SegmentID HistoryBackend::UpdateSegments(const GURL& url,
     return 0;
 
   SegmentID segment_id = 0;
-  ui::PageTransition t = ui::PageTransitionStripQualifier(transition_type);
 
   // Are we at the beginning of a new segment?
   // Note that navigating to an existing entry (with back/forward) reuses the
@@ -342,8 +337,10 @@ SegmentID HistoryBackend::UpdateSegments(const GURL& url,
   // Note also that we should still be updating the visit count for that segment
   // which we are not doing now. It should be addressed when
   // http://crbug.com/96860 is fixed.
-  if ((t == ui::PAGE_TRANSITION_TYPED ||
-       t == ui::PAGE_TRANSITION_AUTO_BOOKMARK) &&
+  if ((ui::PageTransitionCoreTypeIs(transition_type,
+                                    ui::PAGE_TRANSITION_TYPED) ||
+       ui::PageTransitionCoreTypeIs(transition_type,
+                                    ui::PAGE_TRANSITION_AUTO_BOOKMARK)) &&
       (transition_type & ui::PAGE_TRANSITION_FORWARD_BACK) == 0) {
     // If so, create or get the segment.
     std::string segment_name = db_->ComputeSegmentName(url);
@@ -425,24 +422,29 @@ TopHostsList HistoryBackend::TopHosts(size_t num_hosts) const {
   return top_hosts;
 }
 
-OriginCountMap HistoryBackend::GetCountsForOrigins(
+OriginCountAndLastVisitMap HistoryBackend::GetCountsAndLastVisitForOrigins(
     const std::set<GURL>& origins) const {
   if (!db_)
-    return OriginCountMap();
+    return OriginCountAndLastVisitMap();
 
   URLDatabase::URLEnumerator it;
   if (!db_->InitURLEnumeratorForEverything(&it))
-    return OriginCountMap();
+    return OriginCountAndLastVisitMap();
 
-  OriginCountMap origin_count_map;
+  OriginCountAndLastVisitMap origin_count_map;
   for (const GURL& origin : origins)
-    origin_count_map[origin] = 0;
+    origin_count_map[origin] = std::make_pair(0, base::Time());
 
   URLRow row;
   while (it.GetNextURL(&row)) {
     GURL origin = row.url().GetOrigin();
-    if (ContainsValue(origins, origin))
-      ++origin_count_map[origin];
+    auto iter = origin_count_map.find(origin);
+    if (iter != origin_count_map.end()) {
+      std::pair<int, base::Time>& value = iter->second;
+      ++(value.first);
+      if (value.second.is_null() || value.second < row.last_visit())
+        value.second = row.last_visit();
+    }
   }
 
   return origin_count_map;
@@ -474,17 +476,16 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
     first_recorded_time_ = request.time;
 
   ui::PageTransition request_transition = request.transition;
-  ui::PageTransition stripped_transition =
-      ui::PageTransitionStripQualifier(request_transition);
-  bool is_keyword_generated =
-      (stripped_transition == ui::PAGE_TRANSITION_KEYWORD_GENERATED);
+  bool is_keyword_generated = ui::PageTransitionCoreTypeIs(
+      request_transition, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
 
   // If the user is navigating to a not-previously-typed intranet hostname,
   // change the transition to TYPED so that the omnibox will learn that this is
   // a known host.
   bool has_redirects = request.redirects.size() > 1;
   if (ui::PageTransitionIsMainFrame(request_transition) &&
-      (stripped_transition != ui::PAGE_TRANSITION_TYPED) &&
+      !ui::PageTransitionCoreTypeIs(request_transition,
+                                    ui::PAGE_TRANSITION_TYPED) &&
       !is_keyword_generated) {
     const GURL& origin_url(has_redirects ? request.redirects[0] : request.url);
     if (origin_url.SchemeIs(url::kHttpScheme) ||
@@ -497,9 +498,8 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
               net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
               net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
       if (registry_length == 0 && !db_->IsTypedHost(host)) {
-        stripped_transition = ui::PAGE_TRANSITION_TYPED;
         request_transition = ui::PageTransitionFromInt(
-            stripped_transition |
+            ui::PAGE_TRANSITION_TYPED |
             ui::PageTransitionGetQualifier(request_transition));
       }
     }
@@ -574,8 +574,8 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
 
     for (size_t redirect_index = 0; redirect_index < redirects.size();
          redirect_index++) {
-      ui::PageTransition t =
-          ui::PageTransitionFromInt(stripped_transition | redirect_info);
+      ui::PageTransition t = ui::PageTransitionFromInt(
+          ui::PageTransitionStripQualifier(request_transition) | redirect_info);
 
       // If this is the last transition, add a CHAIN_END marker
       if (redirect_index == (redirects.size() - 1)) {
@@ -613,8 +613,10 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
   // TODO(evanm): Due to http://b/1194536 we lose the referrers of a subframe
   // navigation anyway, so last_visit_id is always zero for them.  But adding
   // them here confuses main frame history, so we skip them for now.
-  if (stripped_transition != ui::PAGE_TRANSITION_AUTO_SUBFRAME &&
-      stripped_transition != ui::PAGE_TRANSITION_MANUAL_SUBFRAME &&
+  if (!ui::PageTransitionCoreTypeIs(request_transition,
+                                    ui::PAGE_TRANSITION_AUTO_SUBFRAME) &&
+      !ui::PageTransitionCoreTypeIs(request_transition,
+                                    ui::PAGE_TRANSITION_MANUAL_SUBFRAME) &&
       !is_keyword_generated) {
     tracker_.AddVisit(request.context_id, request.nav_entry_id, request.url,
                       last_ids.second);
@@ -624,7 +626,6 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
 }
 
 void HistoryBackend::InitImpl(
-    const std::string& languages,
     const HistoryDatabaseParams& history_database_params) {
   DCHECK(!db_) << "Initializing HistoryBackend twice";
   // In the rare case where the db fails to initialize a dialog may get shown
@@ -679,7 +680,8 @@ void HistoryBackend::InitImpl(
   // Fill the in-memory database and send it back to the history service on the
   // main thread.
   {
-    scoped_ptr<InMemoryHistoryBackend> mem_backend(new InMemoryHistoryBackend);
+    std::unique_ptr<InMemoryHistoryBackend> mem_backend(
+        new InMemoryHistoryBackend);
     if (mem_backend->Init(history_name))
       delegate_->SetInMemoryBackend(std::move(mem_backend));
   }
@@ -776,12 +778,11 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
   // NOTE: This code must stay in sync with
   // ExpireHistoryBackend::ExpireURLsForVisits().
   int typed_increment = 0;
-  ui::PageTransition transition_type =
-      ui::PageTransitionStripQualifier(transition);
   if (ui::PageTransitionIsNewNavigation(transition) &&
-      ((transition_type == ui::PAGE_TRANSITION_TYPED &&
+      ((ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED) &&
         !ui::PageTransitionIsRedirect(transition)) ||
-       transition_type == ui::PAGE_TRANSITION_KEYWORD_GENERATED))
+       ui::PageTransitionCoreTypeIs(transition,
+                                    ui::PAGE_TRANSITION_KEYWORD_GENERATED)))
     typed_increment = 1;
 
   if (!host_ranks_.empty() && visit_source == SOURCE_BROWSED &&
@@ -794,8 +795,7 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
   URLID url_id = db_->GetRowForURL(url, &url_info);
   if (url_id) {
     // Update of an existing row.
-    if (ui::PageTransitionStripQualifier(transition) !=
-        ui::PAGE_TRANSITION_RELOAD)
+    if (!ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD))
       url_info.set_visit_count(url_info.visit_count() + 1);
     if (typed_increment)
       url_info.set_typed_count(url_info.typed_count() + typed_increment);
@@ -1279,7 +1279,8 @@ void HistoryBackend::QueryHistoryText(const base::string16& text_query,
                                       const QueryOptions& options,
                                       QueryResults* result) {
   URLRows text_matches;
-  db_->GetTextMatches(text_query, &text_matches);
+  db_->GetTextMatchesWithAlgorithm(text_query, options.matching_algorithm,
+                                   &text_matches);
 
   std::vector<URLResult> matching_visits;
   VisitVector visits;  // Declare outside loop to prevent re-construction.
@@ -1353,13 +1354,15 @@ void HistoryBackend::QueryMostVisitedURLs(int result_count,
   if (!db_)
     return;
 
-  ScopedVector<PageUsageData> data;
-  db_->QuerySegmentUsage(
+  auto url_filter = backend_client_
+                        ? base::Bind(&HistoryBackendClient::IsWebSafe,
+                                     base::Unretained(backend_client_.get()))
+                        : base::Callback<bool(const GURL&)>();
+  std::vector<std::unique_ptr<PageUsageData>> data = db_->QuerySegmentUsage(
       base::Time::Now() - base::TimeDelta::FromDays(days_back), result_count,
-      &data.get());
+      url_filter);
 
-  for (size_t i = 0; i < data.size(); ++i) {
-    PageUsageData* current_data = data[i];
+  for (const std::unique_ptr<PageUsageData>& current_data : data) {
     RedirectList redirects;
     QueryRedirectsFrom(current_data->GetURL(), &redirects);
     MostVisitedURL url = MakeMostVisitedURL(*current_data, redirects);
@@ -2257,7 +2260,7 @@ void HistoryBackend::ProcessDBTaskImpl() {
     return;
 
   // Run the first task.
-  scoped_ptr<QueuedHistoryDBTask> task(queued_history_db_tasks_.front());
+  std::unique_ptr<QueuedHistoryDBTask> task(queued_history_db_tasks_.front());
   queued_history_db_tasks_.pop_front();
   if (task->Run(this, db_.get())) {
     // The task is done, notify the callback.
@@ -2453,7 +2456,7 @@ void HistoryBackend::SetUserData(const void* key,
 }
 
 void HistoryBackend::ProcessDBTask(
-    scoped_ptr<HistoryDBTask> task,
+    std::unique_ptr<HistoryDBTask> task,
     scoped_refptr<base::SingleThreadTaskRunner> origin_loop,
     const base::CancelableTaskTracker::IsCanceledCallback& is_canceled) {
   bool scheduled = !queued_history_db_tasks_.empty();
@@ -2567,9 +2570,6 @@ bool HistoryBackend::ClearAllThumbnailHistory(
     // fix the error if it exists. This may fail, in which case either the
     // file doesn't exist or there's no more we can do.
     sql::Connection::Delete(GetFaviconsFileName());
-
-    // Older version of the database.
-    sql::Connection::Delete(GetThumbnailFileName());
     return true;
   }
 

@@ -6,7 +6,6 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 -webkit-app-region: no-drag
 -webkit-appearance: none
 -webkit-background-clip: border-box
--webkit-background-composite: source-over
 -webkit-background-origin: padding-box
 -webkit-border-horizontal-spacing: 0px
 -webkit-border-image: none
@@ -22,7 +21,6 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 -webkit-box-pack: start
 -webkit-box-reflect: none
 -webkit-clip-path: none
--webkit-filter: none
 -webkit-font-smoothing: auto
 -webkit-highlight: none
 -webkit-hyphenate-character: auto
@@ -138,7 +136,7 @@ content:
 cursor: auto
 cx: 0px
 cy: 0px
-d: path('')
+d: none
 direction: ltr
 display: block
 dominant-baseline: auto
@@ -161,7 +159,9 @@ font-size-adjust: none
 font-stretch: normal
 font-style: normal
 font-variant: normal
+font-variant-caps: normal
 font-variant-ligatures: normal
+font-variant-numeric: normal
 font-weight: normal
 grid-auto-columns: auto
 grid-auto-flow: row
@@ -176,6 +176,7 @@ grid-template-areas: none
 grid-template-columns: none
 grid-template-rows: none
 height: 0px
+hyphens: manual
 image-orientation: 0deg
 image-rendering: auto
 isolation: auto
@@ -211,7 +212,7 @@ object-fit: fill
 object-position: 50% 50%
 opacity: 1
 order: 0
-orphans: auto
+orphans: 2
 outline-color: rgb(0, 0, 0)
 outline-offset: 0px
 outline-style: none
@@ -233,8 +234,8 @@ r: 0px
 resize: none
 right: auto
 rotate: 0deg
-rx: 0px
-ry: 0px
+rx: auto
+ry: auto
 scale: 1
 scroll-behavior: auto
 scroll-snap-coordinate: none
@@ -272,6 +273,7 @@ text-justify: auto
 text-overflow: clip
 text-rendering: auto
 text-shadow: none
+text-size-adjust: auto
 text-transform: none
 text-underline-position: auto
 top: auto
@@ -289,7 +291,7 @@ vector-effect: none
 vertical-align: baseline
 visibility: visible
 white-space: normal
-widows: 1
+widows: 2
 width: 769px
 will-change: auto
 word-break: normal

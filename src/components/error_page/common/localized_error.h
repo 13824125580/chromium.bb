@@ -5,12 +5,11 @@
 #ifndef COMPONENTS_ERROR_PAGE_COMMON_LOCALIZED_ERROR_H_
 #define COMPONENTS_ERROR_PAGE_COMMON_LOCALIZED_ERROR_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
-#include "components/error_page/common/offline_page_types.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -31,10 +30,9 @@ class LocalizedError {
                          bool is_post,
                          bool stale_copy_in_cache,
                          bool can_show_network_diagnostics_dialog,
-                         error_page::OfflinePageStatus offline_page_status,
+                         bool has_offline_pages,
                          const std::string& locale,
-                         const std::string& accept_languages,
-                         scoped_ptr<error_page::ErrorPageParams> params,
+                         std::unique_ptr<error_page::ErrorPageParams> params,
                          base::DictionaryValue* strings);
 
   // Returns a description of the encountered error.

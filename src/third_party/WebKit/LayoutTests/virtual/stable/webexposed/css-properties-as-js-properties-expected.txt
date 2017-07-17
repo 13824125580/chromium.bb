@@ -89,6 +89,7 @@ columnRuleWidth
 columnSpan
 columnWidth
 columns
+contain
 content
 counterIncrement
 counterReset
@@ -97,6 +98,7 @@ cssText
 cursor
 cx
 cy
+d
 direction
 display
 dominantBaseline
@@ -123,7 +125,9 @@ fontSize
 fontStretch
 fontStyle
 fontVariant
+fontVariantCaps
 fontVariantLigatures
+fontVariantNumeric
 fontWeight
 getPropertyPriority
 getPropertyValue
@@ -230,6 +234,7 @@ textOrientation
 textOverflow
 textRendering
 textShadow
+textSizeAdjust
 textTransform
 top
 touchAction
@@ -250,7 +255,6 @@ visibility
 webkitAppRegion
 webkitAppearance
 webkitBackgroundClip
-webkitBackgroundComposite
 webkitBackgroundOrigin
 webkitBorderAfter
 webkitBorderAfterColor
@@ -285,7 +289,6 @@ webkitClipPath
 webkitColumnBreakAfter
 webkitColumnBreakBefore
 webkitColumnBreakInside
-webkitFilter
 webkitFontSizeDelta
 webkitFontSmoothing
 webkitHighlight

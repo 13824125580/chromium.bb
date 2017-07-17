@@ -40,7 +40,6 @@
 #include "core/dom/DocumentStatisticsCollector.h"
 #include "core/dom/DocumentType.h"
 #include "core/dom/Element.h"
-#include "core/dom/Fullscreen.h"
 #include "core/dom/StyleEngine.h"
 #include "core/events/Event.h"
 #include "core/html/HTMLAllCollection.h"
@@ -51,7 +50,8 @@
 #include "core/html/HTMLHeadElement.h"
 #include "core/html/HTMLLinkElement.h"
 #include "core/layout/LayoutObject.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutAPIShim.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/loader/DocumentLoader.h"
 #include "modules/accessibility/AXObject.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
@@ -74,11 +74,11 @@ WebURL WebDocument::url() const
     return constUnwrap<Document>()->url();
 }
 
-WebSecurityOrigin WebDocument::securityOrigin() const
+WebSecurityOrigin WebDocument::getSecurityOrigin() const
 {
     if (!constUnwrap<Document>())
         return WebSecurityOrigin();
-    return WebSecurityOrigin(constUnwrap<Document>()->securityOrigin());
+    return WebSecurityOrigin(constUnwrap<Document>()->getSecurityOrigin());
 }
 
 bool WebDocument::isSecureContext(WebString& errorMessage) const
@@ -181,7 +181,7 @@ WebElementCollection WebDocument::all()
 
 void WebDocument::forms(WebVector<WebFormElement>& results) const
 {
-    RefPtrWillBeRawPtr<HTMLCollection> forms = const_cast<Document*>(constUnwrap<Document>())->forms();
+    HTMLCollection* forms = const_cast<Document*>(constUnwrap<Document>())->forms();
     size_t sourceLength = forms->length();
     Vector<WebFormElement> temp;
     temp.reserveCapacity(sourceLength);
@@ -211,35 +211,22 @@ WebElement WebDocument::focusedElement() const
 
 void WebDocument::insertStyleSheet(const WebString& sourceCode)
 {
-    RefPtrWillBeRawPtr<Document> document = unwrap<Document>();
-    ASSERT(document);
-    RefPtrWillBeRawPtr<StyleSheetContents> parsedSheet = StyleSheetContents::create(CSSParserContext(*document, 0));
+    Document* document = unwrap<Document>();
+    DCHECK(document);
+    StyleSheetContents* parsedSheet = StyleSheetContents::create(CSSParserContext(*document, nullptr));
     parsedSheet->parseString(sourceCode);
     document->styleEngine().injectAuthorSheet(parsedSheet);
 }
 
 void WebDocument::watchCSSSelectors(const WebVector<WebString>& webSelectors)
 {
-    RefPtrWillBeRawPtr<Document> document = unwrap<Document>();
+    Document* document = unwrap<Document>();
     CSSSelectorWatch* watch = CSSSelectorWatch::fromIfExists(*document);
     if (!watch && webSelectors.isEmpty())
         return;
     Vector<String> selectors;
     selectors.append(webSelectors.data(), webSelectors.size());
     CSSSelectorWatch::from(*document).watchCSSSelectors(selectors);
-}
-
-void WebDocument::cancelFullScreen()
-{
-    Fullscreen::fullyExitFullscreen(*unwrap<Document>());
-}
-
-WebElement WebDocument::fullScreenElement() const
-{
-    Element* fullScreenElement = 0;
-    if (Fullscreen* fullscreen = Fullscreen::fromIfExists(*const_cast<WebDocument*>(this)->unwrap<Document>()))
-        fullScreenElement = fullscreen->webkitCurrentFullScreenElement();
-    return WebElement(fullScreenElement);
 }
 
 WebReferrerPolicy WebDocument::referrerPolicy() const
@@ -271,7 +258,7 @@ WebAXObject WebDocument::accessibilityObject() const
 {
     const Document* document = constUnwrap<Document>();
     AXObjectCacheImpl* cache = toAXObjectCacheImpl(document->axObjectCache());
-    return cache ? WebAXObject(cache->getOrCreate(document->layoutView())) : WebAXObject();
+    return cache ? WebAXObject(cache->getOrCreate(toLayoutView(LayoutAPIShim::layoutObjectFrom(document->layoutViewItem())))) : WebAXObject();
 }
 
 WebAXObject WebDocument::accessibilityObjectFromID(int axID) const
@@ -313,7 +300,7 @@ v8::Local<v8::Value> WebDocument::registerEmbedderCustomElement(const WebString&
     V8ElementRegistrationOptions::toImpl(isolate, options, registrationOptions, exceptionState);
     if (exceptionState.hadException())
         return v8::Local<v8::Value>();
-    ScriptValue constructor = document->registerElement(ScriptState::current(isolate), name, registrationOptions, exceptionState, CustomElement::EmbedderNames);
+    ScriptValue constructor = document->registerElement(ScriptState::current(isolate), name, registrationOptions, exceptionState, V0CustomElement::EmbedderNames);
     ec = exceptionState.code();
     if (exceptionState.hadException())
         return v8::Local<v8::Value>();
@@ -343,20 +330,20 @@ WebDistillabilityFeatures WebDocument::distillabilityFeatures()
     return DocumentStatisticsCollector::collectStatistics(*unwrap<Document>());
 }
 
-WebDocument::WebDocument(const PassRefPtrWillBeRawPtr<Document>& elem)
+WebDocument::WebDocument(Document* elem)
     : WebNode(elem)
 {
 }
 
 DEFINE_WEB_NODE_TYPE_CASTS(WebDocument, constUnwrap<Node>()->isDocumentNode());
 
-WebDocument& WebDocument::operator=(const PassRefPtrWillBeRawPtr<Document>& elem)
+WebDocument& WebDocument::operator=(Document*elem)
 {
     m_private = elem;
     return *this;
 }
 
-WebDocument::operator PassRefPtrWillBeRawPtr<Document>() const
+WebDocument::operator Document*() const
 {
     return toDocument(m_private.get());
 }

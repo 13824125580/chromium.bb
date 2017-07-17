@@ -5,7 +5,8 @@
 #ifndef HEADLESS_LIB_BROWSER_HEADLESS_BROWSER_MAIN_PARTS_H_
 #define HEADLESS_LIB_BROWSER_HEADLESS_BROWSER_MAIN_PARTS_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "content/public/browser/browser_main_parts.h"
 #include "headless/public/headless_browser.h"
 
@@ -15,7 +16,7 @@ class DevToolsHttpHandler;
 
 namespace headless {
 
-class HeadlessBrowserContext;
+class HeadlessBrowserContextImpl;
 class HeadlessBrowserImpl;
 
 class HeadlessBrowserMainParts : public content::BrowserMainParts {
@@ -27,12 +28,13 @@ class HeadlessBrowserMainParts : public content::BrowserMainParts {
   void PreMainMessageLoopRun() override;
   void PostMainMessageLoopRun() override;
 
-  HeadlessBrowserContext* browser_context() const;
+  HeadlessBrowserContextImpl* default_browser_context() const;
 
  private:
   HeadlessBrowserImpl* browser_;  // Not owned.
-  scoped_ptr<HeadlessBrowserContext> browser_context_;
-  scoped_ptr<devtools_http_handler::DevToolsHttpHandler> devtools_http_handler_;
+  std::unique_ptr<HeadlessBrowserContextImpl> browser_context_;
+  std::unique_ptr<devtools_http_handler::DevToolsHttpHandler>
+      devtools_http_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(HeadlessBrowserMainParts);
 };

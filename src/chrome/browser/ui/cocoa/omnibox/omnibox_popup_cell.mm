@@ -11,6 +11,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/mac/foundation_util.h"
+#include "base/mac/objc_property_releaser.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -18,26 +19,55 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/cocoa/omnibox/omnibox_popup_view_mac.h"
 #include "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
+#import "chrome/browser/ui/cocoa/themed_window.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/font.h"
 
 namespace {
 
-// How far to offset image column from the left.
-const CGFloat kImageXOffset = 5.0;
+// How far to offset text.
+const CGFloat kVerticalTextPadding = 3.0;
 
-// How far to offset image and text.
-const CGFloat kPaddingOffset = 3.0;
+const CGFloat kVerticalImagePadding = 3.0;
+const CGFloat kMaterialVerticalImagePadding = 5.0;
 
-// How far to offset the text column from the left.
 const CGFloat kTextStartOffset = 28.0;
+const CGFloat kMaterialTextStartOffset = 27.0;
 
 // Rounding radius of selection and hover background on popup items.
 const CGFloat kCellRoundingRadius = 2.0;
+
+// How far to offset the image.
+CGFloat VerticalImagePadding() {
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return kVerticalImagePadding;
+  }
+  return kMaterialVerticalImagePadding;
+}
+
+// How far to offset the image column from the left.
+CGFloat ImageXOffset() {
+  const CGFloat kImageXOffset = 5.0;
+  const CGFloat kMaterialImageXOffset = 6.0;
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return kImageXOffset;
+  }
+  return kMaterialImageXOffset;
+}
+
+// How far to offset the text column from the left.
+CGFloat TextStartOffset() {
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return kTextStartOffset;
+  }
+  return kMaterialTextStartOffset;
+}
 
 // Flips the given |rect| in context of the given |frame|.
 NSRect FlipIfRTL(NSRect rect, NSRect frame) {
@@ -51,40 +81,68 @@ NSRect FlipIfRTL(NSRect rect, NSRect frame) {
   return rect;
 }
 
-NSColor* SelectedBackgroundColor() {
-  return [NSColor selectedControlColor];
+NSColor* SelectedBackgroundColor(BOOL is_dark_theme) {
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return [NSColor selectedControlColor];
+  }
+  return is_dark_theme
+             ? skia::SkColorToSRGBNSColor(SkColorSetA(SK_ColorWHITE, 0x14))
+             : skia::SkColorToSRGBNSColor(SkColorSetA(SK_ColorBLACK, 0x14));
 }
-NSColor* HoveredBackgroundColor() {
+
+NSColor* HoveredBackgroundColor(BOOL is_dark_theme) {
+  if (is_dark_theme) {
+    return skia::SkColorToSRGBNSColor(SkColorSetA(SK_ColorWHITE, 0x0D));
+  }
   return [NSColor controlHighlightColor];
 }
 
-NSColor* ContentTextColor() {
+NSColor* ContentTextColor(BOOL is_dark_theme) {
+  if (ui::MaterialDesignController::IsModeMaterial() && is_dark_theme) {
+    return [NSColor whiteColor];
+  }
   return [NSColor blackColor];
 }
-NSColor* DimTextColor() {
-  return [NSColor darkGrayColor];
+NSColor* DimTextColor(BOOL is_dark_theme) {
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return [NSColor darkGrayColor];
+  }
+  if (is_dark_theme) {
+    return skia::SkColorToSRGBNSColor(SkColorSetA(SK_ColorWHITE, 0x7F));
+  }
+  return skia::SkColorToSRGBNSColor(SkColorSetRGB(0x64, 0x64, 0x64));
 }
 NSColor* PositiveTextColor() {
-  return skia::SkColorToCalibratedNSColor(SkColorSetRGB(0x0b, 0x80, 0x43));
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return skia::SkColorToCalibratedNSColor(SkColorSetRGB(0x3d, 0x94, 0x00));
+  }
+  return skia::SkColorToSRGBNSColor(SkColorSetRGB(0x3d, 0x94, 0x00));
 }
 NSColor* NegativeTextColor() {
-  return skia::SkColorToCalibratedNSColor(SkColorSetRGB(0xc5, 0x39, 0x29));
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return skia::SkColorToCalibratedNSColor(SkColorSetRGB(0xdd, 0x4b, 0x39));
+  }
+  return skia::SkColorToSRGBNSColor(SkColorSetRGB(0xdd, 0x4b, 0x39));
 }
-NSColor* URLTextColor() {
-  return [NSColor colorWithCalibratedRed:0.0 green:0.55 blue:0.0 alpha:1.0];
+NSColor* URLTextColor(BOOL is_dark_theme) {
+  if (!ui::MaterialDesignController::IsModeMaterial()) {
+    return [NSColor colorWithCalibratedRed:0.0 green:0.55 blue:0.0 alpha:1.0];
+  }
+  return is_dark_theme ? skia::SkColorToSRGBNSColor(gfx::kGoogleBlue300)
+                       : skia::SkColorToSRGBNSColor(gfx::kGoogleBlue700);
 }
 
 NSFont* FieldFont() {
-  return OmniboxViewMac::GetFieldFont(gfx::Font::NORMAL);
+  return OmniboxViewMac::GetNormalFieldFont();
 }
 NSFont* BoldFieldFont() {
-  return OmniboxViewMac::GetFieldFont(gfx::Font::BOLD);
+  return OmniboxViewMac::GetBoldFieldFont();
 }
 NSFont* LargeFont() {
-  return OmniboxViewMac::GetLargeFont(gfx::Font::NORMAL);
+  return OmniboxViewMac::GetLargeFont();
 }
 NSFont* LargeSuperscriptFont() {
-  NSFont* font = OmniboxViewMac::GetLargeFont(gfx::Font::NORMAL);
+  NSFont* font = OmniboxViewMac::GetLargeFont();
   // Calculate a slightly smaller font. The ratio here is somewhat arbitrary.
   // Proportions from 5/9 to 5/7 all look pretty good.
   CGFloat size = [font pointSize] * 5.0 / 9.0;
@@ -92,41 +150,35 @@ NSFont* LargeSuperscriptFont() {
   return [NSFont fontWithDescriptor:descriptor size:size];
 }
 NSFont* SmallFont() {
-  return OmniboxViewMac::GetSmallFont(gfx::Font::NORMAL);
+  return OmniboxViewMac::GetSmallFont();
 }
 
-CGFloat GetContentAreaWidth(NSRect cellFrame) {
-  return NSWidth(cellFrame) - kTextStartOffset;
+// Sets the writing direction to |direction| for a given |range| of
+// |attributedString|.
+void SetTextDirectionForRange(NSMutableAttributedString* attributedString,
+                              NSWritingDirection direction,
+                              NSRange range) {
+  base::scoped_nsobject<NSMutableParagraphStyle> paragraph_style(
+      [[NSMutableParagraphStyle alloc] init]);
+  [paragraph_style setBaseWritingDirection:direction];
+  [attributedString addAttribute:NSParagraphStyleAttributeName
+                           value:paragraph_style
+                           range:range];
 }
 
 NSAttributedString* CreateAnswerStringHelper(const base::string16& text,
                                              NSInteger style_type,
-                                             bool is_bold) {
+                                             bool is_bold,
+                                             BOOL is_dark_theme) {
   NSDictionary* answer_style = nil;
+  NSFont* answer_font = nil;
+  bool is_mode_material = ui::MaterialDesignController::IsModeMaterial();
   switch (style_type) {
-    case SuggestionAnswer::ANSWER:
-      answer_style = @{
-        NSForegroundColorAttributeName : ContentTextColor(),
-        NSFontAttributeName : LargeFont()
-      };
-      break;
-    case SuggestionAnswer::HEADLINE:
-      answer_style = @{
-        NSForegroundColorAttributeName : DimTextColor(),
-        NSFontAttributeName : LargeFont()
-      };
-      break;
     case SuggestionAnswer::TOP_ALIGNED:
       answer_style = @{
-        NSForegroundColorAttributeName : DimTextColor(),
+        NSForegroundColorAttributeName : DimTextColor(is_dark_theme),
         NSFontAttributeName : LargeSuperscriptFont(),
         NSSuperscriptAttributeName : @1
-      };
-      break;
-    case SuggestionAnswer::DESCRIPTION:
-      answer_style = @{
-        NSForegroundColorAttributeName : DimTextColor(),
-        NSFontAttributeName : FieldFont()
       };
       break;
     case SuggestionAnswer::DESCRIPTION_NEGATIVE:
@@ -141,45 +193,42 @@ NSAttributedString* CreateAnswerStringHelper(const base::string16& text,
         NSFontAttributeName : LargeSuperscriptFont()
       };
       break;
-    case SuggestionAnswer::MORE_INFO:
-      answer_style = @{
-        NSForegroundColorAttributeName : DimTextColor(),
-        NSFontAttributeName : SmallFont()
-      };
-      break;
-    case SuggestionAnswer::SUGGESTION:
-      answer_style = @{
-        NSForegroundColorAttributeName : ContentTextColor(),
-        NSFontAttributeName : FieldFont()
-      };
-      break;
-    case SuggestionAnswer::SUGGESTION_POSITIVE:
-      answer_style = @{
-        NSForegroundColorAttributeName : PositiveTextColor(),
-        NSFontAttributeName : FieldFont()
-      };
-      break;
-    case SuggestionAnswer::SUGGESTION_NEGATIVE:
-      answer_style = @{
-        NSForegroundColorAttributeName : NegativeTextColor(),
-        NSFontAttributeName : FieldFont()
-      };
-      break;
-    case SuggestionAnswer::SUGGESTION_LINK:
-      answer_style = @{
-        NSForegroundColorAttributeName : URLTextColor(),
-        NSFontAttributeName : FieldFont()
-      };
-      break;
-    case SuggestionAnswer::STATUS:
-      answer_style = @{
-        NSForegroundColorAttributeName : DimTextColor(),
-        NSFontAttributeName : LargeSuperscriptFont()
-      };
-      break;
     case SuggestionAnswer::PERSONALIZED_SUGGESTION:
       answer_style = @{
-        NSForegroundColorAttributeName : ContentTextColor(),
+        NSForegroundColorAttributeName : ContentTextColor(is_dark_theme),
+        NSFontAttributeName : FieldFont()
+      };
+      break;
+    case SuggestionAnswer::ANSWER_TEXT_MEDIUM:
+      answer_style = @{
+        NSForegroundColorAttributeName : ContentTextColor(is_dark_theme),
+        NSFontAttributeName : FieldFont()
+      };
+      break;
+    case SuggestionAnswer::ANSWER_TEXT_LARGE:
+      answer_style = @{
+        NSForegroundColorAttributeName : ContentTextColor(is_dark_theme),
+        NSFontAttributeName : LargeFont()
+      };
+      break;
+    case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_SMALL:
+      answer_font = is_mode_material ? FieldFont() : SmallFont();
+      answer_style = @{
+        NSForegroundColorAttributeName : DimTextColor(is_dark_theme),
+        NSFontAttributeName : answer_font
+      };
+      break;
+    case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_MEDIUM:
+      answer_font = is_mode_material ? LargeSuperscriptFont() : FieldFont();
+      answer_style = @{
+        NSForegroundColorAttributeName : DimTextColor(is_dark_theme),
+        NSFontAttributeName : answer_font
+      };
+      break;
+    case SuggestionAnswer::SUGGESTION:  // Fall through.
+    default:
+      answer_style = @{
+        NSForegroundColorAttributeName : ContentTextColor(is_dark_theme),
         NSFontAttributeName : FieldFont()
       };
       break;
@@ -199,7 +248,8 @@ NSAttributedString* CreateAnswerStringHelper(const base::string16& text,
 }
 
 NSAttributedString* CreateAnswerString(const base::string16& text,
-                                       NSInteger style_type) {
+                                       NSInteger style_type,
+                                       BOOL is_dark_theme) {
   // TODO(dschuyler): make this better.  Right now this only supports unnested
   // bold tags.  In the future we'll need to flag unexpected tags while adding
   // support for b, i, u, sub, and sup.  We'll also need to support HTML
@@ -212,52 +262,53 @@ NSAttributedString* CreateAnswerString(const base::string16& text,
   while (true) {
     size_t end = text.find(begin_tag, begin);
     if (end == base::string16::npos) {
-      [result
-          appendAttributedString:CreateAnswerStringHelper(
-                                         text.substr(begin),
-                                         style_type, false)];
+      [result appendAttributedString:CreateAnswerStringHelper(
+                                         text.substr(begin), style_type, false,
+                                         is_dark_theme)];
       break;
     }
     [result appendAttributedString:CreateAnswerStringHelper(
                                        text.substr(begin, end - begin),
-                                       style_type, false)];
+                                       style_type, false, is_dark_theme)];
     begin = end + begin_tag.length();
     end = text.find(end_tag, begin);
     if (end == base::string16::npos)
       break;
     [result appendAttributedString:CreateAnswerStringHelper(
                                        text.substr(begin, end - begin),
-                                       style_type, true)];
+                                       style_type, true, is_dark_theme)];
     begin = end + end_tag.length();
   }
   return result.autorelease();
 }
 
-NSAttributedString* CreateAnswerLine(const SuggestionAnswer::ImageLine& line) {
+NSAttributedString* CreateAnswerLine(const SuggestionAnswer::ImageLine& line,
+                                     BOOL is_dark_theme) {
   base::scoped_nsobject<NSMutableAttributedString> answer_string(
       [[NSMutableAttributedString alloc] init]);
   DCHECK(!line.text_fields().empty());
   for (const SuggestionAnswer::TextField& text_field : line.text_fields()) {
-    [answer_string
-        appendAttributedString:CreateAnswerString(text_field.text(),
-                                                  text_field.type())];
+    [answer_string appendAttributedString:CreateAnswerString(text_field.text(),
+                                                             text_field.type(),
+                                                             is_dark_theme)];
   }
   const base::string16 space(base::ASCIIToUTF16(" "));
   const SuggestionAnswer::TextField* text_field = line.additional_text();
   if (text_field) {
     [answer_string
         appendAttributedString:CreateAnswerString(space + text_field->text(),
-                                                  text_field->type())];
+                                                  text_field->type(),
+                                                  is_dark_theme)];
   }
   text_field = line.status_text();
   if (text_field) {
     [answer_string
         appendAttributedString:CreateAnswerString(space + text_field->text(),
-                                                  text_field->type())];
+                                                  text_field->type(),
+                                                  is_dark_theme)];
   }
   base::scoped_nsobject<NSMutableParagraphStyle> style(
       [[NSMutableParagraphStyle alloc] init]);
-  [style setLineBreakMode:NSLineBreakByTruncatingTail];
   [style setTighteningFactorForTruncation:0.0];
   [answer_string addAttribute:NSParagraphStyleAttributeName
                             value:style
@@ -281,7 +332,6 @@ NSMutableAttributedString* CreateAttributedString(
 
   NSMutableParagraphStyle* style =
       [[[NSMutableParagraphStyle alloc] init] autorelease];
-  [style setLineBreakMode:NSLineBreakByTruncatingTail];
   [style setTighteningFactorForTruncation:0.0];
   [style setAlignment:textAlignment];
   [attributedString addAttribute:NSParagraphStyleAttributeName
@@ -300,7 +350,8 @@ NSMutableAttributedString* CreateAttributedString(
 NSAttributedString* CreateClassifiedAttributedString(
     const base::string16& text,
     NSColor* text_color,
-    const ACMatchClassifications& classifications) {
+    const ACMatchClassifications& classifications,
+    BOOL is_dark_theme) {
   NSMutableAttributedString* attributedString =
       CreateAttributedString(text, text_color);
   NSUInteger match_length = [attributedString length];
@@ -326,12 +377,16 @@ NSAttributedString* CreateClassifiedAttributedString(
     }
 
     if (0 != (i->style & ACMatchClassification::URL)) {
+      // URLs have their text direction set to to LTR (avoids RTL characters
+      // making the URL render from right to left, as per RFC 3987 Section 4.1).
+      SetTextDirectionForRange(attributedString, NSWritingDirectionLeftToRight,
+                               range);
       [attributedString addAttribute:NSForegroundColorAttributeName
-                               value:URLTextColor()
+                               value:URLTextColor(is_dark_theme)
                                range:range];
     } else if (0 != (i->style & ACMatchClassification::DIM)) {
       [attributedString addAttribute:NSForegroundColorAttributeName
-                               value:DimTextColor()
+                               value:DimTextColor(is_dark_theme)
                                range:range];
     }
   }
@@ -341,14 +396,21 @@ NSAttributedString* CreateClassifiedAttributedString(
 
 }  // namespace
 
+@interface OmniboxPopupCellData () {
+  base::mac::ObjCPropertyReleaser propertyReleaser_OmniboxPopupCellData_;
+}
+@end
+
 @interface OmniboxPopupCell ()
 - (CGFloat)drawMatchPart:(NSAttributedString*)attributedString
                withFrame:(NSRect)cellFrame
                   origin:(NSPoint)origin
-            withMaxWidth:(int)maxWidth;
+            withMaxWidth:(int)maxWidth
+            forDarkTheme:(BOOL)isDarkTheme;
 - (CGFloat)drawMatchPrefixWithFrame:(NSRect)cellFrame
                           tableView:(OmniboxPopupMatrix*)tableView
-               withContentsMaxWidth:(int*)contentsMaxWidth;
+               withContentsMaxWidth:(int*)contentsMaxWidth
+                       forDarkTheme:(BOOL)isDarkTheme;
 - (void)drawMatchWithFrame:(NSRect)cellFrame inView:(NSView*)controlView;
 @end
 
@@ -358,16 +420,19 @@ NSAttributedString* CreateClassifiedAttributedString(
 @synthesize description = description_;
 @synthesize prefix = prefix_;
 @synthesize image = image_;
+@synthesize incognitoImage = incognitoImage_;
 @synthesize answerImage = answerImage_;
 @synthesize contentsOffset = contentsOffset_;
 @synthesize isContentsRTL = isContentsRTL_;
 @synthesize isAnswer = isAnswer_;
 @synthesize matchType = matchType_;
+@synthesize max_lines = max_lines_;
 
 - (instancetype)initWithMatch:(const AutocompleteMatch&)match
                contentsOffset:(CGFloat)contentsOffset
                         image:(NSImage*)image
-                  answerImage:(NSImage*)answerImage {
+                  answerImage:(NSImage*)answerImage
+                 forDarkTheme:(BOOL)isDarkTheme {
   if ((self = [super init])) {
     image_ = [image retain];
     answerImage_ = [answerImage retain];
@@ -383,23 +448,31 @@ NSAttributedString* CreateClassifiedAttributedString(
     // of the contents so we force the directionality.
     NSTextAlignment textAlignment =
         isContentsRTL_ ? NSRightTextAlignment : NSLeftTextAlignment;
-    prefix_ =
-        [CreateAttributedString(base::UTF8ToUTF16(match.GetAdditionalInfo(
-                                    kACMatchPropertyContentsPrefix)),
-                                ContentTextColor(), textAlignment) retain];
+    prefix_ = [CreateAttributedString(
+        base::UTF8ToUTF16(
+            match.GetAdditionalInfo(kACMatchPropertyContentsPrefix)),
+        ContentTextColor(isDarkTheme), textAlignment) retain];
 
-    isAnswer_ = match.answer;
+    isAnswer_ = !!match.answer;
     if (isAnswer_) {
-      contents_ = [CreateAnswerLine(match.answer->first_line()) retain];
-      description_ = [CreateAnswerLine(match.answer->second_line()) retain];
+      contents_ =
+          [CreateAnswerLine(match.answer->first_line(), isDarkTheme) retain];
+      description_ =
+          [CreateAnswerLine(match.answer->second_line(), isDarkTheme) retain];
+      max_lines_ = match.answer->second_line().num_text_lines();
     } else {
       contents_ = [CreateClassifiedAttributedString(
-          match.contents, ContentTextColor(), match.contents_class) retain];
+          match.contents, ContentTextColor(isDarkTheme), match.contents_class,
+          isDarkTheme) retain];
       if (!match.description.empty()) {
         description_ = [CreateClassifiedAttributedString(
-            match.description, DimTextColor(), match.description_class) retain];
+            match.description, DimTextColor(isDarkTheme),
+            match.description_class, isDarkTheme) retain];
       }
+      max_lines_ = 1;
     }
+    propertyReleaser_OmniboxPopupCellData_.Init(self,
+                                                [OmniboxPopupCellData class]);
   }
   return self;
 }
@@ -417,16 +490,25 @@ NSAttributedString* CreateClassifiedAttributedString(
 @implementation OmniboxPopupCell
 
 - (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView*)controlView {
+  OmniboxPopupMatrix* matrix =
+      base::mac::ObjCCastStrict<OmniboxPopupMatrix>(controlView);
+  BOOL isDarkTheme = [matrix hasDarkTheme];
+
   if ([self state] == NSOnState || [self isHighlighted]) {
-    if ([self state] == NSOnState)
-      [SelectedBackgroundColor() set];
-    else
-      [HoveredBackgroundColor() set];
-    NSBezierPath* path =
-        [NSBezierPath bezierPathWithRoundedRect:cellFrame
-                                        xRadius:kCellRoundingRadius
-                                        yRadius:kCellRoundingRadius];
-    [path fill];
+    if ([self state] == NSOnState) {
+      [SelectedBackgroundColor(isDarkTheme) set];
+    } else {
+      [HoveredBackgroundColor(isDarkTheme) set];
+    }
+    if (ui::MaterialDesignController::IsModeMaterial()) {
+      NSRectFillUsingOperation(cellFrame, NSCompositeSourceOver);
+    } else {
+      NSBezierPath* path =
+          [NSBezierPath bezierPathWithRoundedRect:cellFrame
+                                          xRadius:kCellRoundingRadius
+                                          yRadius:kCellRoundingRadius];
+      [path fill];
+    }
   }
 
   [self drawMatchWithFrame:cellFrame inView:controlView];
@@ -437,7 +519,8 @@ NSAttributedString* CreateClassifiedAttributedString(
       base::mac::ObjCCastStrict<OmniboxPopupCellData>([self objectValue]);
   OmniboxPopupMatrix* tableView =
       base::mac::ObjCCastStrict<OmniboxPopupMatrix>(controlView);
-  CGFloat remainingWidth = GetContentAreaWidth(cellFrame);
+  CGFloat remainingWidth = [OmniboxPopupCell getContentAreaWidth:cellFrame] -
+                           [tableView contentLeftPadding];
   CGFloat contentsWidth = [cellData getMatchContentsWidth];
   CGFloat separatorWidth = [[tableView separator] size].width;
   CGFloat descriptionWidth =
@@ -446,37 +529,46 @@ NSAttributedString* CreateClassifiedAttributedString(
   OmniboxPopupModel::ComputeMatchMaxWidths(
       ceilf(contentsWidth), ceilf(separatorWidth), ceilf(descriptionWidth),
       ceilf(remainingWidth),
-      !AutocompleteMatch::IsSearchType([cellData matchType]), &contentsMaxWidth,
+      [cellData isAnswer],
+      !AutocompleteMatch::IsSearchType([cellData matchType]),
+      &contentsMaxWidth,
       &descriptionMaxWidth);
 
+  NSWindow* parentWindow = [[controlView window] parentWindow];
+  BOOL isDarkTheme = [parentWindow hasDarkTheme];
   NSRect imageRect = cellFrame;
-  imageRect.size = [[cellData image] size];
-  imageRect.origin.x += kImageXOffset;
-  imageRect.origin.y += kPaddingOffset;
-  [[cellData image] drawInRect:FlipIfRTL(imageRect, cellFrame)
-                      fromRect:NSZeroRect
-                     operation:NSCompositeSourceOver
-                      fraction:1.0
-                respectFlipped:YES
-                         hints:nil];
+  NSImage* theImage =
+      isDarkTheme ? [cellData incognitoImage] : [cellData image];
+  imageRect.size = [theImage size];
+  imageRect.origin.x += ImageXOffset() + [tableView contentLeftPadding];
+  imageRect.origin.y += VerticalImagePadding();
+  [theImage drawInRect:FlipIfRTL(imageRect, cellFrame)
+              fromRect:NSZeroRect
+             operation:NSCompositeSourceOver
+              fraction:1.0
+        respectFlipped:YES
+                 hints:nil];
 
-  NSPoint origin = NSMakePoint(kTextStartOffset, kPaddingOffset);
+  NSPoint origin = NSMakePoint(
+      TextStartOffset() + [tableView contentLeftPadding], kVerticalTextPadding);
   if ([cellData matchType] == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
     // Infinite suggestions are rendered with a prefix (usually ellipsis), which
     // appear vertically stacked.
     origin.x += [self drawMatchPrefixWithFrame:cellFrame
                                      tableView:tableView
-                          withContentsMaxWidth:&contentsMaxWidth];
+                          withContentsMaxWidth:&contentsMaxWidth
+                                  forDarkTheme:isDarkTheme];
   }
   origin.x += [self drawMatchPart:[cellData contents]
                         withFrame:cellFrame
                            origin:origin
-                     withMaxWidth:contentsMaxWidth];
+                     withMaxWidth:contentsMaxWidth
+                     forDarkTheme:isDarkTheme];
 
   if (descriptionMaxWidth > 0) {
     if ([cellData isAnswer]) {
-      origin =
-          NSMakePoint(kTextStartOffset, kContentLineHeight - kPaddingOffset);
+      origin = NSMakePoint(TextStartOffset() + [tableView contentLeftPadding],
+                           kContentLineHeight - kVerticalTextPadding);
       CGFloat imageSize = [tableView answerLineHeight];
       NSRect imageRect =
           NSMakeRect(NSMinX(cellFrame) + origin.x, NSMinY(cellFrame) + origin.y,
@@ -487,28 +579,39 @@ NSAttributedString* CreateClassifiedAttributedString(
                                 fraction:1.0
                           respectFlipped:YES
                                    hints:nil];
-      if ([cellData answerImage])
-        origin.x += imageSize + kPaddingOffset;
+      if ([cellData answerImage]) {
+        origin.x += imageSize + VerticalImagePadding();
+
+        // Have to nudge the baseline down 1pt in Material Design for the text
+        // that follows, so that it's the same as the bottom of the image.
+        if (ui::MaterialDesignController::IsModeMaterial()) {
+          origin.y += 1;
+        }
+      }
     } else {
       origin.x += [self drawMatchPart:[tableView separator]
                             withFrame:cellFrame
                                origin:origin
-                         withMaxWidth:separatorWidth];
+                         withMaxWidth:separatorWidth
+                         forDarkTheme:isDarkTheme];
     }
     origin.x += [self drawMatchPart:[cellData description]
                           withFrame:cellFrame
                              origin:origin
-                       withMaxWidth:descriptionMaxWidth];
+                       withMaxWidth:descriptionMaxWidth
+                       forDarkTheme:isDarkTheme];
   }
 }
 
 - (CGFloat)drawMatchPrefixWithFrame:(NSRect)cellFrame
                           tableView:(OmniboxPopupMatrix*)tableView
-               withContentsMaxWidth:(int*)contentsMaxWidth {
+               withContentsMaxWidth:(int*)contentsMaxWidth
+                       forDarkTheme:(BOOL)isDarkTheme {
   OmniboxPopupCellData* cellData =
       base::mac::ObjCCastStrict<OmniboxPopupCellData>([self objectValue]);
   CGFloat offset = 0.0f;
-  CGFloat remainingWidth = GetContentAreaWidth(cellFrame);
+  CGFloat remainingWidth = [OmniboxPopupCell getContentAreaWidth:cellFrame] -
+                           [tableView contentLeftPadding];
   CGFloat prefixWidth = [[cellData prefix] size].width;
 
   CGFloat prefixOffset = 0.0f;
@@ -537,23 +640,30 @@ NSAttributedString* CreateClassifiedAttributedString(
   }
   *contentsMaxWidth = std::min((int)ceilf(remainingWidth - prefixWidth),
                                *contentsMaxWidth);
+  NSPoint origin = NSMakePoint(
+      prefixOffset + TextStartOffset() + [tableView contentLeftPadding], 0);
   [self drawMatchPart:[cellData prefix]
             withFrame:cellFrame
-               origin:NSMakePoint(prefixOffset + kTextStartOffset, 0)
-         withMaxWidth:prefixWidth];
+               origin:origin
+         withMaxWidth:prefixWidth
+         forDarkTheme:isDarkTheme];
   return offset;
 }
 
 - (CGFloat)drawMatchPart:(NSAttributedString*)attributedString
                withFrame:(NSRect)cellFrame
                   origin:(NSPoint)origin
-            withMaxWidth:(int)maxWidth {
+            withMaxWidth:(int)maxWidth
+            forDarkTheme:(BOOL)isDarkTheme {
   NSRect renderRect = NSIntersectionRect(
       cellFrame, NSOffsetRect(cellFrame, origin.x, origin.y));
   renderRect.size.width =
       std::min(NSWidth(renderRect), static_cast<CGFloat>(maxWidth));
-  if (!NSIsEmptyRect(renderRect))
-    [attributedString drawInRect:FlipIfRTL(renderRect, cellFrame)];
+  if (!NSIsEmptyRect(renderRect)) {
+    [attributedString drawWithRect:FlipIfRTL(renderRect, cellFrame)
+                           options:NSStringDrawingUsesLineFragmentOrigin |
+                                   NSStringDrawingTruncatesLastVisibleLine];
+  }
   return NSWidth(renderRect);
 }
 
@@ -577,7 +687,7 @@ NSAttributedString* CreateClassifiedAttributedString(
 
   // Color does not matter.
   NSAttributedString* attributedString =
-      CreateAttributedString(inputText, DimTextColor());
+      CreateAttributedString(inputText, DimTextColor(false));
   base::scoped_nsobject<NSTextStorage> textStorage(
       [[NSTextStorage alloc] initWithAttributedString:attributedString]);
   base::scoped_nsobject<NSLayoutManager> layoutManager(
@@ -625,10 +735,14 @@ NSAttributedString* CreateClassifiedAttributedString(
   return base::i18n::IsRTL() ? (inputWidth - glyphOffset) : glyphOffset;
 }
 
-+ (NSAttributedString*)createSeparatorString {
++ (NSAttributedString*)createSeparatorStringForDarkTheme:(BOOL)isDarkTheme {
   base::string16 raw_separator =
       l10n_util::GetStringUTF16(IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR);
-  return CreateAttributedString(raw_separator, DimTextColor());
+  return CreateAttributedString(raw_separator, DimTextColor(isDarkTheme));
+}
+
++ (CGFloat)getContentAreaWidth:(NSRect)cellFrame {
+  return NSWidth(cellFrame) - TextStartOffset();
 }
 
 @end

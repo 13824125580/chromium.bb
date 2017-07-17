@@ -37,17 +37,7 @@
 
 namespace blink {
 
-std::ostream& operator<<(std::ostream& os, const Decimal& decimal)
-{
-    Decimal::EncodedData data = decimal.value();
-    return os
-        << "encode(" << String::number(data.coefficient()).ascii().data()
-        << ", " << String::number(data.exponent()).ascii().data()
-        << ", " << (data.sign() == Decimal::Negative ? "Negative" : "Positive")
-        << ")=" << decimal.toString().ascii().data();
-}
-
-// Simulate WebCore/html/StepRange
+// Simulate core/html/forms/StepRange
 class DecimalStepRange {
 public:
     Decimal maximum;
@@ -112,7 +102,7 @@ protected:
 #define EXPECT_DECIMAL_ENCODED_DATA_EQ(expectedCoefficient, expectedExponent,  expectedSign, decimal) \
     EXPECT_EQ((expectedCoefficient), (decimal).value().coefficient()); \
     EXPECT_EQ((expectedExponent), (decimal).value().exponent()); \
-    EXPECT_EQ(Decimal::expectedSign, (decimal).value().sign());
+    EXPECT_EQ(Decimal::expectedSign, (decimal).value().getSign());
 
 #define EXPECT_DECIMAL_STREQ(expected, decimal) EXPECT_STREQ((expected), (decimal).toString().ascii().data())
 

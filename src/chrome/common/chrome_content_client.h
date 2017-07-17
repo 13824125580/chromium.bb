@@ -6,6 +6,7 @@
 #define CHROME_COMMON_CHROME_CONTENT_CLIENT_H_
 
 #if 0
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #endif
 
 #include "build/build_config.h"
+#include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
 #include "content/public/common/content_client.h"
 
 #if 0
@@ -33,6 +35,9 @@ class ChromeContentClient : public content::ContentClient {
   static const char kPDFPluginName[];
   static const char kPDFPluginPath[];
   static const char kRemotingViewerPluginPath[];
+
+  ChromeContentClient();
+  ~ChromeContentClient() override;
 
   // The methods below are called by child processes to set the function
   // pointers for built-in plugins. We avoid linking these plugins into
@@ -69,6 +74,8 @@ class ChromeContentClient : public content::ContentClient {
 #if 0
   void AddPepperPlugins(
       std::vector<content::PepperPluginInfo>* plugins) override;
+  void AddContentDecryptionModules(
+      std::vector<content::CdmInfo>* cdms) override;
   void AddAdditionalSchemes(std::vector<url::SchemeWithType>* standard_schemes,
                             std::vector<url::SchemeWithType>* referrer_schemes,
                             std::vector<std::string>* saveable_shemes) override;
@@ -81,7 +88,7 @@ class ChromeContentClient : public content::ContentClient {
   base::StringPiece GetDataResource(
       int resource_id,
       ui::ScaleFactor scale_factor) const override;
-  base::RefCountedStaticMemory* GetDataResourceBytes(
+  base::RefCountedMemory* GetDataResourceBytes(
       int resource_id) const override;
   gfx::Image& GetNativeImageNamed(int resource_id) const override;
 
@@ -98,8 +105,18 @@ class ChromeContentClient : public content::ContentClient {
                                   std::set<GURL>* origins) override;
 
   void AddServiceWorkerSchemes(std::set<std::string>* schemes) override;
+  bool AllowScriptExtensionForServiceWorker(const GURL& script_url) override;
 
   bool IsSupplementarySiteIsolationModeEnabled() override;
+
+  content::OriginTrialPolicy* GetOriginTrialPolicy() override;
+
+#if defined(OS_ANDROID)
+  media::MediaClientAndroid* GetMediaClientAndroid() override;
+#endif  // OS_ANDROID
+
+ private:
+  std::unique_ptr<ChromeOriginTrialPolicy> origin_trial_policy_;
 #endif
 };
 

@@ -26,7 +26,7 @@ class X509Certificate;
 // crypto config.
 class NET_EXPORT_PRIVATE QuicServerInfo {
  public:
-  QuicServerInfo(const QuicServerId& server_id);
+  explicit QuicServerInfo(const QuicServerId& server_id);
   virtual ~QuicServerInfo();
 
   // Start will commence the lookup. This must be called before any other
@@ -81,6 +81,8 @@ class NET_EXPORT_PRIVATE QuicServerInfo {
     // This class matches QuicClientCryptoConfig::CachedState.
     std::string server_config;         // A serialized handshake message.
     std::string source_address_token;  // An opaque proof of IP ownership.
+    std::string cert_sct;              // Signed timestamp of the leaf cert.
+    std::string chlo_hash;             // Hash of the CHLO message.
     std::vector<std::string> certs;    // A list of certificates in leaf-first
                                        // order.
     std::string server_config_sig;     // A signature of |server_config_|.
@@ -138,6 +140,7 @@ class NET_EXPORT_PRIVATE QuicServerInfoFactory {
   // |server_id| or NULL on failure.
   virtual QuicServerInfo* GetForServer(const QuicServerId& server_id) = 0;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(QuicServerInfoFactory);
 };
 

@@ -8,7 +8,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 using net::registry_controlled_domains::GetDomainAndRegistry;
@@ -34,10 +34,9 @@ namespace net {
 const int kDelayedTime = 0;
 
 DelayedCookieMonster::DelayedCookieMonster()
-      : cookie_monster_(new CookieMonster(NULL, NULL)),
-        did_run_(false),
-        result_(false) {
-}
+    : cookie_monster_(new CookieMonster(nullptr, nullptr)),
+      did_run_(false),
+      result_(false) {}
 
 DelayedCookieMonster::~DelayedCookieMonster() {
 }
@@ -87,7 +86,7 @@ void DelayedCookieMonster::SetCookieWithDetailsAsync(
     base::Time last_access_time,
     bool secure,
     bool http_only,
-    bool same_site,
+    CookieSameSite same_site,
     bool enforce_strict_secure,
     CookiePriority priority,
     const SetCookiesCallback& callback) {
@@ -190,10 +189,10 @@ void DelayedCookieMonster::DeleteAllCreatedBetweenAsync(
   ADD_FAILURE();
 }
 
-void DelayedCookieMonster::DeleteAllCreatedBetweenForHostAsync(
-    const base::Time delete_begin,
-    const base::Time delete_end,
-    const GURL& url,
+void DelayedCookieMonster::DeleteAllCreatedBetweenWithPredicateAsync(
+    const base::Time& delete_begin,
+    const base::Time& delete_end,
+    const base::Callback<bool(const CanonicalCookie&)>& predicate,
     const DeleteCallback& callback) {
   ADD_FAILURE();
 }
@@ -206,13 +205,17 @@ void DelayedCookieMonster::FlushStore(const base::Closure& callback) {
   ADD_FAILURE();
 }
 
-scoped_ptr<CookieStore::CookieChangedSubscription>
+std::unique_ptr<CookieStore::CookieChangedSubscription>
 DelayedCookieMonster::AddCallbackForCookie(
     const GURL& url,
     const std::string& name,
     const CookieChangedCallback& callback) {
   ADD_FAILURE();
-  return scoped_ptr<CookieStore::CookieChangedSubscription>();
+  return std::unique_ptr<CookieStore::CookieChangedSubscription>();
+}
+
+bool DelayedCookieMonster::IsEphemeral() {
+  return true;
 }
 
 //

@@ -14,6 +14,7 @@
 #include "core/testing/DummyPageHolder.h"
 #include "platform/graphics/Color.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
@@ -24,8 +25,8 @@ protected:
     void setHtmlInnerHTML(const char* htmlContent);
 
 private:
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
-    RefPtrWillBePersistent<HTMLDocument> m_document;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
+    Persistent<HTMLDocument> m_document;
 };
 
 void LayoutThemeTest::SetUp()
@@ -62,7 +63,7 @@ TEST_F(LayoutThemeTest, ChangeFocusRingColor)
     Color customColor = makeRGB(123, 145, 167);
 
     // Checking unfocused style.
-    EXPECT_EQ(BNONE, outlineStyle(span));
+    EXPECT_EQ(BorderStyleNone, outlineStyle(span));
     EXPECT_NE(customColor, outlineColor(span));
 
     // Do focus.
@@ -72,7 +73,7 @@ TEST_F(LayoutThemeTest, ChangeFocusRingColor)
     document().view()->updateAllLifecyclePhases();
 
     // Checking focused style.
-    EXPECT_NE(BNONE, outlineStyle(span));
+    EXPECT_NE(BorderStyleNone, outlineStyle(span));
     EXPECT_NE(customColor, outlineColor(span));
 
     // Change focus ring color.
@@ -81,7 +82,7 @@ TEST_F(LayoutThemeTest, ChangeFocusRingColor)
     document().view()->updateAllLifecyclePhases();
 
     // Check that the focus ring color is updated.
-    EXPECT_NE(BNONE, outlineStyle(span));
+    EXPECT_NE(BorderStyleNone, outlineStyle(span));
     EXPECT_EQ(customColor, outlineColor(span));
 }
 

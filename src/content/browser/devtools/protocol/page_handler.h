@@ -37,11 +37,11 @@ class PageHandler : public NotificationObserver {
   ~PageHandler() override;
 
   void SetRenderFrameHost(RenderFrameHostImpl* host);
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
   void Detached();
-  void OnSwapCompositorFrame(const cc::CompositorFrameMetadata& frame_metadata);
-  void OnSynchronousSwapCompositorFrame(const cc::CompositorFrameMetadata&
-      frame_metadata);
+  void OnSwapCompositorFrame(cc::CompositorFrameMetadata frame_metadata);
+  void OnSynchronousSwapCompositorFrame(
+      cc::CompositorFrameMetadata frame_metadata);
   void DidAttachInterstitialPage();
   void DidDetachInterstitialPage();
   bool screencast_enabled() const { return enabled_ && screencast_enabled_; }
@@ -49,7 +49,7 @@ class PageHandler : public NotificationObserver {
   Response Enable();
   Response Disable();
 
-  Response Reload(const bool* ignoreCache,
+  Response Reload(const bool* bypassCache,
                   const std::string* script_to_evaluate_on_load,
                   const std::string* script_preprocessor = NULL);
 
@@ -77,16 +77,16 @@ class PageHandler : public NotificationObserver {
                               const std::string& security_origin);
 
   Response SetColorPickerEnabled(bool enabled);
-  Response RequestAppBanner(bool* result);
+  Response RequestAppBanner();
 
  private:
   WebContentsImpl* GetWebContents();
   void NotifyScreencastVisibility(bool visible);
   void InnerSwapCompositorFrame();
-  void ScreencastFrameCaptured(const cc::CompositorFrameMetadata& metadata,
+  void ScreencastFrameCaptured(cc::CompositorFrameMetadata metadata,
                                const SkBitmap& bitmap,
                                ReadbackResponse response);
-  void ScreencastFrameEncoded(const cc::CompositorFrameMetadata& metadata,
+  void ScreencastFrameEncoded(cc::CompositorFrameMetadata metadata,
                               const base::Time& timestamp,
                               const std::string& data);
 
@@ -118,10 +118,10 @@ class PageHandler : public NotificationObserver {
   int frame_counter_;
   int frames_in_flight_;
 
-  scoped_ptr<ColorPicker> color_picker_;
+  std::unique_ptr<ColorPicker> color_picker_;
 
   RenderFrameHostImpl* host_;
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   NotificationRegistrar registrar_;
   base::WeakPtrFactory<PageHandler> weak_factory_;
 

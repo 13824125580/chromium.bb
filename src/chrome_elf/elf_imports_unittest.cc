@@ -62,7 +62,7 @@ class ELFImportsTest : public testing::Test {
 //
 // If you break this test, you may have changed base or the Windows sandbox
 // such that more system imports are required to link.
-#ifdef NDEBUG
+#if defined(NDEBUG) && !defined(COMPONENT_BUILD)
 TEST_F(ELFImportsTest, ChromeElfSanityCheck) {
   base::FilePath dll;
   ASSERT_TRUE(PathService::Get(base::DIR_EXE, &dll));
@@ -77,14 +77,22 @@ TEST_F(ELFImportsTest, ChromeElfSanityCheck) {
 
   static const char* const kValidFilePatterns[] = {
     "KERNEL32.dll",
-    "MSVC*",
+#if defined(COMPONENT_BUILD)
+    "MSVC*.dll",
+    "VCRUNTIME*.dll",
+    "api-ms-win-crt-*.dll",
+#endif
 #if defined(SYZYASAN)
     "syzyasan_rtl.dll",
 #endif
 #if defined(ADDRESS_SANITIZER) && defined(COMPONENT_BUILD)
     "clang_rt.asan_dynamic-i386.dll",
 #endif
-    "ADVAPI32.dll"
+    "ADVAPI32.dll",
+    // On 64 bit the Version API's like VerQueryValue come from VERSION.dll.
+    // It depends on kernel32, advapi32 and api-ms-win-crt*.dll. This should
+    // be ok.
+    "VERSION.dll",
   };
 
   // Make sure all of ELF's imports are in the valid imports list.
@@ -98,6 +106,22 @@ TEST_F(ELFImportsTest, ChromeElfSanityCheck) {
     }
     ASSERT_TRUE(match) << "Illegal import in chrome_elf.dll: " << import;
   }
+}
+TEST_F(ELFImportsTest, ChromeElfLoadSanityTest) {
+  base::FilePath dll;
+  ASSERT_TRUE(PathService::Get(base::DIR_EXE, &dll));
+  dll = dll.Append(L"chrome_elf.dll");
+
+  // We don't expect user32 to be loaded in chrome_elf_unittests. If this test
+  // case fails, then it means that a dependency on user32 has crept into the
+  // chrome_elf_unittests executable, which needs to be removed.
+  EXPECT_EQ(nullptr, ::GetModuleHandle(L"user32.dll"));
+
+  HMODULE chrome_elf_module_handle = ::LoadLibrary(dll.value().c_str());
+  EXPECT_TRUE(chrome_elf_module_handle != nullptr);
+  // Loading chrome_elf.dll should not load user32.dll
+  EXPECT_EQ(nullptr, ::GetModuleHandle(L"user32.dll"));
+  EXPECT_TRUE(!!::FreeLibrary(chrome_elf_module_handle));
 }
 #endif  // NDEBUG
 

@@ -9,8 +9,12 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "tools/gn/label.h"
+#include "tools/gn/label_ptr.h"
 #include "tools/gn/substitution_list.h"
 #include "tools/gn/substitution_pattern.h"
+
+class Pool;
 
 class Tool {
  public:
@@ -50,6 +54,14 @@ class Tool {
     DCHECK(!complete_);
     DCHECK(ext.empty() || ext[0] == '.');
     default_output_extension_ = ext;
+  }
+
+  const SubstitutionPattern& default_output_dir() const {
+    return default_output_dir_;
+  }
+  void set_default_output_dir(const SubstitutionPattern& dir) {
+    DCHECK(!complete_);
+    default_output_dir_ = dir;
   }
 
   // Dependency file (if supported).
@@ -165,6 +177,9 @@ class Tool {
     rspfile_content_ = content;
   }
 
+  const LabelPtrPair<Pool>& pool() const { return pool_; }
+  void set_pool(const LabelPtrPair<Pool>& pool) { pool_ = pool; }
+
   // Other functions ----------------------------------------------------------
 
   // Called when the toolchain is saving this tool, after everything is filled
@@ -183,9 +198,12 @@ class Tool {
     return substitution_bits_;
   }
 
+  bool OnResolved(Err* err);
+
  private:
   SubstitutionPattern command_;
   std::string default_output_extension_;
+  SubstitutionPattern default_output_dir_;
   SubstitutionPattern depfile_;
   DepsFormat depsformat_;
   PrecompiledHeaderType precompiled_header_type_;
@@ -200,6 +218,7 @@ class Tool {
   bool restat_;
   SubstitutionPattern rspfile_;
   SubstitutionPattern rspfile_content_;
+  LabelPtrPair<Pool> pool_;
 
   bool complete_;
 

@@ -9,8 +9,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "media/base/android/media_codec_bridge.h"
 #include "media/base/media_export.h"
@@ -23,11 +24,12 @@ class MEDIA_EXPORT NdkMediaCodecBridge : public MediaCodecBridge {
   ~NdkMediaCodecBridge() override;
 
   // MediaCodecBridge implementation.
-  MediaCodecStatus Reset() override;
   bool Start() override;
   void Stop() override;
+  MediaCodecStatus Flush() override;
   MediaCodecStatus GetOutputSize(gfx::Size* size) override;
   MediaCodecStatus GetOutputSamplingRate(int* sampling_rate) override;
+  MediaCodecStatus GetOutputChannelCount(int* channel_count) override;
   MediaCodecStatus QueueInputBuffer(
       int index,
       const uint8_t* data,
@@ -57,10 +59,10 @@ class MEDIA_EXPORT NdkMediaCodecBridge : public MediaCodecBridge {
   MediaCodecStatus GetInputBuffer(int input_buffer_index,
                                   uint8_t** data,
                                   size_t* capacity) override;
-  MediaCodecStatus CopyFromOutputBuffer(int index,
-                                        size_t offset,
-                                        void* dst,
-                                        size_t num) override;
+  MediaCodecStatus GetOutputBufferAddress(int index,
+                                          size_t offset,
+                                          const uint8_t** addr,
+                                          size_t* capacity) override;
 
  protected:
   NdkMediaCodecBridge(const std::string& mime,
@@ -72,7 +74,7 @@ class MEDIA_EXPORT NdkMediaCodecBridge : public MediaCodecBridge {
     inline void operator()(AMediaCodec* ptr) const { AMediaCodec_delete(ptr); }
   };
 
-  scoped_ptr<AMediaCodec, AMediaCodecDeleter> media_codec_;
+  std::unique_ptr<AMediaCodec, AMediaCodecDeleter> media_codec_;
 
   DISALLOW_COPY_AND_ASSIGN(NdkMediaCodecBridge);
 };

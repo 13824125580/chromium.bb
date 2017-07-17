@@ -87,7 +87,7 @@ public class AwSettings {
     private boolean mSpatialNavigationEnabled;  // Default depends on device features.
     private boolean mEnableSupportedHardwareAcceleratedFeatures = false;
     private int mMixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW;
-    private boolean mVideoOverlayForEmbeddedVideoEnabled = false;
+
     private boolean mForceVideoOverlayForTests = false;
     private boolean mOffscreenPreRaster = false;
     private int mDisabledMenuItems = MENU_ITEM_NONE;
@@ -96,6 +96,8 @@ public class AwSettings {
     private boolean mAcceptThirdPartyCookies = false;
 
     private final boolean mSupportLegacyQuirks;
+    private final boolean mAllowEmptyDocumentPersistence;
+    private final boolean mAllowGeolocationOnInsecureOrigins;
 
     private final boolean mPasswordEchoEnabled;
 
@@ -208,7 +210,9 @@ public class AwSettings {
 
     public AwSettings(Context context,
             boolean isAccessFromFileURLsGrantedByDefault,
-            boolean supportsLegacyQuirks) {
+            boolean supportsLegacyQuirks,
+            boolean allowEmptyDocumentPersistence,
+            boolean allowGeolocationOnInsecureOrigins) {
         boolean hasInternetPermission = context.checkPermission(
                 android.Manifest.permission.INTERNET,
                 Process.myPid(),
@@ -237,6 +241,8 @@ public class AwSettings {
             mTextSizePercent *= context.getResources().getConfiguration().fontScale;
 
             mSupportLegacyQuirks = supportsLegacyQuirks;
+            mAllowEmptyDocumentPersistence = allowEmptyDocumentPersistence;
+            mAllowGeolocationOnInsecureOrigins = allowGeolocationOnInsecureOrigins;
         }
         // Defer initializing the native side until a native WebContents instance is set.
     }
@@ -1246,6 +1252,18 @@ public class AwSettings {
         return mSupportLegacyQuirks;
     }
 
+    @CalledByNative
+    private boolean getAllowEmptyDocumentPersistenceLocked() {
+        assert Thread.holdsLock(mAwSettingsLock);
+        return mAllowEmptyDocumentPersistence;
+    }
+
+    @CalledByNative
+    private boolean getAllowGeolocationOnInsecureOrigins() {
+        assert Thread.holdsLock(mAwSettingsLock);
+        return mAllowGeolocationOnInsecureOrigins;
+    }
+
     /**
      * See {@link android.webkit.WebSettings#setUseWideViewPort}.
      */
@@ -1683,19 +1701,7 @@ public class AwSettings {
      * @param flag whether to enable the video overlay for the embedded video.
      */
     public void setVideoOverlayForEmbeddedVideoEnabled(final boolean enabled) {
-        synchronized (mAwSettingsLock) {
-            if (mVideoOverlayForEmbeddedVideoEnabled != enabled) {
-                mVideoOverlayForEmbeddedVideoEnabled = enabled;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateRendererPreferencesLocked(mNativeAwSettings);
-                        }
-                    }
-                });
-            }
-        }
+        // No-op, see http://crbug.com/616583
     }
 
     /**
@@ -1703,15 +1709,14 @@ public class AwSettings {
      * @return true if the WebView enables the video overlay for the embedded video.
      */
     public boolean getVideoOverlayForEmbeddedVideoEnabled() {
-        synchronized (mAwSettingsLock) {
-            return getVideoOverlayForEmbeddedVideoEnabledLocked();
-        }
+        // Always false, see http://crbug.com/616583
+        return false;
     }
 
     @CalledByNative
     private boolean getVideoOverlayForEmbeddedVideoEnabledLocked() {
-        assert Thread.holdsLock(mAwSettingsLock);
-        return mVideoOverlayForEmbeddedVideoEnabled;
+        // Always false, see http://crbug.com/616583
+        return false;
     }
 
     @VisibleForTesting

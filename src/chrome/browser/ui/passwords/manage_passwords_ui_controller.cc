@@ -44,9 +44,9 @@ password_manager::PasswordStore* GetPasswordStore(
              ServiceAccessType::EXPLICIT_ACCESS).get();
 }
 
-std::vector<scoped_ptr<autofill::PasswordForm>> CopyFormVector(
+std::vector<std::unique_ptr<autofill::PasswordForm>> CopyFormVector(
     const ScopedVector<autofill::PasswordForm>& forms) {
-  std::vector<scoped_ptr<autofill::PasswordForm>> result(forms.size());
+  std::vector<std::unique_ptr<autofill::PasswordForm>> result(forms.size());
   for (size_t i = 0; i < forms.size(); ++i)
     result[i].reset(new autofill::PasswordForm(*forms[i]));
   return result;
@@ -71,7 +71,7 @@ ManagePasswordsUIController::ManagePasswordsUIController(
 ManagePasswordsUIController::~ManagePasswordsUIController() {}
 
 void ManagePasswordsUIController::OnPasswordSubmitted(
-    scoped_ptr<PasswordFormManager> form_manager) {
+    std::unique_ptr<PasswordFormManager> form_manager) {
   bool show_bubble = !form_manager->IsBlacklisted();
   DestroyAccountChooser();
   passwords_data_.OnPendingPassword(std::move(form_manager));
@@ -88,7 +88,7 @@ void ManagePasswordsUIController::OnPasswordSubmitted(
 }
 
 void ManagePasswordsUIController::OnUpdatePasswordSubmitted(
-    scoped_ptr<PasswordFormManager> form_manager) {
+    std::unique_ptr<PasswordFormManager> form_manager) {
   DestroyAccountChooser();
   passwords_data_.OnUpdatePassword(std::move(form_manager));
   bubble_status_ = SHOULD_POP_UP;
@@ -99,7 +99,7 @@ bool ManagePasswordsUIController::OnChooseCredentials(
     ScopedVector<autofill::PasswordForm> local_credentials,
     ScopedVector<autofill::PasswordForm> federated_credentials,
     const GURL& origin,
-    base::Callback<void(const password_manager::CredentialInfo&)> callback) {
+    const ManagePasswordsState::CredentialsCallback& callback) {
   DCHECK(!local_credentials.empty() || !federated_credentials.empty());
   PasswordDialogController::FormsVector locals =
       CopyFormVector(local_credentials);
@@ -119,10 +119,11 @@ bool ManagePasswordsUIController::OnChooseCredentials(
 }
 
 void ManagePasswordsUIController::OnAutoSignin(
-    ScopedVector<autofill::PasswordForm> local_forms) {
+    ScopedVector<autofill::PasswordForm> local_forms,
+    const GURL& origin) {
   DCHECK(!local_forms.empty());
   DestroyAccountChooser();
-  passwords_data_.OnAutoSignin(std::move(local_forms));
+  passwords_data_.OnAutoSignin(std::move(local_forms), origin);
   bubble_status_ = SHOULD_POP_UP;
   UpdateBubbleAndIconVisibility();
 }
@@ -139,7 +140,7 @@ void ManagePasswordsUIController::OnPromptEnableAutoSignin() {
 }
 
 void ManagePasswordsUIController::OnAutomaticPasswordSave(
-    scoped_ptr<PasswordFormManager> form_manager) {
+    std::unique_ptr<PasswordFormManager> form_manager) {
   DestroyAccountChooser();
   passwords_data_.OnAutomaticPasswordSave(std::move(form_manager));
   bubble_status_ = SHOULD_POP_UP;
@@ -149,15 +150,12 @@ void ManagePasswordsUIController::OnAutomaticPasswordSave(
 void ManagePasswordsUIController::OnPasswordAutofilled(
     const autofill::PasswordFormMap& password_form_map,
     const GURL& origin,
-    const std::vector<scoped_ptr<autofill::PasswordForm>>* federated_matches) {
-  // If we fill a form while a dialog is open, then skip the state change; we
-  // have
-  // the information we need, and the dialog will change its own state once the
-  // interaction is complete.
-  if (passwords_data_.state() !=
-          password_manager::ui::AUTO_SIGNIN_STATE &&
-      passwords_data_.state() !=
-          password_manager::ui::CREDENTIAL_REQUEST_STATE) {
+    const std::vector<std::unique_ptr<autofill::PasswordForm>>*
+        federated_matches) {
+  // To change to managed state only when the managed state is more important
+  // for the user that the current state.
+  if (passwords_data_.state() == password_manager::ui::INACTIVE_STATE ||
+      passwords_data_.state() == password_manager::ui::MANAGE_STATE) {
     passwords_data_.OnPasswordAutofilled(password_form_map, origin,
                                          federated_matches);
     UpdateBubbleAndIconVisibility();
@@ -246,12 +244,15 @@ void ManagePasswordsUIController::OnBubbleShown() {
 }
 
 void ManagePasswordsUIController::OnBubbleHidden() {
+  bool update_icon = (bubble_status_ == SHOWN_PENDING_ICON_UPDATE);
   bubble_status_ = NOT_SHOWN;
   if (GetState() == password_manager::ui::CONFIRMATION_STATE ||
       GetState() == password_manager::ui::AUTO_SIGNIN_STATE) {
     passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
-    UpdateBubbleAndIconVisibility();
+    update_icon = true;
   }
+  if (update_icon)
+    UpdateBubbleAndIconVisibility();
 }
 
 void ManagePasswordsUIController::OnNoInteractionOnUpdate() {
@@ -283,7 +284,9 @@ void ManagePasswordsUIController::SavePassword() {
   DCHECK_EQ(password_manager::ui::PENDING_PASSWORD_STATE, GetState());
   SavePasswordInternal();
   passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
-  UpdateBubbleAndIconVisibility();
+  // The icon is to be updated after the bubble (either "Save password" or "Sign
+  // in to Chrome") is closed.
+  bubble_status_ = SHOWN_PENDING_ICON_UPDATE;
 }
 
 void ManagePasswordsUIController::UpdatePassword(
@@ -298,8 +301,10 @@ void ManagePasswordsUIController::ChooseCredential(
     autofill::PasswordForm form,
     password_manager::CredentialType credential_type) {
   DCHECK(dialog_controller_);
+  DCHECK_EQ(password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD,
+            credential_type);
   dialog_controller_.reset();
-  passwords_data_.ChooseCredential(form, credential_type);
+  passwords_data_.ChooseCredential(&form);
   passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
   UpdateBubbleAndIconVisibility();
 }
@@ -327,6 +332,14 @@ void ManagePasswordsUIController::NavigateToPasswordManagerSettingsPage() {
       chrome::kPasswordManagerSubPage);
 }
 
+void ManagePasswordsUIController::NavigateToChromeSignIn() {
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
+  browser->window()->ShowAvatarBubbleFromAvatarButton(
+      BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
+      signin::ManageAccountsParams(),
+      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE);
+}
+
 void ManagePasswordsUIController::OnDialogHidden() {
   dialog_controller_.reset();
   if (GetState() == password_manager::ui::CREDENTIAL_REQUEST_STATE) {
@@ -340,8 +353,7 @@ void ManagePasswordsUIController::SavePasswordInternal() {
       GetPasswordStore(web_contents());
   password_manager::PasswordFormManager* form_manager =
       passwords_data_.form_manager();
-  for (const autofill::PasswordForm* form :
-       form_manager->blacklisted_matches()) {
+  for (const auto& form : form_manager->blacklisted_matches()) {
     password_store->RemoveLogin(*form);
   }
 
@@ -397,7 +409,7 @@ void ManagePasswordsUIController::DidNavigateMainFrame(
 
   // It is possible that the user was not able to interact with the password
   // bubble.
-  if (bubble_status_ == SHOWN)
+  if (bubble_status_ == SHOWN || bubble_status_ == SHOWN_PENDING_ICON_UPDATE)
     return;
 
   // Otherwise, reset the password manager.

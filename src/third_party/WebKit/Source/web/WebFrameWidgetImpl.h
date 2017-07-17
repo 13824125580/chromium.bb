@@ -32,6 +32,7 @@
 #define WebFrameWidgetImpl_h
 
 #include "platform/graphics/GraphicsLayer.h"
+#include "platform/heap/SelfKeepAlive.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "public/platform/WebPoint.h"
 #include "public/platform/WebSize.h"
@@ -42,8 +43,6 @@
 #include "web/WebViewImpl.h"
 #include "wtf/Assertions.h"
 #include "wtf/HashSet.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 class Frame;
@@ -59,22 +58,22 @@ class WebMouseEvent;
 class WebMouseWheelEvent;
 class WebFrameWidgetImpl;
 
-using WebFrameWidgetsSet = WillBePersistentHeapHashSet<RawPtrWillBeWeakMember<WebFrameWidgetImpl>>;
+using WebFrameWidgetsSet = PersistentHeapHashSet<WeakMember<WebFrameWidgetImpl>>;
 
-class WebFrameWidgetImpl final : public RefCountedWillBeGarbageCollectedFinalized<WebFrameWidgetImpl>
+class WebFrameWidgetImpl final : public GarbageCollectedFinalized<WebFrameWidgetImpl>
     , public WebFrameWidget
     , public PageWidgetEventHandler {
 public:
     static WebFrameWidgetImpl* create(WebWidgetClient*, WebLocalFrame*);
     static WebFrameWidgetsSet& allInstances();
 
+    ~WebFrameWidgetImpl();
+
     // WebWidget functions:
     void close() override;
     WebSize size() override;
-    void willStartLiveResize() override;
     void resize(const WebSize&) override;
     void resizeVisualViewport(const WebSize&) override;
-    void willEndLiveResize() override;
     void didEnterFullScreen() override;
     void didExitFullScreen() override;
     void beginFrame(double lastFrameTimeMonotonic) override;
@@ -114,15 +113,19 @@ public:
     bool isAcceleratedCompositingActive() const override;
     void willCloseLayerTreeView() override;
     void didChangeWindowResizerRect() override;
+    void didAcquirePointerLock() override;
+    void didNotAcquirePointerLock() override;
+    void didLosePointerLock() override;
 
     // WebFrameWidget implementation.
-    void setVisibilityState(WebPageVisibilityState, bool) override;
+    void setVisibilityState(WebPageVisibilityState) override;
     bool isTransparent() const override;
     void setIsTransparent(bool) override;
     void setBaseBackgroundColor(WebColor) override;
     void scheduleAnimation() override;
+    CompositorProxyClient* createCompositorProxyClient() override;
 
-    WebWidgetClient* client() const { return m_client; }
+    WebWidgetClient* client() const override { return m_client; }
 
     Frame* focusedCoreFrame() const;
 
@@ -162,14 +165,8 @@ public:
 
 private:
     friend class WebFrameWidget; // For WebFrameWidget::create.
-#if ENABLE(OILPAN)
-    friend class GarbageCollectedFinalized<WebFrameWidgetImpl>;
-#else
-    friend class WTF::RefCounted<WebFrameWidgetImpl>;
-#endif
 
     explicit WebFrameWidgetImpl(WebWidgetClient*, WebLocalFrame*);
-    ~WebFrameWidgetImpl();
 
     // Perform a hit test for a point relative to the root frame of the page.
     HitTestResult hitTestResultForRootFramePos(const IntPoint& posInRootFrame);
@@ -202,13 +199,18 @@ private:
 
     // WebFrameWidget is associated with a subtree of the frame tree, corresponding to a maximal
     // connected tree of LocalFrames. This member points to the root of that subtree.
-    RawPtrWillBeMember<WebLocalFrameImpl> m_localRoot;
+    Member<WebLocalFrameImpl> m_localRoot;
 
     WebSize m_size;
 
     // If set, the (plugin) node which has mouse capture.
-    RefPtrWillBeMember<Node> m_mouseCaptureNode;
+    Member<Node> m_mouseCaptureNode;
     RefPtr<UserGestureToken> m_mouseCaptureGestureToken;
+
+    // This is owned by the LayerTreeHostImpl, and should only be used on the
+    // compositor thread. The LayerTreeHostImpl is indirectly owned by this
+    // class so this pointer should be valid until this class is destructed.
+    Member<CompositorMutatorImpl> m_mutator;
 
     WebLayerTreeView* m_layerTreeView;
     WebLayer* m_rootLayer;
@@ -227,9 +229,7 @@ private:
 
     WebColor m_baseBackgroundColor;
 
-#if ENABLE(OILPAN)
     SelfKeepAlive<WebFrameWidgetImpl> m_selfKeepAlive;
-#endif
 };
 
 DEFINE_TYPE_CASTS(WebFrameWidgetImpl, WebFrameWidget, widget, widget->forSubframe(), widget.forSubframe());

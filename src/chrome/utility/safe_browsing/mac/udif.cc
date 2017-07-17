@@ -16,6 +16,7 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/utility/safe_browsing/mac/convert_big_endian.h"
@@ -234,7 +235,7 @@ class UDIFPartitionReadStream : public ReadStream {
   const UDIFBlock* const block_;  // The block for this partition.
   uint64_t current_chunk_;  // The current chunk number.
   // The current chunk stream.
-  scoped_ptr<UDIFBlockChunkReadStream> chunk_stream_;
+  std::unique_ptr<UDIFBlockChunkReadStream> chunk_stream_;
 
   DISALLOW_COPY_AND_ASSIGN(UDIFPartitionReadStream);
 };
@@ -338,9 +339,10 @@ size_t UDIFParser::GetPartitionSize(size_t part_number) {
   return size.ValueOrDie();
 }
 
-scoped_ptr<ReadStream> UDIFParser::GetPartitionReadStream(size_t part_number) {
+std::unique_ptr<ReadStream> UDIFParser::GetPartitionReadStream(
+    size_t part_number) {
   DCHECK_LT(part_number, blocks_.size());
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new UDIFPartitionReadStream(stream_, block_size_, blocks_[part_number]));
 }
 
@@ -434,7 +436,7 @@ bool UDIFParser::ParseBlkx() {
     // Copy the block table out of the plist.
     auto block_data =
         reinterpret_cast<const UDIFBlockData*>(CFDataGetBytePtr(data));
-    scoped_ptr<UDIFBlock> block(new UDIFBlock(block_data));
+    std::unique_ptr<UDIFBlock> block(new UDIFBlock(block_data));
 
     if (block->signature() != UDIFBlockData::kSignature) {
       DLOG(ERROR) << "Skipping block " << i << " because its signature does not"
@@ -607,7 +609,8 @@ off_t UDIFPartitionReadStream::Seek(off_t offset, int whence) {
         new UDIFBlockChunkReadStream(stream_, block_size_, chunk));
   }
   current_chunk_ = chunk_number;
-  chunk_stream_->Seek(decompress_read_offset.ValueOrDie(), SEEK_SET);
+  if (chunk_stream_->Seek(decompress_read_offset.ValueOrDie(), SEEK_SET) == -1)
+    return -1;
 
   return offset;
 }
@@ -655,7 +658,8 @@ bool UDIFBlockChunkReadStream::Read(uint8_t* buffer,
 
 off_t UDIFBlockChunkReadStream::Seek(off_t offset, int whence) {
   DCHECK_EQ(SEEK_SET, whence);
-  DCHECK_LT(static_cast<uint64_t>(offset), length_in_bytes_);
+  if (static_cast<uint64_t>(offset) >= length_in_bytes_)
+    return -1;
   offset_ = offset;
   return offset_;
 }

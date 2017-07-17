@@ -43,7 +43,8 @@ class RenderProcessHost;
 // (which uses the same BrowsingInstance).  If the user navigates within a site,
 // the same SiteInstance is used.  Caveat: we currently allow renderer-initiated
 // cross-site navigations to stay in the same SiteInstance, to preserve
-// compatibility in cases like cross-site iframes that open popups.
+// compatibility in cases like cross-site iframes that open popups.  This means
+// that most SiteInstances will contain pages from multiple sites.
 //
 // SITE PER PROCESS (currently experimental): is the most granular process
 // model and is made possible by our support for out-of-process iframes.  A
@@ -61,7 +62,9 @@ class RenderProcessHost;
 //
 // PROCESS PER SITE: We consolidate all SiteInstances for a given site into the
 // same process, throughout the entire browser context.  This ensures that only
-// one process will be used for each site.
+// one process will be used for each site.  Note that there is no strict process
+// isolation of sites in this mode, so a given SiteInstance can still contain
+// pages from multiple sites.
 //
 // Each NavigationEntry for a WebContents points to the SiteInstance that
 // rendered it.  Each RenderFrameHost also points to the SiteInstance that it is
@@ -87,12 +90,12 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
   // Returns the current RenderProcessHost being used to render pages for this
   // SiteInstance.  If there is no RenderProcessHost (because either none has
   // yet been created or there was one but it was cleanly destroyed (e.g. when
-  // it is not actively being used)), then this method will create a new
+  // it is not actively being used), then this method will create a new
   // RenderProcessHost (and a new ID).  Note that renderer process crashes leave
   // the current RenderProcessHost (and ID) in place.
   //
   // For sites that require process-per-site mode (e.g., WebUI), this will
-  // ensure only one RenderProcessHost for the site exists/ within the
+  // ensure only one RenderProcessHost for the site exists within the
   // BrowserContext.
   virtual content::RenderProcessHost* GetProcess(
       int affinity = SiteInstance::kNoProcessAffinity) = 0;
@@ -101,20 +104,22 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
   // SiteInstances) belongs.
   virtual content::BrowserContext* GetBrowserContext() const = 0;
 
-  // Get the web site that this SiteInstance is rendering pages for.
-  // This includes the scheme and registered domain, but not the port.
+  // Get the web site that this SiteInstance is rendering pages for.  This
+  // includes the scheme and registered domain, but not the port.
+  //
+  // NOTE: In most cases, this value should not be considered authoritative
+  // because a SiteInstance can usually host pages from multiple sites.  It is
+  // only an accurate representation of the pages within the SiteInstance in
+  // the "site per process" process model, or for sites that require process
+  // isolation (e.g., WebUI, extensions).
   virtual const GURL& GetSiteURL() const = 0;
 
   // Gets a SiteInstance for the given URL that shares the current
   // BrowsingInstance, creating a new SiteInstance if necessary.  This ensures
   // that a BrowsingInstance only has one SiteInstance per site, so that pages
-  // in a BrowsingInstance have the ability to script each other.  Callers
-  // should ensure that this SiteInstance becomes ref counted, by storing it in
-  // a scoped_refptr.  (By having this method, we can hide the BrowsingInstance
-  // class from the rest of the codebase.)
-  // TODO(creis): This may be an argument to build a pass_refptr<T> class, as
-  // Darin suggests.
-  virtual SiteInstance* GetRelatedSiteInstance(const GURL& url) = 0;
+  // in a BrowsingInstance have the ability to script each other.
+  virtual scoped_refptr<SiteInstance> GetRelatedSiteInstance(
+      const GURL& url) = 0;
 
   // Returns whether the given SiteInstance is in the same BrowsingInstance as
   // this one.  If so, JavaScript interactions that are permitted across
@@ -131,22 +136,20 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
 
   // Factory method to create a new SiteInstance.  This will create a new
   // new BrowsingInstance, so it should only be used when creating a new tab
-  // from scratch (or similar circumstances).  Callers should ensure that
-  // this SiteInstance becomes ref counted, by storing it in a scoped_refptr.
+  // from scratch (or similar circumstances).
   //
   // The render process host factory may be nullptr.  See SiteInstance
   // constructor.
-  //
-  // TODO(creis): This may be an argument to build a pass_refptr<T> class, as
-  // Darin suggests.
-  static SiteInstance* Create(content::BrowserContext* browser_context);
+  static scoped_refptr<SiteInstance> Create(
+      content::BrowserContext* browser_context);
 
   // Factory method to get the appropriate SiteInstance for the given URL, in
   // a new BrowsingInstance.  Use this instead of Create when you know the URL,
   // since it allows special site grouping rules to be applied (for example,
   // to group chrome-ui pages into the same instance).
-  static SiteInstance* CreateForURL(
-      content::BrowserContext* browser_context, const GURL& url);
+  static scoped_refptr<SiteInstance> CreateForURL(
+      content::BrowserContext* browser_context,
+      const GURL& url);
 
   // Return whether both URLs are part of the same web site, for the purpose of
   // assigning them to processes accordingly.  The decision is currently based

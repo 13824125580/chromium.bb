@@ -30,14 +30,14 @@
 #ifndef ServiceWorkerGlobalScope_h
 #define ServiceWorkerGlobalScope_h
 
-#include "bindings/modules/v8/UnionTypesModules.h"
+#include "bindings/modules/v8/RequestOrUSVString.h"
 #include "core/workers/WorkerGlobalScope.h"
 #include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRegistration.h"
 #include "wtf/Assertions.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
+#include "wtf/Forward.h"
+#include <memory>
 
 namespace blink {
 
@@ -56,7 +56,7 @@ typedef RequestOrUSVString RequestInfo;
 class MODULES_EXPORT ServiceWorkerGlobalScope final : public WorkerGlobalScope {
     DEFINE_WRAPPERTYPEINFO();
 public:
-    static PassRefPtrWillBeRawPtr<ServiceWorkerGlobalScope> create(ServiceWorkerThread*, PassOwnPtr<WorkerThreadStartupData>);
+    static ServiceWorkerGlobalScope* create(ServiceWorkerThread*, std::unique_ptr<WorkerThreadStartupData>);
 
     ~ServiceWorkerGlobalScope() override;
     bool isServiceWorkerGlobalScope() const override { return true; }
@@ -70,16 +70,14 @@ public:
 
     ScriptPromise fetch(ScriptState*, const RequestInfo&, const Dictionary&, ExceptionState&);
 
-    void close(ExceptionState&);
-
     ScriptPromise skipWaiting(ScriptState*);
 
-    void setRegistration(WebPassOwnPtr<WebServiceWorkerRegistration::Handle>);
+    void setRegistration(std::unique_ptr<WebServiceWorkerRegistration::Handle>);
 
     // EventTarget
     const AtomicString& interfaceName() const override;
 
-    void dispatchExtendableEvent(PassRefPtrWillBeRawPtr<Event>, WaitUntilObserver*);
+    void dispatchExtendableEvent(Event*, WaitUntilObserver*);
 
     DEFINE_ATTRIBUTE_EVENT_LISTENER(install);
     DEFINE_ATTRIBUTE_EVENT_LISTENER(activate);
@@ -91,18 +89,18 @@ public:
 
 protected:
     // EventTarget
-    DispatchEventResult dispatchEventInternal(PassRefPtrWillBeRawPtr<Event>) override;
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
+    DispatchEventResult dispatchEventInternal(Event*) override;
+    bool addEventListenerInternal(const AtomicString& eventType, EventListener*, const AddEventListenerOptions&) override;
 
 private:
-    ServiceWorkerGlobalScope(const KURL&, const String& userAgent, ServiceWorkerThread*, double timeOrigin, PassOwnPtr<SecurityOrigin::PrivilegeData>, PassOwnPtrWillBeRawPtr<WorkerClients>);
+    ServiceWorkerGlobalScope(const KURL&, const String& userAgent, ServiceWorkerThread*, double timeOrigin, std::unique_ptr<SecurityOrigin::PrivilegeData>, WorkerClients*);
     void importScripts(const Vector<String>& urls, ExceptionState&) override;
-    PassOwnPtrWillBeRawPtr<CachedMetadataHandler> createWorkerScriptCachedMetadataHandler(const KURL& scriptURL, const Vector<char>* metaData) override;
-    void logExceptionToConsole(const String& errorMessage, int scriptId, const String& sourceURL, int lineNumber, int columnNumber, PassRefPtr<ScriptCallStack>) override;
+    CachedMetadataHandler* createWorkerScriptCachedMetadataHandler(const KURL& scriptURL, const Vector<char>* metaData) override;
+    void logExceptionToConsole(const String& errorMessage, std::unique_ptr<SourceLocation>) override;
     void scriptLoaded(size_t scriptSize, size_t cachedMetadataSize) override;
 
-    PersistentWillBeMember<ServiceWorkerClients> m_clients;
-    PersistentWillBeMember<ServiceWorkerRegistration> m_registration;
+    Member<ServiceWorkerClients> m_clients;
+    Member<ServiceWorkerRegistration> m_registration;
     bool m_didEvaluateScript;
     bool m_hadErrorInTopLevelEventHandler;
     unsigned m_eventNestingLevel;

@@ -13,6 +13,7 @@
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/media_log.h"
 #include "media/base/seekable_buffer.h"
@@ -65,7 +66,7 @@ static bool CorrectAcceptEncoding(const blink::WebURLRequest& request) {
 class ResourceMultiBufferDataProviderTest : public testing::Test {
  public:
   ResourceMultiBufferDataProviderTest()
-      : view_(WebView::create(nullptr)),
+      : view_(WebView::create(nullptr, blink::WebPageVisibilityStateVisible)),
         frame_(WebLocalFrame::create(blink::WebTreeScopeType::Document,
                                      &client_)) {
     view_->setMainFrame(frame_);
@@ -92,14 +93,14 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
     first_position_ = first_position;
 
-    scoped_ptr<ResourceMultiBufferDataProvider> loader(
+    std::unique_ptr<ResourceMultiBufferDataProvider> loader(
         new ResourceMultiBufferDataProvider(url_data_.get(), first_position_));
     loader_ = loader.get();
     url_data_->multibuffer()->AddProvider(std::move(loader));
 
     // |test_loader_| will be used when Start() is called.
     url_loader_ = new NiceMock<MockWebURLLoader>();
-    loader_->test_loader_ = scoped_ptr<blink::WebURLLoader>(url_loader_);
+    loader_->test_loader_ = std::unique_ptr<blink::WebURLLoader>(url_loader_);
   }
 
   void Start() {
@@ -181,7 +182,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
     loader_->willFollowRedirect(url_loader_, newRequest, redirectResponse);
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void StopWhenLoad() {
@@ -198,7 +199,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   }
 
   void WriteData(int size) {
-    scoped_ptr<char[]> data(new char[size]);
+    std::unique_ptr<char[]> data(new char[size]);
     loader_->didReceiveData(url_loader_, data.get(), size, size);
   }
 
@@ -207,7 +208,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
     EXPECT_EQ(0, memcmp(buffer, data_ + pos, size));
   }
 
-  bool HasActiveLoader() { return loader_->active_loader_; }
+  bool HasActiveLoader() { return loader_->active_loader_ != nullptr; }
   MOCK_METHOD1(RedirectCallback, void(const scoped_refptr<UrlData>&));
 
   void SetUrlData(const scoped_refptr<UrlData>& new_url_data) {
@@ -218,7 +219,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
   GURL gurl_;
   int64_t first_position_;
 
-  scoped_ptr<UrlIndex> url_index_;
+  std::unique_ptr<UrlIndex> url_index_;
   scoped_refptr<UrlData> url_data_;
   scoped_refptr<UrlData> redirected_to_;
   // The loader is owned by the UrlData above.
@@ -254,7 +255,6 @@ TEST_F(ResourceMultiBufferDataProviderTest, BadHttpResponse) {
   response.setHTTPStatusCode(404);
   response.setHTTPStatusText("Not Found\n");
   loader_->didReceiveResponse(url_loader_, response);
-  StopWhenLoad();
 }
 
 // Tests that partial content is requested but not fulfilled.
@@ -262,7 +262,6 @@ TEST_F(ResourceMultiBufferDataProviderTest, NotPartialResponse) {
   Initialize(kHttpUrl, 100);
   Start();
   FullResponse(1024, false);
-  StopWhenLoad();
 }
 
 // Tests that a 200 response is received.
@@ -319,7 +318,6 @@ TEST_F(ResourceMultiBufferDataProviderTest, InvalidPartialResponse) {
   response.setExpectedContentLength(10);
   response.setHTTPStatusCode(kHttpPartialContent);
   loader_->didReceiveResponse(url_loader_, response);
-  StopWhenLoad();
 }
 
 TEST_F(ResourceMultiBufferDataProviderTest, TestRedirects) {

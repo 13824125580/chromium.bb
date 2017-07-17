@@ -5,14 +5,12 @@
 #ifndef UI_AURA_WINDOW_EVENT_DISPATCHER_H_
 #define UI_AURA_WINDOW_EVENT_DISPATCHER_H_
 
-#include <stdint.h>
-
+#include <memory>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/scoped_observer.h"
@@ -45,6 +43,7 @@ class TouchEvent;
 
 namespace aura {
 class TestScreen;
+class EnvInputStateController;
 class WindowTargeter;
 class WindowTreeHost;
 
@@ -197,8 +196,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   bool CanDispatchToConsumer(ui::GestureConsumer* consumer) override;
   void DispatchGestureEvent(ui::GestureConsumer* raw_input_consumer,
                             ui::GestureEvent* event) override;
-  void DispatchCancelTouchEvent(ui::GestureConsumer* raw_input_consumer,
-                                ui::TouchEvent* event) override;
+  void DispatchSyntheticTouchEvent(ui::TouchEvent* event) override;
 
   // Overridden from WindowObserver:
   void OnWindowDestroying(Window* window) override;
@@ -247,9 +245,6 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   WindowTreeHost* host_;
 
-  // Touch ids that are currently down.
-  uint32_t touch_ids_down_;
-
   Window* mouse_pressed_handler_;
   Window* mouse_moved_handler_;
   Window* event_dispatch_target_;
@@ -261,10 +256,10 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   // touch/mouse moves while the count is > 0.
   int move_hold_count_;
   // The location of |held_move_event_| is in |window_|'s coordinate.
-  scoped_ptr<ui::LocatedEvent> held_move_event_;
+  std::unique_ptr<ui::LocatedEvent> held_move_event_;
 
   // Allowing for reposting of events. Used when exiting context menus.
-  scoped_ptr<ui::LocatedEvent> held_repostable_event_;
+  std::unique_ptr<ui::LocatedEvent> held_repostable_event_;
 
   // Set when dispatching a held event.
   ui::LocatedEvent* dispatching_held_event_;
@@ -272,6 +267,8 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   ScopedObserver<aura::Window, aura::WindowObserver> observer_manager_;
 
   bool transform_events_;
+
+  std::unique_ptr<EnvInputStateController> env_controller_;
 
   // Used to schedule reposting an event.
   base::WeakPtrFactory<WindowEventDispatcher> repost_event_factory_;

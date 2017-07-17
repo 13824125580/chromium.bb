@@ -32,9 +32,11 @@ import os
 import sys
 
 from webkitpy.common.checkout.scm.detection import SCMDetector
-from webkitpy.common.memoized import memoized
-from webkitpy.common.net import buildbot, web
+from webkitpy.common.config.builders import BUILDERS
+from webkitpy.common.net.buildbot import BuildBot
+from webkitpy.common.net import web
 from webkitpy.common.system.systemhost import SystemHost
+from webkitpy.layout_tests.builder_list import BuilderList
 from webkitpy.layout_tests.port.factory import PortFactory
 
 
@@ -42,6 +44,7 @@ _log = logging.getLogger(__name__)
 
 
 class Host(SystemHost):
+
     def __init__(self):
         SystemHost.__init__(self)
         self.web = web.Web()
@@ -49,7 +52,7 @@ class Host(SystemHost):
         self._scm = None
 
         # Everything below this line is WebKit-specific and belongs on a higher-level object.
-        self.buildbot = buildbot.BuildBot()
+        self.buildbot = BuildBot()
 
         # FIXME: Unfortunately Port objects are currently the central-dispatch objects of the NRWT world.
         # In order to instantiate a port correctly, we have to pass it at least an executive, user, scm, and filesystem
@@ -59,10 +62,12 @@ class Host(SystemHost):
 
         self._engage_awesome_locale_hacks()
 
+        self.builders = BuilderList(BUILDERS)
+
     # We call this from the Host constructor, as it's one of the
     # earliest calls made for all webkitpy-based programs.
     def _engage_awesome_locale_hacks(self):
-        # To make life easier on our non-english users, we override
+        # To make life easier on our non-English users, we override
         # the locale environment variables inside webkitpy.
         # If we don't do this, programs like SVN will output localized
         # messages and svn.py will fail to parse them.
@@ -80,7 +85,7 @@ class Host(SystemHost):
     def _engage_awesome_windows_hacks(self):
         try:
             self.executive.run_command(['git', 'help'])
-        except OSError, e:
+        except OSError as e:
             try:
                 self.executive.run_command(['git.bat', 'help'])
                 # The Win port uses the depot_tools package, which contains a number
@@ -96,7 +101,7 @@ class Host(SystemHost):
                 _log.debug('Engaging git.bat Windows hack.')
                 from webkitpy.common.checkout.scm.git import Git
                 Git.executable_name = 'git.bat'
-            except OSError, e:
+            except OSError as e:
                 _log.debug('Failed to engage git.bat Windows hack.')
 
     def initialize_scm(self, patch_directories=None):

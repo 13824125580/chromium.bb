@@ -37,6 +37,7 @@
 #include "modules/indexeddb/IDBTransaction.h"
 #include "modules/indexeddb/WebIDBCallbacksImpl.h"
 #include "public/platform/modules/indexeddb/WebIDBKeyRange.h"
+#include <memory>
 
 using blink::WebIDBCallbacks;
 using blink::WebIDBCursor;
@@ -85,7 +86,7 @@ IDBRequest* IDBIndex::openCursor(ScriptState* scriptState, const ScriptValue& ra
         return nullptr;
     }
     WebIDBCursorDirection direction = IDBCursor::stringToDirection(directionString);
-    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->executionContext(), range, exceptionState);
+    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->getExecutionContext(), range, exceptionState);
     if (exceptionState.hadException())
         return nullptr;
 
@@ -101,7 +102,7 @@ IDBRequest* IDBIndex::openCursor(ScriptState* scriptState, IDBKeyRange* keyRange
 {
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::create(this), m_transaction.get());
     request->setCursorDetails(IndexedDB::CursorKeyAndValue, direction);
-    backendDB()->openCursor(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, direction, false, WebIDBTaskTypeNormal, WebIDBCallbacksImpl::create(request).leakPtr());
+    backendDB()->openCursor(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, direction, false, WebIDBTaskTypeNormal, WebIDBCallbacksImpl::create(request).release());
     return request;
 }
 
@@ -121,7 +122,7 @@ IDBRequest* IDBIndex::count(ScriptState* scriptState, const ScriptValue& range, 
         return nullptr;
     }
 
-    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->executionContext(), range, exceptionState);
+    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->getExecutionContext(), range, exceptionState);
     if (exceptionState.hadException())
         return nullptr;
 
@@ -131,7 +132,7 @@ IDBRequest* IDBIndex::count(ScriptState* scriptState, const ScriptValue& range, 
     }
 
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::create(this), m_transaction.get());
-    backendDB()->count(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, WebIDBCallbacksImpl::create(request).leakPtr());
+    backendDB()->count(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, WebIDBCallbacksImpl::create(request).release());
     return request;
 }
 
@@ -151,7 +152,7 @@ IDBRequest* IDBIndex::openKeyCursor(ScriptState* scriptState, const ScriptValue&
         return nullptr;
     }
     WebIDBCursorDirection direction = IDBCursor::stringToDirection(directionString);
-    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->executionContext(), range, exceptionState);
+    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->getExecutionContext(), range, exceptionState);
     if (exceptionState.hadException())
         return nullptr;
     if (!backendDB()) {
@@ -161,7 +162,7 @@ IDBRequest* IDBIndex::openKeyCursor(ScriptState* scriptState, const ScriptValue&
 
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::create(this), m_transaction.get());
     request->setCursorDetails(IndexedDB::CursorKeyOnly, direction);
-    backendDB()->openCursor(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, direction, true, WebIDBTaskTypeNormal, WebIDBCallbacksImpl::create(request).leakPtr());
+    backendDB()->openCursor(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, direction, true, WebIDBTaskTypeNormal, WebIDBCallbacksImpl::create(request).release());
     return request;
 }
 
@@ -214,7 +215,7 @@ IDBRequest* IDBIndex::getInternal(ScriptState* scriptState, const ScriptValue& k
         return nullptr;
     }
 
-    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->executionContext(), key, exceptionState);
+    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->getExecutionContext(), key, exceptionState);
     if (exceptionState.hadException())
         return nullptr;
     if (!keyRange) {
@@ -227,7 +228,7 @@ IDBRequest* IDBIndex::getInternal(ScriptState* scriptState, const ScriptValue& k
     }
 
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::create(this), m_transaction.get());
-    backendDB()->get(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, keyOnly, WebIDBCallbacksImpl::create(request).leakPtr());
+    backendDB()->get(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, keyOnly, WebIDBCallbacksImpl::create(request).release());
     return request;
 }
 
@@ -249,7 +250,7 @@ IDBRequest* IDBIndex::getAllInternal(ScriptState* scriptState, const ScriptValue
         return nullptr;
     }
 
-    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->executionContext(), range, exceptionState);
+    IDBKeyRange* keyRange = IDBKeyRange::fromScriptValue(scriptState->getExecutionContext(), range, exceptionState);
     if (exceptionState.hadException())
         return nullptr;
     if (!backendDB()) {
@@ -258,7 +259,7 @@ IDBRequest* IDBIndex::getAllInternal(ScriptState* scriptState, const ScriptValue
     }
 
     IDBRequest* request = IDBRequest::create(scriptState, IDBAny::create(this), m_transaction.get());
-    backendDB()->getAll(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, maxCount, keyOnly, WebIDBCallbacksImpl::create(request).leakPtr());
+    backendDB()->getAll(m_transaction->id(), m_objectStore->id(), m_metadata.id, keyRange, maxCount, keyOnly, WebIDBCallbacksImpl::create(request).release());
     return request;
 }
 

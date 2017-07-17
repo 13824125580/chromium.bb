@@ -34,15 +34,9 @@
 
 namespace blink {
 
-static WebMediaPlayer::TrackId nextTrackId()
-{
-    static WebMediaPlayer::TrackId next = 0;
-    return ++next;
-}
-
-TrackBase::TrackBase(TrackType type, const AtomicString& label, const AtomicString& language, const String& id)
-    : m_trackId(nextTrackId())
-    , m_type(type)
+TrackBase::TrackBase(WebMediaPlayer::TrackType type, const AtomicString& kind, const AtomicString& label, const AtomicString& language, const String& id)
+    : m_type(type)
+    , m_kind(kind)
     , m_label(label)
     , m_language(language)
     , m_id(id)
@@ -52,9 +46,6 @@ TrackBase::TrackBase(TrackType type, const AtomicString& label, const AtomicStri
 
 TrackBase::~TrackBase()
 {
-#if !ENABLE(OILPAN)
-    ASSERT(!m_mediaElement);
-#endif
 }
 
 Node* TrackBase::owner() const
@@ -64,15 +55,8 @@ Node* TrackBase::owner() const
 
 DEFINE_TRACE(TrackBase)
 {
+    Supplementable<TrackBase>::trace(visitor);
     visitor->trace(m_mediaElement);
-}
-
-void TrackBase::setKind(const AtomicString& kind)
-{
-    if (isValidKind(kind))
-        m_kind = kind;
-    else
-        m_kind = defaultKind();
 }
 
 } // namespace blink

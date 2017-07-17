@@ -15,7 +15,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/tracked_objects.h"
 #include "base/values.h"
@@ -174,5 +173,6 @@ void ProfilerUI::ReceivedProfilerData(
       &json_data);
 
   // Send the data to the renderer.
-  web_ui()->CallJavascriptFunction("g_browserBridge.receivedData", json_data);
+  web_ui()->CallJavascriptFunctionUnsafe("g_browserBridge.receivedData",
+                                         json_data);
 }

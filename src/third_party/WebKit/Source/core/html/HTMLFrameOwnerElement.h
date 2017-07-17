@@ -39,16 +39,13 @@ class LayoutPart;
 class Widget;
 
 class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement, public FrameOwner {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLFrameOwnerElement);
+    USING_GARBAGE_COLLECTED_MIXIN(HTMLFrameOwnerElement);
 public:
     ~HTMLFrameOwnerElement() override;
 
     Frame* contentFrame() const { return m_contentFrame; }
     DOMWindow* contentWindow() const;
     Document* contentDocument() const;
-
-    void setContentFrame(Frame&);
-    void clearContentFrame();
 
     void disconnectContentFrame();
 
@@ -62,8 +59,8 @@ public:
     virtual bool loadedNonEmptyDocument() const { return false; }
     virtual void didLoadNonEmptyDocument() { }
 
-    void setWidget(PassRefPtrWillBeRawPtr<Widget>);
-    PassRefPtrWillBeRawPtr<Widget> releaseWidget();
+    void setWidget(Widget*);
+    Widget* releaseWidget();
     Widget* ownedWidget() const;
 
     class UpdateSuspendScope {
@@ -77,13 +74,16 @@ public:
     };
 
     // FrameOwner overrides:
-    bool isLocal() const override { return true; }
+    void setContentFrame(Frame&) override;
+    void clearContentFrame() override;
     void dispatchLoad() override;
     SandboxFlags getSandboxFlags() const override { return m_sandboxFlags; }
     void renderFallbackContent() override { }
     ScrollbarMode scrollingMode() const override { return ScrollbarAuto; }
     int marginWidth() const override { return -1; }
     int marginHeight() const override { return -1; }
+    bool allowFullscreen() const override { return false; }
+    const WebVector<WebPermissionType>& delegatedPermissions() const override;
 
     DECLARE_VIRTUAL_TRACE();
 
@@ -93,14 +93,21 @@ protected:
 
     bool loadOrRedirectSubframe(const KURL&, const AtomicString& frameName, bool replaceCurrentItem);
 
+    void disposeWidgetSoon(Widget*);
+
 private:
+    // Intentionally private to prevent redundant checks when the type is
+    // already HTMLFrameOwnerElement.
+    bool isLocal() const override { return true; }
+    bool isRemote() const override { return false; }
+
     bool isKeyboardFocusable() const override;
     bool isFrameOwnerElement() const final { return true; }
 
     virtual ReferrerPolicy referrerPolicyAttribute() { return ReferrerPolicyDefault; }
 
-    RawPtrWillBeMember<Frame> m_contentFrame;
-    RefPtrWillBeMember<Widget> m_widget;
+    Member<Frame> m_contentFrame;
+    Member<Widget> m_widget;
     SandboxFlags m_sandboxFlags;
 };
 
@@ -136,9 +143,11 @@ public:
     }
 
 private:
-    CORE_EXPORT static WillBeHeapHashCountedSet<RawPtrWillBeMember<Node>>& disabledSubtreeRoots();
+    using SubtreeRootSet = HeapHashCountedSet<Member<Node>>;
 
-    RawPtrWillBeMember<Node> m_root;
+    CORE_EXPORT static SubtreeRootSet& disabledSubtreeRoots();
+
+    Member<Node> m_root;
 };
 
 DEFINE_TYPE_CASTS(HTMLFrameOwnerElement, FrameOwner, owner, owner->isLocal(), owner.isLocal());

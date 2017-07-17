@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_VIDEO_CAPTURE_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_
-#define MEDIA_VIDEO_CAPTURE_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_
+#ifndef MEDIA_CAPTURE_VIDEO_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_
+#define MEDIA_CAPTURE_VIDEO_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_
 
 #include <jni.h>
 #include <string>
@@ -13,7 +13,7 @@
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
-#include "media/base/media_export.h"
+#include "media/capture/capture_export.h"
 #include "media/capture/video/video_capture_device.h"
 
 namespace tracked_objects {
@@ -26,7 +26,7 @@ namespace media {
 // by VideoCaptureManager on its own thread, while OnFrameAvailable is called
 // on JAVA thread (i.e., UI thread). Both will access |state_| and |client_|,
 // but only VideoCaptureManager would change their value.
-class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
+class CAPTURE_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
  public:
   // Automatically generated enum to interface with Java world.
   //
@@ -54,8 +54,11 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
 
   // VideoCaptureDevice implementation.
   void AllocateAndStart(const VideoCaptureParams& params,
-                        scoped_ptr<Client> client) override;
+                        std::unique_ptr<Client> client) override;
   void StopAndDeAllocate() override;
+  void GetPhotoCapabilities(
+      ScopedResultCallback<GetPhotoCapabilitiesCallback> callback) override;
+  void TakePhoto(ScopedResultCallback<TakePhotoCallback> callback) override;
 
   // Implement org.chromium.media.VideoCapture.nativeOnFrameAvailable.
   void OnFrameAvailable(JNIEnv* env,
@@ -68,6 +71,12 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
   void OnError(JNIEnv* env,
                const base::android::JavaParamRef<jobject>& obj,
                const base::android::JavaParamRef<jstring>& message);
+
+  // Implement org.chromium.media.VideoCapture.nativeOnPhotoTaken.
+  void OnPhotoTaken(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj,
+                    jlong callback_id,
+                    const base::android::JavaParamRef<jbyteArray>& data);
 
  private:
   enum InternalState {
@@ -86,8 +95,14 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
   InternalState state_;
   bool got_first_frame_;
   base::TimeTicks expected_next_frame_time_;
+  base::TimeTicks first_ref_time_;
   base::TimeDelta frame_interval_;
-  scoped_ptr<VideoCaptureDevice::Client> client_;
+  std::unique_ptr<VideoCaptureDevice::Client> client_;
+
+  // List of |photo_callbacks_| in flight, being served in Java side.
+  base::Lock photo_callbacks_lock_;
+  std::list<std::unique_ptr<ScopedResultCallback<TakePhotoCallback>>>
+      photo_callbacks_;
 
   Name device_name_;
   VideoCaptureFormat capture_format_;
@@ -100,4 +115,4 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_
+#endif  // MEDIA_CAPTURE_VIDEO_ANDROID_VIDEO_CAPTURE_DEVICE_ANDROID_H_

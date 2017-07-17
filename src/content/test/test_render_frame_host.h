@@ -80,6 +80,11 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   void SendBeforeUnloadACK(bool proceed) override;
   void SimulateSwapOutACK() override;
 
+  void SendNavigateWithReplacement(int page_id,
+                                   int nav_entry_id,
+                                   bool did_create_new_entry,
+                                   const GURL& url);
+
   using ModificationCallback =
       base::Callback<void(FrameHostMsg_DidCommitProvisionalLoad_Params*)>;
 
@@ -104,7 +109,7 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
 
   void DidChangeOpener(int opener_routing_id);
 
-  void DidEnforceStrictMixedContentChecking();
+  void DidEnforceInsecureRequestPolicy(blink::WebInsecureRequestPolicy policy);
 
   // If set, navigations will appear to have cleared the history list in the
   // RenderFrame
@@ -135,6 +140,7 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   void SendNavigateWithParameters(int page_id,
                                   int nav_entry_id,
                                   bool did_create_new_entry,
+                                  bool should_replace_entry,
                                   const GURL& url,
                                   ui::PageTransition transition,
                                   int response_code,

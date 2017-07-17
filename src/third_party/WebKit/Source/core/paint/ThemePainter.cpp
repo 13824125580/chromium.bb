@@ -23,15 +23,14 @@
 
 #include "core/InputTypeNames.h"
 #include "core/frame/FrameView.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLDataListElement.h"
 #include "core/html/HTMLDataListOptionsCollection.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/shadow/ShadowElementNames.h"
-#include "core/layout/LayoutMeter.h"
 #include "core/layout/LayoutTheme.h"
-#include "core/layout/LayoutView.h"
 #include "core/paint/MediaControlsPainter.h"
 #include "core/paint/PaintInfo.h"
 #include "core/style/ComputedStyle.h"
@@ -69,6 +68,19 @@ bool ThemePainter::paint(const LayoutObject& o, const PaintInfo& paintInfo, cons
     if (LayoutTheme::theme().shouldUseFallbackTheme(o.styleRef()))
         return paintUsingFallbackTheme(o, paintInfo, r);
 
+    if (part == ButtonPart && o.node()) {
+        UseCounter::count(o.document(), UseCounter::CSSValueAppearanceButtonRendered);
+        if (isHTMLAnchorElement(o.node())) {
+            UseCounter::count(o.document(), UseCounter::CSSValueAppearanceButtonForAnchor);
+        } else if (isHTMLButtonElement(o.node())) {
+            UseCounter::count(o.document(), UseCounter::CSSValueAppearanceButtonForButton);
+        } else if (isHTMLInputElement(o.node()) && toHTMLInputElement(o.node())->isTextButton()) {
+            // Text buttons (type=button, reset, submit) has
+            // -webkit-appearance:push-button by default.
+            UseCounter::count(o.node()->document(), UseCounter::CSSValueAppearanceButtonForOtherButtons);
+        }
+    }
+
     if (m_platformTheme) {
         switch (part) {
         case CheckboxPart:
@@ -99,11 +111,7 @@ bool ThemePainter::paint(const LayoutObject& o, const PaintInfo& paintInfo, cons
     case MenulistPart:
         return paintMenuList(o, paintInfo, r);
     case MeterPart:
-    case RelevancyLevelIndicatorPart:
-    case ContinuousCapacityLevelIndicatorPart:
-    case DiscreteCapacityLevelIndicatorPart:
-    case RatingLevelIndicatorPart:
-        return paintMeter(o, paintInfo, r);
+        return true;
     case ProgressBarPart:
         return paintProgressBar(o, paintInfo, r);
     case SliderHorizontalPart:
@@ -142,6 +150,12 @@ bool ThemePainter::paint(const LayoutObject& o, const PaintInfo& paintInfo, cons
     case MediaCastOffButtonPart:
     case MediaOverlayCastOffButtonPart:
         return MediaControlsPainter::paintMediaCastButton(o, paintInfo, r);
+    case MediaTrackSelectionCheckmarkPart:
+        return MediaControlsPainter::paintMediaTrackSelectionCheckmark(o, paintInfo, r);
+    case MediaClosedCaptionsIconPart:
+        return MediaControlsPainter::paintMediaClosedCaptionsIcon(o, paintInfo, r);
+    case MediaSubtitlesIconPart:
+        return MediaControlsPainter::paintMediaSubtitlesIcon(o, paintInfo, r);
     case MenulistButtonPart:
     case TextFieldPart:
     case TextAreaPart:
@@ -150,10 +164,6 @@ bool ThemePainter::paint(const LayoutObject& o, const PaintInfo& paintInfo, cons
         return paintSearchField(o, paintInfo, r);
     case SearchFieldCancelButtonPart:
         return paintSearchFieldCancelButton(o, paintInfo, r);
-    case SearchFieldDecorationPart:
-        return paintSearchFieldDecoration(o, paintInfo, r);
-    case SearchFieldResultsDecorationPart:
-        return paintSearchFieldResultsDecoration(o, paintInfo, r);
     default:
         break;
     }
@@ -166,6 +176,14 @@ bool ThemePainter::paintBorderOnly(const LayoutObject& o, const PaintInfo& paint
     // Call the appropriate paint method based off the appearance value.
     switch (o.styleRef().appearance()) {
     case TextFieldPart:
+        UseCounter::count(o.document(), UseCounter::CSSValueAppearanceTextFieldRendered);
+        if (isHTMLInputElement(o.node())) {
+            HTMLInputElement* input = toHTMLInputElement(o.node());
+            if (input->type() == InputTypeNames::search)
+                UseCounter::count(o.document(), UseCounter::CSSValueAppearanceTextFieldForSearch);
+            else if (input->isTextField())
+                UseCounter::count(o.document(), UseCounter::CSSValueAppearanceTextFieldForTextField);
+        }
         return paintTextField(o, paintInfo, r);
     case TextAreaPart:
         return paintTextArea(o, paintInfo, r);
@@ -180,18 +198,12 @@ bool ThemePainter::paintBorderOnly(const LayoutObject& o, const PaintInfo& paint
     case ButtonPart:
     case MenulistPart:
     case MeterPart:
-    case RelevancyLevelIndicatorPart:
-    case ContinuousCapacityLevelIndicatorPart:
-    case DiscreteCapacityLevelIndicatorPart:
-    case RatingLevelIndicatorPart:
     case ProgressBarPart:
     case SliderHorizontalPart:
     case SliderVerticalPart:
     case SliderThumbHorizontalPart:
     case SliderThumbVerticalPart:
     case SearchFieldCancelButtonPart:
-    case SearchFieldDecorationPart:
-    case SearchFieldResultsDecorationPart:
     default:
         break;
     }
@@ -214,10 +226,6 @@ bool ThemePainter::paintDecorations(const LayoutObject& o, const PaintInfo& pain
     case ButtonPart:
     case MenulistPart:
     case MeterPart:
-    case RelevancyLevelIndicatorPart:
-    case ContinuousCapacityLevelIndicatorPart:
-    case DiscreteCapacityLevelIndicatorPart:
-    case RatingLevelIndicatorPart:
     case ProgressBarPart:
     case SliderHorizontalPart:
     case SliderVerticalPart:
@@ -225,18 +233,11 @@ bool ThemePainter::paintDecorations(const LayoutObject& o, const PaintInfo& pain
     case SliderThumbVerticalPart:
     case SearchFieldPart:
     case SearchFieldCancelButtonPart:
-    case SearchFieldDecorationPart:
-    case SearchFieldResultsDecorationPart:
     default:
         break;
     }
 
     return false;
-}
-
-bool ThemePainter::paintMeter(const LayoutObject&, const PaintInfo&, const IntRect&)
-{
-    return true;
 }
 
 void ThemePainter::paintSliderTicks(const LayoutObject& o, const PaintInfo& paintInfo, const IntRect&rect)
@@ -300,7 +301,7 @@ void ThemePainter::paintSliderTicks(const LayoutObject& o, const PaintInfo& pain
         tickRegionSideMargin = trackBounds.y() + (thumbSize.width() - tickSize.width() * zoomFactor) / 2.0;
         tickRegionWidth = trackBounds.height() - thumbSize.width();
     }
-    RefPtrWillBeRawPtr<HTMLDataListOptionsCollection> options = dataList->options();
+    HTMLDataListOptionsCollection* options = dataList->options();
     for (unsigned i = 0; HTMLOptionElement* optionElement = options->item(i); i++) {
         String value = optionElement->value();
         if (!input->isValidValue(value))

@@ -47,7 +47,6 @@ const QuicTag kC255 = TAG('C', '2', '5', '5');   // ECDH, Curve25519
 // AEAD algorithms
 const QuicTag kNULL = TAG('N', 'U', 'L', 'N');   // null algorithm
 const QuicTag kAESG = TAG('A', 'E', 'S', 'G');   // AES128 + GCM-12
-const QuicTag kCC12 = TAG('C', 'C', '1', '2');   // ChaCha20 + Poly1305
 const QuicTag kCC20 = TAG('C', 'C', '2', '0');   // ChaCha20 + Poly1305 RFC7539
 
 // Socket receive buffer
@@ -74,6 +73,7 @@ const QuicTag kIFW7 = TAG('I', 'F', 'W', '7');   // Set initial size
 const QuicTag kTBBR = TAG('T', 'B', 'B', 'R');   // Reduced Buffer Bloat TCP
 const QuicTag kRENO = TAG('R', 'E', 'N', 'O');   // Reno Congestion Control
 const QuicTag kBYTE = TAG('B', 'Y', 'T', 'E');   // TCP cubic or reno in bytes
+const QuicTag kRATE = TAG('R', 'A', 'T', 'E');   // TCP cubic rate based sending
 const QuicTag kIW03 = TAG('I', 'W', '0', '3');   // Force ICWND to 3
 const QuicTag kIW10 = TAG('I', 'W', '1', '0');   // Force ICWND to 10
 const QuicTag kIW20 = TAG('I', 'W', '2', '0');   // Force ICWND to 20
@@ -82,14 +82,29 @@ const QuicTag k1CON = TAG('1', 'C', 'O', 'N');   // Emulate a single connection
 const QuicTag kNTLP = TAG('N', 'T', 'L', 'P');   // No tail loss probe
 const QuicTag kNCON = TAG('N', 'C', 'O', 'N');   // N Connection Congestion Ctrl
 const QuicTag kNRTO = TAG('N', 'R', 'T', 'O');   // CWND reduction on loss
+const QuicTag kUNDO = TAG('U', 'N', 'D', 'O');   // Undo any pending retransmits
+                                                 // if they're likely spurious.
 const QuicTag kTIME = TAG('T', 'I', 'M', 'E');   // Time based loss detection
+const QuicTag kATIM = TAG('A', 'T', 'I', 'M');   // Adaptive time loss detection
 const QuicTag kMIN1 = TAG('M', 'I', 'N', '1');   // Min CWND of 1 packet
 const QuicTag kMIN4 = TAG('M', 'I', 'N', '4');   // Min CWND of 4 packets,
                                                  // with a min rate of 1 BDP.
 const QuicTag kTLPR = TAG('T', 'L', 'P', 'R');   // Tail loss probe delay of
                                                  // 0.5RTT.
 const QuicTag kACKD = TAG('A', 'C', 'K', 'D');   // Ack decimation style acking.
+const QuicTag kAKD2 = TAG('A', 'K', 'D', '2');   // Ack decimation tolerating
+                                                 // out of order packets.
+const QuicTag kAKD3 = TAG('A', 'K', 'D', '3');   // Ack decimation style acking
+                                                 // with 1/8 RTT acks.
+const QuicTag kAKD4 = TAG('A', 'K', 'D', '4');   // Ack decimation with 1/8 RTT
+                                                 // tolerating out of order.
 const QuicTag kSSLR = TAG('S', 'S', 'L', 'R');   // Slow Start Large Reduction.
+const QuicTag kNPRR = TAG('N', 'P', 'R', 'R');   // Pace at unity instead of PRR
+const QuicTag k5RTO = TAG('5', 'R', 'T', 'O');   // Close connection on 5 RTOs
+const QuicTag kCTIM = TAG('C', 'T', 'I', 'M');   // Client timestamp in seconds
+                                                 // since UNIX epoch.
+const QuicTag kDHDT = TAG('D', 'H', 'D', 'T');   // Disable HPACK dynamic table.
+const QuicTag kIPFS = TAG('I', 'P', 'F', 'S');   // No Immediate Forward Secrecy
 
 // Optional support of truncated Connection IDs.  If sent by a peer, the value
 // is the minimum number of bytes allowed for the connection ID sent to the
@@ -99,14 +114,8 @@ const QuicTag kTCID = TAG('T', 'C', 'I', 'D');   // Connection ID truncation.
 // Multipath option.
 const QuicTag kMPTH = TAG('M', 'P', 'T', 'H');   // Enable multipath.
 
-// FEC options
-const QuicTag kFHDR = TAG('F', 'H', 'D', 'R');   // FEC protect headers
-const QuicTag kFSTR = TAG('F', 'S', 'T', 'R');   // FEC protect all streams
-// Set FecSendPolicy for sending FEC packet only when FEC alarm goes off.
-const QuicTag kFSPA = TAG('F', 'S', 'P', 'A');
-// Run an experiment that sets FecTimeOut alarm to 0.25RTT.
-// TODO(rtenneti): Delete it after the experiment.
-const QuicTag kFRTT = TAG('F', 'R', 'T', 'T');
+const QuicTag kNCMR = TAG('N', 'C', 'M', 'R');   // Do not attempt connection
+                                                 // migration.
 
 // Enable bandwidth resumption experiment.
 const QuicTag kBWRE = TAG('B', 'W', 'R', 'E');  // Bandwidth resumption.
@@ -138,6 +147,7 @@ const QuicTag kICSL = TAG('I', 'C', 'S', 'L');   // Idle connection state
                                                  // lifetime
 const QuicTag kSCLS = TAG('S', 'C', 'L', 'S');   // Silently close on timeout
 const QuicTag kMSPC = TAG('M', 'S', 'P', 'C');   // Max streams per connection.
+const QuicTag kMIDS = TAG('M', 'I', 'D', 'S');   // Max incoming dynamic streams
 const QuicTag kIRTT = TAG('I', 'R', 'T', 'T');   // Estimated initial RTT in us.
 const QuicTag kSWND = TAG('S', 'W', 'N', 'D');   // Server's Initial congestion
                                                  // window.
@@ -166,6 +176,8 @@ const QuicTag kRCID = TAG('R', 'C', 'I', 'D');   // Server-designated
                                                  // connection ID
 // Server hello tags
 const QuicTag kCADR = TAG('C', 'A', 'D', 'R');   // Client IP address and port
+const QuicTag kASAD = TAG('A', 'S', 'A', 'D');   // Alternate Server IP address
+                                                 // and port.
 
 // CETV tags
 const QuicTag kCIDK = TAG('C', 'I', 'D', 'K');   // ChannelID key
@@ -177,6 +189,9 @@ const QuicTag kRSEQ = TAG('R', 'S', 'E', 'Q');   // Rejected packet number
 
 // Universal tags
 const QuicTag kPAD  = TAG('P', 'A', 'D', '\0');  // Padding
+
+// Server push tags
+const QuicTag kSPSH = TAG('S', 'P', 'S', 'H');  // Support server push.
 
 // Sent by clients with the fix to crbug/566156
 const QuicTag kFIXD = TAG('F', 'I', 'X', 'D');   // Client hello
@@ -213,7 +228,12 @@ const size_t kOrbitSize = 8;  // Number of bytes in an orbit value.
 
 // kProofSignatureLabel is prepended to server configs before signing to avoid
 // any cross-protocol attacks on the signature.
-const char kProofSignatureLabel[] = "QUIC server config signature";
+// TODO(rch): Remove this when QUIC_VERSION_30 is removed.
+const char kProofSignatureLabelOld[] = "QUIC server config signature";
+
+// kProofSignatureLabel is prepended to the CHLO hash and server configs before
+// signing to avoid any cross-protocol attacks on the signature.
+const char kProofSignatureLabel[] = "QUIC CHLO and server config signature";
 
 // kClientHelloMinimumSize is the minimum size of a client hello. Client hellos
 // will have PAD tags added in order to ensure this minimum is met and client

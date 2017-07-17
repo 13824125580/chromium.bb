@@ -32,33 +32,35 @@
 #define TextAutosizer_h
 
 #include "core/CoreExport.h"
-#include "core/layout/LayoutObject.h"
-#include "core/layout/LayoutTable.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
+#include <unicode/uchar.h>
 
 namespace blink {
 
+class ComputedStyle;
 class Document;
+class IntSize;
+class LayoutBlock;
 class LayoutListItem;
 class LayoutListMarker;
-class LayoutBlock;
+class LayoutObject;
+class LayoutTable;
+class LocalFrame;
+class Page;
+class SubtreeLayoutScope;
 
 // Single-pass text autosizer. Documentation at:
 // http://tinyurl.com/TextAutosizer
 
-class CORE_EXPORT TextAutosizer final : public NoBaseWillBeGarbageCollectedFinalized<TextAutosizer> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(TextAutosizer);
+class CORE_EXPORT TextAutosizer final : public GarbageCollectedFinalized<TextAutosizer> {
     WTF_MAKE_NONCOPYABLE(TextAutosizer);
 public:
-    static PassOwnPtrWillBeRawPtr<TextAutosizer> create(const Document* document)
-    {
-        return adoptPtrWillBeNoop(new TextAutosizer(document));
-    }
+    ~TextAutosizer();
+    static TextAutosizer* create(const Document* document) { return new TextAutosizer(document); }
     static float computeAutosizedFontSize(float specifiedSize, float multiplier);
 
     void updatePageInfoInAllFrames();
@@ -73,10 +75,10 @@ public:
     class LayoutScope {
         STACK_ALLOCATED();
     public:
-        explicit LayoutScope(LayoutBlock*);
+        explicit LayoutScope(LayoutBlock*, SubtreeLayoutScope* = nullptr);
         ~LayoutScope();
     protected:
-        RawPtrWillBeMember<TextAutosizer> m_textAutosizer;
+        Member<TextAutosizer> m_textAutosizer;
         LayoutBlock* m_block;
     };
 
@@ -92,7 +94,7 @@ public:
         explicit DeferUpdatePageInfo(Page*);
         ~DeferUpdatePageInfo();
     private:
-        RefPtrWillBeMember<LocalFrame> m_mainFrame;
+        Member<LocalFrame> m_mainFrame;
     };
 
 private:
@@ -157,17 +159,7 @@ private:
     struct Cluster {
         USING_FAST_MALLOC(Cluster);
     public:
-        explicit Cluster(const LayoutBlock* root, BlockFlags flags, Cluster* parent, Supercluster* supercluster = nullptr)
-            : m_root(root)
-            , m_flags(flags)
-            , m_deepestBlockContainingAllText(nullptr)
-            , m_parent(parent)
-            , m_multiplier(0)
-            , m_hasEnoughTextToAutosize(UnknownAmountOfText)
-            , m_supercluster(supercluster)
-            , m_hasTableAncestor(root->isTableCell() || (m_parent && m_parent->m_hasTableAncestor))
-        {
-        }
+        explicit Cluster(const LayoutBlock* root, BlockFlags, Cluster* parent, Supercluster* = nullptr);
 
         const LayoutBlock* const m_root;
         BlockFlags m_flags;
@@ -214,8 +206,8 @@ private:
         "sizeof(FingerprintSourceData) must be a multiple of UChar");
 
     typedef unsigned Fingerprint;
-    typedef HashMap<Fingerprint, OwnPtr<Supercluster>> SuperclusterMap;
-    typedef Vector<OwnPtr<Cluster>> ClusterStack;
+    typedef HashMap<Fingerprint, std::unique_ptr<Supercluster>> SuperclusterMap;
+    typedef Vector<std::unique_ptr<Cluster>> ClusterStack;
 
     // Fingerprints are computed during style recalc, for (some subset of)
     // blocks that will become cluster roots.
@@ -231,7 +223,7 @@ private:
         bool hasFingerprints() const { return !m_fingerprints.isEmpty(); }
     private:
         typedef HashMap<const LayoutObject*, Fingerprint> FingerprintMap;
-        typedef HashMap<Fingerprint, OwnPtr<BlockSet>> ReverseFingerprintMap;
+        typedef HashMap<Fingerprint, std::unique_ptr<BlockSet>> ReverseFingerprintMap;
 
         FingerprintMap m_fingerprints;
         ReverseFingerprintMap m_blocksForFingerprint;
@@ -262,10 +254,10 @@ private:
 
     explicit TextAutosizer(const Document*);
 
-    void beginLayout(LayoutBlock*);
+    void beginLayout(LayoutBlock*, SubtreeLayoutScope*);
     void endLayout(LayoutBlock*);
     void inflateAutoTable(LayoutTable*);
-    float inflate(LayoutObject*, InflateBehavior = ThisBlockOnly, float multiplier = 0);
+    float inflate(LayoutObject*, SubtreeLayoutScope*, InflateBehavior = ThisBlockOnly, float multiplier = 0);
     bool shouldHandleLayout() const;
     IntSize windowSize() const;
     void setAllTextNeedsLayout();
@@ -290,7 +282,7 @@ private:
     // block's width otherwise.
     float widthFromBlock(const LayoutBlock*) const;
     float multiplierFromBlock(const LayoutBlock*);
-    void applyMultiplier(LayoutObject*, float, RelayoutBehavior = AlreadyInLayout);
+    void applyMultiplier(LayoutObject*, float, SubtreeLayoutScope*, RelayoutBehavior = AlreadyInLayout);
     bool isWiderOrNarrowerDescendant(Cluster*);
     Cluster* currentCluster() const;
     const LayoutBlock* deepestBlockContainingAllText(Cluster*);
@@ -304,7 +296,7 @@ private:
     void writeClusterDebugInfo(Cluster*);
 #endif
 
-    RawPtrWillBeMember<const Document> m_document;
+    Member<const Document> m_document;
     const LayoutBlock* m_firstBlockToBeginLayout;
 #if ENABLE(ASSERT)
     BlockSet m_blocksThatHaveBegunLayout; // Used to ensure we don't compute properties of a block before beginLayout() is called on it.

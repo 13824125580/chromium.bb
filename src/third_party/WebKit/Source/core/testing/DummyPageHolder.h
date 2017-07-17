@@ -37,8 +37,7 @@
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -65,10 +64,10 @@ class DummyPageHolder {
     WTF_MAKE_NONCOPYABLE(DummyPageHolder);
     USING_FAST_MALLOC(DummyPageHolder);
 public:
-    static PassOwnPtr<DummyPageHolder> create(
+    static std::unique_ptr<DummyPageHolder> create(
         const IntSize& initialViewSize = IntSize(),
         Page::PageClients* = 0,
-        PassOwnPtrWillBeRawPtr<FrameLoaderClient> = nullptr,
+        FrameLoaderClient* = nullptr,
         FrameSettingOverrideFunction = nullptr);
     ~DummyPageHolder();
 
@@ -78,12 +77,12 @@ public:
     Document& document() const;
 
 private:
-    DummyPageHolder(const IntSize& initialViewSize, Page::PageClients*, PassOwnPtrWillBeRawPtr<FrameLoaderClient>, FrameSettingOverrideFunction settingOverrider);
+    DummyPageHolder(const IntSize& initialViewSize, Page::PageClients*, FrameLoaderClient*, FrameSettingOverrideFunction settingOverrider);
 
-    OwnPtrWillBePersistent<Page> m_page;
-    RefPtrWillBePersistent<LocalFrame> m_frame;
+    Persistent<Page> m_page;
+    Persistent<LocalFrame> m_frame;
 
-    OwnPtrWillBePersistent<FrameLoaderClient> m_frameLoaderClient;
+    Persistent<FrameLoaderClient> m_frameLoaderClient;
 };
 
 } // namespace blink

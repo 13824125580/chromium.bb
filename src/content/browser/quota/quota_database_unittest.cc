@@ -19,7 +19,7 @@
 #include "sql/connection.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
-#include "sql/test/scoped_error_ignorer.h"
+#include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
 #include "storage/browser/quota/quota_database.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -535,8 +535,8 @@ class QuotaDatabaseTest : public testing::Test {
       const base::FilePath& kDbFile,
       const QuotaTableEntry* entries,
       size_t entries_size) {
-    scoped_ptr<sql::Connection> db(new sql::Connection);
-    scoped_ptr<sql::MetaTable> meta_table(new sql::MetaTable);
+    std::unique_ptr<sql::Connection> db(new sql::Connection);
+    std::unique_ptr<sql::MetaTable> meta_table(new sql::MetaTable);
 
     // V2 schema definitions.
     static const int kCurrentVersion = 2;
@@ -687,10 +687,12 @@ TEST_F(QuotaDatabaseTest, OpenCorruptedDatabase) {
   const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
   LazyOpen(kDbFile);
   ASSERT_TRUE(sql::test::CorruptSizeInHeader(kDbFile));
-  sql::ScopedErrorIgnorer ignore_errors;
-  ignore_errors.IgnoreError(SQLITE_CORRUPT);
-  Reopen(kDbFile);
-  EXPECT_TRUE(ignore_errors.CheckIgnoredErrors());
+  {
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
+    Reopen(kDbFile);
+    EXPECT_TRUE(expecter.SawExpectedErrors());
+  }
 }
 
 }  // namespace content

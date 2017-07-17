@@ -25,7 +25,7 @@
 #include "core/dom/StaticNodeList.h"
 #include "core/events/EventDispatchMediator.h"
 #include "core/events/EventTarget.h"
-#include "core/frame/OriginsUsingFeatures.h"
+#include "core/frame/HostsUsingFeatures.h"
 #include "core/frame/UseCounter.h"
 #include "core/svg/SVGElement.h"
 #include "core/timing/DOMWindowPerformance.h"
@@ -34,9 +34,12 @@
 
 namespace blink {
 
-static bool defaultScopedFromEventType(const AtomicString& eventType)
+static bool isEventTypeScopedInV0(const AtomicString& eventType)
 {
-    return (eventType == EventTypeNames::abort
+    // WebKit never allowed selectstart event to cross the the shadow DOM boundary.
+    // Changing this breaks existing sites.
+    // See https://bugs.webkit.org/show_bug.cgi?id=52195 for details.
+    return eventType == EventTypeNames::abort
         || eventType == EventTypeNames::change
         || eventType == EventTypeNames::error
         || eventType == EventTypeNames::load
@@ -45,39 +48,37 @@ static bool defaultScopedFromEventType(const AtomicString& eventType)
         || eventType == EventTypeNames::scroll
         || eventType == EventTypeNames::select
         || eventType == EventTypeNames::selectstart
-        || eventType == EventTypeNames::slotchange);
+        || eventType == EventTypeNames::slotchange;
 }
 
 Event::Event()
-    : Event("", false, false, false)
+    : Event("", false, false)
 {
-}
-
-Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg)
-    : Event(eventType, canBubbleArg, cancelableArg, defaultScopedFromEventType(eventType), monotonicallyIncreasingTime())
-{
+    m_wasInitialized = false;
 }
 
 Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, double platformTimeStamp)
-    : Event(eventType, canBubbleArg, cancelableArg, defaultScopedFromEventType(eventType), platformTimeStamp)
+    : Event(eventType, canBubbleArg, cancelableArg, ComposedMode::Scoped, platformTimeStamp)
 {
 }
 
-Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, bool scoped)
-    : Event(eventType, canBubbleArg, cancelableArg, scoped, monotonicallyIncreasingTime())
+Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, ComposedMode composedMode)
+    : Event(eventType, canBubbleArg, cancelableArg, composedMode, monotonicallyIncreasingTime())
 {
 }
 
-Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, bool scoped, double platformTimeStamp)
+Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableArg, ComposedMode composedMode, double platformTimeStamp)
     : m_type(eventType)
     , m_canBubble(canBubbleArg)
     , m_cancelable(cancelableArg)
-    , m_scoped(scoped)
+    , m_composed(composedMode == ComposedMode::Composed)
+    , m_isEventTypeScopedInV0(isEventTypeScopedInV0(eventType))
     , m_propagationStopped(false)
     , m_immediatePropagationStopped(false)
     , m_defaultPrevented(false)
     , m_defaultHandled(false)
     , m_cancelBubble(false)
+    , m_wasInitialized(true)
     , m_isTrusted(false)
     , m_handlingPassive(false)
     , m_eventPhase(0)
@@ -88,7 +89,7 @@ Event::Event(const AtomicString& eventType, bool canBubbleArg, bool cancelableAr
 }
 
 Event::Event(const AtomicString& eventType, const EventInit& initializer)
-    : Event(eventType, initializer.bubbles(), initializer.cancelable(), initializer.scoped())
+    : Event(eventType, initializer.bubbles(), initializer.cancelable(), initializer.composed() ? ComposedMode::Composed : ComposedMode::Scoped, monotonicallyIncreasingTime())
 {
 }
 
@@ -96,11 +97,22 @@ Event::~Event()
 {
 }
 
+bool Event::isScopedInV0() const
+{
+    return isTrusted() && m_isEventTypeScopedInV0;
+}
+
 void Event::initEvent(const AtomicString& eventTypeArg, bool canBubbleArg, bool cancelableArg)
 {
-    if (dispatched())
+    initEvent(eventTypeArg, canBubbleArg, cancelableArg, nullptr);
+}
+
+void Event::initEvent(const AtomicString& eventTypeArg, bool canBubbleArg, bool cancelableArg, EventTarget* relatedTarget)
+{
+    if (isBeingDispatched())
         return;
 
+    m_wasInitialized = true;
     m_propagationStopped = false;
     m_immediatePropagationStopped = false;
     m_defaultPrevented = false;
@@ -213,7 +225,7 @@ bool Event::isBeforeUnloadEvent() const
 void Event::preventDefault()
 {
     if (m_handlingPassive) {
-        const LocalDOMWindow* window = m_currentTarget ? m_currentTarget->toDOMWindow() : 0;
+        const LocalDOMWindow* window = m_eventPath ? m_eventPath->windowEventContext().window() : 0;
         if (window)
             window->printErrorMessage("Unable to preventDefault inside passive event listener invocation.");
         return;
@@ -223,7 +235,7 @@ void Event::preventDefault()
         m_defaultPrevented = true;
 }
 
-void Event::setTarget(PassRefPtrWillBeRawPtr<EventTarget> target)
+void Event::setTarget(EventTarget* target)
 {
     if (m_target == target)
         return;
@@ -237,10 +249,10 @@ void Event::receivedTarget()
 {
 }
 
-void Event::setUnderlyingEvent(PassRefPtrWillBeRawPtr<Event> ue)
+void Event::setUnderlyingEvent(Event* ue)
 {
     // Prohibit creation of a cycle -- just do nothing in that case.
-    for (Event* e = ue.get(); e; e = e->underlyingEvent())
+    for (Event* e = ue; e; e = e->underlyingEvent())
         if (e == this)
             return;
     m_underlyingEvent = ue;
@@ -249,37 +261,37 @@ void Event::setUnderlyingEvent(PassRefPtrWillBeRawPtr<Event> ue)
 void Event::initEventPath(Node& node)
 {
     if (!m_eventPath) {
-        m_eventPath = adoptPtrWillBeNoop(new EventPath(node, this));
+        m_eventPath = new EventPath(node, this);
     } else {
         m_eventPath->initializeWith(node, this);
     }
 }
 
-WillBeHeapVector<RefPtrWillBeMember<EventTarget>> Event::path(ScriptState* scriptState) const
+HeapVector<Member<EventTarget>> Event::path(ScriptState* scriptState) const
 {
     return pathInternal(scriptState, NonEmptyAfterDispatch);
 }
 
-WillBeHeapVector<RefPtrWillBeMember<EventTarget>> Event::deepPath(ScriptState* scriptState) const
+HeapVector<Member<EventTarget>> Event::composedPath(ScriptState* scriptState) const
 {
     return pathInternal(scriptState, EmptyAfterDispatch);
 }
 
-WillBeHeapVector<RefPtrWillBeMember<EventTarget>> Event::pathInternal(ScriptState* scriptState, EventPathMode mode) const
+HeapVector<Member<EventTarget>> Event::pathInternal(ScriptState* scriptState, EventPathMode mode) const
 {
     if (m_target)
-        OriginsUsingFeatures::countOriginOrIsolatedWorldHumanReadableName(scriptState, *m_target, OriginsUsingFeatures::Feature::EventPath);
+        HostsUsingFeatures::countHostOrIsolatedWorldHumanReadableName(scriptState, *m_target, HostsUsingFeatures::Feature::EventPath);
 
     if (!m_currentTarget) {
         ASSERT(m_eventPhase == Event::NONE);
         if (!m_eventPath) {
             // Before dispatching the event
-            return WillBeHeapVector<RefPtrWillBeMember<EventTarget>>();
+            return HeapVector<Member<EventTarget>>();
         }
         ASSERT(!m_eventPath->isEmpty());
         // After dispatching the event
         if (mode == EmptyAfterDispatch)
-            return WillBeHeapVector<RefPtrWillBeMember<EventTarget>>();
+            return HeapVector<Member<EventTarget>>();
         return m_eventPath->last().treeScopeEventContext().ensureEventPath(*m_eventPath);
     }
 
@@ -296,13 +308,13 @@ WillBeHeapVector<RefPtrWillBeMember<EventTarget>> Event::pathInternal(ScriptStat
 
     // Returns [window] for events that are directly dispatched to the window object;
     // e.g., window.load, pageshow, etc.
-    if (LocalDOMWindow* window = m_currentTarget->toDOMWindow())
-        return WillBeHeapVector<RefPtrWillBeMember<EventTarget>>(1, window);
+    if (LocalDOMWindow* window = m_currentTarget->toLocalDOMWindow())
+        return HeapVector<Member<EventTarget>>(1, window);
 
-    return WillBeHeapVector<RefPtrWillBeMember<EventTarget>>();
+    return HeapVector<Member<EventTarget>>();
 }
 
-PassRefPtrWillBeRawPtr<EventDispatchMediator> Event::createMediator()
+EventDispatchMediator* Event::createMediator()
 {
     return EventDispatchMediator::create(this);
 }
@@ -335,6 +347,15 @@ double Event::timeStamp(ScriptState* scriptState) const
     }
 
     return timeStamp;
+}
+
+void Event::setCancelBubble(ExecutionContext* context, bool cancel)
+{
+    if (!m_cancelBubble && cancel)
+        UseCounter::count(context, UseCounter::EventCancelBubbleWasChangedToTrue);
+    else if (m_cancelBubble && !cancel)
+        UseCounter::count(context, UseCounter::EventCancelBubbleWasChangedToFalse);
+    m_cancelBubble = cancel;
 }
 
 DEFINE_TRACE(Event)

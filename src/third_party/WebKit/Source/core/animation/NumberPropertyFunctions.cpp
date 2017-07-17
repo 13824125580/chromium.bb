@@ -10,7 +10,7 @@ namespace blink {
 
 bool NumberPropertyFunctions::getInitialNumber(CSSPropertyID property, double& result)
 {
-    return getNumber(property, *ComputedStyle::initialStyle(), result);
+    return getNumber(property, ComputedStyle::initialStyle(), result);
 }
 
 bool NumberPropertyFunctions::getNumber(CSSPropertyID property, const ComputedStyle& style, double& result)
@@ -120,7 +120,7 @@ double NumberPropertyFunctions::clampNumber(CSSPropertyID property, double value
         return clampTo<int>(round(value));
 
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return value;
     }
 }

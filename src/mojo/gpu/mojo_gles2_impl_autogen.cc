@@ -1485,14 +1485,6 @@ void MojoGLES2Impl::PostSubBufferCHROMIUM(GLint x,
   MojoGLES2MakeCurrent(context_);
   glPostSubBufferCHROMIUM(x, y, width, height);
 }
-void MojoGLES2Impl::TexImageIOSurface2DCHROMIUM(GLenum target,
-                                                GLsizei width,
-                                                GLsizei height,
-                                                GLuint ioSurfaceId,
-                                                GLuint plane) {
-  MojoGLES2MakeCurrent(context_);
-  glTexImageIOSurface2DCHROMIUM(target, width, height, ioSurfaceId, plane);
-}
 void MojoGLES2Impl::CopyTextureCHROMIUM(GLenum source_id,
                                         GLenum dest_id,
                                         GLint internalformat,
@@ -1575,37 +1567,6 @@ void MojoGLES2Impl::BindUniformLocationCHROMIUM(GLuint program,
                                                 const char* name) {
   MojoGLES2MakeCurrent(context_);
   glBindUniformLocationCHROMIUM(program, location, name);
-}
-void MojoGLES2Impl::GenValuebuffersCHROMIUM(GLsizei n, GLuint* buffers) {
-  MojoGLES2MakeCurrent(context_);
-  glGenValuebuffersCHROMIUM(n, buffers);
-}
-void MojoGLES2Impl::DeleteValuebuffersCHROMIUM(GLsizei n,
-                                               const GLuint* valuebuffers) {
-  MojoGLES2MakeCurrent(context_);
-  glDeleteValuebuffersCHROMIUM(n, valuebuffers);
-}
-GLboolean MojoGLES2Impl::IsValuebufferCHROMIUM(GLuint valuebuffer) {
-  MojoGLES2MakeCurrent(context_);
-  return glIsValuebufferCHROMIUM(valuebuffer);
-}
-void MojoGLES2Impl::BindValuebufferCHROMIUM(GLenum target, GLuint valuebuffer) {
-  MojoGLES2MakeCurrent(context_);
-  glBindValuebufferCHROMIUM(target, valuebuffer);
-}
-void MojoGLES2Impl::SubscribeValueCHROMIUM(GLenum target, GLenum subscription) {
-  MojoGLES2MakeCurrent(context_);
-  glSubscribeValueCHROMIUM(target, subscription);
-}
-void MojoGLES2Impl::PopulateSubscribedValuesCHROMIUM(GLenum target) {
-  MojoGLES2MakeCurrent(context_);
-  glPopulateSubscribedValuesCHROMIUM(target);
-}
-void MojoGLES2Impl::UniformValuebufferCHROMIUM(GLint location,
-                                               GLenum target,
-                                               GLenum subscription) {
-  MojoGLES2MakeCurrent(context_);
-  glUniformValuebufferCHROMIUM(location, target, subscription);
 }
 void MojoGLES2Impl::BindTexImage2DCHROMIUM(GLenum target, GLint imageId) {
   MojoGLES2MakeCurrent(context_);
@@ -1690,12 +1651,13 @@ void MojoGLES2Impl::ScheduleCALayerCHROMIUM(GLuint contents_texture_id,
                                             GLboolean is_clipped,
                                             const GLfloat* clip_rect,
                                             GLint sorting_context_id,
-                                            const GLfloat* transform) {
+                                            const GLfloat* transform,
+                                            GLuint filter) {
   MojoGLES2MakeCurrent(context_);
   glScheduleCALayerCHROMIUM(contents_texture_id, contents_rect, opacity,
                             background_color, edge_aa_mask, bounds_rect,
                             is_clipped, clip_rect, sorting_context_id,
-                            transform);
+                            transform, filter);
 }
 void MojoGLES2Impl::CommitOverlayPlanesCHROMIUM() {
   MojoGLES2MakeCurrent(context_);
@@ -1708,6 +1670,10 @@ void MojoGLES2Impl::SwapInterval(GLint interval) {
 void MojoGLES2Impl::FlushDriverCachesCHROMIUM() {
   MojoGLES2MakeCurrent(context_);
   glFlushDriverCachesCHROMIUM();
+}
+GLuint MojoGLES2Impl::GetLastFlushIdCHROMIUM() {
+  MojoGLES2MakeCurrent(context_);
+  return glGetLastFlushIdCHROMIUM();
 }
 void MojoGLES2Impl::MatrixLoadfCHROMIUM(GLenum matrixMode, const GLfloat* m) {
   MojoGLES2MakeCurrent(context_);

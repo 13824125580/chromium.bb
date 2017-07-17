@@ -22,8 +22,6 @@
 #define InlineBox_h
 
 #include "core/CoreExport.h"
-#include "core/layout/LayoutBoxModelObject.h"
-#include "core/layout/LayoutObject.h"
 #include "core/layout/api/LineLayoutBoxModel.h"
 #include "core/layout/api/LineLayoutItem.h"
 #include "core/layout/api/SelectionState.h"
@@ -34,20 +32,21 @@ namespace blink {
 
 class HitTestRequest;
 class HitTestResult;
+class LayoutObject;
 class RootInlineBox;
 
 enum MarkLineBoxes { MarkLineBoxesDirty, DontMarkLineBoxes };
 
 // InlineBox represents a rectangle that occurs on a line.  It corresponds to
 // some LayoutObject (i.e., it represents a portion of that LayoutObject).
-class InlineBox : public DisplayItemClient {
+class CORE_EXPORT InlineBox : public DisplayItemClient {
     WTF_MAKE_NONCOPYABLE(InlineBox);
 public:
-    InlineBox(LayoutObject& obj)
+    InlineBox(LineLayoutItem obj)
         : m_next(nullptr)
         , m_prev(nullptr)
         , m_parent(nullptr)
-        , m_layoutObject(obj)
+        , m_lineLayoutItem(obj)
         , m_logicalWidth()
 #if ENABLE(ASSERT)
         , m_hasBadParent(false)
@@ -55,15 +54,15 @@ public:
     {
     }
 
-    InlineBox(InlineBox* inlineBoxForLayoutObject, LayoutPoint topLeft, LayoutUnit logicalWidth, bool firstLine, bool constructed,
+    InlineBox(LineLayoutItem item, LayoutPoint topLeft, LayoutUnit logicalWidth, bool firstLine, bool constructed,
         bool dirty, bool extracted, bool isHorizontal, InlineBox* next, InlineBox* prev, InlineFlowBox* parent)
-        : m_next(next)
+        : m_bitfields(firstLine, constructed, dirty, extracted, isHorizontal)
+        , m_next(next)
         , m_prev(prev)
         , m_parent(parent)
-        , m_layoutObject(inlineBoxForLayoutObject->layoutObject())
+        , m_lineLayoutItem(item)
         , m_topLeft(topLeft)
         , m_logicalWidth(logicalWidth)
-        , m_bitfields(firstLine, constructed, dirty, extracted, isHorizontal)
 #if ENABLE(ASSERT)
         , m_hasBadParent(false)
 #endif
@@ -172,7 +171,7 @@ public:
     InlineBox* nextLeafChildIgnoringLineBreak() const;
     InlineBox* prevLeafChildIgnoringLineBreak() const;
 
-    LineLayoutItem getLineLayoutItem() const { return LineLayoutItem(&m_layoutObject); }
+    LineLayoutItem getLineLayoutItem() const { return m_lineLayoutItem; }
 
     InlineFlowBox* parent() const
     {
@@ -281,7 +280,7 @@ public:
     LineLayoutBoxModel boxModelObject() const
     {
         if (!getLineLayoutItem().isText())
-            return LineLayoutBoxModel(toLayoutBoxModelObject(&m_layoutObject));
+            return LineLayoutBoxModel(m_lineLayoutItem);
         return LineLayoutBoxModel(nullptr);
     }
 
@@ -292,6 +291,7 @@ public:
     // flipped for right-to-left text.
     void logicalRectToPhysicalRect(LayoutRect&) const;
 
+    // TODO(szager): The Rect versions should return a rect, not modify the argument.
     void flipForWritingMode(FloatRect&) const;
     FloatPoint flipForWritingMode(const FloatPoint&) const;
     void flipForWritingMode(LayoutRect&) const;
@@ -308,8 +308,8 @@ public:
     const ComputedStyle& styleRef(bool firstLine) const { return m_layoutObject.styleRef(firstLine); }
     LayoutBlock* containingBlock() const { return m_layoutObject.containingBlock(); }
 
-    // Invalidate display item clients in the whole sub inline box tree.
-    void invalidateDisplayItemClientsRecursively();
+    // Set all LineLayoutItems in the inline box subtree should do full paint invalidation.
+    void setShouldDoFullPaintInvalidationRecursively();
 
 #define ADD_BOOLEAN_BITFIELD(name, Name) \
     private:\
@@ -402,11 +402,15 @@ private:
     // containing block. The size indicates the size of the box whose point is being flipped.
     LayoutPoint logicalPositionToPhysicalPoint(const LayoutPoint&, const LayoutSize&) const;
 
+    void setLineLayoutItemShouldDoFullPaintInvalidationIfNeeded();
+
+    InlineBoxBitfields m_bitfields;
+
     InlineBox* m_next; // The next element on the same line as us.
     InlineBox* m_prev; // The previous element on the same line as us.
 
     InlineFlowBox* m_parent; // The box that contains us.
-    LayoutObject& m_layoutObject;
+    LineLayoutItem m_lineLayoutItem;
 
 protected:
     // For RootInlineBox
@@ -432,10 +436,6 @@ protected:
     LayoutUnit m_logicalWidth;
 
 private:
-    LayoutObject& layoutObject() const { return m_layoutObject; }
-
-    InlineBoxBitfields m_bitfields;
-
 #if ENABLE(ASSERT)
     bool m_hasBadParent;
 #endif

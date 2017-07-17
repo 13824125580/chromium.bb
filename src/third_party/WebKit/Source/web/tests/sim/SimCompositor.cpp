@@ -5,7 +5,7 @@
 #include "web/tests/sim/SimCompositor.h"
 
 #include "core/frame/FrameView.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutViewItem.h"
 #include "core/layout/compositing/CompositedLayerMapping.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/graphics/ContentLayerDelegate.h"
@@ -37,7 +37,7 @@ static void paintFrames(LocalFrame& root, SimDisplayItemList& displayList)
     for (Frame* frame = &root; frame; frame = frame->tree().traverseNext(&root)) {
         if (!frame->isLocalFrame())
             continue;
-        PaintLayer* layer = toLocalFrame(frame)->view()->layoutView()->layer();
+        PaintLayer* layer = toLocalFrame(frame)->view()->layoutViewItem().layer();
         paintLayers(*layer, displayList);
     }
 }
@@ -45,6 +45,7 @@ static void paintFrames(LocalFrame& root, SimDisplayItemList& displayList)
 SimCompositor::SimCompositor()
     : m_needsAnimate(false)
     , m_deferCommits(true)
+    , m_hasSelection(false)
     , m_webViewImpl(0)
     , m_lastFrameTimeMonotonic(0)
 {
@@ -75,11 +76,21 @@ void SimCompositor::setDeferCommits(bool deferCommits)
     m_deferCommits = deferCommits;
 }
 
+void SimCompositor::registerSelection(const WebSelection&)
+{
+    m_hasSelection = true;
+}
+
+void SimCompositor::clearSelection()
+{
+    m_hasSelection = false;
+}
+
 SimDisplayItemList SimCompositor::beginFrame()
 {
-    ASSERT(m_webViewImpl);
-    ASSERT(!m_deferCommits);
-    ASSERT(m_needsAnimate);
+    DCHECK(m_webViewImpl);
+    DCHECK(!m_deferCommits);
+    DCHECK(m_needsAnimate);
     m_needsAnimate = false;
 
     // Always advance the time as if the compositor was running at 60fps.

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/location_bar/zoom_bubble_view.h"
 
+#include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -16,8 +17,8 @@
 #include "chrome/browser/ui/views/location_bar/zoom_view.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_zoom_request_client.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
@@ -26,7 +27,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/layout/layout_constants.h"
@@ -50,9 +51,9 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
       browser_view->GetLocationBarView()->zoom_view() : NULL;
 
   // Find the extension that initiated the zoom change, if any.
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(web_contents);
-  const ui_zoom::ZoomRequestClient* client = zoom_controller->last_client();
+  zoom::ZoomController* zoom_controller =
+      zoom::ZoomController::FromWebContents(web_contents);
+  const zoom::ZoomRequestClient* client = zoom_controller->last_client();
 
   // If the bubble is already showing in this window and the zoom change was not
   // initiated by an extension, then the bubble can be reused and only the label
@@ -65,7 +66,7 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
 
   // If the bubble is already showing but in a different tab, the current
   // bubble must be closed and a new one created.
-  CloseBubble();
+  CloseCurrentBubble();
 
   zoom_bubble_ = new ZoomBubbleView(anchor_view, web_contents, reason,
                                     browser_view->immersive_mode_controller());
@@ -83,7 +84,7 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
     zoom_bubble_->set_parent_window(web_contents->GetNativeView());
 
   views::Widget* zoom_bubble_widget =
-      views::BubbleDelegateView::CreateBubble(zoom_bubble_);
+      views::BubbleDialogDelegateView::CreateBubble(zoom_bubble_);
   if (anchor_view)
     zoom_bubble_widget->AddObserver(anchor_view);
 
@@ -95,9 +96,9 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
 }
 
 // static
-void ZoomBubbleView::CloseBubble() {
+void ZoomBubbleView::CloseCurrentBubble() {
   if (zoom_bubble_)
-    zoom_bubble_->Close();
+    zoom_bubble_->CloseBubble();
 }
 
 // static
@@ -116,8 +117,6 @@ ZoomBubbleView::ZoomBubbleView(
       web_contents_(web_contents),
       auto_close_(reason == AUTOMATIC),
       immersive_mode_controller_(immersive_mode_controller) {
-  // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_view_insets(gfx::Insets(5, 0, 5, 0));
   set_notify_enter_exit_on_child(true);
   immersive_mode_controller_->AddObserver(this);
   UseCompactMargins();
@@ -175,11 +174,11 @@ void ZoomBubbleView::Init() {
   }
 
   // Add zoom label with the new zoom percent.
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(web_contents_);
+  zoom::ZoomController* zoom_controller =
+      zoom::ZoomController::FromWebContents(web_contents_);
   int zoom_percent = zoom_controller->GetZoomPercent();
-  label_ = new views::Label(
-      l10n_util::GetStringFUTF16Int(IDS_TOOLTIP_ZOOM, zoom_percent));
+  label_ = new views::Label(l10n_util::GetStringFUTF16(
+      IDS_TOOLTIP_ZOOM, base::FormatPercent(zoom_percent)));
   label_->SetFontList(ui::ResourceBundle::GetSharedInstance().GetFontList(
       ui::ResourceBundle::MediumFont));
   grid_layout->AddView(label_);
@@ -192,10 +191,9 @@ void ZoomBubbleView::Init() {
   grid_layout->StartRow(0, 1);
 
   // Add "Reset to Default" button.
-  views::LabelButton* set_default_button = new views::LabelButton(
-      this, l10n_util::GetStringUTF16(IDS_ZOOM_SET_DEFAULT));
-  set_default_button->SetStyle(views::Button::STYLE_BUTTON);
-  grid_layout->AddView(set_default_button);
+  grid_layout->AddView(
+      views::MdTextButton::CreateSecondaryUiButton(
+          this, l10n_util::GetStringUTF16(IDS_ZOOM_SET_DEFAULT)));
 
   StartTimerIfNecessary();
 }
@@ -207,12 +205,12 @@ void ZoomBubbleView::WindowClosing() {
     zoom_bubble_ = NULL;
 }
 
-void ZoomBubbleView::Close() {
+void ZoomBubbleView::CloseBubble() {
   // Widget's Close() is async, but we don't want to use zoom_bubble_ after
   // this. Additionally web_contents_ may have been destroyed.
   zoom_bubble_ = NULL;
   web_contents_ = NULL;
-  LocationBarBubbleDelegateView::Close();
+  LocationBarBubbleDelegateView::CloseBubble();
 }
 
 void ZoomBubbleView::ButtonPressed(views::Button* sender,
@@ -225,7 +223,7 @@ void ZoomBubbleView::ButtonPressed(views::Button* sender,
                                          extension_info_.id.c_str())),
         ui::PAGE_TRANSITION_FROM_API);
   } else {
-    ui_zoom::PageZoom::Zoom(web_contents_, content::PAGE_ZOOM_RESET);
+    zoom::PageZoom::Zoom(web_contents_, content::PAGE_ZOOM_RESET);
   }
 }
 
@@ -245,11 +243,11 @@ void ZoomBubbleView::OnExtensionIconImageChanged(
 }
 
 void ZoomBubbleView::Refresh() {
-  ui_zoom::ZoomController* zoom_controller =
-      ui_zoom::ZoomController::FromWebContents(web_contents_);
+  zoom::ZoomController* zoom_controller =
+      zoom::ZoomController::FromWebContents(web_contents_);
   int zoom_percent = zoom_controller->GetZoomPercent();
-  label_->SetText(
-      l10n_util::GetStringFUTF16Int(IDS_TOOLTIP_ZOOM, zoom_percent));
+  label_->SetText(l10n_util::GetStringFUTF16(
+      IDS_TOOLTIP_ZOOM, base::FormatPercent(zoom_percent)));
   StartTimerIfNecessary();
 }
 
@@ -307,11 +305,9 @@ void ZoomBubbleView::StartTimerIfNecessary() {
     // The number of milliseconds the bubble should stay on the screen if it
     // will close automatically.
     const int kBubbleCloseDelay = 1500;
-    timer_.Start(
-        FROM_HERE,
-        base::TimeDelta::FromMilliseconds(kBubbleCloseDelay),
-        this,
-        &ZoomBubbleView::Close);
+    timer_.Start(FROM_HERE,
+                 base::TimeDelta::FromMilliseconds(kBubbleCloseDelay), this,
+                 &ZoomBubbleView::CloseBubble);
   }
 }
 

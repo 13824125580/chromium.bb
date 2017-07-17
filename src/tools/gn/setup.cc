@@ -14,6 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/process/launch.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -140,10 +141,11 @@ base::FilePath FindDotFile(const base::FilePath& current_dir) {
 // Called on any thread. Post the item to the builder on the main thread.
 void ItemDefinedCallback(base::MessageLoop* main_loop,
                          scoped_refptr<Builder> builder,
-                         scoped_ptr<Item> item) {
+                         std::unique_ptr<Item> item) {
   DCHECK(item);
-  main_loop->PostTask(FROM_HERE, base::Bind(&Builder::ItemDefined, builder,
-                                            base::Passed(&item)));
+  main_loop->task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&Builder::ItemDefined, builder, base::Passed(&item)));
 }
 
 void DecrementWorkCount() {
@@ -199,7 +201,7 @@ base::FilePath FindWindowsPython() {
   DWORD path_length = ::GetEnvironmentVariable(kPathEnvVarName, nullptr, 0);
   if (path_length == 0)
     return base::FilePath();
-  scoped_ptr<base::char16[]> full_path(new base::char16[path_length]);
+  std::unique_ptr<base::char16[]> full_path(new base::char16[path_length]);
   DWORD actual_path_length =
       ::GetEnvironmentVariable(kPathEnvVarName, full_path.get(), path_length);
   CHECK_EQ(path_length, actual_path_length + 1);
@@ -299,7 +301,7 @@ bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
     if (!FillArguments(*cmdline))
       return false;
   }
-  FillPythonPath();
+  FillPythonPath(*cmdline);
 
   return true;
 }
@@ -332,9 +334,13 @@ bool Setup::RunPostMessageLoop() {
     }
 
     if (!build_settings_.build_args().VerifyAllOverridesUsed(&err)) {
-      // TODO(brettw) implement a system of warnings. Until we have a better
-      // system, print the error but don't return failure.
+      // TODO(brettw) implement a system to have a different marker for
+      // warnings. Until we have a better system, print the error but don't
+      // return failure unless requested on the command line.
       err.PrintToStdout();
+      if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kFailOnUnusedArgs))
+        return false;
       return true;
     }
   }
@@ -590,20 +596,25 @@ bool Setup::FillBuildDir(const std::string& build_dir, bool require_exists) {
   return true;
 }
 
-void Setup::FillPythonPath() {
+void Setup::FillPythonPath(const base::CommandLine& cmdline) {
   // Trace this since it tends to be a bit slow on Windows.
   ScopedTrace setup_trace(TraceItem::TRACE_SETUP, "Fill Python Path");
+  if (cmdline.HasSwitch(switches::kScriptExecutable)) {
+    build_settings_.set_python_path(
+        cmdline.GetSwitchValuePath(switches::kScriptExecutable));
+  } else {
 #if defined(OS_WIN)
-  base::FilePath python_path = FindWindowsPython();
-  if (python_path.empty()) {
-    scheduler_.Log("WARNING", "Could not find python on path, using "
-        "just \"python.exe\"");
-    python_path = base::FilePath(kPythonExeName);
-  }
-  build_settings_.set_python_path(python_path.NormalizePathSeparatorsTo('/'));
+    base::FilePath python_path = FindWindowsPython();
+    if (python_path.empty()) {
+      scheduler_.Log("WARNING", "Could not find python on path, using "
+          "just \"python.exe\"");
+      python_path = base::FilePath(kPythonExeName);
+    }
+    build_settings_.set_python_path(python_path.NormalizePathSeparatorsTo('/'));
 #else
-  build_settings_.set_python_path(base::FilePath("python"));
+    build_settings_.set_python_path(base::FilePath("python"));
 #endif
+  }
 }
 
 bool Setup::RunConfigFile() {
@@ -712,7 +723,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
       err.PrintToStdout();
       return false;
     }
-    scoped_ptr<std::set<SourceFile>> whitelist(new std::set<SourceFile>);
+    std::unique_ptr<std::set<SourceFile>> whitelist(new std::set<SourceFile>);
     for (const auto& item : exec_script_whitelist_value->list_value()) {
       if (!item.VerifyTypeIs(Value::STRING, &err)) {
         err.PrintToStdout();

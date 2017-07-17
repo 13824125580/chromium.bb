@@ -9,6 +9,8 @@
 
 #ifdef INSIDE_BLINK
 #include "wtf/Functional.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 #endif
 
 namespace blink {
@@ -57,16 +59,18 @@ public:
 
 #ifdef INSIDE_BLINK
     // Helpers for posting bound functions as tasks.
-    typedef Function<void()> ClosureTask;
 
-    void postTask(const WebTraceLocation&, PassOwnPtr<ClosureTask>);
-    // TODO(alexclarke): Remove this when possible.
-    void postDelayedTask(const WebTraceLocation&, PassOwnPtr<ClosureTask>, long long delayMs);
-    void postDelayedTask(const WebTraceLocation&, PassOwnPtr<ClosureTask>, double delayMs);
+    // For cross-thread posting. Can be called from any thread.
+    void postTask(const WebTraceLocation&, std::unique_ptr<CrossThreadClosure>);
+    void postDelayedTask(const WebTraceLocation&, std::unique_ptr<CrossThreadClosure>, long long delayMs);
 
-    PassOwnPtr<WebTaskRunner> adoptClone()
+    // For same-thread posting. Must be called from the associated WebThread.
+    void postTask(const WebTraceLocation&, std::unique_ptr<WTF::Closure>);
+    void postDelayedTask(const WebTraceLocation&, std::unique_ptr<WTF::Closure>, long long delayMs);
+
+    std::unique_ptr<WebTaskRunner> adoptClone()
     {
-        return adoptPtr(clone());
+        return wrapUnique(clone());
     }
 #endif
 };

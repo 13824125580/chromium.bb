@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_sync_message.h"
 
@@ -33,7 +33,9 @@ bool SyncMessageFilter::Send(Message* message) {
     return true;
   }
 
-  base::WaitableEvent done_event(true, false);
+  base::WaitableEvent done_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   PendingSyncMsg pending_message(
       SyncMessage::GetMessageId(*message),
       static_cast<SyncMessage*>(message)->GetReplyDeserializer(),
@@ -59,7 +61,10 @@ bool SyncMessageFilter::Send(Message* message) {
   }
 
   base::WaitableEvent* events[2] = { shutdown_event_, &done_event };
-  base::WaitableEvent::WaitMany(events, 2);
+  if (base::WaitableEvent::WaitMany(events, 2) == 1) {
+    TRACE_EVENT_FLOW_END0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+                          "SyncMessageFilter::Send", &done_event);
+  }
 
   {
     base::AutoLock auto_lock(lock_);
@@ -103,6 +108,9 @@ bool SyncMessageFilter::OnMessageReceived(const Message& message) {
         (*iter)->send_result =
             (*iter)->deserializer->SerializeOutputParameters(message);
       }
+      TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+                              "SyncMessageFilter::OnMessageReceived",
+                              (*iter)->done_event);
       (*iter)->done_event->Signal();
       return true;
     }
@@ -142,6 +150,9 @@ void SyncMessageFilter::SignalAllEvents() {
   lock_.AssertAcquired();
   for (PendingSyncMessages::iterator iter = pending_sync_messages_.begin();
        iter != pending_sync_messages_.end(); ++iter) {
+    TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+                            "SyncMessageFilter::SignalAllEvents",
+                            (*iter)->done_event);
     (*iter)->done_event->Signal();
   }
 }

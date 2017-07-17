@@ -57,8 +57,6 @@ int MacOSXMinorVersion()
 }
 
 enum {
-    SNOW_LEOPARD_MINOR_VERSION = 6,
-    LION_MINOR_VERSION = 7,
     MAVERICKS_MINOR_VERSION = 9,
     YOSEMITE_MINOR_VERSION = 10,
     EL_CAPITAN_MINOR_VERSION = 11,
@@ -67,21 +65,6 @@ enum {
 } // namespace
 
 namespace blink {
-
-bool IsOSSnowLeopard()
-{
-    return MacOSXMinorVersion() == SNOW_LEOPARD_MINOR_VERSION;
-}
-
-bool IsOSLionOrEarlier()
-{
-    return MacOSXMinorVersion() <= LION_MINOR_VERSION;
-}
-
-bool IsOSMavericksOrEarlier()
-{
-    return MacOSXMinorVersion() <= MAVERICKS_MINOR_VERSION;
-}
 
 bool IsOSMavericks()
 {

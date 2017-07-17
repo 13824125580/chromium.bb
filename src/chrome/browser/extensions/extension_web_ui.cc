@@ -12,7 +12,7 @@
 #include "base/command_line.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/bookmark_manager_private/bookmark_manager_private_api.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -65,8 +65,9 @@ const char kActive[] = "active";
 void InitializeOverridesList(base::ListValue* list) {
   base::ListValue migrated;
   std::set<std::string> seen_entries;
-  for (base::Value* val : *list) {
-    scoped_ptr<base::DictionaryValue> new_dict(new base::DictionaryValue());
+  for (const auto& val : *list) {
+    std::unique_ptr<base::DictionaryValue> new_dict(
+        new base::DictionaryValue());
     std::string entry_name;
     base::DictionaryValue* existing_dict = nullptr;
     if (val->GetAsDictionary(&existing_dict)) {
@@ -95,7 +96,7 @@ void InitializeOverridesList(base::ListValue* list) {
 // marks it as active.
 void AddOverridesToList(base::ListValue* list,
                         const std::string& override) {
-  for (base::Value* val : *list) {
+  for (const auto& val : *list) {
     base::DictionaryValue* dict = nullptr;
     std::string entry;
     if (!val->GetAsDictionary(&dict) || !dict->GetString(kEntry, &entry)) {
@@ -108,7 +109,7 @@ void AddOverridesToList(base::ListValue* list,
     }
   }
 
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString(kEntry, override);
   dict->SetBoolean(kActive, true);
   // Add the entry to the front of the list.
@@ -120,14 +121,15 @@ void AddOverridesToList(base::ListValue* list,
 void ValidateOverridesList(const extensions::ExtensionSet* all_extensions,
                            base::ListValue* list) {
   base::ListValue migrated;
-  for (base::Value* val : *list) {
+  for (const auto& val : *list) {
     base::DictionaryValue* dict = nullptr;
     std::string entry;
     if (!val->GetAsDictionary(&dict) || !dict->GetString(kEntry, &entry)) {
       NOTREACHED();
       continue;
     }
-    scoped_ptr<base::DictionaryValue> new_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> new_dict(
+        new base::DictionaryValue());
     new_dict->Swap(dict);
     GURL override_url(entry);
     if (!override_url.is_valid())
@@ -174,7 +176,7 @@ bool UpdateOverridesList(base::ListValue* overrides_list,
                          UpdateBehavior behavior) {
   base::ListValue::iterator iter =
       std::find_if(overrides_list->begin(), overrides_list->end(),
-                   [&override_url](const base::Value* value) {
+                   [&override_url](const std::unique_ptr<base::Value>& value) {
                      std::string entry;
                      const base::DictionaryValue* dict = nullptr;
                      return value->GetAsDictionary(&dict) &&
@@ -483,9 +485,9 @@ void ExtensionWebUI::InitializeChromeURLOverrides(Profile* profile) {
 
 // static
 void ExtensionWebUI::ValidateChromeURLOverrides(Profile* profile) {
-  scoped_ptr<extensions::ExtensionSet> all_extensions =
-      extensions::ExtensionRegistry::Get(profile)->
-          GenerateInstalledExtensionsSet();
+  std::unique_ptr<extensions::ExtensionSet> all_extensions =
+      extensions::ExtensionRegistry::Get(profile)
+          ->GenerateInstalledExtensionsSet();
 
   ForEachOverrideList(profile,
                       base::Bind(&ValidateOverridesList, all_extensions.get()));

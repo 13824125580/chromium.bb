@@ -5,12 +5,15 @@
 #include "jingle/glue/proxy_resolving_client_socket.h"
 
 #include <stdint.h>
+#include <string>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth_controller.h"
@@ -60,13 +63,15 @@ ProxyResolvingClientSocket::ProxyResolvingClientSocket(
   session_params.cert_verifier = request_context->cert_verifier();
   session_params.transport_security_state =
       request_context->transport_security_state();
+  session_params.cert_transparency_verifier =
+      request_context->cert_transparency_verifier();
+  session_params.ct_policy_enforcer = request_context->ct_policy_enforcer();
   // TODO(rkn): This is NULL because ChannelIDService is not thread safe.
   session_params.channel_id_service = NULL;
   session_params.proxy_service = request_context->proxy_service();
   session_params.ssl_config_service = request_context->ssl_config_service();
   session_params.http_auth_handler_factory =
       request_context->http_auth_handler_factory();
-  session_params.network_delegate = request_context->network_delegate();
   session_params.http_server_properties =
       request_context->http_server_properties();
   session_params.net_log = request_context->net_log();
@@ -85,10 +90,10 @@ ProxyResolvingClientSocket::ProxyResolvingClientSocket(
         reference_params->testing_fixed_https_port;
     session_params.enable_spdy31 = reference_params->enable_spdy31;
     session_params.enable_http2 = reference_params->enable_http2;
-    session_params.parse_alternative_services =
-        reference_params->parse_alternative_services;
-    session_params.enable_alternative_service_with_different_host =
-        reference_params->enable_alternative_service_with_different_host;
+    session_params.enable_http2_alternative_service_with_different_host =
+        reference_params->enable_http2_alternative_service_with_different_host;
+    session_params.enable_quic_alternative_service_with_different_host =
+        reference_params->enable_quic_alternative_service_with_different_host;
   }
 
   network_session_.reset(new net::HttpNetworkSession(session_params));
@@ -139,6 +144,7 @@ int ProxyResolvingClientSocket::Connect(
   // First we try and resolve the proxy.
   int status = network_session_->proxy_service()->ResolveProxy(
       proxy_url_,
+      std::string(),
       net::LOAD_NORMAL,
       &proxy_info_,
       proxy_resolve_callback_,
@@ -149,9 +155,7 @@ int ProxyResolvingClientSocket::Connect(
     // We defer execution of ProcessProxyResolveDone instead of calling it
     // directly here for simplicity. From the caller's point of view,
     // the connect always happens asynchronously.
-    base::MessageLoop* message_loop = base::MessageLoop::current();
-    CHECK(message_loop);
-    message_loop->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&ProxyResolvingClientSocket::ProcessProxyResolveDone,
                    weak_factory_.GetWeakPtr(), status));
@@ -290,7 +294,7 @@ int ProxyResolvingClientSocket::ReconsiderProxyAfterError(int error) {
   }
 
   int rv = network_session_->proxy_service()->ReconsiderProxyAfterError(
-      proxy_url_, net::LOAD_NORMAL, error, &proxy_info_,
+      proxy_url_, std::string(), net::LOAD_NORMAL, error, &proxy_info_,
       proxy_resolve_callback_, &pac_request_, NULL, bound_net_log_);
   if (rv == net::OK || rv == net::ERR_IO_PENDING) {
     CloseTransportSocket();
@@ -305,9 +309,7 @@ int ProxyResolvingClientSocket::ReconsiderProxyAfterError(int error) {
   // In both cases we want to post ProcessProxyResolveDone (in the error case
   // we might still want to fall back a direct connection).
   if (rv != net::ERR_IO_PENDING) {
-    base::MessageLoop* message_loop = base::MessageLoop::current();
-    CHECK(message_loop);
-    message_loop->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&ProxyResolvingClientSocket::ProcessProxyResolveDone,
                    weak_factory_.GetWeakPtr(), rv));
@@ -353,13 +355,13 @@ int ProxyResolvingClientSocket::GetPeerAddress(
   if (proxy_info_.is_direct())
     return transport_->socket()->GetPeerAddress(address);
 
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(dest_host_port_pair_.host(), &ip_number)) {
+  net::IPAddress ip_address;
+  if (!ip_address.AssignFromIPLiteral(dest_host_port_pair_.host())) {
     // Do not expose the proxy IP address to the caller.
     return net::ERR_NAME_NOT_RESOLVED;
   }
 
-  *address = net::IPEndPoint(ip_number, dest_host_port_pair_.port());
+  *address = net::IPEndPoint(ip_address, dest_host_port_pair_.port());
   return net::OK;
 }
 
@@ -395,13 +397,6 @@ void ProxyResolvingClientSocket::SetOmniboxSpeculation() {
 bool ProxyResolvingClientSocket::WasEverUsed() const {
   if (transport_.get() && transport_->socket())
     return transport_->socket()->WasEverUsed();
-  NOTREACHED();
-  return false;
-}
-
-bool ProxyResolvingClientSocket::UsingTCPFastOpen() const {
-  if (transport_.get() && transport_->socket())
-    return transport_->socket()->UsingTCPFastOpen();
   NOTREACHED();
   return false;
 }

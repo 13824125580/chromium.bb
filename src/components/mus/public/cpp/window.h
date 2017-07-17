@@ -13,11 +13,9 @@
 #include "base/observer_list.h"
 #include "components/mus/common/types.h"
 #include "components/mus/public/interfaces/mus_constants.mojom.h"
-#include "components/mus/public/interfaces/surface_id.mojom.h"
 #include "components/mus/public/interfaces/window_tree.mojom.h"
 #include "mojo/public/cpp/bindings/array.h"
-#include "mojo/public/cpp/system/macros.h"
-#include "mojo/shell/public/interfaces/interface_provider.mojom.h"
+#include "services/shell/public/interfaces/interface_provider.mojom.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -32,8 +30,8 @@ class ServiceProviderImpl;
 class WindowObserver;
 class WindowSurface;
 class WindowSurfaceBinding;
-class WindowTreeClientImpl;
-class WindowTreeConnection;
+class WindowTreeClient;
+class WindowTreeClientPrivate;
 
 namespace {
 class OrderChangedNotifier;
@@ -43,7 +41,7 @@ class OrderChangedNotifier;
 template <typename T>
 struct WindowProperty;
 
-// Windows are owned by the WindowTreeConnection. See WindowTreeDelegate for
+// Windows are owned by the WindowTreeClient. See WindowTreeClientDelegate for
 // details on ownership.
 //
 // TODO(beng): Right now, you'll have to implement a WindowObserver to track
@@ -52,7 +50,7 @@ struct WindowProperty;
 class Window {
  public:
   using Children = std::vector<Window*>;
-  using EmbedCallback = base::Callback<void(bool, ConnectionSpecificId)>;
+  using EmbedCallback = base::Callback<void(bool)>;
   using PropertyDeallocator = void (*)(int64_t value);
   using SharedProperties = std::map<std::string, std::vector<uint8_t>>;
 
@@ -63,10 +61,14 @@ class Window {
   // immediately deleted.
   void Destroy();
 
-  WindowTreeConnection* connection() { return connection_; }
+  WindowTreeClient* window_tree() { return client_; }
 
-  // Configuration.
-  Id id() const { return id_; }
+  // The local_id is provided for client code. The local_id is not set or
+  // manipulated by mus. The default value is -1.
+  void set_local_id(int id) { local_id_ = id; }
+  int local_id() const { return local_id_; }
+
+  int64_t display_id() const { return display_id_; }
 
   // Geometric disposition relative to parent window.
   const gfx::Rect& bounds() const { return bounds_; }
@@ -85,9 +87,18 @@ class Window {
   void SetClientArea(const gfx::Insets& new_client_area,
                      const std::vector<gfx::Rect>& additional_client_areas);
 
+  // Mouse events outside the hit test mask do not hit the window. Returns null
+  // if there is no mask.
+  const gfx::Rect* hit_test_mask() const { return hit_test_mask_.get(); }
+  void SetHitTestMask(const gfx::Rect& mask_rect);
+  void ClearHitTestMask();
+
   // Visibility (also see IsDrawn()). When created windows are hidden.
   bool visible() const { return visible_; }
   void SetVisible(bool value);
+
+  float opacity() const { return opacity_; }
+  void SetOpacity(float opacity);
 
   // Cursors
   mojom::Cursor predefined_cursor() const { return cursor_id_; }
@@ -97,14 +108,10 @@ class Window {
   // Window is attached to the root.
   bool IsDrawn() const;
 
-  const mojom::ViewportMetrics& viewport_metrics() {
-    return *viewport_metrics_;
-  }
-
-  scoped_ptr<WindowSurface> RequestSurface(mojom::SurfaceType type);
+  std::unique_ptr<WindowSurface> RequestSurface(mojom::SurfaceType type);
 
   void AttachSurface(mojom::SurfaceType type,
-                     scoped_ptr<WindowSurfaceBinding> surface_binding);
+                     std::unique_ptr<WindowSurfaceBinding> surface_binding);
 
   // The template-ized versions of the following methods rely on the presence
   // of a mojo::TypeConverter<const std::vector<uint8_t>, T>.
@@ -173,7 +180,7 @@ class Window {
   void MoveToBack();
 
   // Returns true if |child| is this or a descendant of this.
-  bool Contains(Window* child) const;
+  bool Contains(const Window* child) const;
 
   void AddTransientWindow(Window* transient_window);
   void RemoveTransientWindow(Window* transient_window);
@@ -185,7 +192,10 @@ class Window {
   const Window* transient_parent() const { return transient_parent_; }
   const Children& transient_children() const { return transient_children_; }
 
-  Window* GetChildById(Id id);
+  void SetModal();
+  bool is_modal() const { return is_modal_; }
+
+  Window* GetChildByLocalId(int id);
 
   void SetTextInputState(mojo::TextInputStatePtr state);
   void SetImeVisibility(bool visible, mojo::TextInputStatePtr state);
@@ -194,23 +204,26 @@ class Window {
   void SetCapture();
   void ReleaseCapture();
 
-  // Focus.
+  // Focus. See WindowTreeClient::ClearFocus() to reset focus.
   void SetFocus();
   bool HasFocus() const;
   void SetCanFocus(bool can_focus);
 
   // Embedding. See window_tree.mojom for details.
-  void Embed(mus::mojom::WindowTreeClientPtr client);
+  void Embed(mus::mojom::WindowTreeClientPtr client, uint32_t flags = 0);
 
   // NOTE: callback is run synchronously if Embed() is not allowed on this
   // Window.
   void Embed(mus::mojom::WindowTreeClientPtr client,
-             uint32_t policy_bitmask,
-             const EmbedCallback& callback);
+             const EmbedCallback& callback,
+             uint32_t flags = 0);
 
   // TODO(sky): this API is only applicable to the WindowManager. Move it
   // to a better place.
   void RequestClose();
+
+  // Returns an internal name, set by a client app when it creates a window.
+  std::string GetName() const;
 
  protected:
   // This class is subclassed only by test classes that provide a public ctor.
@@ -219,11 +232,14 @@ class Window {
 
  private:
   friend class WindowPrivate;
-  friend class WindowTreeClientImpl;
+  friend class WindowTreeClient;
+  friend class WindowTreeClientPrivate;
 
-  Window(WindowTreeConnection* connection, Id id);
+  Window(WindowTreeClient* client, Id id);
 
-  WindowTreeClientImpl* tree_client();
+  // Used to identify this Window on the server. Clients can not change this
+  // value.
+  Id server_id() const { return server_id_; }
 
   // Applies a shared property change locally and forwards to the server. If
   // |data| is null, this property is deleted.
@@ -243,16 +259,17 @@ class Window {
   void LocalRemoveChild(Window* child);
   void LocalAddTransientWindow(Window* transient_window);
   void LocalRemoveTransientWindow(Window* transient_window);
+  void LocalSetModal();
   // Returns true if the order actually changed.
   bool LocalReorder(Window* relative, mojom::OrderDirection direction);
   void LocalSetBounds(const gfx::Rect& old_bounds, const gfx::Rect& new_bounds);
   void LocalSetClientArea(
       const gfx::Insets& new_client_area,
       const std::vector<gfx::Rect>& additional_client_areas);
-  void LocalSetViewportMetrics(const mojom::ViewportMetrics& old_metrics,
-                               const mojom::ViewportMetrics& new_metrics);
-  void LocalSetDrawn(bool drawn);
+  void LocalSetParentDrawn(bool drawn);
+  void LocalSetDisplay(int64_t display_id);
   void LocalSetVisible(bool visible);
+  void LocalSetOpacity(float opacity);
   void LocalSetPredefinedCursor(mojom::Cursor cursor_id);
   void LocalSetSharedProperty(const std::string& name,
                               const std::vector<uint8_t>* data);
@@ -288,8 +305,9 @@ class Window {
   // RestackTransientDescendants.
   static Window** GetStackingTarget(Window* window);
 
-  WindowTreeConnection* connection_;
-  Id id_;
+  WindowTreeClient* client_;
+  Id server_id_;
+  int local_id_ = -1;
   Window* parent_;
   Children children_;
 
@@ -297,25 +315,27 @@ class Window {
   Window* transient_parent_;
   Children transient_children_;
 
+  bool is_modal_;
+
   base::ObserverList<WindowObserver> observers_;
   InputEventHandler* input_event_handler_;
 
   gfx::Rect bounds_;
   gfx::Insets client_area_;
   std::vector<gfx::Rect> additional_client_areas_;
-
-  mojom::ViewportMetricsPtr viewport_metrics_;
+  std::unique_ptr<gfx::Rect> hit_test_mask_;
 
   bool visible_;
+  float opacity_;
+  int64_t display_id_;
 
   mojom::Cursor cursor_id_;
 
   SharedProperties properties_;
 
-  // Drawn state is derived from the visible state and the parent's visible
-  // state. This field is only used if the window has no parent (eg it's a
-  // root).
-  bool drawn_;
+  // Drawn state of our parent. This is only meaningful for root Windows, in
+  // which the parent Window isn't exposed to the client.
+  bool parent_drawn_;
 
   // Value struct to keep the name and deallocator for this property.
   // Key cannot be used for this purpose because it can be char* or
@@ -328,7 +348,7 @@ class Window {
 
   std::map<const void*, Value> prop_map_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(Window);
+  DISALLOW_COPY_AND_ASSIGN(Window);
 };
 
 }  // namespace mus

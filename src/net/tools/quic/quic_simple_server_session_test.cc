@@ -5,6 +5,7 @@
 #include "net/tools/quic/quic_simple_server_session.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -32,8 +33,8 @@
 
 using net::test::CryptoTestUtils;
 using net::test::GenerateBody;
-using net::test::MockConnection;
-using net::test::MockConnectionHelper;
+using net::test::MockQuicConnection;
+using net::test::MockQuicConnectionHelper;
 using net::test::QuicConfigPeer;
 using net::test::QuicConnectionPeer;
 using net::test::QuicSpdyStreamPeer;
@@ -65,13 +66,29 @@ class MockQuicHeadersStream : public QuicHeadersStream {
   explicit MockQuicHeadersStream(QuicSpdySession* session)
       : QuicHeadersStream(session) {}
 
-  MOCK_METHOD4(WritePushPromise,
+  // Methods taking non-copyable types like SpdyHeaderBlock by value cannot be
+  // mocked directly.
+  size_t WritePushPromise(QuicStreamId original_stream_id,
+                          QuicStreamId promised_stream_id,
+                          SpdyHeaderBlock headers,
+                          QuicAckListenerInterface* ack_listener) override {
+    return WritePushPromiseMock(original_stream_id, promised_stream_id, headers,
+                                ack_listener);
+  }
+  MOCK_METHOD4(WritePushPromiseMock,
                size_t(QuicStreamId original_stream_id,
                       QuicStreamId promised_stream_id,
                       const SpdyHeaderBlock& headers,
                       QuicAckListenerInterface* ack_listener));
 
-  MOCK_METHOD5(WriteHeaders,
+  size_t WriteHeaders(QuicStreamId stream_id,
+                      SpdyHeaderBlock headers,
+                      bool fin,
+                      SpdyPriority priority,
+                      QuicAckListenerInterface* ack_listener) override {
+    return WriteHeadersMock(stream_id, headers, fin, priority, ack_listener);
+  }
+  MOCK_METHOD5(WriteHeadersMock,
                size_t(QuicStreamId stream_id,
                       const SpdyHeaderBlock& headers,
                       bool fin,
@@ -83,8 +100,12 @@ class MockQuicCryptoServerStream : public QuicCryptoServerStream {
  public:
   explicit MockQuicCryptoServerStream(
       const QuicCryptoServerConfig* crypto_config,
-      QuicSession* session)
-      : QuicCryptoServerStream(crypto_config, session) {}
+      QuicCompressedCertsCache* compressed_certs_cache,
+      QuicServerSessionBase* session)
+      : QuicCryptoServerStream(crypto_config,
+                               compressed_certs_cache,
+                               FLAGS_enable_quic_stateless_reject_support,
+                               session) {}
   ~MockQuicCryptoServerStream() override {}
 
   MOCK_METHOD1(SendServerConfigUpdate,
@@ -98,19 +119,23 @@ class MockQuicCryptoServerStream : public QuicCryptoServerStream {
   DISALLOW_COPY_AND_ASSIGN(MockQuicCryptoServerStream);
 };
 
-class MockConnectionWithSendStreamData : public MockConnection {
+class MockQuicConnectionWithSendStreamData : public MockQuicConnection {
  public:
-  MockConnectionWithSendStreamData(MockConnectionHelper* helper,
-                                   Perspective perspective,
-                                   const QuicVersionVector& supported_versions)
-      : MockConnection(helper, perspective, supported_versions) {}
+  MockQuicConnectionWithSendStreamData(
+      MockQuicConnectionHelper* helper,
+      MockAlarmFactory* alarm_factory,
+      Perspective perspective,
+      const QuicVersionVector& supported_versions)
+      : MockQuicConnection(helper,
+                           alarm_factory,
+                           perspective,
+                           supported_versions) {}
 
-  MOCK_METHOD6(SendStreamData,
+  MOCK_METHOD5(SendStreamData,
                QuicConsumedData(QuicStreamId id,
                                 QuicIOVector iov,
                                 QuicStreamOffset offset,
                                 bool fin,
-                                FecProtection fec_protection,
                                 QuicAckListenerInterface* listern));
 };
 
@@ -153,18 +178,25 @@ class QuicSimpleServerSessionTest
   QuicSimpleServerSessionTest()
       : crypto_config_(QuicCryptoServerConfig::TESTING,
                        QuicRandom::GetInstance(),
-                       CryptoTestUtils::ProofSourceForTesting()) {
+                       CryptoTestUtils::ProofSourceForTesting()),
+        compressed_certs_cache_(
+            QuicCompressedCertsCache::kQuicCompressedCertsCacheSize) {
     FLAGS_quic_always_log_bugs_for_tests = true;
     config_.SetMaxStreamsPerConnection(kMaxStreamsForTest, kMaxStreamsForTest);
+    config_.SetMaxIncomingDynamicStreamsToSend(kMaxStreamsForTest);
+    QuicConfigPeer::SetReceivedMaxIncomingDynamicStreams(&config_,
+                                                         kMaxStreamsForTest);
     config_.SetInitialStreamFlowControlWindowToSend(
         kInitialStreamFlowControlWindowForTest);
     config_.SetInitialSessionFlowControlWindowToSend(
         kInitialSessionFlowControlWindowForTest);
 
-    connection_ = new StrictMock<MockConnectionWithSendStreamData>(
-        &helper_, Perspective::IS_SERVER, SupportedVersions(GetParam()));
-    session_.reset(new QuicSimpleServerSession(config_, connection_, &owner_,
-                                               &crypto_config_));
+    connection_ = new StrictMock<MockQuicConnectionWithSendStreamData>(
+        &helper_, &alarm_factory_, Perspective::IS_SERVER,
+        SupportedVersions(GetParam()));
+    session_.reset(new QuicSimpleServerSession(
+        config_, connection_, &owner_, &session_helper_, &crypto_config_,
+        &compressed_certs_cache_));
     MockClock clock;
     handshake_message_.reset(crypto_config_.AddDefaultConfig(
         QuicRandom::GetInstance(), &clock,
@@ -175,15 +207,20 @@ class QuicSimpleServerSessionTest
     QuicSpdySessionPeer::SetHeadersStream(session_.get(), headers_stream_);
     // TODO(jri): Remove this line once tests pass.
     FLAGS_quic_cede_correctly = false;
+
+    session_->OnConfigNegotiated();
   }
 
   StrictMock<MockQuicServerSessionVisitor> owner_;
-  MockConnectionHelper helper_;
-  StrictMock<MockConnectionWithSendStreamData>* connection_;
+  StrictMock<MockQuicServerSessionHelper> session_helper_;
+  MockQuicConnectionHelper helper_;
+  MockAlarmFactory alarm_factory_;
+  StrictMock<MockQuicConnectionWithSendStreamData>* connection_;
   QuicConfig config_;
   QuicCryptoServerConfig crypto_config_;
-  scoped_ptr<QuicSimpleServerSession> session_;
-  scoped_ptr<CryptoHandshakeMessage> handshake_message_;
+  QuicCompressedCertsCache compressed_certs_cache_;
+  std::unique_ptr<QuicSimpleServerSession> session_;
+  std::unique_ptr<CryptoHandshakeMessage> handshake_message_;
   QuicConnectionVisitorInterface* visitor_;
   MockQuicHeadersStream* headers_stream_;
 };
@@ -264,7 +301,7 @@ TEST_P(QuicSimpleServerSessionTest, AcceptClosedStream) {
 TEST_P(QuicSimpleServerSessionTest, CreateIncomingDynamicStreamDisconnected) {
   // Tests that incoming stream creation fails when connection is not connected.
   size_t initial_num_open_stream = session_->GetNumOpenIncomingStreams();
-  QuicConnectionPeer::CloseConnection(connection_);
+  QuicConnectionPeer::TearDownLocalConnectionState(connection_);
   EXPECT_DFATAL(QuicSimpleServerSessionPeer::CreateIncomingDynamicStream(
                     session_.get(), kClientDataStreamId1),
                 "ShouldCreateIncomingDynamicStream called when disconnected");
@@ -274,17 +311,17 @@ TEST_P(QuicSimpleServerSessionTest, CreateIncomingDynamicStreamDisconnected) {
 TEST_P(QuicSimpleServerSessionTest, CreateEvenIncomingDynamicStream) {
   // Tests that incoming stream creation fails when given stream id is even.
   size_t initial_num_open_stream = session_->GetNumOpenIncomingStreams();
-  EXPECT_CALL(*connection_, SendConnectionCloseWithDetails(
-                                QUIC_INVALID_STREAM_ID,
-                                "Client created even numbered stream"));
+  EXPECT_CALL(*connection_,
+              CloseConnection(QUIC_INVALID_STREAM_ID,
+                              "Client created even numbered stream", _));
   QuicSimpleServerSessionPeer::CreateIncomingDynamicStream(session_.get(), 2);
   EXPECT_EQ(initial_num_open_stream, session_->GetNumOpenIncomingStreams());
 }
 
 TEST_P(QuicSimpleServerSessionTest, CreateIncomingDynamicStream) {
-  std::unique_ptr<QuicSpdyStream> stream(
+  QuicSpdyStream* stream =
       QuicSimpleServerSessionPeer::CreateIncomingDynamicStream(
-          session_.get(), kClientDataStreamId1));
+          session_.get(), kClientDataStreamId1);
   EXPECT_NE(nullptr, stream);
   EXPECT_EQ(kClientDataStreamId1, stream->id());
 }
@@ -292,7 +329,7 @@ TEST_P(QuicSimpleServerSessionTest, CreateIncomingDynamicStream) {
 TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamDisconnected) {
   // Tests that outgoing stream creation fails when connection is not connected.
   size_t initial_num_open_stream = session_->GetNumOpenOutgoingStreams();
-  QuicConnectionPeer::CloseConnection(connection_);
+  QuicConnectionPeer::TearDownLocalConnectionState(connection_);
   EXPECT_DFATAL(QuicSimpleServerSessionPeer::CreateOutgoingDynamicStream(
                     session_.get(), kDefaultPriority),
                 "ShouldCreateOutgoingDynamicStream called when disconnected");
@@ -323,8 +360,8 @@ TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamUptoLimit) {
   EXPECT_EQ(0u, session_->GetNumOpenOutgoingStreams());
 
   // Assume encryption already established.
-  MockQuicCryptoServerStream* crypto_stream =
-      new MockQuicCryptoServerStream(&crypto_config_, session_.get());
+  MockQuicCryptoServerStream* crypto_stream = new MockQuicCryptoServerStream(
+      &crypto_config_, &compressed_certs_cache_, session_.get());
   crypto_stream->set_encryption_established(true);
   QuicSimpleServerSessionPeer::SetCryptoStream(session_.get(), crypto_stream);
 
@@ -350,18 +387,17 @@ TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamUptoLimit) {
 
 TEST_P(QuicSimpleServerSessionTest, OnStreamFrameWithEvenStreamId) {
   QuicStreamFrame frame(2, false, 0, StringPiece());
-  EXPECT_CALL(*connection_, SendConnectionCloseWithDetails(
-                                QUIC_INVALID_STREAM_ID,
-                                "Client sent data on server push stream"));
+  EXPECT_CALL(*connection_,
+              CloseConnection(QUIC_INVALID_STREAM_ID,
+                              "Client sent data on server push stream", _));
   session_->OnStreamFrame(frame);
 }
 
 TEST_P(QuicSimpleServerSessionTest, GetEvenIncomingError) {
   // Tests that calling GetOrCreateDynamicStream() on an outgoing stream not
   // promised yet should result close connection.
-  EXPECT_CALL(*connection_,
-              SendConnectionCloseWithDetails(QUIC_INVALID_STREAM_ID,
-                                             "Data for nonexistent stream"));
+  EXPECT_CALL(*connection_, CloseConnection(QUIC_INVALID_STREAM_ID,
+                                            "Data for nonexistent stream", _));
   EXPECT_EQ(nullptr,
             QuicSessionPeer::GetOrCreateDynamicStream(session_.get(), 4));
 }
@@ -380,10 +416,6 @@ class QuicSimpleServerSessionServerPushTest
   const size_t kStreamFlowControlWindowSize = 32 * 1024;  // 32KB.
 
   QuicSimpleServerSessionServerPushTest() : QuicSimpleServerSessionTest() {
-    // This flag has to be true for negotiation of max number of outgoing
-    // streams to work correctly.
-    FLAGS_quic_different_max_num_open_streams = true;
-
     config_.SetMaxStreamsPerConnection(kMaxStreamsForTest, kMaxStreamsForTest);
 
     // Reset stream level flow control window to be 32KB.
@@ -394,13 +426,19 @@ class QuicSimpleServerSessionServerPushTest
     // control blocks it.
     QuicConfigPeer::SetReceivedInitialSessionFlowControlWindow(
         &config_, kInitialSessionFlowControlWindowForTest);
+    // Enable server push.
+    QuicTagVector copt;
+    copt.push_back(kSPSH);
+    QuicConfigPeer::SetReceivedConnectionOptions(&config_, copt);
 
-    connection_ = new StrictMock<MockConnectionWithSendStreamData>(
-        &helper_, Perspective::IS_SERVER, SupportedVersions(GetParam()));
-    session_.reset(new QuicSimpleServerSession(config_, connection_, &owner_,
-                                               &crypto_config_));
+    connection_ = new StrictMock<MockQuicConnectionWithSendStreamData>(
+        &helper_, &alarm_factory_, Perspective::IS_SERVER,
+        SupportedVersions(GetParam()));
+    session_.reset(new QuicSimpleServerSession(
+        config_, connection_, &owner_, &session_helper_, &crypto_config_,
+        &compressed_certs_cache_));
     session_->Initialize();
-    // Needed to make new session flow control window work.
+    // Needed to make new session flow control window and server push work.
     session_->OnConfigNegotiated();
 
     visitor_ = QuicConnectionPeer::GetVisitor(connection_);
@@ -408,8 +446,8 @@ class QuicSimpleServerSessionServerPushTest
     QuicSpdySessionPeer::SetHeadersStream(session_.get(), headers_stream_);
 
     // Assume encryption already established.
-    MockQuicCryptoServerStream* crypto_stream =
-        new MockQuicCryptoServerStream(&crypto_config_, session_.get());
+    MockQuicCryptoServerStream* crypto_stream = new MockQuicCryptoServerStream(
+        &crypto_config_, &compressed_certs_cache_, session_.get());
     crypto_stream->set_encryption_established(true);
     QuicSimpleServerSessionPeer::SetCryptoStream(session_.get(), crypto_stream);
   }
@@ -431,7 +469,7 @@ class QuicSimpleServerSessionServerPushTest
     SpdyHeaderBlock request_headers;
     string resource_host = "www.google.com";
     string partial_push_resource_path = "/server_push_src";
-    list<QuicInMemoryCache::ServerPushInfo> push_resources;
+    std::list<QuicInMemoryCache::ServerPushInfo> push_resources;
     string scheme = "http";
     for (unsigned int i = 1; i <= num_resources; ++i) {
       QuicStreamId stream_id = i * 2;
@@ -440,22 +478,23 @@ class QuicSimpleServerSessionServerPushTest
       GURL resource_url = GURL(url);
       string body;
       GenerateBody(&body, body_size);
-      SpdyHeaderBlock response_headers;
       QuicInMemoryCache::GetInstance()->AddSimpleResponse(resource_host, path,
                                                           200, body);
       push_resources.push_back(QuicInMemoryCache::ServerPushInfo(
-          resource_url, response_headers, kDefaultPriority, body));
+          resource_url, SpdyHeaderBlock(), kDefaultPriority, body));
       // PUSH_PROMISED are sent for all the resources.
-      EXPECT_CALL(*headers_stream_, WritePushPromise(kClientDataStreamId1,
-                                                     stream_id, _, nullptr));
+      EXPECT_CALL(
+          *headers_stream_,
+          WritePushPromiseMock(kClientDataStreamId1, stream_id, _, nullptr));
       if (i <= kMaxStreamsForTest) {
         // |kMaxStreamsForTest| promised responses should be sent.
-        EXPECT_CALL(*headers_stream_, WriteHeaders(stream_id, _, false,
-                                                   kDefaultPriority, nullptr));
+        EXPECT_CALL(
+            *headers_stream_,
+            WriteHeadersMock(stream_id, _, false, kDefaultPriority, nullptr));
         // Since flow control window is smaller than response body, not the
         // whole body will be sent.
         EXPECT_CALL(*connection_,
-                    SendStreamData(stream_id, _, 0, false, _, nullptr))
+                    SendStreamData(stream_id, _, 0, false, nullptr))
             .WillOnce(
                 Return(QuicConsumedData(kStreamFlowControlWindowSize, false)));
         EXPECT_CALL(*connection_, SendBlocked(stream_id));
@@ -489,10 +528,11 @@ TEST_P(QuicSimpleServerSessionServerPushTest,
 
   // After an open stream is marked draining, a new stream is expected to be
   // created and a response sent on the stream.
-  EXPECT_CALL(*headers_stream_, WriteHeaders(next_out_going_stream_id, _, false,
-                                             kDefaultPriority, nullptr));
+  EXPECT_CALL(*headers_stream_,
+              WriteHeadersMock(next_out_going_stream_id, _, false,
+                               kDefaultPriority, nullptr));
   EXPECT_CALL(*connection_,
-              SendStreamData(next_out_going_stream_id, _, 0, false, _, nullptr))
+              SendStreamData(next_out_going_stream_id, _, 0, false, nullptr))
       .WillOnce(Return(QuicConsumedData(kStreamFlowControlWindowSize, false)));
   EXPECT_CALL(*connection_, SendBlocked(next_out_going_stream_id));
   session_->StreamDraining(2);
@@ -523,14 +563,14 @@ TEST_P(QuicSimpleServerSessionServerPushTest,
   // only one queued resource will be sent out.
   QuicStreamId stream_not_reset = (kMaxStreamsForTest + 1) * 2;
   InSequence s;
-  EXPECT_CALL(*headers_stream_, WriteHeaders(stream_not_reset, _, false,
-                                             kDefaultPriority, nullptr));
+  EXPECT_CALL(*headers_stream_, WriteHeadersMock(stream_not_reset, _, false,
+                                                 kDefaultPriority, nullptr));
   EXPECT_CALL(*connection_,
-              SendStreamData(stream_not_reset, _, 0, false, _, nullptr))
+              SendStreamData(stream_not_reset, _, 0, false, nullptr))
       .WillOnce(Return(QuicConsumedData(kStreamFlowControlWindowSize, false)));
   EXPECT_CALL(*connection_, SendBlocked(stream_not_reset));
-  EXPECT_CALL(*headers_stream_, WriteHeaders(stream_got_reset, _, false,
-                                             kDefaultPriority, nullptr))
+  EXPECT_CALL(*headers_stream_, WriteHeadersMock(stream_got_reset, _, false,
+                                                 kDefaultPriority, nullptr))
       .Times(0);
 
   session_->StreamDraining(2);
@@ -550,10 +590,10 @@ TEST_P(QuicSimpleServerSessionServerPushTest,
   QuicStreamId stream_got_reset = 2;
   EXPECT_CALL(*connection_,
               SendRstStream(stream_got_reset, QUIC_RST_ACKNOWLEDGEMENT, _));
-  EXPECT_CALL(*headers_stream_, WriteHeaders(stream_to_open, _, false,
-                                             kDefaultPriority, nullptr));
+  EXPECT_CALL(*headers_stream_, WriteHeadersMock(stream_to_open, _, false,
+                                                 kDefaultPriority, nullptr));
   EXPECT_CALL(*connection_,
-              SendStreamData(stream_to_open, _, 0, false, _, nullptr))
+              SendStreamData(stream_to_open, _, 0, false, nullptr))
       .WillOnce(Return(QuicConsumedData(kStreamFlowControlWindowSize, false)));
 
   EXPECT_CALL(*connection_, SendBlocked(stream_to_open));

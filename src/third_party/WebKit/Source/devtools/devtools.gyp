@@ -57,7 +57,7 @@
                 {
                     'destination': '<(PRODUCT_DIR)/resources/inspector/',
                     'files': [
-                        '<@(devtools_compatibility_scripts)',
+                        '<@(devtools_embedder_scripts)',
                     ],
                 },
             ],
@@ -102,6 +102,9 @@
                             '<(PRODUCT_DIR)/resources/inspector/inspector.js',
                             '<(PRODUCT_DIR)/resources/inspector/toolbox.html',
                             '<(PRODUCT_DIR)/resources/inspector/toolbox.js',
+                            '<(PRODUCT_DIR)/resources/inspector/formatter_worker.js',
+                            '<(PRODUCT_DIR)/resources/inspector/heap_snapshot_worker.js',
+                            '<(PRODUCT_DIR)/resources/inspector/temp_storage_shared_worker.js',
                             '<(PRODUCT_DIR)/resources/inspector/accessibility_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/animation_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/audits_module.js',
@@ -110,20 +113,18 @@
                             '<(PRODUCT_DIR)/resources/inspector/devices_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/diff_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/elements_module.js',
-                            '<(PRODUCT_DIR)/resources/inspector/heap_snapshot_worker_module.js',
+                            '<(PRODUCT_DIR)/resources/inspector/es_tree_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/layers_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/network_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/profiler_module.js',
-                            '<(PRODUCT_DIR)/resources/inspector/promises_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/resources_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/sass_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/security_module.js',
-                            '<(PRODUCT_DIR)/resources/inspector/script_formatter_worker_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/settings_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/snippets_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/source_frame_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/sources_module.js',
-                            '<(PRODUCT_DIR)/resources/inspector/temp_storage_shared_worker_module.js',
+                            '<(PRODUCT_DIR)/resources/inspector/timeline_model_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/timeline_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/ui_lazy_module.js',
                             '<(PRODUCT_DIR)/resources/inspector/devtools_extension_api.js',
@@ -131,7 +132,7 @@
                         'inputs': [
                             '<@(_script_name)',
                             '<@(_static_files)',
-                            '<@(devtools_compatibility_scripts)',
+                            '<@(devtools_embedder_scripts)',
                             '<@(_generated_files)',
                             '<@(devtools_image_files)',
                             '<(_devtools_static_files_list)',
@@ -140,7 +141,7 @@
                             'front_end/Images',
                         ],
                         'outputs': ['<(SHARED_INTERMEDIATE_DIR)/devtools/devtools_resources.grd'],
-                        'action': ['python', '<@(_script_name)', '<@(_generated_files)', '<@(devtools_compatibility_scripts)', '--static_files_list', '<(_devtools_static_files_list)', '--relative_path_dirs', '<@(_relative_path_dirs)', '--images', '<@(_images_path)', '--output', '<@(_outputs)'],
+                        'action': ['python', '<@(_script_name)', '<@(_generated_files)', '<@(devtools_embedder_scripts)', '--static_files_list', '<(_devtools_static_files_list)', '--relative_path_dirs', '<@(_relative_path_dirs)', '--images', '<@(_images_path)', '--output', '<@(_outputs)'],
                     }],
                 },
                 {
@@ -169,7 +170,7 @@
                         'inputs': [
                             '<@(_script_name)',
                             '<@(_static_files)',
-                            '<@(devtools_compatibility_scripts)',
+                            '<@(devtools_embedder_scripts)',
                             '<@(_generated_files)',
                             '<@(devtools_image_files)',
                             '<(_devtools_static_files_list)',
@@ -179,7 +180,7 @@
                         ],
                         # Note that other files are put under /devtools directory, together with declared devtools_resources.grd
                         'outputs': ['<(SHARED_INTERMEDIATE_DIR)/devtools/devtools_resources.grd'],
-                        'action': ['python', '<@(_script_name)', '<@(_generated_files)', '<@(devtools_compatibility_scripts)', '--static_files_list', '<(_devtools_static_files_list)', '--relative_path_dirs', '<@(_relative_path_dirs)', '--images', '<@(_images_path)', '--output', '<@(_outputs)'],
+                        'action': ['python', '<@(_script_name)', '<@(_generated_files)', '<@(devtools_embedder_scripts)', '--static_files_list', '<(_devtools_static_files_list)', '--relative_path_dirs', '<@(_relative_path_dirs)', '--images', '<@(_images_path)', '--output', '<@(_outputs)'],
                     }],
                 }],
             ],
@@ -187,6 +188,9 @@
         {
           'target_name': 'frontend_protocol_sources',
           'type': 'none',
+          'dependencies': [
+            '../core/inspector/inspector.gyp:protocol_version'
+          ],
           'actions': [
             {
               'action_name': 'generateInspectorProtocolFrontendSources',
@@ -194,7 +198,7 @@
                 # The python script in action below.
                 'scripts/CodeGeneratorFrontend.py',
                 # Input file for the script.
-                'protocol.json',
+                '<(SHARED_INTERMEDIATE_DIR)/blink/core/inspector/protocol.json',
               ],
               'outputs': [
                 '<(PRODUCT_DIR)/resources/inspector/InspectorBackendCommands.js',
@@ -202,10 +206,10 @@
               'action': [
                 'python',
                 'scripts/CodeGeneratorFrontend.py',
-                'protocol.json',
+                '<(SHARED_INTERMEDIATE_DIR)/blink/core/inspector/protocol.json',
                 '--output_js_dir', '<(PRODUCT_DIR)/resources/inspector/',
               ],
-              'message': 'Generating Inspector protocol frontend sources from protocol.json',
+              'message': 'Generating Inspector protocol frontend sources from json definitions.',
             },
           ]
         },
@@ -259,7 +263,7 @@
                     '<(_output_path)/InspectorBackendCommands.js',
                     '<(_output_path)/SupportedCSSProperties.js',
                 ],
-                'action': ['python', '<@(_script_name)', 'inspector', 'toolbox', '--input_path', 'front_end', '--output_path', '<@(_output_path)', '--debug', '<@(debug_devtools)'],
+                'action': ['python', '<@(_script_name)', 'inspector', 'toolbox', 'formatter_worker', 'heap_snapshot_worker', 'temp_storage_shared_worker', '--input_path', 'front_end', '--output_path', '<@(_output_path)', '--debug', '<@(debug_devtools)'],
                 'conditions': [
                     ['debug_devtools==0', { # Release
                         'outputs': [
@@ -267,6 +271,9 @@
                             '<(_output_path)/inspector.js',
                             '<(_output_path)/toolbox.html',
                             '<(_output_path)/toolbox.js',
+                            '<(_output_path)/formatter_worker.js',
+                            '<(_output_path)/heap_snapshot_worker.js',
+                            '<(_output_path)/temp_storage_shared_worker.js',
                             '<(_output_path)/accessibility_module.js',
                             '<(_output_path)/animation_module.js',
                             '<(_output_path)/audits_module.js',
@@ -277,22 +284,21 @@
                             '<(_output_path)/diff_module.js',
                             '<(_output_path)/elements_module.js',
                             '<(_output_path)/emulated_devices_module.js',
-                            '<(_output_path)/heap_snapshot_worker_module.js',
+                            '<(_output_path)/es_tree_module.js',
+                            '<(_output_path)/gonzales_module.js',
                             '<(_output_path)/layers_module.js',
                             '<(_output_path)/network_module.js',
                             '<(_output_path)/profiler_module.js',
-                            '<(_output_path)/promises_module.js',
                             '<(_output_path)/resources_module.js',
                             '<(_output_path)/sass_module.js',
                             '<(_output_path)/security_module.js',
                             '<(_output_path)/screencast_module.js',
-                            '<(_output_path)/script_formatter_worker_module.js',
                             '<(_output_path)/settings_module.js',
                             '<(_output_path)/snippets_module.js',
                             '<(_output_path)/source_frame_module.js',
                             '<(_output_path)/sources_module.js',
-                            '<(_output_path)/temp_storage_shared_worker_module.js',
                             '<(_output_path)/timeline_module.js',
+                            '<(_output_path)/timeline_model_module.js',
                             '<(_output_path)/ui_lazy_module.js',
                         ],
                     },

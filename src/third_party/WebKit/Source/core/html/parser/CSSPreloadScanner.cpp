@@ -30,6 +30,7 @@
 #include "core/fetch/FetchInitiatorTypeNames.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/text/SegmentedString.h"
+#include <memory>
 
 namespace blink {
 
@@ -220,9 +221,9 @@ void CSSPreloadScanner::emitRule(const SegmentedString& source)
         String url = parseCSSStringOrURL(m_ruleValue.toString());
         if (!url.isEmpty()) {
             TextPosition position = TextPosition(source.currentLine(), source.currentColumn());
-            OwnPtr<PreloadRequest> request = PreloadRequest::create(FetchInitiatorTypeNames::css, position, url, *m_predictedBaseElementURL, Resource::CSSStyleSheet, m_referrerPolicy);
+            std::unique_ptr<PreloadRequest> request = PreloadRequest::create(FetchInitiatorTypeNames::css, position, url, *m_predictedBaseElementURL, Resource::CSSStyleSheet, m_referrerPolicy);
             // FIXME: Should this be including the charset in the preload request?
-            m_requests->append(request.release());
+            m_requests->append(std::move(request));
         }
         m_state = Initial;
     } else if (equalIgnoringCase(m_rule, "charset"))

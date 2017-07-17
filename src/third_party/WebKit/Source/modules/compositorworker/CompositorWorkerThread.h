@@ -7,42 +7,34 @@
 
 #include "core/workers/WorkerThread.h"
 #include "modules/ModulesExport.h"
+#include <memory>
 
 namespace blink {
 
-class WorkerObjectProxy;
+class InProcessWorkerObjectProxy;
 
-// This class is overridden in unit-tests.
-class MODULES_EXPORT CompositorWorkerThread : public WorkerThread {
+class MODULES_EXPORT CompositorWorkerThread final : public WorkerThread {
 public:
-    static PassRefPtr<CompositorWorkerThread> create(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
+    static std::unique_ptr<CompositorWorkerThread> create(PassRefPtr<WorkerLoaderProxy>, InProcessWorkerObjectProxy&, double timeOrigin);
     ~CompositorWorkerThread() override;
 
-    WorkerObjectProxy& workerObjectProxy() const { return m_workerObjectProxy; }
+    InProcessWorkerObjectProxy& workerObjectProxy() const { return m_workerObjectProxy; }
+    WorkerBackingThread& workerBackingThread() override;
+    bool shouldAttachThreadDebugger() const override { return false; }
 
-    // Returns the shared backing thread for all CompositorWorkers.
-    static WebThreadSupportingGC* sharedBackingThread();
+    static void ensureSharedBackingThread();
+    static void createSharedBackingThreadForTest();
 
-    static bool hasThreadForTest();
-    static bool hasIsolateForTest();
+    static void clearSharedBackingThread();
 
 protected:
-    CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
+    CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy>, InProcessWorkerObjectProxy&, double timeOrigin);
 
-    // WorkerThread:
-    PassRefPtrWillBeRawPtr<WorkerGlobalScope> createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData>) override;
-    WebThreadSupportingGC& backingThread() override;
-    void didStartWorkerThread() override { }
-    void willStopWorkerThread() override { }
-    void initializeBackingThread() override;
-    void shutdownBackingThread() override;
-    v8::Isolate* initializeIsolate() override;
-    void willDestroyIsolate() override;
-    void destroyIsolate() override;
-    void terminateV8Execution() override;
+    WorkerGlobalScope* createWorkerGlobalScope(std::unique_ptr<WorkerThreadStartupData>) override;
+    bool isOwningBackingThread() const override { return false; }
 
 private:
-    WorkerObjectProxy& m_workerObjectProxy;
+    InProcessWorkerObjectProxy& m_workerObjectProxy;
     double m_timeOrigin;
 };
 

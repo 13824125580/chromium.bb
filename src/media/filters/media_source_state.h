@@ -9,8 +9,10 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "media/base/demuxer.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
+#include "media/base/media_log.h"
 #include "media/base/stream_parser.h"
 #include "media/base/stream_parser_buffer.h"
 
@@ -28,13 +30,11 @@ class MEDIA_EXPORT MediaSourceState {
   typedef base::Callback<ChunkDemuxerStream*(DemuxerStream::Type)>
       CreateDemuxerStreamCB;
 
-  typedef base::Closure InitSegmentReceivedCB;
-
   typedef base::Callback<void(ChunkDemuxerStream*, const TextTrackConfig&)>
       NewTextTrackCB;
 
-  MediaSourceState(scoped_ptr<StreamParser> stream_parser,
-                   scoped_ptr<FrameProcessor> frame_processor,
+  MediaSourceState(std::unique_ptr<StreamParser> stream_parser,
+                   std::unique_ptr<FrameProcessor> frame_processor,
                    const CreateDemuxerStreamCB& create_demuxer_stream_cb,
                    const scoped_refptr<MediaLog>& media_log);
 
@@ -52,14 +52,12 @@ class MEDIA_EXPORT MediaSourceState {
   // error occurred. |*timestamp_offset| is used and possibly updated by the
   // append. |append_window_start| and |append_window_end| correspond to the MSE
   // spec's similarly named source buffer attributes that are used in coded
-  // frame processing. |init_segment_received_cb| is run for each new fully
-  // parsed initialization segment.
+  // frame processing.
   bool Append(const uint8_t* data,
               size_t length,
               TimeDelta append_window_start,
               TimeDelta append_window_end,
-              TimeDelta* timestamp_offset,
-              const InitSegmentReceivedCB& init_segment_received_cb);
+              TimeDelta* timestamp_offset);
 
   // Aborts the current append sequence and resets the parser.
   void ResetParserState(TimeDelta append_window_start,
@@ -91,6 +89,10 @@ class MEDIA_EXPORT MediaSourceState {
   // end of stream range logic needs to be executed.
   Ranges<TimeDelta> GetBufferedRanges(TimeDelta duration, bool ended) const;
 
+  // Returns the highest PTS of currently buffered frames in this source, or
+  // base::TimeDelta() if none of the streams contain buffered data.
+  TimeDelta GetHighestPresentationTimestamp() const;
+
   // Returns the highest buffered duration across all streams managed
   // by this object.
   // Returns TimeDelta() if none of the streams contain buffered data.
@@ -117,15 +119,26 @@ class MEDIA_EXPORT MediaSourceState {
       const RangesList& activeRanges,
       bool ended);
 
+  void SetTracksWatcher(const Demuxer::MediaTracksUpdatedCB& tracks_updated_cb);
+
  private:
+  // State advances through this list. The intent is to ensure at least one
+  // config is received prior to parser calling initialization callback, and
+  // that such initialization callback occurs at most once per parser.
+  enum State {
+    UNINITIALIZED = 0,
+    PENDING_PARSER_CONFIG,
+    PENDING_PARSER_INIT,
+    PARSER_INITIALIZED
+  };
+
   // Called by the |stream_parser_| when a new initialization segment is
   // encountered.
   // Returns true on a successful call. Returns false if an error occurred while
   // processing decoder configurations.
   bool OnNewConfigs(bool allow_audio,
                     bool allow_video,
-                    const AudioDecoderConfig& audio_config,
-                    const VideoDecoderConfig& video_config,
+                    std::unique_ptr<MediaTracks> tracks,
                     const StreamParser::TextTrackConfigMap& text_configs);
 
   // Called by the |stream_parser_| at the beginning of a new media segment.
@@ -181,7 +194,7 @@ class MEDIA_EXPORT MediaSourceState {
   bool media_segment_contained_video_frame_;
 
   // The object used to parse appended data.
-  scoped_ptr<StreamParser> stream_parser_;
+  std::unique_ptr<StreamParser> stream_parser_;
 
   ChunkDemuxerStream* audio_;  // Not owned by |this|.
   ChunkDemuxerStream* video_;  // Not owned by |this|.
@@ -189,16 +202,20 @@ class MEDIA_EXPORT MediaSourceState {
   typedef std::map<StreamParser::TrackId, ChunkDemuxerStream*> TextStreamMap;
   TextStreamMap text_stream_map_;  // |this| owns the map's stream pointers.
 
-  scoped_ptr<FrameProcessor> frame_processor_;
+  std::unique_ptr<FrameProcessor> frame_processor_;
   scoped_refptr<MediaLog> media_log_;
   StreamParser::InitCB init_cb_;
 
+  State state_;
+
   // During Append(), OnNewConfigs() will trigger the initialization segment
-  // received algorithm. This callback is only non-NULL during the lifetime of
-  // an Append() call. Note, the MSE spec explicitly disallows this algorithm
+  // received algorithm. Note, the MSE spec explicitly disallows this algorithm
   // during an Abort(), since Abort() is allowed only to emit coded frames, and
-  // only if the parser is PARSING_MEDIA_SEGMENT (not an INIT segment).
-  InitSegmentReceivedCB init_segment_received_cb_;
+  // only if the parser is PARSING_MEDIA_SEGMENT (not an INIT segment). So we
+  // also have a flag here that indicates if Append is in progress and we can
+  // invoke this callback.
+  Demuxer::MediaTracksUpdatedCB init_segment_received_cb_;
+  bool append_in_progress_ = false;
 
   // Indicates that timestampOffset should be updated automatically during
   // OnNewBuffers() based on the earliest end timestamp of the buffers provided.

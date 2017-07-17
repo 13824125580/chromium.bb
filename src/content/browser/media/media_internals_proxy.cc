@@ -6,11 +6,14 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/media/media_internals_handler.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/notification_service.h"
@@ -98,7 +101,7 @@ void MediaInternalsProxy::OnAddEntry(const net::NetLog::Entry& entry) {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&MediaInternalsProxy::AddNetEventOnUIThread, this,
-                 entry.ToValue()));
+                 base::Passed(entry.ToValue())));
 }
 
 MediaInternalsProxy::~MediaInternalsProxy() {}
@@ -153,7 +156,8 @@ void MediaInternalsProxy::UpdateUIOnUIThread(const base::string16& update) {
     handler_->OnUpdate(update);
 }
 
-void MediaInternalsProxy::AddNetEventOnUIThread(base::Value* entry) {
+void MediaInternalsProxy::AddNetEventOnUIThread(
+    std::unique_ptr<base::Value> entry) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // Send the updates to the page in kMediaInternalsProxyEventDelayMilliseconds
@@ -166,7 +170,7 @@ void MediaInternalsProxy::AddNetEventOnUIThread(base::Value* entry) {
         base::TimeDelta::FromMilliseconds(
             kMediaInternalsProxyEventDelayMilliseconds));
   }
-  pending_net_updates_->Append(entry);
+  pending_net_updates_->Append(std::move(entry));
 }
 
 void MediaInternalsProxy::SendNetEventsOnUIThread() {
@@ -178,7 +182,7 @@ void MediaInternalsProxy::SendNetEventsOnUIThread() {
 void MediaInternalsProxy::CallJavaScriptFunctionOnUIThread(
     const std::string& function, base::Value* args) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<base::Value> args_value(args);
+  std::unique_ptr<base::Value> args_value(args);
   std::vector<const base::Value*> args_vector;
   args_vector.push_back(args_value.get());
   base::string16 update = WebUI::GetJavascriptCall(function, args_vector);

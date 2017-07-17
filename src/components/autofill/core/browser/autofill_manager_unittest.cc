@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/autofill/core/browser/autofill_manager.h"
+
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -20,12 +22,11 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/autofill_download_manager.h"
-#include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/credit_card.h"
@@ -42,6 +43,7 @@
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/prefs/pref_service.h"
+#include "components/rappor/test_rappor_service.h"
 #include "grit/components_strings.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -88,7 +90,7 @@ class TestPaymentsClient : public payments::PaymentsClient {
         app_locale == "en-US" ? AutofillClient::SUCCESS
                               : AutofillClient::PERMANENT_FAILURE,
         ASCIIToUTF16("this is a context token"),
-        scoped_ptr<base::DictionaryValue>(nullptr));
+        std::unique_ptr<base::DictionaryValue>(nullptr));
   }
 
   void UploadCard(const payments::PaymentsClient::UploadRequestDetails&
@@ -190,7 +192,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     CreditCard* credit_card = new CreditCard;
     test::SetCreditCardInfo(credit_card, "Elvis Presley",
                             "4234 5678 9012 3456",  // Visa
-                            "04", "2012");
+                            "04", "2999");
     credit_card->set_guid("00000000-0000-0000-0000-000000000008");
     local_credit_cards_.push_back(credit_card);
   }
@@ -201,7 +203,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     CreditCard* credit_card = new CreditCard;
     test::SetCreditCardInfo(credit_card, "Elvis Presley",
                             "4234-5678-9012-3456",  // Visa
-                            "04", "2012");
+                            "04", "2999");
     credit_card->set_guid("00000000-0000-0000-0000-000000000009");
     local_credit_cards_.push_back(credit_card);
   }
@@ -213,6 +215,16 @@ class TestPersonalDataManager : public PersonalDataManager {
                             "4234567890654321",  // Visa
                             month, year);
     credit_card->set_guid("00000000-0000-0000-0000-000000000007");
+    local_credit_cards_.push_back(credit_card);
+  }
+
+  void CreateTestExpiredCreditCard() {
+    ClearCreditCards();
+    CreditCard* credit_card = new CreditCard;
+    test::SetCreditCardInfo(credit_card, "Homer Simpson",
+                            "4234567890654321",  // Visa
+                            "05", "2000");
+    credit_card->set_guid("00000000-0000-0000-0000-000000000009");
     local_credit_cards_.push_back(credit_card);
   }
 
@@ -244,7 +256,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     CreditCard* credit_card = new CreditCard;
     test::SetCreditCardInfo(credit_card, "Elvis Presley",
                             "4234567890123456",  // Visa
-                            "04", "2012");
+                            "04", "2999");
     credit_card->set_guid("00000000-0000-0000-0000-000000000004");
     credit_card->set_use_count(10);
     credit_card->set_use_date(base::Time::Now() - base::TimeDelta::FromDays(5));
@@ -253,7 +265,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     credit_card = new CreditCard;
     test::SetCreditCardInfo(credit_card, "Buddy Holly",
                             "5187654321098765",  // Mastercard
-                            "10", "2014");
+                            "10", "2998");
     credit_card->set_guid("00000000-0000-0000-0000-000000000005");
     credit_card->set_use_count(5);
     credit_card->set_use_date(base::Time::Now() - base::TimeDelta::FromDays(4));
@@ -419,7 +431,7 @@ void ExpectFilledCreditCardFormElvis(int page_id,
                                      bool has_address_fields) {
   ExpectFilledForm(page_id, filled_form, expected_page_id, "", "", "", "", "",
                    "", "", "", "", "", "", "Elvis Presley", "4234567890123456",
-                   "04", "2012", has_address_fields, true, false);
+                   "04", "2999", has_address_fields, true, false);
 }
 
 void ExpectFilledCreditCardYearMonthWithYearMonth(int page_id,
@@ -606,7 +618,7 @@ class TestAutofillManager : public AutofillManager {
   bool credit_card_was_uploaded_;
   bool expected_observed_submission_;
 
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   std::string submitted_form_signature_;
   std::vector<ServerFieldTypeSet> expected_submitted_field_types_;
@@ -683,7 +695,10 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
     suggestion_vector.push_back(suggestion2);
     CheckSuggestions(expected_page_id, 3, &suggestion_vector[0]);
   }
-
+  void CheckNoSuggestions(int expected_page_id) {
+    EXPECT_TRUE(on_suggestions_returned_seen());
+    CheckSuggestions(expected_page_id, 0, nullptr);
+  }
 
   bool on_query_seen() const {
     return on_query_seen_;
@@ -922,12 +937,19 @@ class AutofillManagerTest : public testing::Test {
 #endif  // defined(OS_IOS)
   }
 
+  // Convenience method to cast the FullCardRequest into a CardUnmaskDelegate.
+  CardUnmaskDelegate* full_card_unmask_delegate() {
+    DCHECK(autofill_manager_->full_card_request_);
+    return static_cast<CardUnmaskDelegate*>(
+        autofill_manager_->full_card_request_.get());
+  }
+
  protected:
   base::MessageLoop message_loop_;
   MockAutofillClient autofill_client_;
-  scoped_ptr<MockAutofillDriver> autofill_driver_;
-  scoped_ptr<TestAutofillManager> autofill_manager_;
-  scoped_ptr<TestAutofillExternalDelegate> external_delegate_;
+  std::unique_ptr<MockAutofillDriver> autofill_driver_;
+  std::unique_ptr<TestAutofillManager> autofill_manager_;
+  std::unique_ptr<TestAutofillExternalDelegate> external_delegate_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   TestPaymentsClient* payments_client_;
   TestAutofillDownloadManager* download_manager_;
@@ -1327,15 +1349,14 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_EmptyValue) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          "Visa\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "04/12", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(
-          "MasterCard\xC2\xA0\xE2\x8B\xAF"
-          "8765",
-          "10/14", kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
+                                 "3456",
+                                 "04/99", kVisaCard,
+                                 autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
+                 "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1355,11 +1376,11 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_Whitespace) {
   external_delegate_->CheckSuggestions(
       kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
                                  "3456",
-                                 "04/12", kVisaCard,
+                                 "04/99", kVisaCard,
                                  autofill_manager_->GetPackedCreditCardID(4)),
       Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
                  "8765",
-                 "10/14", kMasterCard,
+                 "10/98", kMasterCard,
                  autofill_manager_->GetPackedCreditCardID(5)));
 }
 
@@ -1380,11 +1401,11 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsOnly) {
   external_delegate_->CheckSuggestions(
       kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
                                  "3456",
-                                 "04/12", kVisaCard,
+                                 "04/99", kVisaCard,
                                  autofill_manager_->GetPackedCreditCardID(4)),
       Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
                  "8765",
-                 "10/14", kMasterCard,
+                 "10/98", kMasterCard,
                  autofill_manager_->GetPackedCreditCardID(5)));
 }
 
@@ -1433,11 +1454,10 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestionsMatchCharacter) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          "Visa\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "04/12", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
+      kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
+                                 "3456",
+                                 "04/99", kVisaCard,
+                                 autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that we return credit card profile suggestions when the selected form
@@ -1495,6 +1515,7 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestionsNonHTTPS) {
   // Clear the test credit cards and try again -- we shouldn't return a warning.
   personal_data_.ClearCreditCards();
   GetAutofillSuggestions(form, field);
+  // Autocomplete suggestions are queried, but not Autofill.
   EXPECT_FALSE(external_delegate_->on_suggestions_returned_seen());
 }
 
@@ -1506,8 +1527,9 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestionsRepeatedObfuscatedNumber) {
   CreditCard* credit_card = new CreditCard;
   test::SetCreditCardInfo(credit_card, "Elvis Presley",
                           "5231567890123456",  // Mastercard
-                          "05", "2012");
+                          "05", "2999");
   credit_card->set_guid("00000000-0000-0000-0000-000000000007");
+  credit_card->set_use_date(base::Time::Now() - base::TimeDelta::FromDays(15));
   autofill_manager_->AddCreditCard(credit_card);
 
   // Set up our form data.
@@ -1521,19 +1543,18 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestionsRepeatedObfuscatedNumber) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          "Visa\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "04/12", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(
-          "MasterCard\xC2\xA0\xE2\x8B\xAF"
-          "8765",
-          "10/14", kMasterCard, autofill_manager_->GetPackedCreditCardID(5)),
-      Suggestion(
-          "MasterCard\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "05/12", kMasterCard, autofill_manager_->GetPackedCreditCardID(7)));
+      kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
+                                 "3456",
+                                 "04/99", kVisaCard,
+                                 autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
+                 "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)),
+      Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
+                 "3456",
+                 "05/99", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(7)));
 }
 
 // Test that we return profile and credit card suggestions for combined forms.
@@ -1559,15 +1580,14 @@ TEST_F(AutofillManagerTest, GetAddressAndCreditCardSuggestions) {
 
   // Test that we sent the credit card suggestions to the external delegate.
   external_delegate_->CheckSuggestions(
-      kPageID2,
-      Suggestion(
-          "Visa\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "04/12", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion(
-          "MasterCard\xC2\xA0\xE2\x8B\xAF"
-          "8765",
-          "10/14", kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kPageID2, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
+                           "3456",
+                           "04/99", kVisaCard,
+                           autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion("MasterCard\xC2\xA0\xE2\x8B\xAF"
+                 "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that for non-https forms with both address and credit card fields, we
@@ -1604,7 +1624,7 @@ TEST_F(AutofillManagerTest, GetAddressAndCreditCardSuggestionsNonHttps) {
   // Clear the test credit cards and try again -- we shouldn't return a warning.
   personal_data_.ClearCreditCards();
   GetAutofillSuggestions(form, field);
-  EXPECT_FALSE(external_delegate_->on_suggestions_returned_seen());
+  external_delegate_->CheckNoSuggestions(kDefaultPageID);
 }
 
 // Test that we return autocomplete-like suggestions when trying to autofill
@@ -1771,8 +1791,8 @@ TEST_F(AutofillManagerTest, FillAddressForm) {
   const char guid[] = "00000000-0000-0000-0000-000000000001";
   AutofillProfile* profile = autofill_manager_->GetProfileWithGUID(guid);
   ASSERT_TRUE(profile);
-  EXPECT_EQ(0U, profile->use_count());
-  EXPECT_EQ(base::Time(), profile->use_date());
+  EXPECT_EQ(1U, profile->use_count());
+  EXPECT_NE(base::Time(), profile->use_date());
 
   int response_page_id = 0;
   FormData response_data;
@@ -1782,7 +1802,7 @@ TEST_F(AutofillManagerTest, FillAddressForm) {
   ExpectFilledAddressFormElvis(response_page_id, response_data, kDefaultPageID,
                                false);
 
-  EXPECT_EQ(1U, profile->use_count());
+  EXPECT_EQ(2U, profile->use_count());
   EXPECT_NE(base::Time(), profile->use_date());
 }
 
@@ -1942,7 +1962,7 @@ TEST_F(AutofillManagerTest, FillCreditCardFormNoYearMonth) {
 TEST_F(AutofillManagerTest, FillCreditCardFormYearNoMonth) {
   // Same as the SetUp(), but generate 4 credit cards with year month
   // combination.
-  personal_data_.CreateTestCreditCardsYearAndMonth("2012", "");
+  personal_data_.CreateTestCreditCardsYearAndMonth("2999", "");
   // Set up our form data.
   FormData form;
   CreateTestCreditCardFormData(&form, true, true);
@@ -1955,8 +1975,8 @@ TEST_F(AutofillManagerTest, FillCreditCardFormYearNoMonth) {
   FillAutofillFormDataAndSaveResults(kDefaultPageID, form, *form.fields.begin(),
                                      MakeFrontendID(guid, std::string()),
                                      &response_page_id, &response_data);
-  ExpectFilledCreditCardYearMonthWithYearMonth(response_page_id, response_data,
-      kDefaultPageID, false, "2012", "");
+  ExpectFilledCreditCardYearMonthWithYearMonth(
+      response_page_id, response_data, kDefaultPageID, false, "2999", "");
 }
 
 // Test that we correctly fill a credit card form with month input type.
@@ -1965,7 +1985,7 @@ TEST_F(AutofillManagerTest, FillCreditCardFormYearMonth) {
   // Same as the SetUp(), but generate 4 credit cards with year month
   // combination.
   personal_data_.ClearCreditCards();
-  personal_data_.CreateTestCreditCardsYearAndMonth("2012", "04");
+  personal_data_.CreateTestCreditCardsYearAndMonth("2999", "04");
   // Set up our form data.
   FormData form;
   CreateTestCreditCardFormData(&form, true, true);
@@ -1978,8 +1998,44 @@ TEST_F(AutofillManagerTest, FillCreditCardFormYearMonth) {
   FillAutofillFormDataAndSaveResults(kDefaultPageID, form, *form.fields.begin(),
                                      MakeFrontendID(guid, std::string()),
                                      &response_page_id, &response_data);
-  ExpectFilledCreditCardYearMonthWithYearMonth(response_page_id, response_data,
-      kDefaultPageID, false, "2012", "04");
+  ExpectFilledCreditCardYearMonthWithYearMonth(
+      response_page_id, response_data, kDefaultPageID, false, "2999", "04");
+}
+
+// Test that we correctly fill a credit card form with first and last cardholder
+// name.
+TEST_F(AutofillManagerTest, FillCreditCardFormSplitName) {
+  // Set up our form data.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.origin = GURL("https://myform.com/form.html");
+  form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Last Name", "cardlastname", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  form.fields.push_back(field);
+  test::CreateTestFormField("CVC", "cvc", "", "text", &field);
+  form.fields.push_back(field);
+
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  const char guid[] = "00000000-0000-0000-0000-000000000004";
+  int response_page_id = 0;
+  FormData response_data;
+  FillAutofillFormDataAndSaveResults(kDefaultPageID, form, *form.fields.begin(),
+                                     MakeFrontendID(guid, std::string()),
+                                     &response_page_id, &response_data);
+  ExpectFilledField("Card Name", "cardname", "Elvis", "text",
+                    response_data.fields[0]);
+  ExpectFilledField("Last Name", "cardlastname", "Presley", "text",
+                    response_data.fields[1]);
+  ExpectFilledField("Card Number", "cardnumber", "4234567890123456", "text",
+                    response_data.fields[2]);
 }
 
 // Test that we correctly fill a combined address and credit card form.
@@ -2116,6 +2172,46 @@ TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOff) {
   }
 }
 
+// Test that a field with a value equal to it's placeholder attribute is filled.
+TEST_F(AutofillManagerTest, FillAddressForm_PlaceholderEqualsValue) {
+  FormData address_form;
+  address_form.name = ASCIIToUTF16("MyForm");
+  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.action = GURL("https://myform.com/submit.html");
+  FormFieldData field;
+  // Set the same placeholder and value for each field.
+  test::CreateTestFormField("First name", "firstname", "", "text", &field);
+  field.placeholder = ASCIIToUTF16("First Name");
+  field.value = ASCIIToUTF16("First Name");
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Middle name", "middle", "", "text", &field);
+  field.placeholder = ASCIIToUTF16("Middle Name");
+  field.value = ASCIIToUTF16("Middle Name");
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Last name", "lastname", "", "text", &field);
+  field.placeholder = ASCIIToUTF16("Last Name");
+  field.value = ASCIIToUTF16("Last Name");
+  address_form.fields.push_back(field);
+  std::vector<FormData> address_forms(1, address_form);
+  FormsSeen(address_forms);
+
+  // Fill the address form.
+  const char guid[] = "00000000-0000-0000-0000-000000000001";
+  int response_page_id = 0;
+  FormData response_data;
+  FillAutofillFormDataAndSaveResults(
+      kDefaultPageID, address_form, address_form.fields[0],
+      MakeFrontendID(std::string(), guid), &response_page_id, &response_data);
+
+  // All the fields should be filled.
+  ExpectFilledField("First name", "firstname", "Elvis", "text",
+                    response_data.fields[0]);
+  ExpectFilledField("Middle name", "middle", "Aaron", "text",
+                    response_data.fields[1]);
+  ExpectFilledField("Last name", "lastname", "Presley", "text",
+                    response_data.fields[2]);
+}
+
 // Test that a credit card field with an unrecognized autocomplete attribute
 // gets filled.
 TEST_F(AutofillManagerTest, FillCreditCardForm_UnrecognizedAttribute) {
@@ -2155,7 +2251,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_UnrecognizedAttribute) {
                     response_data.fields[1]);
 
   // The expiration month should be filled.
-  ExpectFilledField("Expiration Date", "ccmonth", "04/2012", "text",
+  ExpectFilledField("Expiration Date", "ccmonth", "04/2999", "text",
                     response_data.fields[2]);
 }
 
@@ -2183,6 +2279,62 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_AutocompleteOff) {
   // All fields should be filled.
   ExpectFilledCreditCardFormElvis(response_page_id, response_data,
                                   kDefaultPageID, false);
+}
+
+// Test that selecting an expired credit card fills everything except the
+// expiration date.
+TEST_F(AutofillManagerTest, FillCreditCardForm_ExpiredCard) {
+  personal_data_.CreateTestExpiredCreditCard();
+
+  // Set up the form data.
+  FormData form;
+  form.name = ASCIIToUTF16("MyForm");
+  form.origin = GURL("https://myform.com/form.html");
+  form.action = GURL("https://myform.com/submit.html");
+
+  // Create a credit card form.
+  FormFieldData field;
+  test::CreateTestFormField("Name on Card", "nameoncard", "", "text", &field);
+  field.autocomplete_attribute = "cc-name";
+  form.fields.push_back(field);
+  std::vector<const char*> kCreditCardTypes = {"Visa", "Master Card", "AmEx",
+                                               "discover"};
+  test::CreateTestSelectField("Card Type", "cardtype", "", kCreditCardTypes,
+                              kCreditCardTypes, 4, &field);
+  field.autocomplete_attribute = "cc-type";
+  form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  field.autocomplete_attribute = "cc-number";
+  form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  field.autocomplete_attribute = "cc-exp-month";
+  form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  field.autocomplete_attribute = "cc-exp-year";
+  form.fields.push_back(field);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  const char guid[] = "00000000-0000-0000-0000-000000000009";
+  int response_page_id = 0;
+  FormData response_data;
+  FillAutofillFormDataAndSaveResults(kDefaultPageID, form, *form.fields.begin(),
+                                     MakeFrontendID(guid, std::string()),
+                                     &response_page_id, &response_data);
+
+  // The credit card name, type and number should be filled.
+  ExpectFilledField("Name on Card", "nameoncard", "Homer Simpson", "text",
+                    response_data.fields[0]);
+  ExpectFilledField("Card Type", "cardtype", "Visa", "select-one",
+                    response_data.fields[1]);
+  ExpectFilledField("Card Number", "cardnumber", "4234567890654321", "text",
+                    response_data.fields[2]);
+
+  // The expiration month and year should not be filled.
+  ExpectFilledField("Expiration Month", "ccmonth", "", "text",
+                    response_data.fields[3]);
+  ExpectFilledField("Expiration Year", "ccyear", "", "text",
+                    response_data.fields[4]);
 }
 
 // Test that non-focusable field is ignored while inferring boundaries between
@@ -2460,7 +2612,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
                       response_data.fields[7]);
     ExpectFilledField("", "ccnumber", "4234567890123456", "text",
                       response_data.fields[8]);
-    ExpectFilledField("", "ccexp", "04/2012", "text", response_data.fields[9]);
+    ExpectFilledField("", "ccexp", "04/2999", "text", response_data.fields[9]);
     ExpectFilledField("", "email", "", "text", response_data.fields[10]);
   }
 }
@@ -2550,7 +2702,7 @@ TEST_F(AutofillManagerTest, FillAutofilledForm) {
   {
     SCOPED_TRACE("Credit card 2");
     ExpectFilledForm(response_page_id, response_data, kPageID3, "", "", "", "",
-                     "", "", "", "", "", "", "", "", "", "", "2012", true, true,
+                     "", "", "", "", "", "", "", "", "", "", "2999", true, true,
                      false);
   }
 }
@@ -2925,6 +3077,68 @@ TEST_F(AutofillManagerTest, AutocompleteSuggestions_SomeWhenAutofillEmpty) {
   GetAutofillSuggestions(form, field);
 }
 
+// Test that when Autofill is disabled and the field is a credit card name
+// field,
+// autocomplete is queried for suggestions.
+TEST_F(AutofillManagerTest,
+       AutocompleteSuggestions_CreditCardNameFieldShouldAutocomplete) {
+  TestAutofillClient client;
+  autofill_manager_.reset(
+      new TestAutofillManager(autofill_driver_.get(), &client, NULL));
+  autofill_manager_->set_autofill_enabled(false);
+  autofill_manager_->SetExternalDelegate(external_delegate_.get());
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, false, false);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+  // The first field is "Name on card", which should autocomplete.
+  FormFieldData field = form.fields[0];
+  field.should_autocomplete = true;
+
+  // Autocomplete manager is not called for suggestions.
+  autofill_manager_->autocomplete_history_manager_.reset(
+      new MockAutocompleteHistoryManager(autofill_driver_.get(),
+                                         autofill_manager_->client()));
+  MockAutocompleteHistoryManager* m =
+      static_cast<MockAutocompleteHistoryManager*>(
+          autofill_manager_->autocomplete_history_manager_.get());
+  EXPECT_CALL(*m, OnGetAutocompleteSuggestions(_, _, _, _));
+
+  GetAutofillSuggestions(form, field);
+}
+
+// Test that when Autofill is disabled and the field is a credit card number
+// field, autocomplete is not queried for suggestions.
+TEST_F(AutofillManagerTest,
+       AutocompleteSuggestions_CreditCardNumberShouldNotAutocomplete) {
+  TestAutofillClient client;
+  autofill_manager_.reset(
+      new TestAutofillManager(autofill_driver_.get(), &client, NULL));
+  autofill_manager_->set_autofill_enabled(false);
+  autofill_manager_->SetExternalDelegate(external_delegate_.get());
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, false, false);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+  // The second field is "Card Number", which should not autocomplete.
+  FormFieldData field = form.fields[1];
+  field.should_autocomplete = true;
+
+  // Autocomplete manager is not called for suggestions.
+  autofill_manager_->autocomplete_history_manager_.reset(
+      new MockAutocompleteHistoryManager(autofill_driver_.get(), &client));
+  MockAutocompleteHistoryManager* m =
+      static_cast<MockAutocompleteHistoryManager*>(
+          autofill_manager_->autocomplete_history_manager_.get());
+  EXPECT_CALL(*m, OnGetAutocompleteSuggestions(_, _, _, _)).Times(0);
+
+  GetAutofillSuggestions(form, field);
+}
+
 // Test that we do not query for Autocomplete suggestions when there are no
 // Autofill suggestions available, and that the field should not autocomplete.
 TEST_F(
@@ -3147,6 +3361,11 @@ TEST_F(AutofillManagerTest, FormSubmittedPossibleTypesTwoSubmissions) {
                                false);
 
   personal_data_.ClearAutofillProfiles();
+  // The default credit card is a Elvis card. It must be removed because name
+  // fields would be detected. However at least one profile or card is needed to
+  // start the upload process, which is why this other card is created.
+  personal_data_.ClearCreditCards();
+  personal_data_.CreateTestCreditCardsYearAndMonth("2999", "04");
   ASSERT_EQ(0u, personal_data_.GetProfiles().size());
 
   // Simulate form submission. The first submission should not count the data
@@ -3290,13 +3509,13 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
   profile.set_guid("00000000-0000-0000-0000-000000000001");
   profiles.push_back(profile);
   test::SetProfileInfo(&profile, "Charles", "", "Holley", "buddy@gmail.com",
-                       "Decca", "123 Apple St.", "unit 6", "Lubbock", "Texas",
+                       "Decca", "123 Apple St.", "unit 6", "Lubbock", "TX",
                        "79401", "US", "5142821292");
   profile.set_guid("00000000-0000-0000-0000-000000000002");
   profiles.push_back(profile);
   test::SetProfileInfo(&profile, "Charles", "", "Baudelaire",
                        "lesfleursdumal@gmail.com", "", "108 Rue Saint-Lazare",
-                       "Apt. 10", "Paris", "Ile de France", "75008", "FR",
+                       "Apt. 10", "Paris", "Île de France", "75008", "FR",
                        "+33 2 49 19 70 70");
   profile.set_guid("00000000-0000-0000-0000-000000000001");
   profiles.push_back(profile);
@@ -3304,8 +3523,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
   // Set up the test credit cards.
   std::vector<CreditCard> credit_cards;
   CreditCard credit_card;
-  test::SetCreditCardInfo(&credit_card, "Elvis Presley", "4234-5678-9012-3456",
-                          "04", "2012");
+  test::SetCreditCardInfo(&credit_card, "John Doe", "4234-5678-9012-3456", "04",
+                          "2999");
   credit_card.set_guid("00000000-0000-0000-0000-000000000003");
   credit_cards.push_back(credit_card);
 
@@ -3340,9 +3559,12 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
       {"567", PHONE_HOME_NUMBER},
       {"8901", PHONE_HOME_NUMBER},
 
-      // Test an european profile.
+      // Test a European profile.
       {"Paris", ADDRESS_HOME_CITY},
-      {"Ile de France", ADDRESS_HOME_STATE},
+      {"Île de France", ADDRESS_HOME_STATE},  // Exact match
+      {"Ile de France", ADDRESS_HOME_STATE},  // Missing accent.
+      {"-Ile-de-France-", ADDRESS_HOME_STATE},  // Extra punctuation.
+      {"île dÉ FrÃÑÇË", ADDRESS_HOME_STATE},  // Other accents & case mismatch.
       {"75008", ADDRESS_HOME_ZIP},
       {"FR", ADDRESS_HOME_COUNTRY},
       {"France", ADDRESS_HOME_COUNTRY},
@@ -3354,15 +3576,17 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
       {"2", PHONE_HOME_CITY_CODE},
 
       // Credit card fields matches.
-      {"Elvis Presley", CREDIT_CARD_NAME},
+      {"John Doe", CREDIT_CARD_NAME_FULL},
+      {"John", CREDIT_CARD_NAME_FIRST},
+      {"Doe", CREDIT_CARD_NAME_LAST},
       {"4234-5678-9012-3456", CREDIT_CARD_NUMBER},
       {"04", CREDIT_CARD_EXP_MONTH},
       {"April", CREDIT_CARD_EXP_MONTH},
-      {"2012", CREDIT_CARD_EXP_4_DIGIT_YEAR},
-      {"12", CREDIT_CARD_EXP_2_DIGIT_YEAR},
-      {"04/2012", CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+      {"2999", CREDIT_CARD_EXP_4_DIGIT_YEAR},
+      {"99", CREDIT_CARD_EXP_2_DIGIT_YEAR},
+      {"04/2999", CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
 
-      // Make sure whitespaces and invalid characters are handled properly.
+      // Make sure whitespace and invalid characters are handled properly.
       {"", EMPTY_TYPE},
       {" ", EMPTY_TYPE},
       {"***", UNKNOWN_TYPE},
@@ -3377,6 +3601,10 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
       {"3734 Elvis Presley Blvd", ADDRESS_HOME_LINE1},
       {"3734, Elvis    Presley Blvd.", ADDRESS_HOME_LINE1},
 
+      // Make sure that a state's full name and abbreviation match.
+      {"TN", ADDRESS_HOME_STATE},     // Saved as "Tennessee" in profile.
+      {"Texas", ADDRESS_HOME_STATE},  // Saved as "TX" in profile.
+
       // Special phone number case. A profile with no country code should only
       // match PHONE_HOME_CITY_AND_NUMBER.
       {"5142821292", PHONE_HOME_CITY_AND_NUMBER},
@@ -3385,7 +3613,6 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
       {"Elvis Aaron", UNKNOWN_TYPE},
       {"Mr. Presley", UNKNOWN_TYPE},
       {"3734 Elvis Presley", UNKNOWN_TYPE},
-      {"TN", UNKNOWN_TYPE},
       {"38116-1023", UNKNOWN_TYPE},
       {"5", UNKNOWN_TYPE},
       {"56", UNKNOWN_TYPE},
@@ -3398,11 +3625,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
     form.action = GURL("http://myform.com/submit.html");
 
     FormFieldData field;
-    ServerFieldTypeSet types;
     test::CreateTestFormField("", "1", "", "text", &field);
-    field.value = ASCIIToUTF16(test_case.input_value);
-    types.clear();
-    types.insert(test_case.field_type);
+    field.value = UTF8ToUTF16(test_case.input_value);
     form.fields.push_back(field);
 
     FormStructure form_structure(form);
@@ -3415,7 +3639,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
         form_structure.field(0)->possible_types();
     EXPECT_EQ(1U, possible_types.size());
 
-    EXPECT_NE(possible_types.end(), possible_types.find(test_case.field_type));
+    EXPECT_NE(possible_types.end(), possible_types.find(test_case.field_type))
+        << "Failed to determine type for: \"" << test_case.input_value << "\"";
   }
 }
 
@@ -3468,6 +3693,182 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload_IsTriggered) {
 
   autofill_manager_->set_expected_submitted_field_types(expected_types);
   FormSubmitted(form);
+}
+
+// Tests that DisambiguateUploadTypes makes the correct choices.
+TEST_F(AutofillManagerTest, DisambiguateUploadTypes) {
+  // Set up the test profile.
+  std::vector<AutofillProfile> profiles;
+  AutofillProfile profile;
+  test::SetProfileInfo(&profile, "Elvis", "Aaron", "Presley",
+                       "theking@gmail.com", "RCA", "3734 Elvis Presley Blvd.",
+                       "", "Memphis", "Tennessee", "38116", "US",
+                       "(234) 567-8901");
+  profile.set_guid("00000000-0000-0000-0000-000000000001");
+  profiles.push_back(profile);
+
+  // Set up the test credit card.
+  std::vector<CreditCard> credit_cards;
+  CreditCard credit_card;
+  test::SetCreditCardInfo(&credit_card, "Elvis Presley", "4234-5678-9012-3456",
+                          "04", "2999");
+  credit_card.set_guid("00000000-0000-0000-0000-000000000003");
+  credit_cards.push_back(credit_card);
+
+  typedef struct {
+    std::string input_value;
+    ServerFieldType predicted_type;
+    bool expect_disambiguation;
+    ServerFieldType expected_upload_type;
+  } TestFieldData;
+
+  std::vector<TestFieldData> test_cases[13];
+
+  // Address disambiguation.
+  // An ambiguous address line followed by a field predicted as a line 2 and
+  // that is empty should be disambiguated as an ADDRESS_HOME_LINE1.
+  test_cases[0].push_back({"3734 Elvis Presley Blvd.", ADDRESS_HOME_LINE1, true,
+                           ADDRESS_HOME_LINE1});
+  test_cases[0].push_back({"", ADDRESS_HOME_LINE2, true, EMPTY_TYPE});
+
+  // An ambiguous address line followed by a field predicted as a line 2 but
+  // filled with another know profile value should be disambiguated as an
+  // ADDRESS_HOME_STREET_ADDRESS.
+  test_cases[1].push_back({"3734 Elvis Presley Blvd.",
+                           ADDRESS_HOME_STREET_ADDRESS, true,
+                           ADDRESS_HOME_STREET_ADDRESS});
+  test_cases[1].push_back(
+      {"38116", ADDRESS_HOME_LINE2, true, ADDRESS_HOME_ZIP});
+
+  // An ambiguous address line followed by an empty field predicted as
+  // something other than a line 2 should be disambiguated as an
+  // ADDRESS_HOME_STREET_ADDRESS.
+  test_cases[2].push_back({"3734 Elvis Presley Blvd.",
+                           ADDRESS_HOME_STREET_ADDRESS, true,
+                           ADDRESS_HOME_STREET_ADDRESS});
+  test_cases[2].push_back({"", ADDRESS_HOME_ZIP, true, EMPTY_TYPE});
+
+  // An ambiguous address line followed by no other field should be
+  // disambiguated as an ADDRESS_HOME_STREET_ADDRESS.
+  test_cases[3].push_back({"3734 Elvis Presley Blvd.",
+                           ADDRESS_HOME_STREET_ADDRESS, true,
+                           ADDRESS_HOME_STREET_ADDRESS});
+
+  // Phone number disambiguation.
+  // A field with possible types PHONE_HOME_CITY_AND_NUMBER and
+  // PHONE_HOME_WHOLE_NUMBER should be disambiguated as
+  // PHONE_HOME_CITY_AND_NUMBER
+  test_cases[4].push_back({"2345678901", PHONE_HOME_WHOLE_NUMBER, true,
+                           PHONE_HOME_CITY_AND_NUMBER});
+
+  // Name disambiguation.
+  // An ambiguous name field that has no next field and that is preceded by
+  // a non credit card field should be disambiguated as a non credit card
+  // name.
+  test_cases[5].push_back(
+      {"Memphis", ADDRESS_HOME_CITY, true, ADDRESS_HOME_CITY});
+  test_cases[5].push_back({"Elvis", CREDIT_CARD_NAME_FIRST, true, NAME_FIRST});
+  test_cases[5].push_back({"Presley", CREDIT_CARD_NAME_LAST, true, NAME_LAST});
+
+  // An ambiguous name field that has no next field and that is preceded by
+  // a credit card field should be disambiguated as a credit card name.
+  test_cases[6].push_back(
+      {"4234-5678-9012-3456", CREDIT_CARD_NUMBER, true, CREDIT_CARD_NUMBER});
+  test_cases[6].push_back({"Elvis", NAME_FIRST, true, CREDIT_CARD_NAME_FIRST});
+  test_cases[6].push_back({"Presley", NAME_LAST, true, CREDIT_CARD_NAME_LAST});
+
+  // An ambiguous name field that has no previous field and that is
+  // followed by a non credit card field should be disambiguated as a non
+  // credit card name.
+  test_cases[7].push_back({"Elvis", CREDIT_CARD_NAME_FIRST, true, NAME_FIRST});
+  test_cases[7].push_back({"Presley", CREDIT_CARD_NAME_LAST, true, NAME_LAST});
+  test_cases[7].push_back(
+      {"Memphis", ADDRESS_HOME_CITY, true, ADDRESS_HOME_CITY});
+
+  // An ambiguous name field that has no previous field and that is followed
+  // by a credit card field should be disambiguated as a credit card name.
+  test_cases[8].push_back({"Elvis", NAME_FIRST, true, CREDIT_CARD_NAME_FIRST});
+  test_cases[8].push_back({"Presley", NAME_LAST, true, CREDIT_CARD_NAME_LAST});
+  test_cases[8].push_back(
+      {"4234-5678-9012-3456", CREDIT_CARD_NUMBER, true, CREDIT_CARD_NUMBER});
+
+  // An ambiguous name field that is preceded and followed by non credit
+  // card fields should be disambiguated as a non credit card name.
+  test_cases[9].push_back(
+      {"Memphis", ADDRESS_HOME_CITY, true, ADDRESS_HOME_CITY});
+  test_cases[9].push_back({"Elvis", CREDIT_CARD_NAME_FIRST, true, NAME_FIRST});
+  test_cases[9].push_back({"Presley", CREDIT_CARD_NAME_LAST, true, NAME_LAST});
+  test_cases[9].push_back(
+      {"Tennessee", ADDRESS_HOME_STATE, true, ADDRESS_HOME_STATE});
+
+  // An ambiguous name field that is preceded and followed by credit card
+  // fields should be disambiguated as a credit card name.
+  test_cases[10].push_back(
+      {"4234-5678-9012-3456", CREDIT_CARD_NUMBER, true, CREDIT_CARD_NUMBER});
+  test_cases[10].push_back({"Elvis", NAME_FIRST, true, CREDIT_CARD_NAME_FIRST});
+  test_cases[10].push_back({"Presley", NAME_LAST, true, CREDIT_CARD_NAME_LAST});
+  test_cases[10].push_back({"2999", CREDIT_CARD_EXP_4_DIGIT_YEAR, true,
+                            CREDIT_CARD_EXP_4_DIGIT_YEAR});
+
+  // An ambiguous name field that is preceded by a non credit card field and
+  // followed by a credit card field should not be disambiguated.
+  test_cases[11].push_back(
+      {"Memphis", ADDRESS_HOME_CITY, true, ADDRESS_HOME_CITY});
+  test_cases[11].push_back(
+      {"Elvis", NAME_FIRST, false, CREDIT_CARD_NAME_FIRST});
+  test_cases[11].push_back(
+      {"Presley", NAME_LAST, false, CREDIT_CARD_NAME_LAST});
+  test_cases[11].push_back({"2999", CREDIT_CARD_EXP_4_DIGIT_YEAR, true,
+                            CREDIT_CARD_EXP_4_DIGIT_YEAR});
+
+  // An ambiguous name field that is preceded by a credit card field and
+  // followed by a non credit card field should not be disambiguated.
+  test_cases[12].push_back({"2999", CREDIT_CARD_EXP_4_DIGIT_YEAR, true,
+                            CREDIT_CARD_EXP_4_DIGIT_YEAR});
+  test_cases[12].push_back(
+      {"Elvis", NAME_FIRST, false, CREDIT_CARD_NAME_FIRST});
+  test_cases[12].push_back(
+      {"Presley", NAME_LAST, false, CREDIT_CARD_NAME_LAST});
+  test_cases[12].push_back(
+      {"Memphis", ADDRESS_HOME_CITY, true, ADDRESS_HOME_CITY});
+
+  for (const std::vector<TestFieldData>& test_fields : test_cases) {
+    FormData form;
+    form.name = ASCIIToUTF16("MyForm");
+    form.origin = GURL("http://myform.com/form.html");
+    form.action = GURL("http://myform.com/submit.html");
+
+    // Create the form fields specified in the test case.
+    FormFieldData field;
+    for (const TestFieldData& test_field : test_fields) {
+      test::CreateTestFormField("", "1", "", "text", &field);
+      field.value = ASCIIToUTF16(test_field.input_value);
+      form.fields.push_back(field);
+    }
+
+    // Assign the specified predicted type for each field in the test case.
+    FormStructure form_structure(form);
+    for (size_t i = 0; i < test_fields.size(); ++i) {
+      form_structure.field(i)->set_server_type(test_fields[i].predicted_type);
+    }
+
+    AutofillManager::DeterminePossibleFieldTypesForUpload(
+        profiles, credit_cards, "en-us", &form_structure);
+    ASSERT_EQ(test_fields.size(), form_structure.field_count());
+
+    // Make sure the disambiguation method selects the expected upload type.
+    ServerFieldTypeSet possible_types;
+    for (size_t i = 0; i < test_fields.size(); ++i) {
+      possible_types = form_structure.field(i)->possible_types();
+      if (test_fields[i].expect_disambiguation) {
+        EXPECT_EQ(1U, possible_types.size());
+        EXPECT_NE(possible_types.end(),
+                  possible_types.find(test_fields[i].expected_upload_type));
+      } else {
+        EXPECT_EQ(2U, possible_types.size());
+      }
+    }
+  }
 }
 
 TEST_F(AutofillManagerTest, RemoveProfile) {
@@ -3755,11 +4156,10 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestionsForNumberSpitAcrossFields) {
   GetAutofillSuggestions(form, number_field);
 
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          "Visa\xC2\xA0\xE2\x8B\xAF"
-          "3456",
-          "04/12", kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
+      kDefaultPageID, Suggestion("Visa\xC2\xA0\xE2\x8B\xAF"
+                                 "3456",
+                                 "04/99", kVisaCard,
+                                 autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that inputs detected to be CVC inputs are forced to
@@ -3827,10 +4227,10 @@ TEST_F(AutofillManagerTest, DontOfferToSavePaymentsCard) {
       form.fields[i].value = ASCIIToUTF16("2017");
   }
 
-  AutofillManager::UnmaskResponse response;
+  CardUnmaskDelegate::UnmaskResponse response;
   response.should_store_pan = false;
   response.cvc = ASCIIToUTF16("123");
-  autofill_manager_->OnUnmaskResponse(response);
+  full_card_unmask_delegate()->OnUnmaskResponse(response);
   autofill_manager_->OnDidGetRealPan(AutofillClient::SUCCESS,
                                      "4012888888881881");
   autofill_manager_->OnFormSubmitted(form);
@@ -3841,24 +4241,18 @@ TEST_F(AutofillManagerTest, FillInUpdatedExpirationDate) {
   CreditCard card;
   PrepareForRealPanResponse(&form, &card);
 
-  AutofillManager::UnmaskResponse response;
+  CardUnmaskDelegate::UnmaskResponse response;
   response.should_store_pan = false;
   response.cvc = ASCIIToUTF16("123");
   response.exp_month = ASCIIToUTF16("02");
   response.exp_year = ASCIIToUTF16("2018");
-  autofill_manager_->OnUnmaskResponse(response);
+  full_card_unmask_delegate()->OnUnmaskResponse(response);
   autofill_manager_->OnDidGetRealPan(AutofillClient::SUCCESS,
                                      "4012888888881881");
-
-  EXPECT_EQ(ASCIIToUTF16("02"),
-            autofill_manager_->unmask_request_.card.GetRawInfo(
-                CREDIT_CARD_EXP_MONTH));
-  EXPECT_EQ(ASCIIToUTF16("2018"),
-            autofill_manager_->unmask_request_.card.GetRawInfo(
-                CREDIT_CARD_EXP_4_DIGIT_YEAR));
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit an address form in order to establish a recent
@@ -3892,6 +4286,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_FeatureNotEnabled) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(false);
 
   // Create, fill and submit an address form in order to establish a recent
@@ -3926,6 +4321,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard_FeatureNotEnabled) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_CvcUnavailable) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit an address form in order to establish a recent
@@ -3959,9 +4355,79 @@ TEST_F(AutofillManagerTest, UploadCreditCard_CvcUnavailable) {
   histogram_tester.ExpectUniqueSample(
       "Autofill.CardUploadDecisionExpanded",
       AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC, 1);
+
+  rappor::TestRapporService* rappor_service =
+      autofill_client_.test_rappor_service();
+  EXPECT_EQ(1, rappor_service->GetReportsCount());
+  std::string sample;
+  rappor::RapporType type;
+  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
+      "Autofill.CardUploadNotOfferedNoCvc", &sample, &type));
+  EXPECT_EQ("myform.com", sample);
+  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_MultipleCvcFields) {
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Remove the profiles that were created in the TestPersonalDataManager
+  // constructor because they would result in conflicting names that would
+  // prevent the upload.
+  personal_data_.ClearAutofillProfiles();
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  credit_card_form.name = ASCIIToUTF16("MyForm");
+  credit_card_form.origin = GURL("https://myform.com/form.html");
+  credit_card_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("CVC (hidden)", "cvc1", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("CVC", "cvc2", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("");  // CVC MISSING
+  credit_card_form.fields[5].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // A CVC value appeared in one of the two CVC fields, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.CardUploadDecisionExpanded",
+      AutofillMetrics::UPLOAD_OFFERED, 1);
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_NoProfileAvailable) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Don't fill or submit an address form.
@@ -3989,9 +4455,20 @@ TEST_F(AutofillManagerTest, UploadCreditCard_NoProfileAvailable) {
   histogram_tester.ExpectUniqueSample(
       "Autofill.CardUploadDecisionExpanded",
       AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS, 1);
+
+  rappor::TestRapporService* rappor_service =
+      autofill_client_.test_rappor_service();
+  EXPECT_EQ(1, rappor_service->GetReportsCount());
+  std::string sample;
+  rappor::RapporType type;
+  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
+      "Autofill.CardUploadNotOfferedNoAddress", &sample, &type));
+  EXPECT_EQ("myform.com", sample);
+  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_NoNameAvailable) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit an address form in order to establish a recent
@@ -4025,9 +4502,20 @@ TEST_F(AutofillManagerTest, UploadCreditCard_NoNameAvailable) {
   histogram_tester.ExpectUniqueSample(
       "Autofill.CardUploadDecisionExpanded",
       AutofillMetrics::UPLOAD_NOT_OFFERED_NO_NAME, 1);
+
+  rappor::TestRapporService* rappor_service =
+      autofill_client_.test_rappor_service();
+  EXPECT_EQ(1, rappor_service->GetReportsCount());
+  std::string sample;
+  rappor::RapporType type;
+  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
+      "Autofill.CardUploadNotOfferedNoName", &sample, &type));
+  EXPECT_EQ("myform.com", sample);
+  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesConflict) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit two address forms with different zip codes.
@@ -4072,6 +4560,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesConflict) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesHavePrefixMatch) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit two address forms with different zip codes.
@@ -4116,6 +4605,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesHavePrefixMatch) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_NoZipCodeAvailable) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit an address form in order to establish a recent
@@ -4159,6 +4649,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard_NoZipCodeAvailable) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_NamesMatchLoosely) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit two address forms with different names.
@@ -4206,6 +4697,7 @@ TEST_F(AutofillManagerTest, UploadCreditCard_NamesMatchLoosely) {
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_NamesHaveToMatch) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Create, fill and submit two address forms with different names.
@@ -4247,9 +4739,20 @@ TEST_F(AutofillManagerTest, UploadCreditCard_NamesHaveToMatch) {
   histogram_tester.ExpectUniqueSample(
       "Autofill.CardUploadDecisionExpanded",
       AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES, 1);
+
+  rappor::TestRapporService* rappor_service =
+      autofill_client_.test_rappor_service();
+  EXPECT_EQ(1, rappor_service->GetReportsCount());
+  std::string sample;
+  rappor::RapporType type;
+  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
+      "Autofill.CardUploadNotOfferedConflictingNames", &sample, &type));
+  EXPECT_EQ("myform.com", sample);
+  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
 }
 
 TEST_F(AutofillManagerTest, UploadCreditCard_UploadDetailsFails) {
+  personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Anything other than "en-US" will cause GetUploadDetails to return a failure
@@ -4400,6 +4903,7 @@ TEST_F(AutofillManagerTest, NoCreditCardSuggestionsForNonPrefixTokenMatch) {
   test::CreateTestFormField("Name on Card", "nameoncard", "lvis", "text",
                             &field);
   GetAutofillSuggestions(form, field);
+  // Autocomplete suggestions are queried, but not Autofill.
   EXPECT_FALSE(external_delegate_->on_suggestions_returned_seen());
 }
 

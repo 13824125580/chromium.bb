@@ -8,7 +8,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -18,12 +18,15 @@
 #include "net/http/http_server_properties.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/quic_utils.h"
+#include "net/socket/ssl_client_socket.h"
 #include "net/url_request/url_request_context_builder.h"
 
 namespace cronet {
 
 namespace {
 
+// Name of disk cache directory.
+const char kDiskCacheDirectoryName[] = "disk_cache";
 // TODO(xunjieli): Refactor constants in io_thread.cc.
 const char kQuicFieldTrialName[] = "QUIC";
 const char kQuicConnectionOptions[] = "connection_options";
@@ -44,21 +47,26 @@ const char kQuicMigrateSessionsOnNetworkChange[] =
 const char kQuicPreferAes[] = "prefer_aes";
 const char kQuicUserAgentId[] = "user_agent_id";
 const char kQuicMigrateSessionsEarly[] = "migrate_sessions_early";
+const char kQuicDisableBidirectionalStreams[] =
+    "quic_disable_bidirectional_streams";
 
 // AsyncDNS experiment dictionary name.
 const char kAsyncDnsFieldTrialName[] = "AsyncDNS";
 // Name of boolean to enable AsyncDNS experiment.
 const char kAsyncDnsEnable[] = "enable";
 
+const char kSSLKeyLogFile[] = "ssl_key_log_file";
+
 void ParseAndSetExperimentalOptions(
     const std::string& experimental_options,
     net::URLRequestContextBuilder* context_builder,
-    net::NetLog* net_log) {
+    net::NetLog* net_log,
+    const scoped_refptr<base::SequencedTaskRunner>& file_task_runner) {
   if (experimental_options.empty())
     return;
 
   DVLOG(1) << "Experimental Options:" << experimental_options;
-  scoped_ptr<base::Value> options =
+  std::unique_ptr<base::Value> options =
       base::JSONReader::Read(experimental_options);
 
   if (!options) {
@@ -67,7 +75,7 @@ void ParseAndSetExperimentalOptions(
     return;
   }
 
-  scoped_ptr<base::DictionaryValue> dict =
+  std::unique_ptr<base::DictionaryValue> dict =
       base::DictionaryValue::From(std::move(options));
 
   if (!dict) {
@@ -168,6 +176,13 @@ void ParseAndSetExperimentalOptions(
       context_builder->set_quic_migrate_sessions_early(
           quic_migrate_sessions_early);
     }
+
+    bool quic_disable_bidirectional_streams = false;
+    if (quic_args->GetBoolean(kQuicDisableBidirectionalStreams,
+                              &quic_disable_bidirectional_streams)) {
+      context_builder->set_quic_disable_bidirectional_streams(
+          quic_disable_bidirectional_streams);
+    }
   }
 
   const base::DictionaryValue* async_dns_args = nullptr;
@@ -178,11 +193,25 @@ void ParseAndSetExperimentalOptions(
       if (net_log == nullptr) {
         DCHECK(false) << "AsyncDNS experiment requires NetLog.";
       } else {
-        scoped_ptr<net::HostResolver> host_resolver(
+        std::unique_ptr<net::HostResolver> host_resolver(
             net::HostResolver::CreateDefaultResolver(net_log));
         host_resolver->SetDnsClientEnabled(true);
         context_builder->set_host_resolver(std::move(host_resolver));
       }
+    }
+  }
+
+  std::string ssl_key_log_file_string;
+  if (dict->GetString(kSSLKeyLogFile, &ssl_key_log_file_string)) {
+    DCHECK(file_task_runner);
+    base::FilePath ssl_key_log_file(ssl_key_log_file_string);
+    if (!ssl_key_log_file.empty() && file_task_runner) {
+      // SetSSLKeyLogFile is only safe to call before any SSLClientSockets are
+      // created. This should not be used if there are multiple CronetEngine.
+      // TODO(xunjieli): Expose this as a stable API after crbug.com/458365 is
+      // resolved.
+      net::SSLClientSocket::SetSSLKeyLogFile(ssl_key_log_file,
+                                             file_task_runner);
     }
   }
 }
@@ -220,7 +249,8 @@ URLRequestContextConfig::URLRequestContextConfig(
     const std::string& data_reduction_primary_proxy,
     const std::string& data_reduction_fallback_proxy,
     const std::string& data_reduction_secure_proxy_check_url,
-    scoped_ptr<net::CertVerifier> mock_cert_verifier)
+    std::unique_ptr<net::CertVerifier> mock_cert_verifier,
+    bool enable_network_quality_estimator)
     : enable_quic(enable_quic),
       quic_user_agent_id(quic_user_agent_id),
       enable_spdy(enable_spdy),
@@ -236,19 +266,23 @@ URLRequestContextConfig::URLRequestContextConfig(
       data_reduction_fallback_proxy(data_reduction_fallback_proxy),
       data_reduction_secure_proxy_check_url(
           data_reduction_secure_proxy_check_url),
-      mock_cert_verifier(std::move(mock_cert_verifier)) {}
+      mock_cert_verifier(std::move(mock_cert_verifier)),
+      enable_network_quality_estimator(enable_network_quality_estimator) {}
 
 URLRequestContextConfig::~URLRequestContextConfig() {}
 
 void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     net::URLRequestContextBuilder* context_builder,
-    net::NetLog* net_log) {
+    net::NetLog* net_log,
+    const scoped_refptr<base::SequencedTaskRunner>& file_task_runner) {
   std::string config_cache;
   if (http_cache != DISABLED) {
     net::URLRequestContextBuilder::HttpCacheParams cache_params;
     if (http_cache == DISK && !storage_path.empty()) {
       cache_params.type = net::URLRequestContextBuilder::HttpCacheParams::DISK;
-      cache_params.path = base::FilePath(storage_path);
+      cache_params.path =
+          base::FilePath(storage_path)
+              .Append(FILE_PATH_LITERAL(kDiskCacheDirectoryName));
     } else {
       cache_params.type =
           net::URLRequestContextBuilder::HttpCacheParams::IN_MEMORY;
@@ -264,8 +298,8 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
   if (enable_quic)
     context_builder->set_quic_user_agent_id(quic_user_agent_id);
 
-  ParseAndSetExperimentalOptions(experimental_options, context_builder,
-                                 net_log);
+  ParseAndSetExperimentalOptions(experimental_options, context_builder, net_log,
+                                 file_task_runner);
 
   if (mock_cert_verifier)
     context_builder->SetCertVerifier(std::move(mock_cert_verifier));

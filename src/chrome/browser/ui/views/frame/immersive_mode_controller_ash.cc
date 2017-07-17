@@ -4,9 +4,11 @@
 
 #include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
 
+#include "ash/common/material_design/material_design_controller.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shell.h"
 #include "ash/wm/immersive_revealed_lock.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "base/macros.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
@@ -49,7 +51,7 @@ class ImmersiveRevealedLockAsh : public ImmersiveRevealedLock {
       : lock_(lock) {}
 
  private:
-  scoped_ptr<ash::ImmersiveRevealedLock> lock_;
+  std::unique_ptr<ash::ImmersiveRevealedLock> lock_;
 
   DISALLOW_COPY_AND_ASSIGN(ImmersiveRevealedLockAsh);
 };
@@ -161,7 +163,13 @@ void ImmersiveModeControllerAsh::LayoutBrowserRootView() {
   widget->GetRootView()->Layout();
 }
 
+// TODO(yiyix|tdanderson): Once Chrome OS material design is enabled by default,
+// remove all code related to immersive mode hints (here, in TabStrip and
+// BrowserNonClientFrameViewAsh::OnPaint()). See crbug.com/614453.
 bool ImmersiveModeControllerAsh::UpdateTabIndicators() {
+  if (ash::MaterialDesignController::IsShelfMaterial())
+    return false;
+
   bool has_tabstrip = browser_view_->IsBrowserTypeNormal();
   if (!IsEnabled() || !has_tabstrip) {
     use_tab_indicators_ = false;
@@ -184,7 +192,7 @@ bool ImmersiveModeControllerAsh::UpdateTabIndicators() {
 void ImmersiveModeControllerAsh::OnImmersiveRevealStarted() {
   visible_fraction_ = 0;
   browser_view_->top_container()->SetPaintToLayer(true);
-  browser_view_->top_container()->SetFillsBoundsOpaquely(false);
+  browser_view_->top_container()->layer()->SetFillsBoundsOpaquely(false);
   UpdateTabIndicators();
   LayoutBrowserRootView();
   FOR_EACH_OBSERVER(Observer, observers_, OnImmersiveRevealStarted());
@@ -252,14 +260,16 @@ void ImmersiveModeControllerAsh::Observe(
 
   bool tab_indicator_visibility_changed = UpdateTabIndicators();
 
-  // Auto hide the shelf in immersive browser fullscreen. When auto hidden, the
-  // shelf displays a 3px 'light bar' when it is closed. When in immersive
-  // browser fullscreen and tab fullscreen, hide the shelf completely and
-  // prevent it from being revealed.
+  // Auto hide the shelf in immersive browser fullscreen. When auto hidden and
+  // Material Design is not enabled, the shelf displays a 3px 'light bar' when
+  // it is closed. When in immersive browser fullscreen and tab fullscreen, hide
+  // the shelf completely and prevent it from being revealed.
   bool in_tab_fullscreen = content::Source<FullscreenController>(source)->
       IsWindowFullscreenForTabOrPending();
-  ash::wm::GetWindowState(native_window_)->set_hide_shelf_when_fullscreen(
-      in_tab_fullscreen);
+  ash::wm::GetWindowState(native_window_)
+      ->set_shelf_mode_in_fullscreen(
+          in_tab_fullscreen ? ash::wm::WindowState::SHELF_HIDDEN
+                            : ash::wm::WindowState::SHELF_AUTO_HIDE_VISIBLE);
   ash::Shell::GetInstance()->UpdateShelfVisibility();
 
   if (tab_indicator_visibility_changed)

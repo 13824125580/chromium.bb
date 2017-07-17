@@ -93,7 +93,7 @@ bool AXMenuListOption::isSelected() const
 {
     AXMenuListPopup* parent = static_cast<AXMenuListPopup*>(parentObject());
     if (parent && !parent->isOffScreen())
-        return parent->activeChild() == this;
+        return parent->activeDescendant() == this;
     return m_element && m_element->selected();
 }
 
@@ -136,7 +136,7 @@ String AXMenuListOption::textAlternative(bool recursive, bool inAriaLabelledByTr
     if (nameSources)
         ASSERT(relatedObjects);
 
-    if (!node())
+    if (!getNode())
         return String();
 
     bool foundTextAlternative = false;

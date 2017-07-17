@@ -1,41 +1,55 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [39, 79, 142, 99],
-        [38, 100, 152, 80],
-        [38, 99, 152, 81],
-        [38, 79, 152, 99],
-        [38, 78, 3, 21]
-      ],
-      "paintInvalidationClients": [
-        "InlineTextBox 'hello world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello world hello world'",
-        "InlineTextBox ' '",
-        "InlineTextBox 'hello'",
-        "LayoutText #text",
-        "RootInlineBox",
-        "RootInlineBox",
-        "RootInlineBox",
-        "RootInlineBox",
-        "InlineTextBox '\n'",
-        "RootInlineBox",
-        "LayoutBlockFlow DIV id='test'",
-        "LayoutBlockFlow DIV id='test'",
-        "RootInlineBox",
-        "LayoutBR BR",
-        "InlineTextBox '\n'",
-        "LayoutBlockFlow DIV id='test'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='test'",
+          "rect": [38, 78, 152, 102],
+          "reason": "forced by layout"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [39, 79, 146, 99],
+          "reason": "layoutObject removal"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='test'",
+          "rect": [38, 78, 3, 21],
+          "reason": "invalidate paint rectangle"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutText #text",
+      "reason": "layoutObject removal"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='test'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "RootInlineBox",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutBR BR",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "InlineTextBox '\n'",
+      "reason": "forced by layout"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='test'",
+      "reason": "invalidate paint rectangle"
     }
   ]
 }

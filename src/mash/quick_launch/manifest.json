@@ -1,5 +1,12 @@
 {
-  "url": "mojo://quick_launch/",
-  "name": "Quick Launch",
-  "capabilities": { "*": ["*"] }
+  "manifest_version":  1,
+  "name": "mojo:quick_launch",
+  "display_name": "Quick Launch Bar",
+  "capabilities": {
+    "provided": { "mash:launchable": [ "mash::mojom::Launchable" ] },
+    "required": {
+      "*": { "classes": [ "app", "mash:launchable" ] },
+      "mojo:catalog": { "interfaces": [ "catalog::mojom::Catalog" ] }
+    }
+  }
 }

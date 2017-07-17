@@ -68,7 +68,6 @@ WebInspector.ExtensionServer = function()
     this._registerHandler(commands.Reload, this._onReload.bind(this));
     this._registerHandler(commands.SetOpenResourceHandler, this._onSetOpenResourceHandler.bind(this));
     this._registerHandler(commands.SetResourceContent, this._onSetResourceContent.bind(this));
-    this._registerHandler(commands.SetSidebarHeight, this._onSetSidebarHeight.bind(this));
     this._registerHandler(commands.SetSidebarContent, this._onSetSidebarContent.bind(this));
     this._registerHandler(commands.SetSidebarPage, this._onSetSidebarPage.bind(this));
     this._registerHandler(commands.ShowPanel, this._onShowPanel.bind(this));
@@ -335,15 +334,6 @@ WebInspector.ExtensionServer.prototype = {
         return this._sidebarPanes;
     },
 
-    _onSetSidebarHeight: function(message)
-    {
-        var sidebar = this._clientObjects[message.id];
-        if (!sidebar)
-            return this._status.E_NOTFOUND(message.id);
-        sidebar.setHeight(message.height);
-        return this._status.OK();
-    },
-
     _onSetSidebarContent: function(message, port)
     {
         var sidebar = this._clientObjects[message.id];
@@ -381,7 +371,7 @@ WebInspector.ExtensionServer.prototype = {
 
         var resource = WebInspector.resourceForURL(message.url);
         if (resource) {
-            WebInspector.Revealer.reveal(resource, message.lineNumber);
+            WebInspector.Revealer.reveal(resource);
             return this._status.OK();
         }
 
@@ -631,7 +621,6 @@ WebInspector.ExtensionServer.prototype = {
 
     _onForwardKeyboardEvent: function(message)
     {
-        const Esc = "U+001B";
         message.entries.forEach(handleEventEntry);
 
         /**
@@ -640,12 +629,15 @@ WebInspector.ExtensionServer.prototype = {
          */
         function handleEventEntry(entry)
         {
-            if (!entry.ctrlKey && !entry.altKey && !entry.metaKey && !/^F\d+$/.test(entry.keyIdentifier) && entry.keyIdentifier !== Esc)
+            if (!entry.ctrlKey && !entry.altKey && !entry.metaKey && !/^F\d+$/.test(entry.key) && entry.key !== "Escape")
                 return;
             // Fool around closure compiler -- it has its own notion of both KeyboardEvent constructor
             // and initKeyboardEvent methods and overriding these in externs.js does not have effect.
             var event = new window.KeyboardEvent(entry.eventType, {
                 keyIdentifier: entry.keyIdentifier,
+                key: entry.key,
+                code: entry.code,
+                keyCode: entry.keyCode,
                 location: entry.location,
                 ctrlKey: entry.ctrlKey,
                 altKey: entry.altKey,
@@ -959,7 +951,7 @@ WebInspector.ExtensionServer.prototype = {
             if (contextSecurityOrigin) {
                 for (var i = 0; i < executionContexts.length; ++i) {
                     var executionContext = executionContexts[i];
-                    if (executionContext.frameId === frame.id && executionContext.origin === contextSecurityOrigin && !executionContext.isMainWorldContext)
+                    if (executionContext.frameId === frame.id && executionContext.origin === contextSecurityOrigin && !executionContext.isDefault)
                         context = executionContext;
 
                 }
@@ -970,7 +962,7 @@ WebInspector.ExtensionServer.prototype = {
             } else {
                 for (var i = 0; i < executionContexts.length; ++i) {
                     var executionContext = executionContexts[i];
-                    if (executionContext.frameId === frame.id && executionContext.isMainWorldContext)
+                    if (executionContext.frameId === frame.id && executionContext.isDefault)
                         context = executionContext;
 
                 }
@@ -984,7 +976,7 @@ WebInspector.ExtensionServer.prototype = {
         if (!target)
             return;
 
-        target.runtimeAgent().evaluate(expression, "extension", exposeCommandLineAPI, true, contextId, returnByValue, false, onEvalute);
+        target.runtimeAgent().evaluate(expression, "extension", exposeCommandLineAPI, true, contextId, returnByValue, false, false, onEvalute);
 
         /**
          * @param {?Protocol.Error} error

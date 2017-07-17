@@ -73,7 +73,7 @@ void LayoutTextControlSingleLine::paint(const PaintInfo& paintInfo, const Layout
     LayoutTextControl::paint(paintInfo, paintOffset);
 
     if (shouldPaintSelfBlockBackground(paintInfo.phase) && m_shouldDrawCapsLockIndicator) {
-        if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, *this, paintInfo.phase, paintOffset))
+        if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, *this, paintInfo.phase))
             return;
 
         LayoutRect contentsRect = contentBoxRect();
@@ -87,7 +87,7 @@ void LayoutTextControlSingleLine::paint(const PaintInfo& paintInfo, const Layout
         // Convert the rect into the coords used for painting the content
         contentsRect.moveBy(paintOffset + location());
         IntRect snappedRect = pixelSnappedIntRect(contentsRect);
-        LayoutObjectDrawingRecorder recorder(paintInfo.context, *this, paintInfo.phase, snappedRect, paintOffset);
+        LayoutObjectDrawingRecorder recorder(paintInfo.context, *this, paintInfo.phase, snappedRect);
         LayoutTheme::theme().painter().paintCapsLockIndicator(*this, paintInfo, snappedRect);
     }
 }
@@ -174,7 +174,6 @@ void LayoutTextControlSingleLine::styleDidChange(StyleDifference diff, const Com
     LayoutTextControl::styleDidChange(diff, oldStyle);
     if (HTMLElement* placeholder = inputElement()->placeholderElement())
         placeholder->setInlineStyleProperty(CSSPropertyTextOverflow, textShouldBeTruncated() ? CSSValueEllipsis : CSSValueClip);
-    setHasOverflowClip(false);
 }
 
 void LayoutTextControlSingleLine::capsLockStateMayHaveChanged()
@@ -232,7 +231,7 @@ LayoutUnit LayoutTextControlSingleLine::preferredContentLogicalWidth(float charW
     LayoutUnit result = LayoutUnit::fromFloatCeil(charWidth * factor);
 
     float maxCharWidth = 0.f;
-    AtomicString family = styleRef().font().fontDescription().family().family();
+    AtomicString family = styleRef().font().getFontDescription().family().family();
     // Match the default system font to the width of MS Shell Dlg, the default
     // font for textareas in Firefox, Safari Win and IE for some encodings (in
     // IE, the default font is encoding specific). 4027 is the (xMax - xMin)
@@ -274,8 +273,21 @@ PassRefPtr<ComputedStyle> LayoutTextControlSingleLine::createInnerEditorStyle(co
     textBlockStyle->setOverflowWrap(NormalOverflowWrap);
     textBlockStyle->setTextOverflow(textShouldBeTruncated() ? TextOverflowEllipsis : TextOverflowClip);
 
+    int computedLineHeight = lineHeight(true, HorizontalLine, PositionOfInteriorLineBoxes);
     // Do not allow line-height to be smaller than our default.
-    if (textBlockStyle->fontSize() >= lineHeight(true, HorizontalLine, PositionOfInteriorLineBoxes) || !startStyle.logicalHeight().isIntrinsicOrAuto())
+    if (textBlockStyle->fontSize() >= computedLineHeight)
+        textBlockStyle->setLineHeight(ComputedStyle::initialLineHeight());
+
+    // We'd like to remove line-height if it's unnecessary because
+    // overflow:scroll clips editing text by line-height.
+    Length logicalHeight = startStyle.logicalHeight();
+    // Here, we remove line-height if the INPUT fixed height is taller than the
+    // line-height.  It's not the precise condition because logicalHeight
+    // includes border and padding if box-sizing:border-box, and there are cases
+    // in which we don't want to remove line-height with percent or calculated
+    // length.
+    // TODO(tkent): This should be done during layout.
+    if (logicalHeight.hasPercent() || (logicalHeight.isFixed() && logicalHeight.getFloatValue() > computedLineHeight))
         textBlockStyle->setLineHeight(ComputedStyle::initialLineHeight());
 
     textBlockStyle->setDisplay(BLOCK);
@@ -284,20 +296,21 @@ PassRefPtr<ComputedStyle> LayoutTextControlSingleLine::createInnerEditorStyle(co
     if (inputElement()->shouldRevealPassword())
         textBlockStyle->setTextSecurity(TSNONE);
 
-    textBlockStyle->setOverflowX(OSCROLL);
-    textBlockStyle->setOverflowY(OSCROLL);
+    textBlockStyle->setOverflowX(OverflowScroll);
+    // overflow-y:visible doesn't work because overflow-x:scroll makes a layer.
+    textBlockStyle->setOverflowY(OverflowScroll);
     RefPtr<ComputedStyle> noScrollbarStyle = ComputedStyle::create();
-    noScrollbarStyle->setStyleType(SCROLLBAR);
+    noScrollbarStyle->setStyleType(PseudoIdScrollbar);
     noScrollbarStyle->setDisplay(NONE);
     textBlockStyle->addCachedPseudoStyle(noScrollbarStyle);
-    textBlockStyle->setHasPseudoStyle(SCROLLBAR);
+    textBlockStyle->setHasPseudoStyle(PseudoIdScrollbar);
 
     return textBlockStyle.release();
 }
 
 bool LayoutTextControlSingleLine::textShouldBeTruncated() const
 {
-    return document().focusedElement() != node() && styleRef().textOverflow() == TextOverflowEllipsis;
+    return document().focusedElement() != node() && styleRef().getTextOverflow() == TextOverflowEllipsis;
 }
 
 void LayoutTextControlSingleLine::autoscroll(const IntPoint& position)

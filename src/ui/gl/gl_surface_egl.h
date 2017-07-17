@@ -9,6 +9,7 @@
 #include <windows.h>
 #endif
 
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
@@ -19,10 +20,11 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_surface_overlay.h"
 
-namespace gfx {
+namespace gl {
 
 // Get default EGL display for GLSurfaceEGL (differs by platform).
 EGLNativeDisplayType GetPlatformDefaultEGLNativeDisplay();
@@ -100,18 +102,18 @@ class GL_EXPORT NativeViewGLSurfaceEGL : public GLSurfaceEGL {
   gfx::SwapResult PostSubBuffer(int x, int y, int width, int height) override;
   bool SupportsCommitOverlayPlanes() override;
   gfx::SwapResult CommitOverlayPlanes() override;
-  VSyncProvider* GetVSyncProvider() override;
+  gfx::VSyncProvider* GetVSyncProvider() override;
   bool ScheduleOverlayPlane(int z_order,
-                            OverlayTransform transform,
-                            gl::GLImage* image,
-                            const Rect& bounds_rect,
-                            const RectF& crop_rect) override;
+                            gfx::OverlayTransform transform,
+                            GLImage* image,
+                            const gfx::Rect& bounds_rect,
+                            const gfx::RectF& crop_rect) override;
   bool FlipsVertically() const override;
   bool BuffersFlipped() const override;
 
-  // Create a NativeViewGLSurfaceEGL with an externally provided VSyncProvider.
-  // Takes ownership of the VSyncProvider.
-  virtual bool Initialize(scoped_ptr<VSyncProvider> sync_provider);
+  // Create a NativeViewGLSurfaceEGL with an externally provided
+  // gfx::VSyncProvider. Takes ownership of the gfx::VSyncProvider.
+  virtual bool Initialize(std::unique_ptr<gfx::VSyncProvider> sync_provider);
 
   // Takes care of the platform dependant bits, of any, for creating the window.
   virtual bool InitializeNativeWindow();
@@ -134,7 +136,7 @@ class GL_EXPORT NativeViewGLSurfaceEGL : public GLSurfaceEGL {
   bool supports_post_sub_buffer_;
   bool flips_vertically_;
 
-  scoped_ptr<VSyncProvider> vsync_provider_;
+  std::unique_ptr<gfx::VSyncProvider> vsync_provider_;
 
   int swap_interval_;
 
@@ -209,6 +211,6 @@ class GL_EXPORT SurfacelessEGL : public GLSurfaceEGL {
   DISALLOW_COPY_AND_ASSIGN(SurfacelessEGL);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_SURFACE_EGL_H_

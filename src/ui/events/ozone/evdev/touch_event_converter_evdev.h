@@ -9,11 +9,11 @@
 #include <stdint.h>
 
 #include <bitset>
+#include <memory>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_pump_libevent.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
@@ -73,8 +73,8 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
 
   void ReportEvent(const InProgressTouchEvdev& event,
                    EventType event_type,
-                   const base::TimeDelta& delta);
-  void ReportEvents(base::TimeDelta delta);
+                   base::TimeTicks timestamp);
+  void ReportEvents(base::TimeTicks timestamp);
 
   void UpdateTrackingId(int slot, int tracking_id);
   void ReleaseTouches();
@@ -124,7 +124,7 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   std::vector<InProgressTouchEvdev> events_;
 
   // Finds touch noise.
-  scoped_ptr<TouchNoiseFinder> touch_noise_finder_;
+  std::unique_ptr<TouchNoiseFinder> touch_noise_finder_;
 
   // Records the recent touch events. It is used to fill the feedback reports
   TouchEventLogEvdev touch_evdev_debug_buffer_;

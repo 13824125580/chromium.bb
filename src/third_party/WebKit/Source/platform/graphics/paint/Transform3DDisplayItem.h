@@ -9,7 +9,6 @@
 #include "platform/graphics/paint/DisplayItem.h"
 #include "platform/transforms/TransformationMatrix.h"
 #include "wtf/Assertions.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -65,7 +64,7 @@ private:
 #if ENABLE(ASSERT)
     bool isEndAndPairedWith(DisplayItem::Type otherType) const final
     {
-        return DisplayItem::transform3DTypeToEndTransform3DType(otherType) == type();
+        return DisplayItem::transform3DTypeToEndTransform3DType(otherType) == getType();
     }
 #endif
 };

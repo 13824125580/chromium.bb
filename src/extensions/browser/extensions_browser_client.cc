@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "components/update_client/update_client.h"
+#include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_error.h"
 #include "extensions/browser/updater/update_client_config.h"
 
@@ -22,14 +23,28 @@ ExtensionsBrowserClient::CreateUpdateClient(content::BrowserContext* context) {
   return scoped_refptr<update_client::UpdateClient>(nullptr);
 }
 
-int ExtensionsBrowserClient::GetTabIdForWebContents(
-    content::WebContents* web_contents) {
-  return -1;
+std::unique_ptr<ExtensionApiFrameIdMapHelper>
+ExtensionsBrowserClient::CreateExtensionApiFrameIdMapHelper(
+    ExtensionApiFrameIdMap* map) {
+  return nullptr;
 }
 
-void ExtensionsBrowserClient::ReportError(content::BrowserContext* context,
-                                          scoped_ptr<ExtensionError> error) {
+std::unique_ptr<content::BluetoothChooser>
+ExtensionsBrowserClient::CreateBluetoothChooser(
+    content::RenderFrameHost* frame,
+    const content::BluetoothChooser::EventHandler& event_handler) {
+  return nullptr;
+}
+
+void ExtensionsBrowserClient::ReportError(
+    content::BrowserContext* context,
+    std::unique_ptr<ExtensionError> error) {
   LOG(ERROR) << error->GetDebugString();
+}
+
+bool ExtensionsBrowserClient::IsActivityLoggingEnabled(
+    content::BrowserContext* context) {
+  return false;
 }
 
 ExtensionsBrowserClient* ExtensionsBrowserClient::Get() {

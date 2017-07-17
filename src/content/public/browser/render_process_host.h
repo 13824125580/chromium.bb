@@ -23,11 +23,8 @@ class GURL;
 
 namespace base {
 class CommandLine;
+class SharedPersistentMemoryAllocator;
 class TimeDelta;
-}
-
-namespace gpu {
-union ValueState;
 }
 
 namespace media {
@@ -35,12 +32,17 @@ class AudioOutputController;
 class MediaKeys;
 }
 
+namespace shell {
+class Connection;
+class InterfaceProvider;
+class InterfaceRegistry;
+}
+
 namespace content {
 class BrowserContext;
 class BrowserMessageFilter;
 class RenderProcessHostObserver;
 class RenderWidgetHost;
-class ServiceRegistry;
 class StoragePartition;
 struct GlobalRequestID;
 
@@ -113,10 +115,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual bool IsForGuestsOnly() const = 0;
 
   // Returns the storage partition associated with this process.
-  //
-  // TODO(nasko): Remove this function from the public API once
-  // URLRequestContextGetter's creation is moved into StoragePartition.
-  // http://crbug.com/158595
   virtual StoragePartition* GetStoragePartition() const = 0;
 
   // Try to shut down the associated renderer process without running unload
@@ -232,11 +230,13 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // process associated with this RenderProcessHost.
   virtual void SetWebRtcLogMessageCallback(
       base::Callback<void(const std::string&)> callback) = 0;
+  virtual void ClearWebRtcLogMessageCallback() = 0;
 
-  typedef base::Callback<void(scoped_ptr<uint8_t[]> packet_header,
+  typedef base::Callback<void(std::unique_ptr<uint8_t[]> packet_header,
                               size_t header_length,
                               size_t packet_length,
-                              bool incoming)> WebRtcRtpPacketCallback;
+                              bool incoming)>
+      WebRtcRtpPacketCallback;
 
   typedef base::Callback<void(bool incoming, bool outgoing)>
       WebRtcStopRtpDumpCallback;
@@ -257,8 +257,24 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // have changed.
   virtual void NotifyTimezoneChange(const std::string& zone_id) = 0;
 
-  // Returns the ServiceRegistry for this process.
-  virtual ServiceRegistry* GetServiceRegistry() = 0;
+  // Returns the shell::InterfaceRegistry the browser process uses to expose
+  // interfaces to the renderer.
+  virtual shell::InterfaceRegistry* GetInterfaceRegistry() = 0;
+
+  // Returns the shell::InterfaceProvider the browser process can use to bind
+  // interfaces exposed to it from the renderer.
+  virtual shell::InterfaceProvider* GetRemoteInterfaces() = 0;
+
+  // Returns the shell connection for this process.
+  virtual shell::Connection* GetChildConnection() = 0;
+
+  // Extracts any persistent-memory-allocator used for renderer metrics.
+  // Ownership is passed to the caller. To support sharing of histogram data
+  // between the Renderer and the Browser, the allocator is created when the
+  // process is created and later retrieved by the SubprocessMetricsProvider
+  // for management.
+  virtual std::unique_ptr<base::SharedPersistentMemoryAllocator>
+  TakeMetricsAllocator() = 0;
 
   // Return true if this is a host for an externally managed process.
   virtual bool IsProcessManagedExternally() const = 0;
@@ -269,18 +285,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // value.
   // Note: Do not use! Will disappear after PlzNavitate is completed.
   virtual const base::TimeTicks& GetInitTimeForNavigationMetrics() const = 0;
-
-  // Returns whether or not the CHROMIUM_subscribe_uniform WebGL extension
-  // is currently enabled
-  virtual bool SubscribeUniformEnabled() const = 0;
-
-  // Handlers for subscription target changes to update subscription_set_
-  virtual void OnAddSubscription(unsigned int target) = 0;
-  virtual void OnRemoveSubscription(unsigned int target) = 0;
-
-  // Send a new ValueState to the Gpu Service to update a subscription target
-  virtual void SendUpdateValueState(
-      unsigned int target, const gpu::ValueState& state) = 0;
 
   // Retrieves the list of AudioOutputController objects associated
   // with this object and passes it to the callback you specify, on
@@ -306,6 +310,9 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // to the Worker in this renderer process has changed.
   virtual void IncrementWorkerRefCount() = 0;
   virtual void DecrementWorkerRefCount() = 0;
+
+  // Purges and suspends the renderer process.
+  virtual void PurgeAndSuspend() = 0;
 
   // Returns the current number of active views in this process.  Excludes
   // any RenderViewHosts that are swapped out.

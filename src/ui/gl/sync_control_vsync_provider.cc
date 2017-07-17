@@ -23,14 +23,15 @@ const int64_t kMaxVsyncIntervalUs = base::Time::kMicrosecondsPerSecond / 10;
 const double kRelativeIntervalDifferenceThreshold = 0.05;
 #endif
 
-namespace gfx {
+namespace gl {
 
-SyncControlVSyncProvider::SyncControlVSyncProvider()
-    : VSyncProvider(), last_media_stream_counter_(0), invalid_msc_(false) {
+SyncControlVSyncProvider::SyncControlVSyncProvider() : gfx::VSyncProvider() {
+#if defined(OS_LINUX)
   // On platforms where we can't get an accurate reading on the refresh
   // rate we fall back to the assumption that we're displaying 60 frames
   // per second.
   last_good_interval_ = base::TimeDelta::FromSeconds(1) / 60;
+#endif
 }
 
 SyncControlVSyncProvider::~SyncControlVSyncProvider() {}
@@ -108,7 +109,7 @@ void SyncControlVSyncProvider::GetVSyncParameters(
     last_computed_intervals_.pop();
 
   int32_t numerator, denominator;
-  if (GetMscRate(&numerator, &denominator)) {
+  if (GetMscRate(&numerator, &denominator) && numerator) {
     last_computed_intervals_.push(base::TimeDelta::FromSeconds(denominator) /
                                   numerator);
   } else if (!last_timebase_.is_null()) {
@@ -157,4 +158,4 @@ void SyncControlVSyncProvider::GetVSyncParameters(
 #endif  // defined(OS_LINUX)
 }
 
-}  // namespace gfx
+}  // namespace gl

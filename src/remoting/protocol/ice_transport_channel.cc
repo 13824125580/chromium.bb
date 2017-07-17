@@ -10,14 +10,14 @@
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/utils.h"
 #include "net/base/net_errors.h"
 #include "remoting/protocol/channel_socket_adapter.h"
 #include "remoting/protocol/port_allocator_factory.h"
 #include "remoting/protocol/transport_context.h"
 #include "third_party/webrtc/base/network.h"
-#include "third_party/webrtc/p2p/base/constants.h"
+#include "third_party/webrtc/p2p/base/p2pconstants.h"
 #include "third_party/webrtc/p2p/base/p2ptransportchannel.h"
 #include "third_party/webrtc/p2p/base/port.h"
 #include "third_party/webrtc/p2p/client/httpportallocator.h"
@@ -26,6 +26,8 @@ namespace remoting {
 namespace protocol {
 
 namespace {
+
+const int kIceUfragLength = 16;
 
 // Utility function to map a cricket::Candidate string type to a
 // TransportRoute::RouteType enum value.
@@ -49,7 +51,7 @@ IceTransportChannel::IceTransportChannel(
     scoped_refptr<TransportContext> transport_context)
     : transport_context_(transport_context),
       ice_username_fragment_(
-          rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH)),
+          rtc::CreateRandomString(kIceUfragLength)),
       connect_attempts_left_(
           transport_context->network_settings().ice_reconnect_attempts),
       weak_factory_(this) {
@@ -88,7 +90,7 @@ void IceTransportChannel::Connect(const std::string& name,
   // Create P2PTransportChannel, attach signal handlers and connect it.
   // TODO(sergeyu): Specify correct component ID for the channel.
   channel_.reset(new cricket::P2PTransportChannel(
-      std::string(), 0, nullptr, port_allocator_.get()));
+      std::string(), 0, port_allocator_.get()));
   std::string ice_password = rtc::CreateRandomString(cricket::ICE_PWD_LENGTH);
   channel_->SetIceProtocolType(cricket::ICEPROTO_RFC5245);
   channel_->SetIceRole((transport_context_->role() == TransportRole::CLIENT)
@@ -134,7 +136,7 @@ void IceTransportChannel::Connect(const std::string& name,
 
 void IceTransportChannel::NotifyConnected() {
   // Create P2PDatagramSocket adapter for the P2PTransportChannel.
-  scoped_ptr<TransportChannelSocketAdapter> socket(
+  std::unique_ptr<TransportChannelSocketAdapter> socket(
       new TransportChannelSocketAdapter(channel_.get()));
   socket->SetOnDestroyedCallback(base::Bind(
       &IceTransportChannel::OnChannelDestroyed, base::Unretained(this)));

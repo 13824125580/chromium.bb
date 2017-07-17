@@ -7,8 +7,10 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/enrollment/auto_enrollment_controller.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
@@ -66,7 +68,7 @@ EnrollmentHandlerChromeOS::EnrollmentHandlerChromeOS(
     EnterpriseInstallAttributes* install_attributes,
     ServerBackedStateKeysBroker* state_keys_broker,
     chromeos::OwnerSettingsServiceChromeOS* owner_settings_service,
-    scoped_ptr<CloudPolicyClient> client,
+    std::unique_ptr<CloudPolicyClient> client,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner,
     const EnrollmentConfig& enrollment_config,
     const std::string& auth_token,
@@ -116,7 +118,7 @@ void EnrollmentHandlerChromeOS::StartEnrollment() {
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
-scoped_ptr<CloudPolicyClient> EnrollmentHandlerChromeOS::ReleaseClient() {
+std::unique_ptr<CloudPolicyClient> EnrollmentHandlerChromeOS::ReleaseClient() {
   Stop();
   return std::move(client_);
 }
@@ -136,9 +138,9 @@ void EnrollmentHandlerChromeOS::OnPolicyFetched(CloudPolicyClient* client) {
     return;
   }
 
-  scoped_ptr<DeviceCloudPolicyValidator> validator(
+  std::unique_ptr<DeviceCloudPolicyValidator> validator(
       DeviceCloudPolicyValidator::Create(
-          scoped_ptr<em::PolicyFetchResponse>(
+          std::unique_ptr<em::PolicyFetchResponse>(
               new em::PolicyFetchResponse(*policy)),
           background_task_runner_));
 
@@ -414,10 +416,9 @@ void EnrollmentHandlerChromeOS::HandleLockDeviceResult(
         // InstallAttributes not ready yet, retry later.
         LOG(WARNING) << "Install Attributes not ready yet will retry in "
                      << kLockRetryIntervalMs << "ms.";
-        base::MessageLoop::current()->PostDelayedTask(
-            FROM_HERE,
-            base::Bind(&EnrollmentHandlerChromeOS::StartLockDevice,
-                       weak_ptr_factory_.GetWeakPtr()),
+        base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+            FROM_HERE, base::Bind(&EnrollmentHandlerChromeOS::StartLockDevice,
+                                  weak_ptr_factory_.GetWeakPtr()),
             base::TimeDelta::FromMilliseconds(kLockRetryIntervalMs));
         lockbox_init_duration_ += kLockRetryIntervalMs;
       } else {

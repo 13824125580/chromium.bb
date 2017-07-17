@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
-import android.content.Context;
 import android.text.TextUtils;
 
 import org.chromium.base.CommandLine;
@@ -21,6 +20,10 @@ public class ContextualSearchFieldTrial {
     private static final String DISABLED_PARAM = "disabled";
     private static final String ENABLED_VALUE = "true";
 
+    static final String MANDATORY_PROMO_ENABLED = "mandatory_promo_enabled";
+    static final String MANDATORY_PROMO_LIMIT = "mandatory_promo_limit";
+    static final int MANDATORY_PROMO_DEFAULT_LIMIT = 10;
+
     private static final String PEEK_PROMO_FORCED = "peek_promo_forced";
     @VisibleForTesting
     static final String PEEK_PROMO_ENABLED = "peek_promo_enabled";
@@ -30,7 +33,7 @@ public class ContextualSearchFieldTrial {
     private static final String DISABLE_SEARCH_TERM_RESOLUTION = "disable_search_term_resolution";
     private static final String DISABLE_EXTRA_SEARCH_BAR_ANIMATIONS =
             "disable_extra_search_bar_animations";
-    private static final String ENABLE_DIGIT_BLACKLIST = "enable_digit_blacklist";
+    private static final String ENABLE_BLACKLIST = "enable_blacklist";
 
     // Translation.  All these members are private, except for usage by testing.
     // Master switch, needed to enable any translate code for Contextual Search.
@@ -60,9 +63,24 @@ public class ContextualSearchFieldTrial {
     // Quick Answers.
     private static final String ENABLE_QUICK_ANSWERS = "enable_quick_answers";
 
+    // Tap triggering suppression.
+    private static final String SUPPRESSION_TAPS = "suppression_taps";
+    // Enables collection of recent scroll seen/unseen histograms.
+    // TODO(donnd): remove all supporting code once short-lived data collection is done.
+    private static final String ENABLE_RECENT_SCROLL_COLLECTION = "enable_recent_scroll_collection";
+    // Set non-zero to establish an recent scroll suppression threshold for taps.
+    private static final String RECENT_SCROLL_DURATION_MS = "recent_scroll_duration_ms";
+    // TODO(donnd): remove all supporting code once short-lived data collection is done.
+    private static final String ENABLE_SCREEN_TOP_COLLECTION = "enable_screen_top_collection";
+    private static final String SCREEN_TOP_SUPPRESSION_DPS = "screen_top_suppression_dps";
+    private static final String ENABLE_BAR_OVERLAP_COLLECTION = "enable_bar_overlap_collection";
+    private static final String BAR_OVERLAP_SUPPRESSION_ENABLED = "enable_bar_overlap_suppression";
+
     // Cached values to avoid repeated and redundant JNI operations.
     private static Boolean sEnabled;
     private static Boolean sDisableSearchTermResolution;
+    private static Boolean sIsMandatoryPromoEnabled;
+    private static Integer sMandatoryPromoLimit;
     private static Boolean sIsPeekPromoEnabled;
     private static Integer sPeekPromoMaxCount;
     private static Boolean sIsTranslationEnabled;
@@ -73,6 +91,13 @@ public class ContextualSearchFieldTrial {
     private static Boolean sIsEnglishTargetTranslationEnabled;
     private static Boolean sIsServerControlledOneboxEnabled;
     private static Boolean sIsQuickAnswersEnabled;
+    private static Boolean sIsRecentScrollCollectionEnabled;
+    private static Integer sRecentScrollDurationMs;
+    private static Boolean sIsScreenTopCollectionEnabled;
+    private static Integer sScreenTopSuppressionDps;
+    private static Boolean sIsBarOverlapCollectionEnabled;
+    private static Boolean sIsBarOverlapSuppressionEnabled;
+    private static Integer sSuppressionTaps;
 
     /**
      * Don't instantiate.
@@ -82,17 +107,16 @@ public class ContextualSearchFieldTrial {
     /**
      * Checks the current Variations parameters associated with the active group as well as the
      * Chrome preference to determine if the service is enabled.
-     * @param context Context used to determine whether the device is a tablet or a phone.
      * @return Whether Contextual Search is enabled or not.
      */
-    public static boolean isEnabled(Context context) {
+    public static boolean isEnabled() {
         if (sEnabled == null) {
-            sEnabled = detectEnabled(context);
+            sEnabled = detectEnabled();
         }
         return sEnabled.booleanValue();
     }
 
-    private static boolean detectEnabled(Context context) {
+    private static boolean detectEnabled() {
         if (SysUtils.isLowEndDevice()) {
             return false;
         }
@@ -140,6 +164,28 @@ public class ContextualSearchFieldTrial {
     }
 
     /**
+     * @return Whether the Mandatory Promo is enabled.
+     */
+    static boolean isMandatoryPromoEnabled() {
+        if (sIsMandatoryPromoEnabled == null) {
+            sIsMandatoryPromoEnabled = getBooleanParam(MANDATORY_PROMO_ENABLED);
+        }
+        return sIsMandatoryPromoEnabled.booleanValue();
+    }
+
+    /**
+     * @return The number of times the Promo should be seen before it becomes mandatory.
+     */
+    static int getMandatoryPromoLimit() {
+        if (sMandatoryPromoLimit == null) {
+            sMandatoryPromoLimit = getIntParamValueOrDefault(
+                    MANDATORY_PROMO_LIMIT,
+                    MANDATORY_PROMO_DEFAULT_LIMIT);
+        }
+        return sMandatoryPromoLimit.intValue();
+    }
+
+    /**
      * @return Whether the Peek Promo is forcibly enabled (used for testing).
      */
     static boolean isPeekPromoForced() {
@@ -164,10 +210,10 @@ public class ContextualSearchFieldTrial {
     }
 
     /**
-     * @return Whether the digit blacklist is enabled.
+     * @return Whether the blacklist is enabled.
      */
-    static boolean isDigitBlacklistEnabled() {
-        return getBooleanParam(ENABLE_DIGIT_BLACKLIST);
+    static boolean isBlacklistEnabled() {
+        return getBooleanParam(ENABLE_BLACKLIST);
     }
 
     /**
@@ -264,6 +310,89 @@ public class ContextualSearchFieldTrial {
             sIsQuickAnswersEnabled = getBooleanParam(ENABLE_QUICK_ANSWERS);
         }
         return sIsQuickAnswersEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether collecting metrics for tap triggering after a scroll is enabled.
+     */
+    static boolean isRecentScrollCollectionEnabled() {
+        if (sIsRecentScrollCollectionEnabled == null) {
+            sIsRecentScrollCollectionEnabled = getBooleanParam(ENABLE_RECENT_SCROLL_COLLECTION);
+        }
+        return sIsRecentScrollCollectionEnabled.booleanValue();
+    }
+
+    /**
+     * Gets the duration to use for suppressing Taps after a recent scroll, or {@code 0} if no
+     * suppression is configured.
+     * @return The period of time after a scroll when tap triggering is suppressed.
+     */
+    static int getRecentScrollSuppressionDurationMs() {
+        if (sRecentScrollDurationMs == null) {
+            sRecentScrollDurationMs = getIntParamValueOrDefault(RECENT_SCROLL_DURATION_MS, 0);
+        }
+        return sRecentScrollDurationMs.intValue();
+    }
+
+    /**
+     * @return Whether collecting metrics for tap triggering near the top of the screen is enabled.
+     */
+    static boolean isScreenTopCollectionEnabled() {
+        if (sIsScreenTopCollectionEnabled == null) {
+            sIsScreenTopCollectionEnabled = getBooleanParam(ENABLE_SCREEN_TOP_COLLECTION);
+        }
+        return sIsScreenTopCollectionEnabled.booleanValue();
+    }
+
+    /**
+     * Gets a Y value limit that will suppress a Tap near the top of the screen.
+     * Any Y value less than the limit will suppress the Tap trigger.
+     * @return The Y value triggering limit in DPs, a value of zero will not limit.
+     */
+    static int getScreenTopSuppressionDps() {
+        if (sScreenTopSuppressionDps == null) {
+            sScreenTopSuppressionDps = getIntParamValueOrDefault(SCREEN_TOP_SUPPRESSION_DPS, 0);
+        }
+        return sScreenTopSuppressionDps.intValue();
+    }
+
+    /**
+     * @return Whether collecting data on Bar overlap is enabled.
+     */
+    static boolean isBarOverlapCollectionEnabled() {
+        if (sIsBarOverlapCollectionEnabled == null) {
+            sIsBarOverlapCollectionEnabled = getBooleanParam(ENABLE_BAR_OVERLAP_COLLECTION);
+        }
+        return sIsBarOverlapCollectionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed by a selection nearly overlapping the normal
+     *         Bar peeking location.
+     */
+    static boolean isBarOverlapSuppressionEnabled() {
+        if (sIsBarOverlapSuppressionEnabled == null) {
+            sIsBarOverlapSuppressionEnabled = getBooleanParam(BAR_OVERLAP_SUPPRESSION_ENABLED);
+        }
+        return sIsBarOverlapSuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering by Tap is suppressed (through a combination of various signals).
+     */
+    static boolean isTapSuppressionEnabled() {
+        return getSuppressionTaps() > 0;
+    }
+
+    /**
+     * @return The suppression threshold, expressed as the number of Taps since the last open where
+     *         we start suppressing the UX on Tap.
+     */
+    static int getSuppressionTaps() {
+        if (sSuppressionTaps == null) {
+            sSuppressionTaps = getIntParamValueOrDefault(SUPPRESSION_TAPS, 0);
+        }
+        return sSuppressionTaps.intValue();
     }
 
     // --------------------------------------------------------------------------------------------

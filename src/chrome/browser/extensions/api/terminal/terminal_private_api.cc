@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/terminal/terminal_extension_helper.h"
@@ -67,7 +68,7 @@ void NotifyProcessOutput(content::BrowserContext* browser_context,
     return;
   }
 
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Append(new base::FundamentalValue(tab_id));
   args->Append(new base::FundamentalValue(terminal_id));
   args->Append(new base::StringValue(output_type));
@@ -76,7 +77,7 @@ void NotifyProcessOutput(content::BrowserContext* browser_context,
   extensions::EventRouter* event_router =
       extensions::EventRouter::Get(browser_context);
   if (event_router) {
-    scoped_ptr<extensions::Event> event(new extensions::Event(
+    std::unique_ptr<extensions::Event> event(new extensions::Event(
         extensions::events::TERMINAL_PRIVATE_ON_PROCESS_OUTPUT,
         terminal_private::OnProcessOutput::kEventName, std::move(args)));
     event_router->DispatchEventToExtension(extension_id, std::move(event));
@@ -107,7 +108,7 @@ TerminalPrivateOpenTerminalProcessFunction::
 
 ExtensionFunction::ResponseAction
 TerminalPrivateOpenTerminalProcessFunction::Run() {
-  scoped_ptr<OpenTerminalProcess::Params> params(
+  std::unique_ptr<OpenTerminalProcess::Params> params(
       OpenTerminalProcess::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -169,12 +170,12 @@ void TerminalPrivateOpenTerminalProcessFunction::RespondOnUIThread(
     SendResponse(false);
     return;
   }
-  SetResult(new base::FundamentalValue(terminal_id));
+  SetResult(base::MakeUnique<base::FundamentalValue>(terminal_id));
   SendResponse(true);
 }
 
 ExtensionFunction::ResponseAction TerminalPrivateSendInputFunction::Run() {
-  scoped_ptr<SendInput::Params> params(SendInput::Params::Create(*args_));
+  std::unique_ptr<SendInput::Params> params(SendInput::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   // Registry lives on the FILE thread.
@@ -197,7 +198,7 @@ void TerminalPrivateSendInputFunction::SendInputOnFileThread(
 }
 
 void TerminalPrivateSendInputFunction::RespondOnUIThread(bool success) {
-  SetResult(new base::FundamentalValue(success));
+  SetResult(base::MakeUnique<base::FundamentalValue>(success));
   SendResponse(true);
 }
 
@@ -206,7 +207,7 @@ TerminalPrivateCloseTerminalProcessFunction::
 
 ExtensionFunction::ResponseAction
 TerminalPrivateCloseTerminalProcessFunction::Run() {
-  scoped_ptr<CloseTerminalProcess::Params> params(
+  std::unique_ptr<CloseTerminalProcess::Params> params(
       CloseTerminalProcess::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -232,7 +233,7 @@ void TerminalPrivateCloseTerminalProcessFunction::CloseOnFileThread(
 
 void TerminalPrivateCloseTerminalProcessFunction::RespondOnUIThread(
     bool success) {
-  SetResult(new base::FundamentalValue(success));
+  SetResult(base::MakeUnique<base::FundamentalValue>(success));
   SendResponse(true);
 }
 
@@ -241,7 +242,7 @@ TerminalPrivateOnTerminalResizeFunction::
 
 ExtensionFunction::ResponseAction
 TerminalPrivateOnTerminalResizeFunction::Run() {
-  scoped_ptr<OnTerminalResize::Params> params(
+  std::unique_ptr<OnTerminalResize::Params> params(
       OnTerminalResize::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -266,14 +267,14 @@ void TerminalPrivateOnTerminalResizeFunction::OnResizeOnFileThread(
 }
 
 void TerminalPrivateOnTerminalResizeFunction::RespondOnUIThread(bool success) {
-  SetResult(new base::FundamentalValue(success));
+  SetResult(base::MakeUnique<base::FundamentalValue>(success));
   SendResponse(true);
 }
 
 TerminalPrivateAckOutputFunction::~TerminalPrivateAckOutputFunction() {}
 
 ExtensionFunction::ResponseAction TerminalPrivateAckOutputFunction::Run() {
-  scoped_ptr<AckOutput::Params> params(AckOutput::Params::Create(*args_));
+  std::unique_ptr<AckOutput::Params> params(AckOutput::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   content::WebContents* caller_contents = GetSenderWebContents();

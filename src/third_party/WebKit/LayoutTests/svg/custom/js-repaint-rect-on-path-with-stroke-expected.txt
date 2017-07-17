@@ -1,20 +1,44 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [200, 50, 100, 50],
-        [174, 30, 126, 90],
-        [50, 50, 100, 50],
-        [50, 30, 126, 90]
-      ],
-      "paintInvalidationClients": [
-        "LayoutSVGRoot svg",
-        "LayoutSVGPath path id='path'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutSVGRoot svg",
+          "rect": [174, 30, 126, 90],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutSVGRoot svg",
+          "rect": [50, 30, 126, 90],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutSVGPath path id='path'",
+          "rect": [200, 50, 100, 50],
+          "reason": "full"
+        },
+        {
+          "object": "LayoutSVGPath path id='path'",
+          "rect": [50, 50, 100, 50],
+          "reason": "full"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutSVGRoot svg",
+      "reason": "bounds change"
+    },
+    {
+      "object": "LayoutSVGPath path id='path'",
+      "reason": "full"
     }
   ]
 }

@@ -27,14 +27,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
-import unittest
 
 from webkitpy.common.system import outputcapture
 from webkitpy.common.system.executive_mock import MockExecutive
 from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.layout_tests.port import port_testcase
 from webkitpy.layout_tests.port import win
-from webkitpy.tool.mocktool import MockOptions
+from webkitpy.tool.mock_tool import MockOptions
 
 
 class WinPortTest(port_testcase.PortTestCase):
@@ -56,7 +55,7 @@ class WinPortTest(port_testcase.PortTestCase):
 
     def test_setup_environ_for_server_cygpath(self):
         port = self.make_port()
-        env = port.setup_environ_for_server(port.driver_name())
+        env = port.setup_environ_for_server()
         self.assertEqual(env['CYGWIN_PATH'], '/mock-checkout/third_party/cygwin/bin')
 
     def test_setup_environ_for_server_register_cygwin(self):
@@ -144,7 +143,8 @@ class WinPortTest(port_testcase.PortTestCase):
 
     def test_driver_name_option(self):
         self.assertTrue(self.make_port()._path_to_driver().endswith('content_shell.exe'))
-        self.assertTrue(self.make_port(options=MockOptions(driver_name='OtherDriver'))._path_to_driver().endswith('OtherDriver.exe'))
+        self.assertTrue(self.make_port(options=MockOptions(driver_name='OtherDriver')
+                                       )._path_to_driver().endswith('OtherDriver.exe'))
 
     def test_path_to_image_diff(self):
         self.assertEqual(self.make_port()._path_to_image_diff(), '/mock-checkout/out/Release/image_diff.exe')

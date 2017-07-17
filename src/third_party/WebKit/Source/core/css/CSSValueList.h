@@ -29,21 +29,22 @@
 namespace blink {
 
 class CORE_EXPORT CSSValueList : public CSSValue {
+    WTF_MAKE_NONCOPYABLE(CSSValueList);
 public:
-    using iterator = WillBeHeapVector<RefPtrWillBeMember<CSSValue>, 4>::iterator;
-    using const_iterator = WillBeHeapVector<RefPtrWillBeMember<CSSValue>, 4>::const_iterator;
+    using iterator = HeapVector<Member<const CSSValue>, 4>::iterator;
+    using const_iterator = HeapVector<Member<const CSSValue>, 4>::const_iterator;
 
-    static PassRefPtrWillBeRawPtr<CSSValueList> createCommaSeparated()
+    static CSSValueList* createCommaSeparated()
     {
-        return adoptRefWillBeNoop(new CSSValueList(CommaSeparator));
+        return new CSSValueList(CommaSeparator);
     }
-    static PassRefPtrWillBeRawPtr<CSSValueList> createSpaceSeparated()
+    static CSSValueList* createSpaceSeparated()
     {
-        return adoptRefWillBeNoop(new CSSValueList(SpaceSeparator));
+        return new CSSValueList(SpaceSeparator);
     }
-    static PassRefPtrWillBeRawPtr<CSSValueList> createSlashSeparated()
+    static CSSValueList* createSlashSeparated()
     {
-        return adoptRefWillBeNoop(new CSSValueList(SlashSeparator));
+        return new CSSValueList(SlashSeparator);
     }
 
     iterator begin() { return m_values.begin(); }
@@ -52,16 +53,12 @@ public:
     const_iterator end() const { return m_values.end(); }
 
     size_t length() const { return m_values.size(); }
-    CSSValue* item(size_t index) { return m_values[index].get(); }
-    const CSSValue* item(size_t index) const { return m_values[index].get(); }
-    CSSValue* itemWithBoundsCheck(size_t index) { return index < m_values.size() ? m_values[index].get() : nullptr; }
-    const CSSValue* itemWithBoundsCheck(size_t index) const { return index < m_values.size() ? m_values[index].get() : nullptr; }
+    const CSSValue& item(size_t index) const { return *m_values[index]; }
 
-    void append(PassRefPtrWillBeRawPtr<CSSValue> value) { m_values.append(value); }
-    void prepend(PassRefPtrWillBeRawPtr<CSSValue> value) { m_values.prepend(value); }
-    bool removeAll(CSSValue*);
-    bool hasValue(CSSValue*) const;
-    PassRefPtrWillBeRawPtr<CSSValueList> copy();
+    void append(const CSSValue& value) { m_values.append(value); }
+    bool removeAll(const CSSValue&);
+    bool hasValue(const CSSValue&) const;
+    CSSValueList* copy() const;
 
     String customCSSText() const;
     bool equals(const CSSValueList&) const;
@@ -76,7 +73,7 @@ protected:
 private:
     explicit CSSValueList(ValueListSeparator);
 
-    WillBeHeapVector<RefPtrWillBeMember<CSSValue>, 4> m_values;
+    HeapVector<Member<const CSSValue>, 4> m_values;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSValueList, isValueList());

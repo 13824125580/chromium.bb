@@ -32,6 +32,8 @@
 
 namespace blink {
 
+class LayoutBlockFlow;
+
 // LayoutInline is the LayoutObject associated with display: inline.
 // This is called an "inline box" in CSS 2.1.
 // http://www.w3.org/TR/CSS2/visuren.html#inline-boxes
@@ -112,8 +114,6 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
 public:
     explicit LayoutInline(Element*);
 
-    static LayoutInline* createAnonymous(Document*);
-
     LayoutObject* firstChild() const { ASSERT(children() == virtualChildren()); return children()->firstChild(); }
     LayoutObject* lastChild() const { ASSERT(children() == virtualChildren()); return children()->lastChild(); }
 
@@ -138,11 +138,11 @@ public:
     LayoutUnit marginUnder() const final;
 
     void absoluteRects(Vector<IntRect>&, const LayoutPoint& accumulatedOffset) const final;
-    void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
+    void absoluteQuads(Vector<FloatQuad>&) const override;
 
-    LayoutSize offsetFromContainer(const LayoutObject*, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const final;
+    LayoutSize offsetFromContainer(const LayoutObject*) const final;
 
-    IntRect linesBoundingBox() const;
+    LayoutRect linesBoundingBox() const;
     LayoutRect visualOverflowRect() const final;
 
     InlineFlowBox* createAndAppendInlineFlowBox();
@@ -190,7 +190,7 @@ protected:
 
     void computeSelfHitTestRects(Vector<LayoutRect>& rects, const LayoutPoint& layerOffset) const override;
 
-    void invalidateDisplayItemClients(const LayoutBoxModelObject& paintInvalidationContainer, PaintInvalidationReason) const override;
+    void invalidateDisplayItemClients(PaintInvalidationReason) const override;
 
 private:
     LayoutObjectChildList* virtualChildren() final { return children(); }
@@ -217,9 +217,9 @@ private:
 
     void moveChildrenToIgnoringContinuation(LayoutInline* to, LayoutObject* startChild);
 
-    void splitInlines(LayoutBlock* fromBlock, LayoutBlock* toBlock, LayoutBlock* middleBlock,
+    void splitInlines(LayoutBlockFlow* fromBlock, LayoutBlockFlow* toBlock, LayoutBlockFlow* middleBlock,
         LayoutObject* beforeChild, LayoutBoxModelObject* oldCont);
-    void splitFlow(LayoutObject* beforeChild, LayoutBlock* newBlockBox,
+    void splitFlow(LayoutObject* beforeChild, LayoutBlockFlow* newBlockBox,
         LayoutObject* newChild, LayoutBoxModelObject* oldCont);
 
     void layout() final { ASSERT_NOT_REACHED(); } // Do nothing for layout()
@@ -230,30 +230,30 @@ private:
 
     PaintLayerType layerTypeRequired() const override;
 
-    LayoutUnit offsetLeft() const final;
-    LayoutUnit offsetTop() const final;
-    LayoutUnit offsetWidth() const final { return LayoutUnit(linesBoundingBox().width()); }
-    LayoutUnit offsetHeight() const final { return LayoutUnit(linesBoundingBox().height()); }
+    LayoutUnit offsetLeft(const Element*) const final;
+    LayoutUnit offsetTop(const Element*) const final;
+    LayoutUnit offsetWidth() const final { return linesBoundingBox().width(); }
+    LayoutUnit offsetHeight() const final { return linesBoundingBox().height(); }
 
     LayoutRect absoluteClippedOverflowRect() const override;
-    LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* = nullptr) const override;
-    void mapToVisibleRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect&, const PaintInvalidationState*) const final;
 
-    // This method differs from clippedOverflowRectForPaintInvalidation in that it includes
-    // the rects for culled inline boxes, which aren't necessary for paint invalidation.
-    LayoutRect clippedOverflowRect(const LayoutBoxModelObject*, const PaintInvalidationState* = nullptr) const;
+    // This method differs from visualOverflowRect in that it doesn't include the rects
+    // for culled inline boxes, which aren't necessary for paint invalidation.
+    LayoutRect localOverflowRectForPaintInvalidation() const override;
+
+    bool mapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect&, VisualRectFlags = DefaultVisualRectFlags) const final;
 
     PositionWithAffinity positionForPoint(const LayoutPoint&) final;
 
     IntRect borderBoundingBox() const final
     {
-        IntRect boundingBox = linesBoundingBox();
+        IntRect boundingBox = enclosingIntRect(linesBoundingBox());
         return IntRect(0, 0, boundingBox.width(), boundingBox.height());
     }
 
     virtual InlineFlowBox* createInlineFlowBox(); // Subclassed by SVG and Ruby
 
-    void dirtyLinesFromChangedChild(LayoutObject* child) final { m_lineBoxes.dirtyLinesFromChangedChild(LineLayoutItem(this), LineLayoutItem(child)); }
+    void dirtyLinesFromChangedChild(LayoutObject* child, MarkingBehavior markingBehaviour = MarkContainerChain) final { m_lineBoxes.dirtyLinesFromChangedChild(LineLayoutItem(this), LineLayoutItem(child), markingBehaviour == MarkContainerChain); }
 
     // TODO(leviw): This should probably be an int. We don't snap equivalent lines to different heights.
     LayoutUnit lineHeight(bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const final;

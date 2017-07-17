@@ -4,6 +4,8 @@
 
 package org.chromium.content.browser.input;
 
+import android.annotation.TargetApi;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
@@ -79,6 +81,18 @@ public class ReplicaInputConnection
         public Handler getHandler() {
             return mHandler;
         }
+
+        @Override
+        public void onWindowFocusChanged(boolean gainFocus) {}
+
+        @Override
+        public void onViewFocusChanged(boolean gainFocus) {}
+
+        @Override
+        public void onViewAttachedToWindow() {}
+
+        @Override
+        public void onViewDetachedFromWindow() {}
     }
 
     @VisibleForTesting
@@ -171,10 +185,19 @@ public class ReplicaInputConnection
     @Override
     public boolean setComposingText(CharSequence text, int newCursorPosition) {
         if (DEBUG_LOGS) Log.w(TAG, "setComposingText [%s] [%d]", text, newCursorPosition);
+        return updateComposingText(text, newCursorPosition, false);
+    }
+
+    /**
+     * Sends composing update to the InputMethodManager.
+     */
+    private boolean updateComposingText(
+            final CharSequence text, final int newCursorPosition, final boolean isPendingAccent) {
+        final int accentToSend = isPendingAccent ? mPendingAccent : 0;
         mPendingAccent = 0;
         super.setComposingText(text, newCursorPosition);
         updateSelectionIfRequired();
-        return mImeAdapter.sendCompositionToNative(text, newCursorPosition, false);
+        return mImeAdapter.sendCompositionToNative(text, newCursorPosition, false, accentToSend);
     }
 
     /**
@@ -186,7 +209,7 @@ public class ReplicaInputConnection
         mPendingAccent = 0;
         super.commitText(text, newCursorPosition);
         updateSelectionIfRequired();
-        return mImeAdapter.sendCompositionToNative(text, newCursorPosition, text.length() > 0);
+        return mImeAdapter.sendCompositionToNative(text, newCursorPosition, text.length() > 0, 0);
     }
 
     /**
@@ -351,7 +374,7 @@ public class ReplicaInputConnection
             int pendingAccent = unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK;
             StringBuilder builder = new StringBuilder();
             builder.appendCodePoint(pendingAccent);
-            setComposingText(builder.toString(), 1);
+            updateComposingText(builder.toString(), 1, true);
             mPendingAccent = pendingAccent;
             return true;
         } else if (mPendingAccent != 0 && unicodeChar != 0) {
@@ -464,6 +487,15 @@ public class ReplicaInputConnection
     @Override
     public Handler getHandler() {
         return mHandler;
+    }
+
+    /**
+     * @see BaseInputConnection#requestCursorUpdates(int)
+     */
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    @Override
+    public boolean requestCursorUpdates(int cursorUpdateMode) {
+        return mImeAdapter.onRequestCursorUpdates(cursorUpdateMode);
     }
 
     @VisibleForTesting

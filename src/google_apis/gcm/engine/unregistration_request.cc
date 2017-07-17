@@ -10,7 +10,7 @@
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "google_apis/gcm/base/gcm_util.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
@@ -54,7 +54,7 @@ UnregistrationRequest::CustomRequestHandler::~CustomRequestHandler() {}
 UnregistrationRequest::UnregistrationRequest(
     const GURL& registration_url,
     const RequestInfo& request_info,
-    scoped_ptr<CustomRequestHandler> custom_request_handler,
+    std::unique_ptr<CustomRequestHandler> custom_request_handler,
     const net::BackoffEntry::Policy& backoff_policy,
     const UnregistrationCallback& callback,
     int max_retry_count,

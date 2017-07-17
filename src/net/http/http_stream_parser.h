@@ -8,11 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
 #include "crypto/ec_private_key.h"
@@ -223,7 +223,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // The amount of sent data.
   int64_t sent_bytes_;
 
-  // The parsed response headers.  Owned by the caller of SendRequest.  This
+  // The parsed response headers.  Owned by the caller of SendRequest.   This
   // cannot be safely accessed after reading the final set of headers, as the
   // caller of SendRequest may have been destroyed - this happens in the case an
   // HttpResponseBodyDrainer is used.
@@ -234,11 +234,14 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // closes the connection.
   int64_t response_body_length_;
 
+  // True if reading a keep-alive response. False if not, or if don't yet know.
+  bool response_is_keep_alive_;
+
   // Keep track of the number of response body bytes read so far.
   int64_t response_body_read_;
 
   // Helper if the data is chunked.
-  scoped_ptr<HttpChunkedDecoder> chunked_decoder_;
+  std::unique_ptr<HttpChunkedDecoder> chunked_decoder_;
 
   // Where the caller wants the body data.
   scoped_refptr<IOBuffer> user_read_buf_;

@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/binding.h"
@@ -16,22 +18,21 @@
 namespace mojo {
 
 // Use this class to manage a set of bindings, which are automatically destroyed
-// and removed from the set when the pipe they bound to is disconnected.
+// and removed from the set when the pipe they are bound to is disconnected.
 template <typename Interface>
 class BindingSet {
  public:
-  using GenericInterface = typename Interface::GenericInterface;
-
   BindingSet() {}
   ~BindingSet() { CloseAllBindings(); }
 
-  void set_connection_error_handler(const Closure& error_handler) {
+  void set_connection_error_handler(const base::Closure& error_handler) {
     error_handler_ = error_handler;
   }
 
-  void AddBinding(Interface* impl, InterfaceRequest<GenericInterface> request) {
+  void AddBinding(Interface* impl, InterfaceRequest<Interface> request) {
     auto binding = new Element(impl, std::move(request));
-    binding->set_connection_error_handler([this]() { OnConnectionError(); });
+    binding->set_connection_error_handler(
+        base::Bind(&BindingSet::OnConnectionError, base::Unretained(this)));
     bindings_.push_back(binding->GetWeakPtr());
   }
 
@@ -58,16 +59,15 @@ class BindingSet {
  private:
   class Element {
    public:
-    using GenericInterface = typename Interface::GenericInterface;
-
-    Element(Interface* impl, InterfaceRequest<GenericInterface> request)
+    Element(Interface* impl, InterfaceRequest<Interface> request)
         : binding_(impl, std::move(request)), weak_ptr_factory_(this) {
-      binding_.set_connection_error_handler([this]() { OnConnectionError(); });
+      binding_.set_connection_error_handler(
+          base::Bind(&Element::OnConnectionError, base::Unretained(this)));
     }
 
     ~Element() {}
 
-    void set_connection_error_handler(const Closure& error_handler) {
+    void set_connection_error_handler(const base::Closure& error_handler) {
       error_handler_ = error_handler;
     }
 
@@ -78,14 +78,15 @@ class BindingSet {
     void Close() { binding_.Close(); }
 
     void OnConnectionError() {
-      Closure error_handler = error_handler_;
+      base::Closure error_handler = error_handler_;
       delete this;
-      error_handler.Run();
+      if (!error_handler.is_null())
+        error_handler.Run();
     }
 
    private:
     Binding<Interface> binding_;
-    Closure error_handler_;
+    base::Closure error_handler_;
     base::WeakPtrFactory<Element> weak_ptr_factory_;
 
     DISALLOW_COPY_AND_ASSIGN(Element);
@@ -99,10 +100,11 @@ class BindingSet {
                                    }),
                     bindings_.end());
 
-    error_handler_.Run();
+    if (!error_handler_.is_null())
+      error_handler_.Run();
   }
 
-  Closure error_handler_;
+  base::Closure error_handler_;
   std::vector<base::WeakPtr<Element>> bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(BindingSet);

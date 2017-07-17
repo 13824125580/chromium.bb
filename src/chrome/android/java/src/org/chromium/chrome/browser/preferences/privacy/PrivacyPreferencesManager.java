@@ -8,9 +8,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.preference.PreferenceManager;
 
 import org.chromium.base.CommandLine;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
@@ -26,10 +26,10 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
 
     static final String PREF_CRASH_DUMP_UPLOAD = "crash_dump_upload";
     static final String PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR = "crash_dump_upload_no_cellular";
+    static final String PREF_METRICS_REPORTING = "metrics_reporting";
     private static final String PREF_NETWORK_PREDICTIONS = "network_predictions";
     private static final String PREF_BANDWIDTH_OLD = "prefetch_bandwidth";
     private static final String PREF_BANDWIDTH_NO_CELLULAR_OLD = "prefetch_bandwidth_no_cellular";
-    private static final String PREF_METRICS_REPORTING = "metrics_reporting";
     private static final String PREF_CELLULAR_EXPERIMENT = "cellular_experiment";
     private static final String ALLOW_PRERENDER_OLD = "allow_prefetch";
     private static final String PREF_PHYSICAL_WEB = "physical_web";
@@ -50,7 +50,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     @VisibleForTesting
     PrivacyPreferencesManager(Context context) {
         mContext = context;
-        mSharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
+        mSharedPreferences = ContextUtils.getAppSharedPreferences();
 
         // Crash dump uploading preferences.
         // We default the command line flag to disable uploads unless altered on deferred startup
@@ -63,9 +63,9 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
         mCrashDumpAlwaysUpload = context.getString(R.string.crash_dump_always_upload_value);
     }
 
-    public static PrivacyPreferencesManager getInstance(Context context) {
+    public static PrivacyPreferencesManager getInstance() {
         if (sInstance == null) {
-            sInstance = new PrivacyPreferencesManager(context.getApplicationContext());
+            sInstance = new PrivacyPreferencesManager(ContextUtils.getApplicationContext());
         }
         return sInstance;
     }
@@ -75,8 +75,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
      * @return String value of the preference.
      */
     public String getPrefCrashDumpUploadPreference() {
-        return mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD,
-                mCrashDumpNeverUpload);
+        return mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
     }
 
     /**
@@ -253,7 +252,6 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
         if (!mSharedPreferences.contains(PREF_METRICS_REPORTING)) {
             setUsageAndCrashReporting(isUploadCrashDumpEnabled());
         }
-
         return mSharedPreferences.getBoolean(PREF_METRICS_REPORTING, false);
     }
 
@@ -294,7 +292,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     public void setUploadCrashDump(String when) {
         // Set the crash upload preference regardless of the current connection status.
         boolean canUpload = !when.equals(mCrashDumpNeverUpload);
-        PrefServiceBridge.getInstance().setCrashReporting(canUpload);
+        PrefServiceBridge.getInstance().setCrashReportingEnabled(canUpload);
     }
 
     /**
@@ -349,7 +347,8 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
             ed.putBoolean(PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, allowCrashUpload);
         }
         ed.apply();
-        PrefServiceBridge.getInstance().setCrashReporting(allowCrashUpload);
+        if (isCellularExperimentEnabled()) setUsageAndCrashReporting(allowCrashUpload);
+        syncUsageAndCrashReportingPrefs();
     }
 
     /**
@@ -365,8 +364,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     @Override
     public boolean isUploadPermitted() {
         return !mCrashUploadingCommandLineDisabled && isNetworkAvailable()
-                && (allowUploadCrashDump() || CommandLine.getInstance().hasSwitch(
-                        ChromeSwitches.FORCE_CRASH_DUMP_UPLOAD));
+                && (allowUploadCrashDump() || isUploadEnabledForTests());
     }
 
     /**
@@ -383,7 +381,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
      */
     @Override
     public boolean isUmaUploadPermitted() {
-        return isNetworkAvailable() && allowUploadCrashDump();
+        return isNetworkAvailable() && (allowUploadCrashDump() || isUploadEnabledForTests());
     }
 
     /**
@@ -468,5 +466,29 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     public boolean isPhysicalWebEnabled() {
         int state = mSharedPreferences.getInt(PREF_PHYSICAL_WEB, PHYSICAL_WEB_ONBOARDING);
         return (state == PHYSICAL_WEB_ON);
+    }
+
+    /**
+     * Check whether the command line switch is used to force uploading if at all possible. Used by
+     * test devices to avoid UI manipulation.
+     *
+     * @return whether uploading should be enabled if at all possible.
+     */
+    @Override
+    public boolean isUploadEnabledForTests() {
+        return CommandLine.getInstance().hasSwitch(ChromeSwitches.FORCE_CRASH_DUMP_UPLOAD);
+    }
+
+    /**
+     * Update usage and crash preferences based on Android preferences in case they are out of
+     * sync.
+     */
+    public void syncUsageAndCrashReportingPrefs() {
+        boolean isUploadUserPermitted = isUploadUserPermitted();
+        if (isCellularExperimentEnabled()) {
+            PrefServiceBridge.getInstance().setMetricsReportingEnabled(isUploadUserPermitted);
+        }
+
+        PrefServiceBridge.getInstance().setCrashReportingEnabled(isUploadUserPermitted);
     }
 }

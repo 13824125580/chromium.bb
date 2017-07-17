@@ -18,11 +18,12 @@
 #include "base/pending_task.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,6 +31,7 @@
 #include "base/message_loop/message_pump_win.h"
 #include "base/process/memory.h"
 #include "base/strings/string16.h"
+#include "base/win/current_module.h"
 #include "base/win/scoped_handle.h"
 #endif
 
@@ -40,15 +42,15 @@ namespace base {
 
 namespace {
 
-scoped_ptr<MessagePump> TypeDefaultMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeDefaultMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_DEFAULT);
 }
 
-scoped_ptr<MessagePump> TypeIOMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeIOMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_IO);
 }
 
-scoped_ptr<MessagePump> TypeUIMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeUIMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_UI);
 }
 
@@ -415,9 +417,8 @@ void RunTest_RecursiveSupport2(MessageLoop::Type message_loop_type) {
 
 void PostNTasksThenQuit(int posts_remaining) {
   if (posts_remaining > 1) {
-    MessageLoop::current()->PostTask(
-        FROM_HERE,
-        Bind(&PostNTasksThenQuit, posts_remaining - 1));
+    MessageLoop::current()->task_runner()->PostTask(
+        FROM_HERE, Bind(&PostNTasksThenQuit, posts_remaining - 1));
   } else {
     MessageLoop::current()->QuitWhenIdle();
   }
@@ -449,8 +450,6 @@ class TestIOHandler : public MessageLoopForIO::IOHandler {
 TestIOHandler::TestIOHandler(const wchar_t* name, HANDLE signal, bool wait)
     : signal_(signal), wait_(wait) {
   memset(buffer_, 0, sizeof(buffer_));
-  memset(&context_, 0, sizeof(context_));
-  context_.handler = this;
 
   file_.Set(CreateFile(name, GENERIC_READ, 0, NULL, OPEN_EXISTING,
                        FILE_FLAG_OVERLAPPED, NULL));
@@ -582,6 +581,9 @@ RUN_MESSAGE_LOOP_TESTS(UI, &TypeUIMessagePumpFactory);
 RUN_MESSAGE_LOOP_TESTS(IO, &TypeIOMessagePumpFactory);
 
 #if defined(OS_WIN)
+// Additional set of tests for GPU version of UI message loop.
+RUN_MESSAGE_LOOP_TESTS(GPU, &MessagePumpForGpu::CreateMessagePumpForGpu);
+
 TEST(MessageLoopTest, PostDelayedTask_SharedTimer_SubPump) {
   RunTest_PostDelayedTask_SharedTimer_SubPump();
 }
@@ -637,8 +639,8 @@ TEST(MessageLoopTest, TaskObserver) {
 
   MessageLoop loop;
   loop.AddTaskObserver(&observer);
-  loop.PostTask(FROM_HERE, Bind(&PostNTasksThenQuit, kNumPosts));
-  loop.Run();
+  loop.task_runner()->PostTask(FROM_HERE, Bind(&PostNTasksThenQuit, kNumPosts));
+  RunLoop().Run();
   loop.RemoveTaskObserver(&observer);
 
   EXPECT_EQ(kNumPosts, observer.num_tasks_started());
@@ -813,11 +815,10 @@ TEST(MessageLoopTest, DestructionObserverTest) {
 
   MLDestructionObserver observer(&task_destroyed, &destruction_observer_called);
   loop->AddDestructionObserver(&observer);
-  loop->PostDelayedTask(
-      FROM_HERE,
-      Bind(&DestructionObserverProbe::Run,
-                 new DestructionObserverProbe(&task_destroyed,
-                                              &destruction_observer_called)),
+  loop->task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&DestructionObserverProbe::Run,
+                      new DestructionObserverProbe(
+                          &task_destroyed, &destruction_observer_called)),
       kDelay);
   delete loop;
   EXPECT_TRUE(observer.task_destroyed_before_message_loop());
@@ -838,12 +839,12 @@ TEST(MessageLoopTest, ThreadMainTaskRunner) {
       &Foo::Test1ConstRef, foo.get(), a));
 
   // Post quit task;
-  MessageLoop::current()->PostTask(
+  MessageLoop::current()->task_runner()->PostTask(
       FROM_HERE,
       Bind(&MessageLoop::QuitWhenIdle, Unretained(MessageLoop::current())));
 
   // Now kick things off
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 
   EXPECT_EQ(foo->test_count(), 1);
   EXPECT_EQ(foo->result(), "a");
@@ -923,7 +924,7 @@ LRESULT CALLBACK TestWndProcThunk(HWND hwnd, UINT message,
 
 TEST(MessageLoopTest, AlwaysHaveUserMessageWhenNesting) {
   MessageLoop loop(MessageLoop::TYPE_UI);
-  HINSTANCE instance = GetModuleFromAddress(&TestWndProcThunk);
+  HINSTANCE instance = CURRENT_MODULE();
   WNDCLASSEX wc = {0};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = TestWndProcThunk;
@@ -962,7 +963,7 @@ TEST(MessageLoopTest, OriginalRunnerWorks) {
   scoped_refptr<Foo> foo(new Foo());
   original_runner->PostTask(FROM_HERE,
                             Bind(&Foo::Test1ConstRef, foo.get(), "a"));
-  loop.RunUntilIdle();
+  RunLoop().RunUntilIdle();
   EXPECT_EQ(1, foo->test_count());
 }
 
@@ -970,11 +971,27 @@ TEST(MessageLoopTest, DeleteUnboundLoop) {
   // It should be possible to delete an unbound message loop on a thread which
   // already has another active loop. This happens when thread creation fails.
   MessageLoop loop;
-  scoped_ptr<MessageLoop> unbound_loop(MessageLoop::CreateUnbound(
+  std::unique_ptr<MessageLoop> unbound_loop(MessageLoop::CreateUnbound(
       MessageLoop::TYPE_DEFAULT, MessageLoop::MessagePumpFactoryCallback()));
   unbound_loop.reset();
   EXPECT_EQ(&loop, MessageLoop::current());
   EXPECT_EQ(loop.task_runner(), ThreadTaskRunnerHandle::Get());
+}
+
+TEST(MessageLoopTest, ThreadName) {
+  {
+    std::string kThreadName("foo");
+    MessageLoop loop;
+    PlatformThread::SetName(kThreadName);
+    EXPECT_EQ(kThreadName, loop.GetThreadName());
+  }
+
+  {
+    std::string kThreadName("bar");
+    base::Thread thread(kThreadName);
+    ASSERT_TRUE(thread.StartAndWaitForTesting());
+    EXPECT_EQ(kThreadName, thread.message_loop()->GetThreadName());
+  }
 }
 
 }  // namespace base

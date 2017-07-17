@@ -88,13 +88,12 @@ PowerSaverInfo PowerSaverInfo::Get(content::RenderFrame* render_frame,
   // It is also enabled for the Power Saver test plugin for browser tests.
   bool is_flash =
       plugin_info.name == base::ASCIIToUTF16(content::kFlashPluginName);
-  bool can_throttle_plugin_type =
-      is_flash || override_for_testing == "ignore-list";
 
   PowerSaverInfo info;
-  info.power_saver_enabled =
-      override_for_testing == "always" ||
-      (power_saver_setting_on && can_throttle_plugin_type);
+  bool is_eligible = power_saver_setting_on &&
+                     (is_flash || override_for_testing == "ignore-list");
+  info.power_saver_enabled = override_for_testing == "always" ||
+                             (power_saver_setting_on && is_eligible);
 
   if (info.power_saver_enabled) {
     // Even if we disable PPS in the next block because content is same-origin,
@@ -102,7 +101,7 @@ PowerSaverInfo PowerSaverInfo::Get(content::RenderFrame* render_frame,
     info.blocked_for_background_tab = render_frame->IsHidden();
 
     auto status = render_frame->GetPeripheralContentStatus(
-        render_frame->GetWebFrame()->top()->securityOrigin(),
+        render_frame->GetWebFrame()->top()->getSecurityOrigin(),
         url::Origin(params.url), gfx::Size());
 
     // Early-exit from the whole Power Saver system if the content is

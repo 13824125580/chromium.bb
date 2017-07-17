@@ -58,7 +58,7 @@ class TestMemoryDetails : public MetricsMemoryDetails {
 
   void StartFetchAndWait() {
     uma_.reset(new base::HistogramTester());
-    StartFetch(FROM_CHROME_ONLY);
+    StartFetch();
     content::RunMessageLoop();
   }
 
@@ -92,7 +92,7 @@ class TestMemoryDetails : public MetricsMemoryDetails {
     base::MessageLoop::current()->QuitWhenIdle();
   }
 
-  scoped_ptr<base::HistogramTester> uma_;
+  std::unique_ptr<base::HistogramTester> uma_;
 
   DISALLOW_COPY_AND_ASSIGN(TestMemoryDetails);
 };
@@ -185,23 +185,24 @@ class SiteDetailsBrowserTest : public ExtensionBrowserTest {
   // resources and, optionally, a background process.
   const Extension* CreateExtension(const std::string& name,
                                    bool has_background_process) {
-    scoped_ptr<TestExtensionDir> dir(new TestExtensionDir);
+    std::unique_ptr<TestExtensionDir> dir(new TestExtensionDir);
 
     DictionaryBuilder manifest;
     manifest.Set("name", name)
         .Set("version", "1.0")
         .Set("manifest_version", 2)
-        .Set("web_accessible_resources",
-             std::move(ListBuilder()
-                           .Append("blank_iframe.html")
-                           .Append("http_iframe.html")
-                           .Append("two_http_iframes.html")));
+        .Set("web_accessible_resources", ListBuilder()
+                                             .Append("blank_iframe.html")
+                                             .Append("http_iframe.html")
+                                             .Append("two_http_iframes.html")
+                                             .Build());
 
     if (has_background_process) {
       manifest.Set(
           "background",
-          std::move(DictionaryBuilder().Set(
-              "scripts", std::move(ListBuilder().Append("script.js")))));
+          DictionaryBuilder()
+              .Set("scripts", ListBuilder().Append("script.js").Build())
+              .Build());
       dir->WriteFile(FILE_PATH_LITERAL("script.js"),
                      "console.log('" + name + " running');");
     }
@@ -240,20 +241,64 @@ class SiteDetailsBrowserTest : public ExtensionBrowserTest {
     return extension;
   }
 
-  const Extension* CreateHostedApp(const std::string& name,
-                                   const GURL& app_url) {
-    scoped_ptr<TestExtensionDir> dir(new TestExtensionDir);
+  // Creates a V2 platform app that loads a web iframe in the app's sandbox
+  // page.
+  // TODO(lazyboy): Deprecate this behavior in https://crbug.com/615585.
+  void CreateAppWithSandboxPage(const std::string& name) {
+    std::unique_ptr<TestExtensionDir> dir(new TestExtensionDir);
 
     DictionaryBuilder manifest;
     manifest.Set("name", name)
         .Set("version", "1.0")
         .Set("manifest_version", 2)
+        .Set("sandbox",
+             DictionaryBuilder()
+                 .Set("pages", ListBuilder().Append("sandbox.html").Build())
+                 .Build())
         .Set("app",
-             std::move(DictionaryBuilder()
-                           .Set("urls",
-                                std::move(ListBuilder().Append(app_url.spec())))
-                           .Set("launch", std::move(DictionaryBuilder().Set(
-                                              "web_url", app_url.spec())))));
+             DictionaryBuilder()
+                 .Set("background",
+                      DictionaryBuilder()
+                          .Set("scripts",
+                               ListBuilder().Append("background.js").Build())
+                          .Build())
+                 .Build());
+
+    dir->WriteFile(FILE_PATH_LITERAL("background.js"),
+                   "var sandboxFrame = document.createElement('iframe');"
+                   "sandboxFrame.src = 'sandbox.html';"
+                   "document.body.appendChild(sandboxFrame);");
+
+    std::string iframe_url =
+        embedded_test_server()->GetURL("/title1.html").spec();
+    dir->WriteFile(
+        FILE_PATH_LITERAL("sandbox.html"),
+        base::StringPrintf("<html><body>%s, web iframe:"
+                           "  <iframe width=80 height=80 src=%s></iframe>"
+                           "</body></html>",
+                           name.c_str(), iframe_url.c_str()));
+    dir->WriteManifest(manifest.ToJSON());
+
+    const Extension* extension = LoadExtension(dir->unpacked_path());
+    EXPECT_TRUE(extension);
+    temp_dirs_.push_back(dir.release());
+  }
+
+  const Extension* CreateHostedApp(const std::string& name,
+                                   const GURL& app_url) {
+    std::unique_ptr<TestExtensionDir> dir(new TestExtensionDir);
+
+    DictionaryBuilder manifest;
+    manifest.Set("name", name)
+        .Set("version", "1.0")
+        .Set("manifest_version", 2)
+        .Set(
+            "app",
+            DictionaryBuilder()
+                .Set("urls", ListBuilder().Append(app_url.spec()).Build())
+                .Set("launch",
+                     DictionaryBuilder().Set("web_url", app_url.spec()).Build())
+                .Build());
     dir->WriteManifest(manifest.ToJSON());
 
     const Extension* extension = LoadExtension(dir->unpacked_path());
@@ -888,6 +933,19 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, IsolateExtensions) {
   EXPECT_TRUE(IsInTrial("SiteIsolationExtensionsActive"));
 }
 
+// Due to http://crbug.com/612711, we are not isolating iframes from platform
+// apps with --isolate-extenions.
+IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, PlatformAppsNotIsolated) {
+  // --site-per-process will still isolate iframes from platform apps, so skip
+  // the test in that case.
+  if (content::AreAllSitesIsolatedForTesting())
+    return;
+  CreateAppWithSandboxPage("Extension One");
+  scoped_refptr<TestMemoryDetails> details = new TestMemoryDetails();
+  details->StartFetchAndWait();
+  EXPECT_EQ(0, details->GetOutOfProcessIframeCount());
+}
+
 // Exercises accounting in the case where an extension has two different-site
 // web iframes.
 IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, ExtensionWithTwoWebIframes) {
@@ -1214,7 +1272,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Now load an extension with a background page. This will result in a
   // BrowsingInstance for the background page.
-  const Extension* extension2 = CreateExtension("Extension One", true);
+  const Extension* extension2 = CreateExtension("Extension Two", true);
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_THAT(details->uma()->GetAllSamples(

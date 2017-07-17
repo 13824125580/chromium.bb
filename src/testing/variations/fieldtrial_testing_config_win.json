@@ -22,12 +22,12 @@
     ],
     "AutomaticTabDiscarding": [
         {
-            "enable_featuress": [
+            "enable_features": [
                 "AutomaticTabDiscarding"
             ],
-            "group_name": "Enabled_Once_5",
+            "group_name": "Enabled_Once_10-gen2",
             "params": {
-                "MinimumProtectionTime": "300"
+                "MinimumProtectionTime": "600"
             }
         }
     ],
@@ -59,17 +59,35 @@
             "group_name": "Enabled"
         }
     ],
-    "DataReductionProxyConfigService": [
+    "DefaultBrowserInfobar": [
         {
-            "group_name": "Enabled",
+            "group_name": "SettingsTextNotNow"
+        }
+    ],
+    "DisallowFetchForDocWrittenScriptsInMainFrame": [
+        {
+            "disable_features": [
+                "DocumentWriteEvaluator"
+            ],
+            "group_name": "DocumentWriteScriptBlockGroup",
             "params": {
-                "minimum_refresh_interval_on_success_msec": "21600000"
+                "disallowFetchForDocWrittenScriptsInMainFrameOnSlowConnections": "true"
             }
         }
     ],
     "EnableGoogleCachedCopyTextExperiment": [
         {
             "group_name": "Button"
+        }
+    ],
+    "EnableMediaRouter": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "EnableMediaRouterWithCastExtension": [
+        {
+            "group_name": "Enabled"
         }
     ],
     "EnableSessionCrashedBubbleUI": [
@@ -90,6 +108,11 @@
     "ExtensionInstallVerification": [
         {
             "group_name": "Enforce"
+        }
+    ],
+    "GoogleBrandedContextMenu": [
+        {
+            "group_name": "branded"
         }
     ],
     "GoogleNow": [
@@ -117,7 +140,20 @@
             "group_name": "Enabled"
         }
     ],
+    "MainFrameBeforeActivation": [
+        {
+            "enable_features": [
+                "MainFrameBeforeActivation"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "MaterialDesignDownloads": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "MojoChannel": [
         {
             "group_name": "Enabled"
         }
@@ -146,12 +182,33 @@
             }
         }
     ],
+    "NetworkTimeQueries": [
+        {
+            "enable_features": [
+                "NetworkTimeServiceQuerying"
+            ],
+            "group_name": "NetworkTimeQueriesEnabled"
+        }
+    ],
+    "NewAudioRenderingMixingStrategy": [
+        {
+            "enable_features": [
+                "NewAudioRenderingMixingStrategy"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "NewProfileManagement": [
         {
             "group_name": "Enabled"
         }
     ],
     "OfferUploadCreditCards": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "OutOfProcessPac": [
         {
             "group_name": "Enabled"
         }
@@ -171,17 +228,50 @@
             "group_name": "Disabled"
         }
     ],
+    "PasswordManagerSettingsMigration": [
+        {
+            "group_name": "Enable"
+        }
+    ],
+    "PasswordSeparatedSigninFlow": [
+        {
+            "enable_features": [
+                "UsePasswordSeparatedSigninFlow"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
+    "PreRead": [
+        {
+            "group_name": "NoPrefetchArgument2",
+            "params": {
+                "NoPrefetchArgument": "true"
+            }
+        },
+        {
+            "group_name": "PreReadChromeChildInBrowser",
+            "params": {
+                "PreReadChromeChildInBrowser": "true"
+            }
+        }
+    ],
+    "PreconnectMore": [
+        {
+            "enable_features": [
+                "PreconnectMore"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
     "QUIC": [
         {
-            "group_name": "Enabled"
+            "group_name": "Enabled",
+            "params": {
+                "delay_tcp_race": "true"
+            }
         }
     ],
     "RefreshTokenDeviceId": [
-        {
-            "group_name": "Enabled"
-        }
-    ],
-    "RenderingPipelineThrottling": [
         {
             "group_name": "Enabled"
         }
@@ -220,6 +310,43 @@
             "group_name": "On"
         }
     ],
+    "SSLCommonNameMismatchHandling": [
+        {
+            "group_name": "Enabled"
+        }
+    ],
+    "SafeBrowsingIncidentReportingService": [
+        {
+            "enable_features": [
+                "IncidentReportingDisableUpload"
+            ],
+            "group_name": "Enabled",
+            "params": {
+                "collect_reg_data": "true"
+            }
+        },
+        {
+            "group_name": "Default"
+        }
+    ],
+    "SafeBrowsingIncidentReportingServiceFeatures": [
+        {
+            "enable_features": [
+                "IncidentReportingModuleLoadAnalysis",
+                "IncidentReportingSuspiciousModuleReporting"
+            ],
+            "group_name": "WithSuspiciousModuleReporting"
+        },
+        {
+            "enable_features": [
+                "IncidentReportingModuleLoadAnalysis"
+            ],
+            "group_name": "WithModuleLoadAnalysis"
+        },
+        {
+            "group_name": "Default"
+        }
+    ],
     "SafeBrowsingReportPhishingErrorLink": [
         {
             "group_name": "Enabled"
@@ -231,22 +358,17 @@
             "group_name": "Disabled"
         }
     ],
-    "SafeBrowsingUnverifiedDownloads": [
-        {
-            "group_name": "DisableByParameterMostSbTypes2",
-            "params": {
-                "blacklist": ".exe-,.zip-",
-                "block_sb_types": "true",
-                "whitelist": ".rar,.svg,.url,.xml,.zip"
-            }
-        }
-    ],
     "SafeBrowsingUpdateFrequency": [
         {
             "group_name": "UpdateTime15m",
             "params": {
                 "NextUpdateIntervalInMinutes": "15"
             }
+        }
+    ],
+    "SafeBrowsingV4LocalDatabaseManagerEnabled": [
+        {
+            "group_name": "Enabled"
         }
     ],
     "SchedulerExpensiveTaskBlocking": [
@@ -262,11 +384,6 @@
     "SettingsEnforcement": [
         {
             "group_name": "enforce_always_with_extensions_and_dse"
-        }
-    ],
-    "SpdyEnableDependencies": [
-        {
-            "group_name": "Enable"
         }
     ],
     "StrictSecureCookies": [
@@ -287,9 +404,31 @@
             "group_name": "Enabled"
         }
     ],
+    "TokenBinding": [
+        {
+            "enable_features": [
+                "token-binding"
+            ],
+            "group_name": "TokenBinding"
+        }
+    ],
     "TriggeredResetFieldTrial": [
         {
             "group_name": "On"
+        }
+    ],
+    "V8CacheStrategiesForCacheStorage": [
+        {
+            "group_name": "default"
+        },
+        {
+            "group_name": "none"
+        },
+        {
+            "group_name": "normal"
+        },
+        {
+            "group_name": "aggressive"
         }
     ],
     "VarationsServiceControl": [
@@ -300,8 +439,19 @@
             }
         }
     ],
-    "WebFontsIntervention": [
+    "WebRTC-EnableWebRtcEcdsa": [
         {
+            "enable_features": [
+                "WebRTC-EnableWebRtcEcdsa"
+            ],
+            "group_name": "Enabled"
+        }
+    ],
+    "WebRTC-H264WithOpenH264FFmpeg": [
+        {
+            "enable_features": [
+                "WebRTC-H264WithOpenH264FFmpeg"
+            ],
             "group_name": "Enabled"
         }
     ],

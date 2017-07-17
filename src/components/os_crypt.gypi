@@ -32,6 +32,69 @@
             'os_crypt/os_crypt_posix.cc',
           ],
         }],
+        ['OS=="win"', {
+          'all_dependent_settings': {
+            'msvs_settings': {
+              'VCLinkerTool': {
+                'AdditionalDependencies': [
+                  'crypt32.lib',
+                ],
+              },
+            },
+          },
+          'msvs_settings': {
+            'VCLinkerTool': {
+              'AdditionalDependencies': [
+                'crypt32.lib',
+              ],
+            },
+          },
+        }],
+        ['OS=="linux" and chromeos!=1', {
+          'sources': [
+            'os_crypt/key_storage_linux.cc',
+            'os_crypt/key_storage_linux.h',
+            'os_crypt/os_crypt_linux.cc',
+          ],
+          'sources!': [
+            'os_crypt/os_crypt_posix.cc',
+          ],
+          'conditions': [
+            ['use_glib==1', {
+              'sources': [
+                'os_crypt/key_storage_libsecret.cc',
+                'os_crypt/key_storage_libsecret.h',
+                'os_crypt/libsecret_util_linux.cc',
+                'os_crypt/libsecret_util_linux.h',
+              ],
+              'defines': [
+                'USE_LIBSECRET',
+              ],
+              'include_dirs' : [
+                '../third_party/libsecret/'
+              ],
+              'dependencies': [
+                '../build/linux/system.gyp:glib',
+              ],
+            }],
+            ['use_dbus==1', {
+              'sources': [
+                'os_crypt/kwallet_dbus.cc',
+                'os_crypt/kwallet_dbus.h',
+              ],
+              'defines': [
+                'USE_KWALLET',
+              ],
+              'dependencies': [
+                '../build/linux/system.gyp:dbus',
+                '../dbus/dbus.gyp:dbus',
+              ],
+              'include_dirs': [
+                '..',
+              ],
+            }]
+          ],
+        }],
       ],
       'target_conditions': [
         ['OS=="ios"', {
@@ -42,5 +105,34 @@
         }],
       ],
     },
+    {
+      'target_name': 'os_crypt_test_support',
+      'type': 'static_library',
+      'sources': [
+        'os_crypt/os_crypt_mocker.cc',
+        'os_crypt/os_crypt_mocker.h',
+      ],
+      'dependencies': [
+        '../base/base.gyp:base',
+        '../testing/gtest.gyp:gtest',
+      ],
+      'conditions': [
+        ['OS=="linux" and chromeos!=1', {
+          'sources': [
+            'os_crypt/os_crypt_mocker_linux.cc',
+            'os_crypt/os_crypt_mocker_linux.h',
+          ],
+          'defines': [
+            'USE_LIBSECRET',
+          ],
+          'include_dirs' : [
+            '../third_party/libsecret/'
+          ],
+          'dependencies': [
+            '../build/linux/system.gyp:glib',
+          ],
+        }],
+      ]
+    }
   ],
 }

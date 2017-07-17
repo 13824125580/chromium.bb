@@ -3,12 +3,10 @@
 # found in the LICENSE file.
 
 import("//build/config/ios/rules.gni")
+import("//ios/build/config.gni")
 
-ios_app("ios_web_shell") {
+ios_app_bundle("ios_web_shell") {
   info_plist = "Info.plist"
-  app_name = "ios_web_shell"
-  entitlements_path = ""
-  code_signing_identity = ""
 
   sources = [
     "web_exe_main.mm",
@@ -16,6 +14,10 @@ ios_app("ios_web_shell") {
 
   deps = [
     ":shell",
+
+    # All shared libraries must have the sanitizer deps to properly link in
+    # asan mode (this target will be empty in other cases).
+    "//build/config/sanitizers:deps",
   ]
 
   ldflags = [
@@ -25,16 +27,22 @@ ios_app("ios_web_shell") {
     "2",
   ]
 
-  # TODO(crbug.com/546283): once gn supports bundle resources, add support for
-  # the following gyp code:
-  #
-  # 'mac_bundle_resources': [
-  #   'shell/Default.png',
-  #   'shell/MainView.xib',
-  #   'shell/textfield_background@2x.png',
-  #   'shell/toolbar_back@2x.png',
-  #   'shell/toolbar_forward@2x.png',
-  # ],
+  configs += [ "//build/config/compiler:enable_arc" ]
+
+  assert_no_deps = ios_assert_no_deps
+}
+
+bundle_data("shell_bundle_data") {
+  visibility = [ ":shell" ]
+  sources = [
+    "Default.png",
+    "textfield_background@2x.png",
+    "toolbar_back@2x.png",
+    "toolbar_forward@2x.png",
+  ]
+  outputs = [
+    "{{bundle_resources_dir}}/{{source_file_part}}",
+  ]
 }
 
 source_set("shell") {
@@ -58,16 +66,15 @@ source_set("shell") {
   ]
 
   deps = [
+    ":shell_bundle_data",
     "//base",
+    "//ios/net",
     "//ios/web",
+    "//ios/web:user_agent",
     "//ios/web/public/app",
     "//net",
     "//net:extras",
     "//ui/base",
-
-    # All shared libraries must have the sanitizer deps to properly link in
-    # asan mode (this target will be empty in other cases).
-    "//build/config/sanitizers:deps",
   ]
 
   libs = [
@@ -76,4 +83,6 @@ source_set("shell") {
     "Foundation.framework",
     "UIKit.framework",
   ]
+
+  configs += [ "//build/config/compiler:enable_arc" ]
 }

@@ -7,12 +7,14 @@
 
 #include <stdint.h>
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "components/mus/public/interfaces/compositor_frame.mojom.h"
+#include "components/mus/public/interfaces/surface.mojom.h"
 #include "components/mus/public/interfaces/window_tree.mojom.h"
 #include "components/mus/ws/ids.h"
 #include "components/mus/ws/server_window_surface.h"
@@ -80,7 +82,14 @@ class ServerWindow {
   void SetClientArea(const gfx::Insets& insets,
                      const std::vector<gfx::Rect>& additional_client_areas);
 
+  const gfx::Rect* hit_test_mask() const { return hit_test_mask_.get(); }
+  void SetHitTestMask(const gfx::Rect& mask);
+  void ClearHitTestMask();
+
   int32_t cursor() const { return static_cast<int32_t>(cursor_id_); }
+  int32_t non_client_cursor() const {
+    return static_cast<int32_t>(non_client_cursor_id_);
+  }
 
   const ServerWindow* parent() const { return parent_; }
   ServerWindow* parent() { return parent_; }
@@ -100,13 +109,17 @@ class ServerWindow {
   ServerWindow* GetChildWindow(const WindowId& id);
 
   // Transient window management.
-  void AddTransientWindow(ServerWindow* child);
+  // Adding transient child fails if the child window is modal to system.
+  bool AddTransientWindow(ServerWindow* child);
   void RemoveTransientWindow(ServerWindow* child);
 
   ServerWindow* transient_parent() { return transient_parent_; }
   const ServerWindow* transient_parent() const { return transient_parent_; }
 
   const Windows& transient_children() const { return transient_children_; }
+
+  bool is_modal() const { return is_modal_; }
+  void SetModal();
 
   // Returns true if this contains |window| or is |window|.
   bool Contains(const ServerWindow* window) const;
@@ -120,6 +133,7 @@ class ServerWindow {
   void SetOpacity(float value);
 
   void SetPredefinedCursor(mus::mojom::Cursor cursor_id);
+  void SetNonClientCursor(mus::mojom::Cursor cursor_id);
 
   const gfx::Transform& transform() const { return transform_; }
   void SetTransform(const gfx::Transform& transform);
@@ -128,6 +142,8 @@ class ServerWindow {
     return properties_;
   }
   void SetProperty(const std::string& name, const std::vector<uint8_t>* value);
+
+  std::string GetName() const;
 
   void SetTextInputState(const ui::TextInputState& state);
   const ui::TextInputState& text_input_state() const {
@@ -197,12 +213,14 @@ class ServerWindow {
   ServerWindow* transient_parent_;
   Windows transient_children_;
 
+  bool is_modal_;
   bool visible_;
   gfx::Rect bounds_;
   gfx::Insets client_area_;
   std::vector<gfx::Rect> additional_client_areas_;
-  scoped_ptr<ServerWindowSurfaceManager> surface_manager_;
+  std::unique_ptr<ServerWindowSurfaceManager> surface_manager_;
   mojom::Cursor cursor_id_;
+  mojom::Cursor non_client_cursor_id_;
   float opacity_;
   bool can_focus_;
   gfx::Transform transform_;
@@ -215,6 +233,10 @@ class ServerWindow {
   // The hit test for windows extends outside the bounds of the window by this
   // amount.
   gfx::Insets extended_hit_test_region_;
+
+  // Mouse events outside the hit test mask don't hit the window. An empty mask
+  // means all events miss the window. If null there is no mask.
+  std::unique_ptr<gfx::Rect> hit_test_mask_;
 
   base::ObserverList<ServerWindowObserver> observers_;
 

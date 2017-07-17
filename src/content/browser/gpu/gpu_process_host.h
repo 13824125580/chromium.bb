@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
@@ -20,17 +21,17 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "content/common/gpu/gpu_memory_uma_stats.h"
-#include "content/common/gpu/gpu_process_launch_causes.h"
+#include "content/common/gpu_process_launch_causes.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/config/gpu_info.h"
+#include "gpu/ipc/common/gpu_memory_uma_stats.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "ipc/ipc_sender.h"
 #include "ipc/message_filter.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
-#include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
 struct GPUCreateCommandBufferConfig;
@@ -40,6 +41,7 @@ struct ChannelHandle;
 }
 
 namespace gpu {
+struct GpuPreferences;
 struct SyncToken;
 }
 
@@ -47,12 +49,12 @@ namespace content {
 class BrowserChildProcessHostImpl;
 class GpuMainThread;
 class InProcessChildThreadParams;
-class MojoApplicationHost;
+class MojoChildConnection;
 class RenderWidgetHostViewFrameSubscriber;
 class ShaderDiskCache;
 
 typedef base::Thread* (*GpuMainThreadFactoryFunction)(
-    const InProcessChildThreadParams&);
+    const InProcessChildThreadParams&, const gpu::GpuPreferences&);
 
 class GpuProcessHost : public BrowserChildProcessHostDelegate,
                        public IPC::Sender,
@@ -66,6 +68,14 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   typedef base::Callback<void(const IPC::ChannelHandle&, const gpu::GPUInfo&)>
       EstablishChannelCallback;
+
+  struct EstablishChannelRequest {
+    EstablishChannelRequest();
+    EstablishChannelRequest(const EstablishChannelRequest& other);
+    ~EstablishChannelRequest();
+    int32_t client_id;
+    EstablishChannelCallback callback;
+  };
 
   typedef base::Callback<void(const gfx::GpuMemoryBufferHandle& handle)>
       CreateGpuMemoryBufferCallback;
@@ -96,7 +106,8 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
       GpuMainThreadFactoryFunction create);
 
   // BrowserChildProcessHostDelegate implementation.
-  ServiceRegistry* GetServiceRegistry() override;
+  shell::InterfaceRegistry* GetInterfaceRegistry() override;
+  shell::InterfaceProvider* GetRemoteInterfaces() override;
 
   // Get the GPU process host for the GPU process with the given ID. Returns
   // null if the process no longer exists.
@@ -125,23 +136,19 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
                              gfx::BufferFormat format,
                              gfx::BufferUsage usage,
                              int client_id,
-                             int32_t surface_id,
+                             gpu::SurfaceHandle surface_handle,
                              const CreateGpuMemoryBufferCallback& callback);
-
-  // Tells the GPU process to create a new GPU memory buffer from an existing
-  // handle.
-  void CreateGpuMemoryBufferFromHandle(
-      const gfx::GpuMemoryBufferHandle& handle,
-      gfx::GpuMemoryBufferId id,
-      const gfx::Size& size,
-      gfx::BufferFormat format,
-      int client_id,
-      const CreateGpuMemoryBufferCallback& callback);
 
   // Tells the GPU process to destroy GPU memory buffer.
   void DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
                               int client_id,
                               const gpu::SyncToken& sync_token);
+
+#if defined(OS_ANDROID)
+  // Tells the GPU process that the given surface is being destroyed so that it
+  // can stop using it.
+  void SendDestroyingVideoSurface(int surface_id, const base::Closure& done_cb);
+#endif
 
   // What kind of GPU process, e.g. sandboxed or unsandboxed.
   GpuProcessKind kind();
@@ -162,9 +169,6 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   bool Init();
 
-  // Sets up mojo support in GPU process. Returns false upon failure.
-  bool SetupMojo();
-
   // Post an IPC message to the UI shim's message handler on the UI thread.
   void RouteOnUIThread(const IPC::Message& message);
 
@@ -172,27 +176,28 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnProcessLaunched() override;
-  void OnProcessLaunchFailed() override;
+  void OnProcessLaunchFailed(int error_code) override;
   void OnProcessCrashed(int exit_code) override;
 
   // Message handlers.
   void OnInitialized(bool result, const gpu::GPUInfo& gpu_info);
   void OnChannelEstablished(const IPC::ChannelHandle& channel_handle);
   void OnGpuMemoryBufferCreated(const gfx::GpuMemoryBufferHandle& handle);
+#if defined(OS_ANDROID)
+  void OnDestroyingVideoSurfaceAck(int surface_id);
+#endif
   void OnDidCreateOffscreenContext(const GURL& url);
   void OnDidLoseContext(bool offscreen,
                         gpu::error::ContextLostReason reason,
                         const GURL& url);
   void OnDidDestroyOffscreenContext(const GURL& url);
-  void OnGpuMemoryUmaStatsReceived(const GPUMemoryUmaStats& stats);
-#if defined(OS_MACOSX)
-  void OnAcceleratedSurfaceBuffersSwapped(const IPC::Message& message);
-#endif
+  void OnGpuMemoryUmaStatsReceived(const gpu::GPUMemoryUmaStats& stats);
+  void OnFieldTrialActivated(const std::string& trial_name);
 
 #if defined(OS_WIN)
   void OnAcceleratedSurfaceCreatedChildWindow(
-      const gfx::PluginWindowHandle& parent_handle,
-      const gfx::PluginWindowHandle& window_handle);
+      gpu::SurfaceHandle parent_handle,
+      gpu::SurfaceHandle window_handle);
 #endif
 
   void CreateChannelCache(int32_t client_id);
@@ -201,7 +206,8 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
                      const std::string& key,
                      const std::string& shader);
 
-  bool LaunchGpuProcess(const std::string& channel_id);
+  bool LaunchGpuProcess(const std::string& channel_id,
+                        gpu::GpuPreferences* gpu_preferences);
 
   void SendOutstandingReplies();
 
@@ -217,10 +223,13 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   // These are the channel requests that we have already sent to
   // the GPU process, but haven't heard back about yet.
-  std::queue<EstablishChannelCallback> channel_requests_;
+  std::queue<EstablishChannelRequest> channel_requests_;
 
   // The pending create gpu memory buffer requests we need to reply to.
   std::queue<CreateGpuMemoryBufferCallback> create_gpu_memory_buffer_requests_;
+
+  // A callback to signal the completion of a SendDestroyingVideoSurface call.
+  base::Closure send_destroying_video_surface_done_cb_;
 
   // Qeueud messages to send when the process launches.
   std::queue<IPC::Message*> queued_messages_;
@@ -239,7 +248,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // true.
   gpu::GPUInfo gpu_info_;
 
-  scoped_ptr<base::Thread> in_process_gpu_thread_;
+  std::unique_ptr<base::Thread> in_process_gpu_thread_;
 
   // Whether we actually launched a GPU process.
   bool process_launched_;
@@ -262,7 +271,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   static bool crashed_before_;
   static int swiftshader_crash_count_;
 
-  scoped_ptr<BrowserChildProcessHostImpl> process_;
+  std::unique_ptr<BrowserChildProcessHostImpl> process_;
 
   // Track the URLs of the pages which have live offscreen contexts,
   // assumed to be associated with untrusted content such as WebGL.
@@ -273,7 +282,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   // Statics kept around to send to UMA histograms on GPU process lost.
   bool uma_memory_stats_received_;
-  GPUMemoryUmaStats uma_memory_stats_;
+  gpu::GPUMemoryUmaStats uma_memory_stats_;
 
   typedef std::map<int32_t, scoped_refptr<ShaderDiskCache>>
       ClientIdToShaderCacheMap;
@@ -282,8 +291,9 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   std::string shader_prefix_key_;
 
   // Browser-side Mojo endpoint which sets up a Mojo channel with the child
-  // process and contains the browser's ServiceRegistry.
-  scoped_ptr<MojoApplicationHost> mojo_application_host_;
+  // process and contains the browser's InterfaceRegistry.
+  const std::string child_token_;
+  std::unique_ptr<MojoChildConnection> mojo_child_connection_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuProcessHost);
 };

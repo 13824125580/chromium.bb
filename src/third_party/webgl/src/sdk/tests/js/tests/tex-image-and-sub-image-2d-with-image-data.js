@@ -21,7 +21,7 @@
 ** MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 */
 
-function generateTest(internalFormat, pixelFormat, pixelType, prologue, resourcePath) {
+function generateTest(internalFormat, pixelFormat, pixelType, prologue, resourcePath, defaultContextVersion) {
     var wtu = WebGLTestUtils;
     var tiu = TexImageUtils;
     var gl = null;
@@ -35,6 +35,8 @@ function generateTest(internalFormat, pixelFormat, pixelType, prologue, resource
     {
         description('Verify texImage2D and texSubImage2D code paths taking ImageData (' + internalFormat + '/' + pixelFormat + '/' + pixelType + ')');
 
+        // Set the default context version while still allowing the webglVersion URL query string to override it.
+        wtu.setDefault3DContextVersion(defaultContextVersion);
         gl = wtu.create3DContext("example");
 
         if (!prologue(gl)) {
@@ -131,8 +133,18 @@ function generateTest(internalFormat, pixelFormat, pixelType, prologue, resource
         var br = premultiplyAlpha ? blackColor : greenColor;
 
         var loc;
+        var skipCorner = false;
         if (bindingTarget == gl.TEXTURE_CUBE_MAP) {
             loc = gl.getUniformLocation(program, "face");
+            switch (gl[pixelFormat]) {
+              case gl.RED_INTEGER:
+              case gl.RG_INTEGER:
+              case gl.RGB_INTEGER:
+              case gl.RGBA_INTEGER:
+                // https://github.com/KhronosGroup/WebGL/issues/1819
+                skipCorner = true;
+                break;
+            }
         }
 
         for (var tt = 0; tt < targets.length; ++tt) {
@@ -146,10 +158,14 @@ function generateTest(internalFormat, pixelFormat, pixelType, prologue, resource
             // the right color.
             debug("Checking " + (flipY ? "top" : "bottom"));
             wtu.checkCanvasRect(gl, 0, bottom, halfWidth, halfHeight, tl, "shouldBe " + tl);
-            wtu.checkCanvasRect(gl, halfWidth, bottom, halfWidth, halfHeight, tr, "shouldBe " + tr);
+            if (!skipCorner && !flipY) {
+                wtu.checkCanvasRect(gl, halfWidth, bottom, halfWidth, halfHeight, tr, "shouldBe " + tr);
+            }
             debug("Checking " + (flipY ? "bottom" : "top"));
             wtu.checkCanvasRect(gl, 0, top, halfWidth, halfHeight, bl, "shouldBe " + bl);
-            wtu.checkCanvasRect(gl, halfWidth, top, halfWidth, halfHeight, br, "shouldBe " + br);
+            if (!skipCorner && flipY) {
+                wtu.checkCanvasRect(gl, halfWidth, top, halfWidth, halfHeight, br, "shouldBe " + br);
+            }
         }
     }
 

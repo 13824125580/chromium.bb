@@ -7,10 +7,6 @@
 
 #include <Foundation/Foundation.h>
 
-namespace ios {
-class ChromeBrowserState;
-}
-
 // Error domain for authentication error.
 extern NSString* kAuthenticationErrorDomain;
 
@@ -42,7 +38,8 @@ typedef enum {
   // Sign in operation was started from settings.
   SIGN_IN_SOURCE_SETTINGS,
   // Sign in operation was started from as a pre-requisite of share operation.
-  SIGN_IN_SOURCE_SHARE,
+  // Deprecated since M53.
+  SIGN_IN_SOURCE_SHARE_DEPRECATED,
   // Sign in operation was started from as a pre-requisite of a print operation.
   SIGN_IN_SOURCE_PRINT,
   // Sign in operation was started from the re-sign in infobar.
@@ -53,9 +50,11 @@ typedef enum {
   SIGN_IN_SOURCE_RECENT_TABS,
   // Sign in operation was started from the bookmarks promo panel.
   SIGN_IN_SOURCE_BOOKMARKS_PROMO,
+  // Sign in operation was started from the Tab Switcher.
+  SIGN_IN_SOURCE_TAB_SWITCHER,
   // NOTE: Add new sign in sources only immediately above this line. Also, make
   // sure the enum list for histogram |Signin.IOSSignInSource| in
-  // tools/histogram/histograms.xml is updated with any change in here.
+  // uma/configs/chrome/histograms.xml is updated with any change in here.
   SIGN_IN_SOURCE_COUNT
 } SignInSource;
 
@@ -75,12 +74,8 @@ typedef enum {
 namespace signin_ui {
 
 // Completion callback for a sign-in operation.
-// |signedIn| is true if the operation was successful and the user is now
-// signed in.
-// |signedInBrowserState| is the browser state that was signed in.
-typedef void (^CompletionCallback)(
-    BOOL signedIn,
-    ios::ChromeBrowserState* signedInBrowserState);
+// |success| is YES if the operation was successful.
+typedef void (^CompletionCallback)(BOOL success);
 
 }  // namespace signin_ui
 

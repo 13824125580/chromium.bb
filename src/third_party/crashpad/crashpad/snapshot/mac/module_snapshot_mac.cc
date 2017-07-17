@@ -79,6 +79,9 @@ void ModuleSnapshotMac::GetCrashpadOptions(CrashpadInfoClientOptions* options) {
   options->gather_indirectly_referenced_memory =
       CrashpadInfoClientOptions::TriStateFromCrashpadInfo(
           crashpad_info.gather_indirectly_referenced_memory);
+
+  options->indirectly_referenced_memory_cap =
+      crashpad_info.indirectly_referenced_memory_cap;
 }
 
 std::string ModuleSnapshotMac::Name() const {
@@ -180,6 +183,16 @@ std::map<std::string, std::string> ModuleSnapshotMac::AnnotationsSimpleMap()
   MachOImageAnnotationsReader annotations_reader(
       process_reader_, mach_o_image_reader_, name_);
   return annotations_reader.SimpleMap();
+}
+
+std::set<CheckedRange<uint64_t>> ModuleSnapshotMac::ExtraMemoryRanges() const {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+  return std::set<CheckedRange<uint64_t>>();
+}
+
+std::vector<const UserMinidumpStream*>
+ModuleSnapshotMac::CustomMinidumpStreams() const {
+  return std::vector<const UserMinidumpStream*>();
 }
 
 }  // namespace internal

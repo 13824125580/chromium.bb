@@ -152,7 +152,7 @@ void WebRtcLogsDOMHandler::UpdateUI() {
   for (std::vector<UploadList::UploadInfo>::iterator i = uploads.begin();
        i != uploads.end();
        ++i) {
-    scoped_ptr<base::DictionaryValue> upload(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> upload(new base::DictionaryValue());
     upload->SetString("id", i->upload_id);
 
     base::string16 value_w;
@@ -200,8 +200,8 @@ void WebRtcLogsDOMHandler::UpdateUI() {
 
   base::StringValue version(version_info::GetVersionNumber());
 
-  web_ui()->CallJavascriptFunction("updateWebRtcLogsList", upload_list,
-                                   version);
+  web_ui()->CallJavascriptFunctionUnsafe("updateWebRtcLogsList", upload_list,
+                                         version);
 }
 
 }  // namespace

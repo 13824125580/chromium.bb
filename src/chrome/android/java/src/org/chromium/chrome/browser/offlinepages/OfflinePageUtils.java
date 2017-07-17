@@ -5,31 +5,52 @@
 package org.chromium.chrome.browser.offlinepages;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Environment;
 
 import org.chromium.base.Log;
+import org.chromium.base.VisibleForTesting;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.snackbar.Snackbar;
+import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.components.offlinepages.FeatureMode;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.WebContents;
+import org.chromium.net.ConnectionType;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.ui.base.PageTransition;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * A class holding static util functions for offline pages.
  */
 public class OfflinePageUtils {
     private static final String TAG = "OfflinePageUtils";
-    /** Snackbar button types */
-    public static final int RELOAD_BUTTON = 0;
+    /** Background task tag to differentiate from other task types */
+    public static final String TASK_TAG = "OfflinePageUtils";
 
     private static final int SNACKBAR_DURATION = 6 * 1000; // 6 second
 
     private static final long STORAGE_ALMOST_FULL_THRESHOLD_BYTES = 10L * (1 << 20); // 10M
+
+    private static OfflinePageUtils sInstance;
+
+    private static OfflinePageUtils getInstance() {
+        if (sInstance == null) {
+            sInstance = new OfflinePageUtils();
+        }
+        return sInstance;
+    }
 
     /**
      * Returns the number of free bytes on the storage.
@@ -46,94 +67,53 @@ public class OfflinePageUtils {
     }
 
     /**
-     * Returns true if the stoarge is almost full which indicates that the user probably needs to
-     * free up some space.
-     */
-    public static boolean isStorageAlmostFull() {
-        return getFreeSpaceInBytes() < STORAGE_ALMOST_FULL_THRESHOLD_BYTES;
-    }
-
-    /**
      * Returns true if the network is connected.
      */
     public static boolean isConnected() {
         return NetworkChangeNotifier.isOnline();
     }
 
-    /**
-     * Finds out the appropriate resource ID of UI string shown to the user.
-     * @param stringResId The resource ID of UI string used when 'bookmarks' name is used  in UI
-     *        strings.
-     * return The resource ID of UI string shown to the user, depending on the experiment.
+    /*
+     * Save an offline copy for the bookmarked page asynchronously.
+     *
+     * @param bookmarkId The ID of the page to save an offline copy.
+     * @param tab A {@link Tab} object.
+     * @param callback The callback to be invoked when the offline copy is saved.
      */
-    public static int getStringId(int stringResId) {
-        if (!OfflinePageBridge.isEnabled()) {
-            return stringResId;
-        }
-        if (OfflinePageBridge.getFeatureMode() != FeatureMode.ENABLED_AS_SAVED_PAGES) {
-            return stringResId;
-        }
-        if (stringResId == R.string.bookmark_action_bar_delete) {
-            return R.string.offline_pages_action_bar_delete;
-        } else if (stringResId == R.string.bookmark_action_bar_move) {
-            return R.string.offline_pages_action_bar_move;
-        } else if (stringResId == R.string.bookmark_action_bar_search) {
-            return R.string.offline_pages_action_bar_search;
-        } else if (stringResId == R.string.edit_bookmark) {
-            return R.string.offline_pages_edit_item;
-        } else if (stringResId == R.string.bookmark_drawer_all_items) {
-            return R.string.offline_pages_all_items;
-        } else if (stringResId == R.string.bookmark_title_bar_all_items) {
-            return R.string.offline_pages_all_items;
-        } else if (stringResId == R.string.bookmarks) {
-            return R.string.offline_pages_saved_pages;
-        } else if (stringResId == R.string.menu_bookmarks) {
-            return R.string.menu_bookmarks_offline_pages;
-        } else if (stringResId == R.string.ntp_bookmarks) {
-            return R.string.offline_pages_ntp_button_name;
-        } else if (stringResId == R.string.accessibility_ntp_toolbar_btn_bookmarks) {
-            return R.string.offline_pages_ntp_button_accessibility;
-        } else if (stringResId == R.string.bookmarks_folder_empty) {
-            return R.string.offline_pages_folder_empty;
-        } else if (stringResId == R.string.new_tab_incognito_message) {
-            return R.string.offline_pages_new_tab_incognito_message;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_page_saved) {
-            return R.string.offline_pages_page_saved;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_page_saved_folder) {
-            return R.string.offline_pages_page_saved_folder;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_page_skipped) {
-            return R.string.offline_pages_page_skipped;
-        } else if (stringResId
-                == R.string.offline_pages_as_bookmarks_page_saved_storage_near_full) {
-            return R.string.offline_pages_page_saved_storage_near_full;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_page_failed_to_save) {
-            return R.string.offline_pages_page_failed_to_save;
-        } else if (stringResId
-                == R.string.offline_pages_as_bookmarks_page_failed_to_save_storage_near_full) {
-            return R.string.offline_pages_page_failed_to_save_storage_near_full;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_storage_space_message) {
-            return R.string.offline_pages_storage_space_message;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_viewing_offline_page) {
-            return R.string.offline_pages_viewing_offline_page;
-        } else if (stringResId == R.string.offline_pages_as_bookmarks_offline_page_size) {
-            return R.string.bookmark_offline_page_size;
-        } else {
-            return stringResId;
-        }
+    public static void saveBookmarkOffline(BookmarkId bookmarkId, Tab tab) {
+        // If bookmark ID is missing there is nothing to save here.
+        if (bookmarkId == null) return;
+
+        // Making sure the feature is enabled.
+        if (!OfflinePageBridge.isOfflineBookmarksEnabled()) return;
+
+        // Making sure tab is worth keeping.
+        if (shouldSkipSavingTabOffline(tab)) return;
+
+        OfflinePageBridge offlinePageBridge = getInstance().getOfflinePageBridge(tab.getProfile());
+        if (offlinePageBridge == null) return;
+
+        WebContents webContents = tab.getWebContents();
+        ClientId clientId = ClientId.createClientIdForBookmarkId(bookmarkId);
+
+        // TODO(fgorski): Ensure that request is queued if the model is not loaded.
+        offlinePageBridge.savePage(webContents, clientId, new OfflinePageBridge.SavePageCallback() {
+            @Override
+            public void onSavePageDone(int savePageResult, String url, long offlineId) {
+                // TODO(fgorski): Decide if we need to do anything with result.
+                // Perhaps some UMA reporting, but that can really happen someplace else.
+            }
+        });
     }
 
     /**
-     * Whenever we reload an offline page, if we are online, load the online version of the page
-     * instead, on the theory that the user prefers the online version of the page.
+     * Indicates whether we should skip saving the given tab as an offline page.
+     * A tab shouldn't be saved offline if it shows an error page or a sad tab page.
      */
-    public static void preferOnlineVersion(ChromeActivity activity, Tab tab, String newUrl) {
-        // If we are reloading an offline page, but are online, get the online version.
-        if (newUrl.equals(tab.getUrl()) && isConnected()) {
-            Log.i(TAG, "Refreshing to the online version of an offline page, since we are online");
-            LoadUrlParams params =
-                    new LoadUrlParams(tab.getOfflinePageOriginalUrl(), PageTransition.RELOAD);
-            tab.loadUrl(params);
-        }
+    private static boolean shouldSkipSavingTabOffline(Tab tab) {
+        WebContents webContents = tab.getWebContents();
+        return tab.isShowingErrorPage() || tab.isShowingSadTab() || webContents == null
+                || webContents.isDestroyed() || webContents.isIncognito();
     }
 
     /**
@@ -142,6 +122,7 @@ public class OfflinePageUtils {
      * @return onlineUrl without the scheme
      */
     public static String stripSchemeFromOnlineUrl(String onlineUrl) {
+        onlineUrl = onlineUrl.trim();
         // Offline pages are only saved for https:// and http:// schemes.
         if (onlineUrl.startsWith("https://")) {
             return onlineUrl.substring(8);
@@ -158,48 +139,30 @@ public class OfflinePageUtils {
      * @param tab The current tab.
      */
     public static void showOfflineSnackbarIfNecessary(ChromeActivity activity, Tab tab) {
-        showOfflineSnackbarIfNecessary(activity, tab, null);
+        if (!OfflinePageBridge.isOfflinePagesEnabled()) return;
+
+        if (OfflinePageTabObserver.getInstance() == null) {
+            SnackbarController snackbarController =
+                    createReloadSnackbarController(activity.getTabModelSelector());
+            OfflinePageTabObserver.init(
+                    activity.getBaseContext(), activity.getSnackbarManager(), snackbarController);
+        }
+
+        showOfflineSnackbarIfNecessary(tab);
     }
 
     /**
      * Shows the snackbar for the current tab to provide offline specific information if needed.
      * This method is used by testing for dependency injecting a snackbar controller.
-     * @param activity The activity owning the tab.
+     * @param context android context
+     * @param snackbarManager The snackbar manager to show and dismiss snackbars.
      * @param tab The current tab.
-     * @param snackbarController Class to show the snackbar.
+     * @param snackbarController The snackbar controller to control snackbar behavior.
      */
-    public static void showOfflineSnackbarIfNecessary(
-            ChromeActivity activity, Tab tab, SnackbarController snackbarController) {
-        Log.d(TAG, "showOfflineSnackbarIfNecessary, controller is " + snackbarController);
-        if (tab == null || tab.isFrozen()) return;
-
-        if (!OfflinePageBridge.isEnabled()) return;
-
-        // We only show a snackbar if we are seeing an offline page.
-        if (!tab.isOfflinePage()) return;
-
-        // Get a snackbar controller if we need one.
-        if (snackbarController == null) {
-            snackbarController = getSnackbarController(activity, tab);
-        }
-
-        final boolean connected = isConnected();
-
-        Log.d(TAG, "showOfflineSnackbarIfNecessary called, tabId " + tab.getId() + ", hidden "
-                        + tab.isHidden() + ", connected " + connected + ", controller "
-                        + snackbarController);
-
-        // If the tab is no longer hidden, and we have a connection while showing an offline
-        // page, offer to reload it now.
-        if (!tab.isHidden() && connected) {
-            Log.d(TAG, "Offering to reload page, controller " + snackbarController);
-            showReloadSnackbar(activity, snackbarController);
-            return;
-        }
-
-        // Set up the tab observer to watch for the tab being unhidden or connectivity.
-        OfflinePageTabObserver.addObserverForTab(activity, tab, connected, snackbarController);
-        return;
+    static void showOfflineSnackbarIfNecessary(Tab tab) {
+        // Set up the tab observer to watch for the tab being shown (not hidden) and a valid
+        // connection. When both conditions are met a snackbar is shown.
+        OfflinePageTabObserver.addObserverForTab(tab);
     }
 
     /**
@@ -207,34 +170,34 @@ public class OfflinePageUtils {
      * @param activity The activity owning the tab.
      * @param snackbarController Class to show the snackbar.
      */
-    public static void showReloadSnackbar(final ChromeActivity activity,
-            final SnackbarController snackbarController) {
+    public static void showReloadSnackbar(Context context, SnackbarManager snackbarManager,
+            final SnackbarController snackbarController, int tabId) {
+        if (tabId == Tab.INVALID_TAB_ID) return;
+
         Log.d(TAG, "showReloadSnackbar called with controller " + snackbarController);
-        Context context = activity.getBaseContext();
-        final int snackbarTextId = getStringId(R.string.offline_pages_viewing_offline_page);
-        Snackbar snackbar = Snackbar.make(context.getString(snackbarTextId), snackbarController,
-                                            Snackbar.TYPE_ACTION)
-                                    .setSingleLine(false)
-                                    .setAction(context.getString(R.string.reload), RELOAD_BUTTON);
-        Log.d(TAG, "made snackbar with controller " + snackbarController);
+        Snackbar snackbar =
+                Snackbar.make(context.getString(R.string.offline_pages_viewing_offline_page),
+                        snackbarController, Snackbar.TYPE_ACTION, Snackbar.UMA_OFFLINE_PAGE_RELOAD)
+                        .setSingleLine(false).setAction(context.getString(R.string.reload), tabId);
         snackbar.setDuration(SNACKBAR_DURATION);
-        activity.getSnackbarManager().showSnackbar(snackbar);
+        snackbarManager.showSnackbar(snackbar);
     }
 
     /**
      * Gets a snackbar controller that we can use to show our snackbar.
+     * @param tabModelSelector used to retrieve a tab by ID
      */
-    private static SnackbarController getSnackbarController(
-            final ChromeActivity activity, final Tab tab) {
-        final int tabId = tab.getId();
+    private static SnackbarController createReloadSnackbarController(
+            final TabModelSelector tabModelSelector) {
         Log.d(TAG, "building snackbar controller");
 
         return new SnackbarController() {
             @Override
             public void onAction(Object actionData) {
-                assert RELOAD_BUTTON == (int) actionData;
+                assert actionData != null;
+                int tabId = (int) actionData;
                 RecordUserAction.record("OfflinePages.ReloadButtonClicked");
-                Tab foundTab = activity.getTabModelSelector().getTabById(tabId);
+                Tab foundTab = tabModelSelector.getTabById(tabId);
                 if (foundTab == null) return;
 
                 LoadUrlParams params = new LoadUrlParams(
@@ -247,5 +210,83 @@ public class OfflinePageUtils {
                 RecordUserAction.record("OfflinePages.ReloadButtonNotClicked");
             }
         };
+    }
+
+    public static DeviceConditions getDeviceConditions(Context context) {
+        return getInstance().getDeviceConditionsImpl(context);
+    }
+
+    /**
+     * Records UMA data when the Offline Pages Background Load service awakens.
+     * @param context android context
+     */
+    public static void recordWakeupUMA(Context context, long taskScheduledTimeMillis) {
+        DeviceConditions deviceConditions = getDeviceConditions(context);
+        if (deviceConditions == null) return;
+
+        // Report charging state.
+        RecordHistogram.recordBooleanHistogram(
+                "OfflinePages.Wakeup.ConnectedToPower", deviceConditions.isPowerConnected());
+
+        // Report battery percentage.
+        RecordHistogram.recordPercentageHistogram(
+                "OfflinePages.Wakeup.BatteryPercentage", deviceConditions.getBatteryPercentage());
+
+        // Report the default network found (or none, if we aren't connected).
+        int connectionType = deviceConditions.getNetConnectionType();
+        Log.d(TAG, "Found default network of type " + connectionType);
+        RecordHistogram.recordEnumeratedHistogram("OfflinePages.Wakeup.NetworkAvailable",
+                connectionType, ConnectionType.CONNECTION_LAST + 1);
+
+        // Collect UMA on the time since the request started.
+        long nowMillis = System.currentTimeMillis();
+        long delayInMilliseconds = nowMillis - taskScheduledTimeMillis;
+        if (delayInMilliseconds <= 0) {
+            return;
+        }
+        RecordHistogram.recordLongTimesHistogram(
+                "OfflinePages.Wakeup.DelayTime",
+                delayInMilliseconds,
+                TimeUnit.MILLISECONDS);
+    }
+
+    private static boolean isPowerConnected(Intent batteryStatus) {
+        int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+        boolean isConnected = (status == BatteryManager.BATTERY_STATUS_CHARGING
+                || status == BatteryManager.BATTERY_STATUS_FULL);
+        Log.d(TAG, "Power connected is " + isConnected);
+        return isConnected;
+    }
+
+    private static int batteryPercentage(Intent batteryStatus) {
+        int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        if (scale == 0) return 0;
+
+        int percentage = Math.round(100 * level / (float) scale);
+        Log.d(TAG, "Battery Percentage is " + percentage);
+        return percentage;
+    }
+
+    protected OfflinePageBridge getOfflinePageBridge(Profile profile) {
+        return OfflinePageBridge.getForProfile(profile);
+    }
+
+    /** Returns the current device conditions. May be overridden for testing. */
+    protected DeviceConditions getDeviceConditionsImpl(Context context) {
+        IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        // Note this is a sticky intent, so we aren't really registering a receiver, just getting
+        // the sticky intent.  That means that we don't need to unregister the filter later.
+        Intent batteryStatus = context.registerReceiver(null, filter);
+        if (batteryStatus == null) return null;
+
+        return new DeviceConditions(isPowerConnected(batteryStatus),
+                batteryPercentage(batteryStatus),
+                NetworkChangeNotifier.getInstance().getCurrentConnectionType());
+    }
+
+    @VisibleForTesting
+    static void setInstanceForTesting(OfflinePageUtils instance) {
+        sInstance = instance;
     }
 }

@@ -39,6 +39,8 @@
 #include "core/page/CustomContextMenuProvider.h"
 #include "platform/ContextMenu.h"
 #include "platform/ContextMenuItem.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
@@ -47,16 +49,16 @@ using namespace HTMLNames;
 ContextMenuController::ContextMenuController(Page*, ContextMenuClient* client)
     : m_client(client)
 {
-    ASSERT_ARG(client, client);
+    DCHECK(client);
 }
 
 ContextMenuController::~ContextMenuController()
 {
 }
 
-PassOwnPtrWillBeRawPtr<ContextMenuController> ContextMenuController::create(Page* page, ContextMenuClient* client)
+ContextMenuController* ContextMenuController::create(Page* page, ContextMenuClient* client)
 {
-    return adoptPtrWillBeNoop(new ContextMenuController(page, client));
+    return new ContextMenuController(page, client);
 }
 
 DEFINE_TRACE(ContextMenuController)
@@ -67,7 +69,7 @@ DEFINE_TRACE(ContextMenuController)
 
 void ContextMenuController::clearContextMenu()
 {
-    m_contextMenu.clear();
+    m_contextMenu.reset();
     if (m_menuProvider)
         m_menuProvider->contextMenuCleared();
     m_menuProvider = nullptr;
@@ -94,11 +96,11 @@ void ContextMenuController::populateCustomContextMenu(const Event& event)
         return;
 
     HTMLElement& element = toHTMLElement(*node);
-    RefPtrWillBeRawPtr<HTMLMenuElement> menuElement = element.assignedContextMenu();
+    HTMLMenuElement* menuElement = element.assignedContextMenu();
     if (!menuElement || !equalIgnoringCase(menuElement->fastGetAttribute(typeAttr), "context"))
         return;
-    RefPtrWillBeRawPtr<RelatedEvent> relatedEvent = RelatedEvent::create(EventTypeNames::show, true, true, node);
-    if (menuElement->dispatchEvent(relatedEvent.release()) != DispatchEventResult::NotCanceled)
+    RelatedEvent* relatedEvent = RelatedEvent::create(EventTypeNames::show, true, true, node);
+    if (menuElement->dispatchEvent(relatedEvent) != DispatchEventResult::NotCanceled)
         return;
     if (menuElement != element.assignedContextMenu())
         return;
@@ -115,7 +117,7 @@ void ContextMenuController::handleContextMenuEvent(Event* event)
     showContextMenu(event);
 }
 
-void ContextMenuController::showContextMenu(Event* event, PassRefPtrWillBeRawPtr<ContextMenuProvider> menuProvider)
+void ContextMenuController::showContextMenu(Event* event, ContextMenuProvider* menuProvider)
 {
     m_menuProvider = menuProvider;
 
@@ -129,7 +131,7 @@ void ContextMenuController::showContextMenu(Event* event, PassRefPtrWillBeRawPtr
     showContextMenu(event);
 }
 
-void ContextMenuController::showContextMenuAtPoint(LocalFrame* frame, float x, float y, PassRefPtrWillBeRawPtr<ContextMenuProvider> menuProvider)
+void ContextMenuController::showContextMenuAtPoint(LocalFrame* frame, float x, float y, ContextMenuProvider* menuProvider)
 {
     m_menuProvider = menuProvider;
 
@@ -144,7 +146,7 @@ void ContextMenuController::showContextMenuAtPoint(LocalFrame* frame, float x, f
     showContextMenu(nullptr);
 }
 
-PassOwnPtr<ContextMenu> ContextMenuController::createContextMenu(Event* event)
+std::unique_ptr<ContextMenu> ContextMenuController::createContextMenu(Event* event)
 {
     ASSERT(event);
 
@@ -155,7 +157,7 @@ PassOwnPtr<ContextMenu> ContextMenuController::createContextMenu(Event* event)
     return createContextMenu(event->target()->toNode()->document().frame(), mouseEvent->absoluteLocation());
 }
 
-PassOwnPtr<ContextMenu> ContextMenuController::createContextMenu(LocalFrame* frame, const LayoutPoint& location)
+std::unique_ptr<ContextMenu> ContextMenuController::createContextMenu(LocalFrame* frame, const LayoutPoint& location)
 {
     HitTestRequest::HitTestRequestType type = HitTestRequest::ReadOnly | HitTestRequest::Active;
     HitTestResult result(type, location);
@@ -168,18 +170,27 @@ PassOwnPtr<ContextMenu> ContextMenuController::createContextMenu(LocalFrame* fra
 
     m_hitTestResult = result;
 
-    return adoptPtr(new ContextMenu);
+    return wrapUnique(new ContextMenu);
 }
 
 void ContextMenuController::showContextMenu(Event* event)
 {
+    bool fromTouch = false;
     bool fromContextMenuKey = false;
-    if (event && event->isMouseEvent()) {
-        const MouseEvent* mouseEvent = toMouseEvent(event);
-        fromContextMenuKey = mouseEvent->fromContextMenuKey();
+
+    if (event) {
+        if (event->isMouseEvent()) {
+            MouseEvent* mouseEvent = static_cast<MouseEvent*>(event);
+            fromTouch = mouseEvent->fromTouch();
+        }
+
+        if (event->isMouseEvent()) {
+            const MouseEvent* mouseEvent = toMouseEvent(event);
+            fromContextMenuKey = mouseEvent->fromContextMenuKey();
+        }
     }
-    m_client->showContextMenu(m_contextMenu.get(), fromContextMenuKey);
-    if (event)
+
+    if (m_client->showContextMenu(m_contextMenu.get(), fromTouch, fromContextMenuKey) && event)
         event->setDefaultHandled();
 }
 

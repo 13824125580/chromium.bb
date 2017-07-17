@@ -9,7 +9,6 @@
         'buildflag_header_path': 'third_party/kasko/kasko_features.h',
         'buildflag_flags': [
           'ENABLE_KASKO=<(kasko)',
-          'ENABLE_KASKO_HANG_REPORTS=<(kasko_hang_reports)',
         ],
       },
     },
@@ -42,6 +41,7 @@
           # GN: //third_party/kasko
           'target_name': 'kasko',
           'type': 'none',
+          'hard_dependency': 1,
           'dependencies': [
             'copy_kasko_dll',
             'kasko_features',
@@ -75,6 +75,9 @@
           'dependencies': [
             'kasko_features',
           ],
+          'export_dependent_settings': [
+            'kasko_features',
+          ]
         },
       ],
     }],

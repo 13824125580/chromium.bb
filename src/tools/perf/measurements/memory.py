@@ -4,13 +4,13 @@
 
 import logging
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 from metrics import memory
 from metrics import power
 
 
-class Memory(page_test.PageTest):
+class Memory(legacy_page_test.LegacyPageTest):
 
   def __init__(self):
     super(Memory, self).__init__()
@@ -24,6 +24,7 @@ class Memory(page_test.PageTest):
     self._memory_metric = memory.MemoryMetric(browser)
 
   def WillNavigateToPage(self, page, tab):
+    del page  # unused
     tab.CollectGarbage()
 
   def DidNavigateToPage(self, page, tab):
@@ -43,6 +44,7 @@ class Memory(page_test.PageTest):
     self._power_metric.AddResults(tab, results)
 
   def DidRunPage(self, platform):
+    del platform  # unused
     # TODO(rnephew): Remove when crbug.com/553601 is solved.
     logging.info('DidRunPage for memory metric')
     self._power_metric.Close()

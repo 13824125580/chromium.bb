@@ -9,6 +9,7 @@
 
 using net::SpdyHeaderBlock;
 using net::kPushPromiseTimeoutSecs;
+using std::string;
 
 namespace net {
 
@@ -16,24 +17,23 @@ QuicClientPromisedInfo::QuicClientPromisedInfo(QuicClientSessionBase* session,
                                                QuicStreamId id,
                                                string url)
     : session_(session),
-      helper_(session->connection()->helper()),
       id_(id),
       url_(url),
       client_request_delegate_(nullptr) {}
 
 QuicClientPromisedInfo::~QuicClientPromisedInfo() {}
 
-QuicTime QuicClientPromisedInfo::CleanupAlarm::OnAlarm() {
+void QuicClientPromisedInfo::CleanupAlarm::OnAlarm() {
   DVLOG(1) << "self GC alarm for stream " << promised_->id_;
   promised_->Reset(QUIC_STREAM_CANCELLED);
-  return QuicTime::Zero();
 }
 
 void QuicClientPromisedInfo::Init() {
-  cleanup_alarm_.reset(
-      helper_->CreateAlarm(new QuicClientPromisedInfo::CleanupAlarm(this)));
-  cleanup_alarm_->Set(helper_->GetClock()->ApproximateNow().Add(
-      QuicTime::Delta::FromSeconds(kPushPromiseTimeoutSecs)));
+  cleanup_alarm_.reset(session_->connection()->alarm_factory()->CreateAlarm(
+      new QuicClientPromisedInfo::CleanupAlarm(this)));
+  cleanup_alarm_->Set(
+      session_->connection()->helper()->GetClock()->ApproximateNow().Add(
+          QuicTime::Delta::FromSeconds(kPushPromiseTimeoutSecs)));
 }
 
 void QuicClientPromisedInfo::OnPromiseHeaders(const SpdyHeaderBlock& headers) {
@@ -56,11 +56,11 @@ void QuicClientPromisedInfo::OnPromiseHeaders(const SpdyHeaderBlock& headers) {
     Reset(QUIC_UNAUTHORIZED_PROMISE_URL);
     return;
   }
-  request_headers_.reset(new SpdyHeaderBlock(headers));
+  request_headers_.reset(new SpdyHeaderBlock(headers.Clone()));
 }
 
 void QuicClientPromisedInfo::OnResponseHeaders(const SpdyHeaderBlock& headers) {
-  response_headers_.reset(new SpdyHeaderBlock(headers));
+  response_headers_.reset(new SpdyHeaderBlock(headers.Clone()));
   if (client_request_delegate_) {
     // We already have a client request waiting.
     FinalValidation();
@@ -107,7 +107,7 @@ QuicAsyncStatus QuicClientPromisedInfo::HandleClientRequest(
     return QUIC_FAILURE;
   }
   client_request_delegate_ = delegate;
-  client_request_headers_.reset(new SpdyHeaderBlock(request_headers));
+  client_request_headers_.reset(new SpdyHeaderBlock(request_headers.Clone()));
   if (!response_headers_) {
     return QUIC_PENDING;
   }

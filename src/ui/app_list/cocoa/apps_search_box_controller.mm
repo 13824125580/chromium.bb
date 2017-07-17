@@ -8,12 +8,12 @@
 #include "base/mac/mac_util.h"
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
-#import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSBezierPath+RoundRect.h"
 #include "ui/app_list/app_list_menu.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/resources/grit/app_list_resources.h"
 #include "ui/app_list/search_box_model.h"
 #include "ui/app_list/search_box_model_observer.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/controls/hover_image_menu_button.h"
 #import "ui/base/cocoa/controls/hover_image_menu_button_cell.h"
 #import "ui/base/cocoa/menu_controller.h"
@@ -389,9 +389,11 @@ void SearchBoxModelObserverBridge::TextChanged() {
   // to a point anchored below the bottom right of the button.
   NSRect anchorRect = [menuButton convertRect:[menuButton bounds]
                                        toView:nil];
-  NSPoint anchorPoint = [[menuButton window] convertBaseToScreen:NSMakePoint(
-      NSMaxX(anchorRect) + kMenuXOffsetFromButton,
-      NSMinY(anchorRect) - kMenuYOffsetFromButton)];
+  NSPoint anchorPoint = ui::ConvertPointFromWindowToScreen(
+      [menuButton window],
+      NSMakePoint(NSMaxX(anchorRect) + kMenuXOffsetFromButton,
+                  NSMinY(anchorRect) - kMenuYOffsetFromButton));
+
   NSRect confinementRect = [[menuButton window] frame];
   confinementRect.size = NSMakeSize(anchorPoint.x - NSMinX(confinementRect),
                                     anchorPoint.y - NSMinY(confinementRect));

@@ -59,7 +59,7 @@ AppLauncherPageUI::AppLauncherPageUI(content::WebUI* web_ui)
   web_ui->AddMessageHandler(new ThemeHandler());
 #endif
 
-  scoped_ptr<HTMLSource> html_source(
+  std::unique_ptr<HTMLSource> html_source(
       new HTMLSource(GetProfile()->GetOriginalProfile()));
   content::URLDataSource::Add(GetProfile(), html_source.release());
 }
@@ -131,8 +131,21 @@ bool AppLauncherPageUI::HTMLSource::ShouldReplaceExistingSource() const {
   return false;
 }
 
-bool AppLauncherPageUI::HTMLSource::ShouldAddContentSecurityPolicy() const {
-  return false;
+std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyScriptSrc()
+    const {
+  // 'unsafe-inline' is added to script-src.
+  return "script-src chrome://resources 'self' 'unsafe-eval' 'unsafe-inline';";
+}
+
+std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyStyleSrc()
+    const {
+  return "style-src 'self' chrome://resources chrome://theme 'unsafe-inline';";
+}
+
+std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyImgSrc()
+    const {
+  return "img-src chrome://extension-icon chrome://theme chrome://resources "
+      "data:;";
 }
 
 AppLauncherPageUI::HTMLSource::~HTMLSource() {}

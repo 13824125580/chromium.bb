@@ -1,17 +1,12 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "core/html/AutoplayExperimentHelper.h"
 
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLMediaElement.h"
-#include "core/layout/LayoutBox.h"
-#include "core/layout/LayoutObject.h"
-#include "core/layout/LayoutVideo.h"
-#include "core/layout/LayoutView.h"
 #include "core/page/Page.h"
 #include "platform/Logging.h"
 #include "platform/UserGestureIndicator.h"
@@ -24,38 +19,40 @@ using namespace HTMLNames;
 // Seconds to wait after a video has stopped moving before playing it.
 static const double kViewportTimerPollDelay = 0.5;
 
-AutoplayExperimentHelper::AutoplayExperimentHelper(HTMLMediaElement& element)
-    : m_element(&element)
+AutoplayExperimentHelper::AutoplayExperimentHelper(Client* client)
+    : m_client(client)
     , m_mode(Mode::ExperimentOff)
     , m_playPending(false)
     , m_registeredWithLayoutObject(false)
     , m_wasInViewport(false)
+    , m_autoplayMediaEncountered(false)
+    , m_playbackStartedMetricRecorded(false)
+    , m_waitingForAutoplayPlaybackStop(false)
+    , m_recordedElement(false)
     , m_lastLocationUpdateTime(-std::numeric_limits<double>::infinity())
     , m_viewportTimer(this, &AutoplayExperimentHelper::viewportTimerFired)
+    , m_autoplayDeferredMetric(GesturelessPlaybackNotOverridden)
 {
-    if (document().settings()) {
-        m_mode = fromString(document().settings()->autoplayExperimentMode());
+    m_mode = fromString(this->client().autoplayExperimentMode());
 
-        if (m_mode != Mode::ExperimentOff) {
-            WTF_LOG(Media, "HTMLMediaElement: autoplay experiment set to %d",
-                m_mode);
-        }
-    }
+    DVLOG_IF(3, isExperimentEnabled()) << "autoplay experiment set to " << m_mode;
 }
 
 AutoplayExperimentHelper::~AutoplayExperimentHelper()
 {
-    unregisterForPositionUpdatesIfNeeded();
 }
 
 void AutoplayExperimentHelper::becameReadyToPlay()
 {
     // Assuming that we're eligible to override the user gesture requirement,
     // either play if we meet the visibility checks, or install a listener
-    // to wait for them to pass.
+    // to wait for them to pass.  We do not actually start playback; our
+    // caller must do that.
+    autoplayMediaEncountered();
+
     if (isEligible()) {
         if (meetsVisibilityRequirements())
-            prepareToPlay(GesturelessPlaybackStartedByAutoplayFlagImmediately);
+            prepareToAutoplay(GesturelessPlaybackStartedByAutoplayFlagImmediately);
         else
             registerForPositionUpdatesIfNeeded();
     }
@@ -63,28 +60,44 @@ void AutoplayExperimentHelper::becameReadyToPlay()
 
 void AutoplayExperimentHelper::playMethodCalled()
 {
-    // Set the pending state, even if the play isn't going to be pending.
-    // Eligibility can change if, for example, the mute status changes.
-    // Having this set is okay.
-    m_playPending = true;
+    // If a play is already pending, then do nothing.  We're already trying
+    // to play.  Similarly, do nothing if we're already playing.
+    if (m_playPending || !m_client->paused())
+        return;
 
-    if (!UserGestureIndicator::processingUserGesture()) {
+    if (!UserGestureIndicator::utilizeUserGesture()) {
+        autoplayMediaEncountered();
 
-        if (isEligible()) {
-            // Remember that userGestureRequiredForPlay is required for
-            // us to be eligible for the experiment.
+        // Check for eligibility, but don't worry if playback is currently
+        // pending.  If we're still not eligible, then this play() will fail.
+        if (isEligible(IgnorePendingPlayback)) {
+            m_playPending = true;
+
             // If we are able to override the gesture requirement now, then
             // do so.  Otherwise, install an event listener if we need one.
+            // We do not actually start playback; play() will do that.
             if (meetsVisibilityRequirements()) {
-                // Override the gesture and play.
-                prepareToPlay(GesturelessPlaybackStartedByPlayMethodImmediately);
+                // Override the gesture and assume that play() will succeed.
+                prepareToAutoplay(GesturelessPlaybackStartedByPlayMethodImmediately);
             } else {
                 // Wait for viewport visibility.
+                // TODO(liberato): if the autoplay is allowed soon enough, then
+                // it should still record *Immediately.  Otherwise, we end up
+                // here before the first layout sometimes, when the item is
+                // visible but we just don't know that yet.
                 registerForPositionUpdatesIfNeeded();
             }
         }
+    } else if (isLockedPendingUserGesture()) {
+        // If this media tried to autoplay, and we haven't played it yet, then
+        // record that the user provided the gesture to start it the first time.
+        if (m_autoplayMediaEncountered && !m_playbackStartedMetricRecorded)
+            recordAutoplayMetric(AutoplayManualStart);
+        // Don't let future gestureless playbacks affect metrics.
+        m_autoplayMediaEncountered = true;
+        m_playbackStartedMetricRecorded = true;
+        m_playPending = false;
 
-    } else if (element().isUserGestureRequiredForPlay()) {
         unregisterForPositionUpdatesIfNeeded();
     }
 }
@@ -96,34 +109,52 @@ void AutoplayExperimentHelper::pauseMethodCalled()
     unregisterForPositionUpdatesIfNeeded();
 }
 
+void AutoplayExperimentHelper::loadMethodCalled()
+{
+    if (isLockedPendingUserGesture() && UserGestureIndicator::utilizeUserGesture()) {
+        recordAutoplayMetric(AutoplayEnabledThroughLoad);
+        unlockUserGesture(GesturelessPlaybackEnabledByLoad);
+    }
+}
+
 void AutoplayExperimentHelper::mutedChanged()
 {
-    // If we are no longer eligible for the autoplay experiment, then also
-    // quit listening for events.  If we are eligible, and if we should be
-    // playing, then start playing.  In other words, start playing if
-    // we just needed 'mute' to autoplay.
-    if (!isEligible()) {
-        unregisterForPositionUpdatesIfNeeded();
-    } else {
-        // Try to play.  If we can't, then install a listener.
-        if (!maybeStartPlaying())
-            registerForPositionUpdatesIfNeeded();
-    }
+    // Mute changes are always allowed if this is unlocked.
+    if (!client().isLockedPendingUserGesture())
+        return;
+
+    // Changes with a user gesture are okay.
+    if (UserGestureIndicator::utilizeUserGesture())
+        return;
+
+    // If the mute state has changed to 'muted', then it's okay.
+    if (client().muted())
+        return;
+
+    // If nothing is playing, then changes are okay too.
+    if (client().paused())
+        return;
+
+    // Trying to unmute without a user gesture.
+
+    // If we don't care about muted state, then it's okay.
+    if (!enabled(IfMuted) && !(client().isCrossOrigin() && enabled(OrMuted)))
+        return;
+
+    // Unmuting isn't allowed, so pause.
+    client().pauseInternal();
 }
 
 void AutoplayExperimentHelper::registerForPositionUpdatesIfNeeded()
 {
     // If we don't require that the player is in the viewport, then we don't
     // need the listener.
-    if (!enabled(IfViewport)) {
+    if (!requiresViewportVisibility()) {
         if (!enabled(IfPageVisible))
             return;
     }
 
-    if (LayoutObject* layoutObject = element().layoutObject()) {
-        LayoutMedia* layoutMedia = toLayoutMedia(layoutObject);
-        layoutMedia->setRequestPositionUpdates(true);
-    }
+    m_client->setRequestPositionUpdates(true);
 
     // Set this unconditionally, in case we have no layout object yet.
     m_registeredWithLayoutObject = true;
@@ -131,12 +162,8 @@ void AutoplayExperimentHelper::registerForPositionUpdatesIfNeeded()
 
 void AutoplayExperimentHelper::unregisterForPositionUpdatesIfNeeded()
 {
-    if (m_registeredWithLayoutObject) {
-        if (LayoutObject* obj = element().layoutObject()) {
-            LayoutMedia* layoutMedia = toLayoutMedia(obj);
-            layoutMedia->setRequestPositionUpdates(false);
-        }
-    }
+    if (m_registeredWithLayoutObject)
+        m_client->setRequestPositionUpdates(false);
 
     // Clear this unconditionally so that we don't re-register if we didn't
     // have a LayoutObject now, but get one later.
@@ -151,13 +178,15 @@ void AutoplayExperimentHelper::positionChanged(const IntRect& visibleRect)
     // Also note that we are called quite often, including when the
     // page becomes visible.  That's why we don't bother to register
     // for page visibility changes explicitly.
+    if (visibleRect.isEmpty())
+        return;
 
     m_lastVisibleRect = visibleRect;
 
-    if (!element().layoutObject())
+    IntRect currentLocation = client().absoluteBoundingBoxRect();
+    if (currentLocation.isEmpty())
         return;
 
-    IntRect currentLocation = element().layoutObject()->absoluteBoundingBoxRect();
     bool inViewport = meetsVisibilityRequirements();
 
     if (m_lastLocation != currentLocation) {
@@ -175,18 +204,12 @@ void AutoplayExperimentHelper::positionChanged(const IntRect& visibleRect)
 
 void AutoplayExperimentHelper::updatePositionNotificationRegistration()
 {
-    if (m_registeredWithLayoutObject) {
-        LayoutMedia* layoutMedia = toLayoutMedia(element().layoutObject());
-        layoutMedia->setRequestPositionUpdates(true);
-    }
+    if (m_registeredWithLayoutObject)
+        m_client->setRequestPositionUpdates(true);
 }
 
 void AutoplayExperimentHelper::triggerAutoplayViewportCheckForTesting()
 {
-    FrameView* view = document().view();
-    if (view)
-        positionChanged(view->rootFrameToContents(view->computeVisibleArea()));
-
     // Make sure that the last update appears to be sufficiently far in the
     // past to appear that scrolling has stopped by now in viewportTimerFired.
     m_lastLocationUpdateTime = monotonicallyIncreasingTime() - kViewportTimerPollDelay - 1;
@@ -214,21 +237,25 @@ void AutoplayExperimentHelper::viewportTimerFired(Timer<AutoplayExperimentHelper
 bool AutoplayExperimentHelper::meetsVisibilityRequirements() const
 {
     if (enabled(IfPageVisible)
-        && element().document().pageVisibilityState() != PageVisibilityStateVisible)
+        && client().pageVisibilityState() != PageVisibilityStateVisible)
         return false;
 
-    if (!enabled(IfViewport))
+    if (!requiresViewportVisibility())
         return true;
 
     if (m_lastVisibleRect.isEmpty())
         return false;
 
-    LayoutObject* layoutObject = element().layoutObject();
-    if (!layoutObject)
+    IntRect currentLocation = client().absoluteBoundingBoxRect();
+    if (currentLocation.isEmpty())
         return false;
 
-    IntRect currentLocation = layoutObject->absoluteBoundingBoxRect();
+    // In partial-viewport mode, we require only 1x1 area.
+    if (enabled(IfPartialViewport)) {
+        return m_lastVisibleRect.intersects(currentLocation);
+    }
 
+    // Element must be completely visible, or as much as fits.
     // If element completely fills the screen, then truncate it to exactly
     // match the screen.  Any element that is wider just has to cover.
     if (currentLocation.x() <= m_lastVisibleRect.x()
@@ -249,53 +276,84 @@ bool AutoplayExperimentHelper::meetsVisibilityRequirements() const
 bool AutoplayExperimentHelper::maybeStartPlaying()
 {
     // See if we're allowed to autoplay now.
-    if (!isEligible() || !meetsVisibilityRequirements()) {
+    if (!isGestureRequirementOverridden())
         return false;
-    }
 
     // Start playing!
-    prepareToPlay(element().shouldAutoplay()
+    prepareToAutoplay(client().shouldAutoplay()
         ? GesturelessPlaybackStartedByAutoplayFlagAfterScroll
         : GesturelessPlaybackStartedByPlayMethodAfterScroll);
-    element().playInternal();
+
+    // Record that this played without a user gesture.
+    // This should rarely actually do anything.  Usually, playMethodCalled()
+    // and becameReadyToPlay will handle it, but toggling muted state can,
+    // in some cases, also trigger autoplay if the autoplay attribute is set
+    // after the media is ready to play.
+    autoplayMediaEncountered();
+
+    client().playInternal();
 
     return true;
 }
 
-bool AutoplayExperimentHelper::isEligible() const
+bool AutoplayExperimentHelper::isGestureRequirementOverridden() const
+{
+    return isEligible() && meetsVisibilityRequirements();
+}
+
+bool AutoplayExperimentHelper::isPlaybackDeferred() const
+{
+    return m_playPending;
+}
+
+bool AutoplayExperimentHelper::isEligible(EligibilityMode mode) const
 {
     if (m_mode == Mode::ExperimentOff)
+        return false;
+
+    // If autoplay is disabled, no one is eligible.
+    if (!client().isAutoplayAllowedPerSettings())
         return false;
 
     // If no user gesture is required, then the experiment doesn't apply.
     // This is what prevents us from starting playback more than once.
     // Since this flag is never set to true once it's cleared, it will block
     // the autoplay experiment forever.
-    if (!element().isUserGestureRequiredForPlay())
+    if (!isLockedPendingUserGesture())
         return false;
 
     // Make sure that this is an element of the right type.
-    if (!enabled(ForVideo) && isHTMLVideoElement(element()))
+    if (!enabled(ForVideo) && client().isHTMLVideoElement())
         return false;
 
-    if (!enabled(ForAudio) && isHTMLAudioElement(element()))
+    if (!enabled(ForAudio) && client().isHTMLAudioElement())
         return false;
 
     // If nobody has requested playback, either by the autoplay attribute or
     // a play() call, then do nothing.
 
-    if (!m_playPending && !element().shouldAutoplay())
+    if (mode !=  IgnorePendingPlayback && !m_playPending && !client().shouldAutoplay())
         return false;
 
     // Note that the viewport test always returns false on desktop, which is
     // why video-autoplay-experiment.html doesn't check -ifmobile .
     if (enabled(IfMobile)
-        && !document().viewportDescription().isLegacyViewportType())
+        && !client().isLegacyViewportType())
         return false;
+
+    // If we require same-origin, then check the origin.
+    if (enabled(IfSameOrigin) && client().isCrossOrigin()) {
+        // We're cross-origin, so block unless it's muted content and OrMuted
+        // is enabled.  For good measure, we also block all audio elements.
+        if (client().isHTMLAudioElement() || !client().muted()
+            || !enabled(OrMuted)) {
+            return false;
+        }
+    }
 
     // If we require muted media and this is muted, then it is eligible.
     if (enabled(IfMuted))
-        return element().muted();
+        return client().muted();
 
     // Element is eligible for gesture override, maybe muted.
     return true;
@@ -303,43 +361,47 @@ bool AutoplayExperimentHelper::isEligible() const
 
 void AutoplayExperimentHelper::muteIfNeeded()
 {
-    if (enabled(PlayMuted)) {
-        ASSERT(!isEligible());
-        // If we are actually changing the muted state, then this will call
-        // mutedChanged().  If isEligible(), then mutedChanged() will try
-        // to start playback, which we should not do here.
-        element().setMuted(true);
-    }
+    if (enabled(PlayMuted))
+        client().setMuted(true);
 }
 
-void AutoplayExperimentHelper::prepareToPlay(AutoplayMetrics metric)
+void AutoplayExperimentHelper::unlockUserGesture(AutoplayMetrics metric)
 {
-    element().recordAutoplayMetric(metric);
+    // Note that this could be moved back into HTMLMediaElement fairly easily.
+    // It's only here so that we can record the reason, and we can hide the
+    // ordering between unlocking and recording from the element this way.
+    if (!client().isLockedPendingUserGesture())
+        return;
 
+    setDeferredOverrideReason(metric);
+    client().unlockUserGesture();
+}
+
+void AutoplayExperimentHelper::setDeferredOverrideReason(AutoplayMetrics metric)
+{
+    // If the player is unlocked, then we don't care about any later reason.
+    if (!client().isLockedPendingUserGesture())
+        return;
+
+    m_autoplayDeferredMetric = metric;
+}
+
+void AutoplayExperimentHelper::prepareToAutoplay(AutoplayMetrics metric)
+{
     // This also causes !isEligible, so that we don't allow autoplay more than
     // once.  Be sure to do this before muteIfNeeded().
-    element().removeUserGestureRequirement();
+    // Also note that, at this point, we know that we're goint to start
+    // playback.  However, we still don't record the metric here.  Instead,
+    // we let playbackStarted() do that later.
+    setDeferredOverrideReason(metric);
+
+    // Don't bother to call autoplayMediaEncountered, since whoever initiates
+    // playback has do it anyway, in case we don't allow autoplay.
 
     unregisterForPositionUpdatesIfNeeded();
     muteIfNeeded();
 
-    // Record that this autoplayed without a user gesture.  This is normally
-    // set when we discover an autoplay attribute, but we include all cases
-    // where playback started without a user gesture, e.g., play().
-    element().setInitialPlayWithoutUserGestures(true);
-
     // Do not actually start playback here.
-}
-
-Document& AutoplayExperimentHelper::document() const
-{
-    return element().document();
-}
-
-HTMLMediaElement& AutoplayExperimentHelper::element() const
-{
-    ASSERT(m_element);
-    return *m_element;
 }
 
 AutoplayExperimentHelper::Mode AutoplayExperimentHelper::fromString(const String& mode)
@@ -353,14 +415,126 @@ AutoplayExperimentHelper::Mode AutoplayExperimentHelper::fromString(const String
         value |= IfPageVisible;
     if (mode.contains("-ifviewport"))
         value |= IfViewport;
+    if (mode.contains("-ifpartialviewport"))
+        value |= IfPartialViewport;
     if (mode.contains("-ifmuted"))
         value |= IfMuted;
     if (mode.contains("-ifmobile"))
         value |= IfMobile;
+    if (mode.contains("-ifsameorigin"))
+        value |= IfSameOrigin;
+    if (mode.contains("-ormuted"))
+        value |= OrMuted;
     if (mode.contains("-playmuted"))
         value |= PlayMuted;
 
     return value;
+}
+
+void AutoplayExperimentHelper::autoplayMediaEncountered()
+{
+    if (!m_autoplayMediaEncountered) {
+        m_autoplayMediaEncountered = true;
+        recordAutoplayMetric(AutoplayMediaFound);
+    }
+}
+
+bool AutoplayExperimentHelper::isLockedPendingUserGesture() const
+{
+    return client().isLockedPendingUserGesture();
+}
+
+void AutoplayExperimentHelper::playbackStarted()
+{
+    recordAutoplayMetric(AnyPlaybackStarted);
+
+    // Forget about our most recent visibility check.  If another override is
+    // requested, then we'll have to refresh it.  That way, we don't need to
+    // keep it up to date in the interim.
+    m_lastVisibleRect = IntRect();
+    m_wasInViewport = false;
+
+    // Any pending play is now playing.
+    m_playPending = false;
+
+    if (m_playbackStartedMetricRecorded)
+        return;
+
+    // Whether we record anything or not, we only want to record metrics for
+    // the initial playback.
+    m_playbackStartedMetricRecorded = true;
+
+    // If this is a gestureless start, then record why it was allowed.
+    if (m_autoplayMediaEncountered) {
+        m_waitingForAutoplayPlaybackStop = true;
+        recordAutoplayMetric(m_autoplayDeferredMetric);
+    }
+}
+
+void AutoplayExperimentHelper::playbackStopped()
+{
+    const bool ended = client().ended();
+    const bool bailout = isBailout();
+
+    // Record that play was paused.  We don't care if it was autoplay,
+    // play(), or the user manually started it.
+    recordAutoplayMetric(ended ? AnyPlaybackComplete : AnyPlaybackPaused);
+    if (bailout)
+        recordAutoplayMetric(AnyPlaybackBailout);
+
+    // If this was a gestureless play, then record that separately.
+    // These cover attr and play() gestureless starts.
+    if (m_waitingForAutoplayPlaybackStop) {
+        m_waitingForAutoplayPlaybackStop = false;
+
+        recordAutoplayMetric(ended ? AutoplayComplete : AutoplayPaused);
+
+        if (bailout)
+            recordAutoplayMetric(AutoplayBailout);
+    }
+}
+
+void AutoplayExperimentHelper::recordAutoplayMetric(AutoplayMetrics metric)
+{
+    client().recordAutoplayMetric(metric);
+}
+
+bool AutoplayExperimentHelper::isBailout() const
+{
+    // We count the user as having bailed-out on the video if they watched
+    // less than one minute and less than 50% of it.
+    const double playedTime = client().currentTime();
+    const double progress = playedTime / client().duration();
+    return (playedTime < 60) && (progress < 0.5);
+}
+
+void AutoplayExperimentHelper::recordSandboxFailure()
+{
+    // We record autoplayMediaEncountered here because we know
+    // that the autoplay attempt will fail.
+    autoplayMediaEncountered();
+    recordAutoplayMetric(AutoplayDisabledBySandbox);
+}
+
+void AutoplayExperimentHelper::loadingStarted()
+{
+    if (m_recordedElement)
+        return;
+
+    m_recordedElement = true;
+    recordAutoplayMetric(client().isHTMLVideoElement()
+        ? AnyVideoElement
+        : AnyAudioElement);
+}
+
+bool AutoplayExperimentHelper::requiresViewportVisibility() const
+{
+    return client().isHTMLVideoElement() && (enabled(IfViewport) || enabled(IfPartialViewport));
+}
+
+bool AutoplayExperimentHelper::isExperimentEnabled()
+{
+    return m_mode != Mode::ExperimentOff;
 }
 
 } // namespace blink

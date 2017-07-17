@@ -35,6 +35,7 @@
 #include "modules/webdatabase/SQLStatement.h"
 #include "modules/webdatabase/SQLTransactionStateMachine.h"
 #include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
@@ -110,10 +111,9 @@ private:
     Member<SQLTransactionErrorCallback> m_errorCallback;
 
     bool m_executeSqlAllowed;
-    OwnPtr<SQLErrorData> m_transactionError;
+    std::unique_ptr<SQLErrorData> m_transactionError;
 
     bool m_readOnly;
-    int m_asyncOperationId;
 };
 
 } // namespace blink

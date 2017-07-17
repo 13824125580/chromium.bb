@@ -36,6 +36,7 @@ _log = logging.getLogger(__name__)
 
 
 class MockProcess(object):
+
     def __init__(self, stdout='MOCK STDOUT\n', stderr=''):
         self.pid = 42
         self.stdout = StringIO.StringIO(stdout)
@@ -53,6 +54,8 @@ class MockProcess(object):
         return self.returncode
 
 # FIXME: This should be unified with MockExecutive2
+
+
 class MockExecutive(object):
     PIPE = "MOCK PIPE"
     STDOUT = "MOCK STDOUT"
@@ -101,7 +104,7 @@ class MockExecutive(object):
 
         self.calls.append(args)
 
-        assert(isinstance(args, list) or isinstance(args, tuple))
+        assert isinstance(args, list) or isinstance(args, tuple)
         if self._should_log:
             env_string = ""
             if env:
@@ -169,6 +172,7 @@ class MockExecutive(object):
     def process_dump(self):
         return []
 
+
 class MockExecutive2(MockExecutive):
     """MockExecutive2 is like MockExecutive except it doesn't log anything."""
 
@@ -191,7 +195,7 @@ class MockExecutive2(MockExecutive):
                     env=None,
                     debug_logging=False):
         self.calls.append(args)
-        assert(isinstance(args, list) or isinstance(args, tuple))
+        assert isinstance(args, list) or isinstance(args, tuple)
         if self._exception:
             raise self._exception  # pylint: disable=E0702
         if self._run_command_fn:

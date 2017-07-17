@@ -49,17 +49,12 @@
         'gl_bindings_autogen_osmesa.h',
         'gl_context.cc',
         'gl_context.h',
-        'gl_context_android.cc',
-        'gl_context_mac.mm',
         'gl_context_osmesa.cc',
         'gl_context_osmesa.h',
-        'gl_context_ozone.cc',
         'gl_context_stub.cc',
         'gl_context_stub.h',
         'gl_context_stub_with_extensions.cc',
         'gl_context_stub_with_extensions.h',
-        'gl_context_win.cc',
-        'gl_context_x11.cc',
         'gl_enums.cc',
         'gl_enums.h',
         'gl_enums_implementation_autogen.h',
@@ -74,6 +69,7 @@
         'gl_gl_api_implementation.h',
         'gl_helper.cc',
         'gl_helper.h',
+        'gl_image.cc',
         'gl_image.h',
         'gl_image_memory.cc',
         'gl_image_memory.h',
@@ -98,17 +94,12 @@
         'gl_state_restorer.h',
         'gl_surface.cc',
         'gl_surface.h',
-        'gl_surface_android.cc',
-        'gl_surface_mac.cc',
         'gl_surface_osmesa.cc',
         'gl_surface_osmesa.h',
         'gl_surface_overlay.cc',
         'gl_surface_overlay.h',
-        'gl_surface_ozone.cc',
         'gl_surface_stub.cc',
         'gl_surface_stub.h',
-        'gl_surface_win.cc',
-        'gl_surface_x11.cc',
         'gl_switches.cc',
         'gl_switches.h',
         'gl_version_info.cc',
@@ -146,6 +137,17 @@
             'gl_image_egl.h',
             'gl_surface_egl.cc',
             'gl_surface_egl.h',
+            'gl_surface_egl_android.cc',
+            'gl_surface_egl_ozone.cc',
+            'gl_surface_egl_win.cc',
+          ],
+          'direct_dependent_settings': {
+            'defines': [
+              'USE_EGL',
+            ],
+          },
+         'defines': [
+            'USE_EGL',
           ],
           'include_dirs': [
             '<(DEPTH)/third_party/khronos',
@@ -173,16 +175,23 @@
             'gl_surface_egl_x11.h',
             'gl_surface_glx.cc',
             'gl_surface_glx.h',
+            'gl_surface_osmesa_x11.cc',
+            'gl_surface_osmesa_x11.h',
           ],
-          'all_dependent_settings': {
+          'direct_dependent_settings': {
             'defines': [
               'GL_GLEXT_PROTOTYPES',
+              'USE_GLX',
             ],
           },
+          'defines': [
+            'USE_GLX',
+          ],
           'dependencies': [
             '<(DEPTH)/build/linux/system.gyp:x11',
             '<(DEPTH)/build/linux/system.gyp:xcomposite',
             '<(DEPTH)/build/linux/system.gyp:xext',
+            '<(DEPTH)/ui/base/x/ui_base_x.gyp:ui_base_x',
             '<(DEPTH)/ui/events/platform/events_platform.gyp:events_platform',
             '<(DEPTH)/ui/gfx/x/gfx_x11.gyp:gfx_x11',
           ],
@@ -205,6 +214,8 @@
             'gl_context_wgl.h',
             'gl_egl_api_implementation.cc',
             'gl_egl_api_implementation.h',
+            'gl_surface_osmesa_win.cc',
+            'gl_surface_osmesa_win.h', 
             'gl_surface_wgl.cc',
             'gl_surface_wgl.h',
             'gl_wgl_api_implementation.cc',
@@ -245,6 +256,8 @@
             'gl_image_io_surface.h',
             'scoped_cgl.cc',
             'scoped_cgl.h',
+            'yuv_to_rgb_converter.cc',
+            'yuv_to_rgb_converter.h',
           ],
           'link_settings': {
             'libraries': [
@@ -297,6 +310,7 @@
       'dependencies': [
         '../../third_party/khronos/khronos.gyp:khronos_headers',
         'gl',
+        'init/gl_init.gyp:gl_init',
       ],
       'include_dirs': [
         '../..',
@@ -317,6 +331,7 @@
       'dependencies': [
         '../../third_party/khronos/khronos.gyp:khronos_headers',
         'gl',
+        'init/gl_init.gyp:gl_init',
       ],
       'include_dirs': [
         '../..',

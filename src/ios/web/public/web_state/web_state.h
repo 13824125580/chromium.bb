@@ -15,7 +15,6 @@
 #include "base/supports_user_data.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
-#include "ios/web/public/web_view_type.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/size.h"
@@ -33,6 +32,11 @@ typedef UIView<CRWScrollableContent> CRWContentView;
 
 namespace base {
 class DictionaryValue;
+class Value;
+}
+
+namespace shell {
+class InterfaceRegistry;
 }
 
 namespace web {
@@ -40,6 +44,7 @@ namespace web {
 class BrowserState;
 class NavigationManager;
 class WebInterstitial;
+class WebStateDelegate;
 class WebStateObserver;
 class WebStatePolicyDecider;
 class WebStateWeakPtrFactory;
@@ -47,6 +52,14 @@ class WebStateWeakPtrFactory;
 // Core interface for interaction with the web.
 class WebState : public base::SupportsUserData {
  public:
+  // Parameters for the Create() method.
+  struct CreateParams {
+    explicit CreateParams(web::BrowserState* browser_state);
+    ~CreateParams();
+
+    web::BrowserState* browser_state;
+  };
+
   // Parameters for the OpenURL() method.
   struct OpenURLParams {
     OpenURLParams(const GURL& url,
@@ -83,15 +96,29 @@ class WebState : public base::SupportsUserData {
       const std::vector<gfx::Size>&)>
           ImageDownloadCallback;
 
+  // Creates a new WebState.
+  static std::unique_ptr<WebState> Create(const CreateParams& params);
+
   ~WebState() override {}
+
+  // Gets/Sets the delegate.
+  virtual WebStateDelegate* GetDelegate() = 0;
+  virtual void SetDelegate(WebStateDelegate* delegate) = 0;
+
+  // Whether or not a web view is allowed to exist in this WebState. Defaults
+  // to false; this should be enabled before attempting to access the view.
+  virtual bool IsWebUsageEnabled() const = 0;
+  virtual void SetWebUsageEnabled(bool enabled) = 0;
+
+  // Whether or not dialogs (JavaScript dialogs, HTTP auths and window.open)
+  // calls should be suppressed. Default is false.
+  virtual bool ShouldSuppressDialogs() const = 0;
+  virtual void SetShouldSuppressDialogs(bool should_suppress) = 0;
 
   // The view containing the contents of the current web page. If the view has
   // been purged due to low memory, this will recreate it. It is up to the
   // caller to size the view.
   virtual UIView* GetView() = 0;
-
-  // Returns the type of the web view associated with this WebState.
-  virtual WebViewType GetWebViewType() const = 0;
 
   // Gets the BrowserState associated with this WebState. Can never return null.
   virtual BrowserState* GetBrowserState() const = 0;
@@ -102,10 +129,21 @@ class WebState : public base::SupportsUserData {
 
   // Gets the NavigationManager associated with this WebState. Can never return
   // null.
+  virtual const NavigationManager* GetNavigationManager() const = 0;
   virtual NavigationManager* GetNavigationManager() = 0;
 
   // Gets the CRWJSInjectionReceiver associated with this WebState.
   virtual CRWJSInjectionReceiver* GetJSInjectionReceiver() const = 0;
+
+  // Runs JavaScript in the main frame's context. If a callback is provided, it
+  // will be used to return the result, when the result is available or script
+  // execution has failed due to an error.
+  // NOTE: Integer values will be returned as TYPE_DOUBLE because of underlying
+  // library limitation.
+  typedef base::Callback<void(const base::Value*)> JavaScriptResultCallback;
+  virtual void ExecuteJavaScript(const base::string16& javascript) = 0;
+  virtual void ExecuteJavaScript(const base::string16& javascript,
+                                 const JavaScriptResultCallback& callback) = 0;
 
   // Gets the contents MIME type.
   virtual const std::string& GetContentsMimeType() const = 0;
@@ -122,6 +160,10 @@ class WebState : public base::SupportsUserData {
 
   // Returns true if the current page is loading.
   virtual bool IsLoading() const = 0;
+
+  // The fraction of the page load that has completed as a number between 0.0
+  // (nothing loaded) and 1.0 (fully loaded).
+  virtual double GetLoadingProgress() const = 0;
 
   // Whether this instance is in the process of being destroyed.
   virtual bool IsBeingDestroyed() const = 0;
@@ -154,6 +196,9 @@ class WebState : public base::SupportsUserData {
 
   // Returns the currently visible WebInterstitial if one is shown.
   virtual WebInterstitial* GetWebInterstitial() const = 0;
+
+  // Returns the unique ID to use with web::CertStore.
+  virtual int GetCertGroupId() const = 0;
 
   // Callback used to handle script commands.
   // The callback must return true if the command was handled, and false
@@ -194,6 +239,9 @@ class WebState : public base::SupportsUserData {
                             uint32_t max_bitmap_size,
                             bool bypass_cache,
                             const ImageDownloadCallback& callback) = 0;
+
+  // Returns Mojo interface registry for this WebState.
+  virtual shell::InterfaceRegistry* GetMojoInterfaceRegistry() = 0;
 
  protected:
   friend class WebStateObserver;

@@ -7,13 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "skia/ext/platform_canvas.h"
-#include "skia/ext/refptr.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/shadow_value.h"
@@ -25,6 +25,7 @@ class Rect;
 class RectF;
 class FontList;
 class Point;
+class PointF;
 class Size;
 class Transform;
 
@@ -82,14 +83,10 @@ class GFX_EXPORT Canvas {
   // being returned.
   Canvas(const Size& size, float image_scale, bool is_opaque);
 
-  // Constructs a canvas with the size and the image_scale of the provided
-  // |image_rep|, and draws the |image_rep| into it.
-  Canvas(const ImageSkiaRep& image_rep, bool is_opaque);
-
   // Creates a Canvas backed by an |sk_canvas| with |image_scale_|.
   // |sk_canvas| is assumed to be already scaled based on |image_scale|
   // so no additional scaling is applied.
-  Canvas(const skia::RefPtr<SkCanvas>& sk_canvas, float image_scale);
+  Canvas(sk_sp<SkCanvas> sk_canvas, float image_scale);
 
   virtual ~Canvas();
 
@@ -241,13 +238,20 @@ class GFX_EXPORT Canvas {
 
   // Draws a single pixel line with the specified color.
   void DrawLine(const Point& p1, const Point& p2, SkColor color);
+  void DrawLine(const PointF& p1, const PointF& p2, SkColor color);
 
   // Draws a line with the given |paint| parameters.
   void DrawLine(const Point& p1, const Point& p2, const SkPaint& paint);
+  void DrawLine(const PointF& p1, const PointF& p2, const SkPaint& paint);
 
   // Draws a circle with the given |paint| parameters.
   void DrawCircle(const Point& center_point,
                   int radius,
+                  const SkPaint& paint);
+
+  // Draws a circle with the given |paint| parameters.
+  void DrawCircle(const PointF& center_point,
+                  float radius,
                   const SkPaint& paint);
 
   // Draws the given rectangle with rounded corners of |radius| using the
@@ -449,7 +453,7 @@ class GFX_EXPORT Canvas {
   // Canvas::Scale() does not affect |image_scale_|.
   float image_scale_;
 
-  skia::RefPtr<SkCanvas> canvas_;
+  sk_sp<SkCanvas> canvas_;
 
   DISALLOW_COPY_AND_ASSIGN(Canvas);
 };

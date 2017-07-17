@@ -30,9 +30,7 @@
 
 namespace blink {
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(NodeIteratorBase);
-
-NodeIteratorBase::NodeIteratorBase(PassRefPtrWillBeRawPtr<Node> rootNode, unsigned whatToShow, PassRefPtrWillBeRawPtr<NodeFilter> nodeFilter)
+NodeIteratorBase::NodeIteratorBase(Node* rootNode, unsigned whatToShow, NodeFilter* nodeFilter)
     : m_root(rootNode)
     , m_whatToShow(whatToShow)
     , m_filter(nodeFilter)
@@ -54,6 +52,11 @@ DEFINE_TRACE(NodeIteratorBase)
 {
     visitor->trace(m_root);
     visitor->trace(m_filter);
+}
+
+DEFINE_TRACE_WRAPPERS(NodeIteratorBase)
+{
+    visitor->traceWrappers(m_filter);
 }
 
 } // namespace blink

@@ -8,6 +8,7 @@
 #include "platform/geometry/IntRect.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/paint/DrawingDisplayItem.h"
+#include "public/platform/WebDisplayItemList.h"
 #include "third_party/skia/include/core/SkRegion.h"
 
 namespace blink {
@@ -45,12 +46,14 @@ void computeChunkBoundsAndOpaqueness(const DisplayItemList& displayItems, Vector
 
 PaintArtifact::PaintArtifact()
     : m_displayItemList(0)
+    , m_isSuitableForGpuRasterization(true)
 {
 }
 
-PaintArtifact::PaintArtifact(DisplayItemList displayItems, Vector<PaintChunk> paintChunks)
+PaintArtifact::PaintArtifact(DisplayItemList displayItems, Vector<PaintChunk> paintChunks, bool isSuitableForGpuRasterizationArg)
     : m_displayItemList(std::move(displayItems))
     , m_paintChunks(std::move(paintChunks))
+    , m_isSuitableForGpuRasterization(isSuitableForGpuRasterizationArg)
 {
     computeChunkBoundsAndOpaqueness(m_displayItemList, m_paintChunks);
 }
@@ -58,6 +61,7 @@ PaintArtifact::PaintArtifact(DisplayItemList displayItems, Vector<PaintChunk> pa
 PaintArtifact::PaintArtifact(PaintArtifact&& source)
     : m_displayItemList(std::move(source.m_displayItemList))
     , m_paintChunks(std::move(source.m_paintChunks))
+    , m_isSuitableForGpuRasterization(source.m_isSuitableForGpuRasterization)
 {
 }
 
@@ -69,6 +73,7 @@ PaintArtifact& PaintArtifact::operator=(PaintArtifact&& source)
 {
     m_displayItemList = std::move(source.m_displayItemList);
     m_paintChunks = std::move(source.m_paintChunks);
+    m_isSuitableForGpuRasterization = source.m_isSuitableForGpuRasterization;
     return *this;
 }
 
@@ -94,14 +99,12 @@ void PaintArtifact::replay(GraphicsContext& graphicsContext) const
 void PaintArtifact::appendToWebDisplayItemList(WebDisplayItemList* list) const
 {
     TRACE_EVENT0("blink,benchmark", "PaintArtifact::appendToWebDisplayItemList");
-#if ENABLE(ASSERT)
-    m_displayItemList.assertDisplayItemClientsAreAlive();
-#endif
     unsigned visualRectIndex = 0;
     for (const DisplayItem& displayItem : m_displayItemList) {
         displayItem.appendToWebDisplayItemList(m_displayItemList.visualRect(visualRectIndex), list);
         visualRectIndex++;
     }
+    list->setIsSuitableForGpuRasterization(isSuitableForGpuRasterization());
 }
 
 } // namespace blink

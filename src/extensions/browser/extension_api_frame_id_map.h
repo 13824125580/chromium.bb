@@ -7,6 +7,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
 #include "base/callback.h"
 #include "base/lazy_instance.h"
@@ -20,6 +21,14 @@ class WebContents;
 }  // namespace content
 
 namespace extensions {
+
+class ExtensionApiFrameIdMapHelper {
+ public:
+  virtual void GetTabAndWindowId(content::RenderFrameHost* rfh,
+                                 int* tab_id_out,
+                                 int* window_id_out) = 0;
+  virtual ~ExtensionApiFrameIdMapHelper() {}
+};
 
 // Extension frame IDs are exposed through the chrome.* APIs and have the
 // following characteristics:
@@ -49,7 +58,7 @@ class ExtensionApiFrameIdMap {
   // The data for a RenderFrame. Every RenderFrameIdKey maps to a FrameData.
   struct FrameData {
     FrameData();
-    FrameData(int frame_id, int parent_frame_id, int tab_id);
+    FrameData(int frame_id, int parent_frame_id, int tab_id, int window_id);
 
     // The extension API frame ID of the frame.
     int frame_id;
@@ -60,6 +69,10 @@ class ExtensionApiFrameIdMap {
     // The id of the tab that the frame is in, or -1 if the frame isn't in a
     // tab.
     int tab_id;
+
+    // The id of the window that the frame is in, or -1 if the frame isn't in a
+    // window.
+    int window_id;
   };
 
   using FrameDataCallback = base::Callback<void(const FrameData&)>;
@@ -91,7 +104,7 @@ class ExtensionApiFrameIdMap {
       content::WebContents* web_contents,
       int frame_id);
 
-  // Runs |callback| with the result that is equivalent to calling GetFrameId()
+  // Runs |callback| with a result that is equivalent to calling GetFrameData()
   // on the UI thread. Thread hopping is minimized if possible. Callbacks for
   // the same |render_process_id| and |frame_routing_id| are guaranteed to be
   // run in order. The order of other callbacks is undefined.
@@ -106,16 +119,26 @@ class ExtensionApiFrameIdMap {
                               int frame_routing_id,
                               FrameData* frame_data_out);
 
-  // Looks up the frame ID and stores it in the map. This method should be
+  // Retrieves the FrameData for a given |rfh|. The map may be updated with the
+  // result if the map did not contain the FrameData before the lookup.
+  // If |rfh| is nullptr, then the map is not modified.
+  FrameData GetFrameData(content::RenderFrameHost* rfh) WARN_UNUSED_RESULT;
+
+  // Looks up the FrameData and stores it in the map. This method should be
   // called as early as possible, e.g. in a
   // WebContentsObserver::RenderFrameCreated notification.
   void CacheFrameData(content::RenderFrameHost* rfh);
 
-  // Removes the frame ID mapping for a given frame. This method can be called
+  // Removes the FrameData mapping for a given frame. This method can be called
   // at any time, but it is typically called when a frame is destroyed.
   // If this method is not called, the cached mapping for the frame is retained
   // forever.
   void RemoveFrameData(content::RenderFrameHost* rfh);
+
+  // Updates the tab and window id for the given RenderFrameHost, if any exists.
+  void UpdateTabAndWindowId(int tab_id,
+                            int window_id,
+                            content::RenderFrameHost* rfh);
 
  protected:
   friend struct base::DefaultLazyInstanceTraits<ExtensionApiFrameIdMap>;
@@ -152,25 +175,29 @@ class ExtensionApiFrameIdMap {
   using FrameDataCallbacksMap = std::map<RenderFrameIdKey, FrameDataCallbacks>;
 
   ExtensionApiFrameIdMap();
-  ~ExtensionApiFrameIdMap();
+  virtual ~ExtensionApiFrameIdMap();
 
-  // Determines the value to be stored in |frame_id_map_| for a given key. This
-  // method is only called when |key| is not in |frame_id_map_|.
+  // Determines the value to be stored in |frame_data_map_| for a given key.
+  // This method is only called when |key| is not in |frame_data_map_|.
   // virtual for testing.
   virtual FrameData KeyToValue(const RenderFrameIdKey& key) const;
 
-  FrameData LookupFrameDataOnUI(const RenderFrameIdKey& key);
+  // Looks up the data for the given |key| and adds it to the |frame_data_map_|.
+  // |is_from_io| indicates whether the lookup originated from the IO thread.
+  FrameData LookupFrameDataOnUI(const RenderFrameIdKey& key, bool is_from_io);
 
-  // Called as soon as the frame ID is found for the given |key|, and runs all
-  // queued callbacks with |cached_frame_id_pair|.
+  // Called as soon as the frame data is found for the given |key|, and runs all
+  // queued callbacks with |cached_frame_data|.
   void ReceivedFrameDataOnIO(const RenderFrameIdKey& key,
-                             const FrameData& cached_frame_id_pair);
+                             const FrameData& cached_frame_data);
 
-  // Implementation of CacheFrameId(RenderFrameHost), separated for testing.
+  // Implementation of CacheFrameData(RenderFrameHost), separated for testing.
   void CacheFrameData(const RenderFrameIdKey& key);
 
-  // Implementation of RemoveFrameId(RenderFrameHost), separated for testing.
+  // Implementation of RemoveFrameData(RenderFrameHost), separated for testing.
   void RemoveFrameData(const RenderFrameIdKey& key);
+
+  std::unique_ptr<ExtensionApiFrameIdMapHelper> helper_;
 
   // Queued callbacks for use on the IO thread.
   FrameDataCallbacksMap callbacks_map_;
@@ -179,7 +206,7 @@ class ExtensionApiFrameIdMap {
   // number of thread hops on the IO thread.
   FrameDataMap frame_data_map_;
 
-  // This lock protects |frame_id_map_| from being concurrently written on the
+  // This lock protects |frame_data_map_| from being concurrently written on the
   // UI thread and read on the IO thread.
   base::Lock frame_data_map_lock_;
 

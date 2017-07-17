@@ -27,7 +27,6 @@
 
 #include "core/style/BorderValue.h"
 #include "core/style/ComputedStyleConstants.h"
-#include "platform/Length.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 
@@ -48,7 +47,7 @@ public:
 
     unsigned short ruleWidth() const
     {
-        if (m_rule.style() == BNONE || m_rule.style() == BHIDDEN)
+        if (m_rule.style() == BorderStyleNone || m_rule.style() == BorderStyleHidden)
             return 0;
         return m_rule.width();
     }

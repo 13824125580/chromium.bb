@@ -11,7 +11,7 @@
 #include "bindings/core/v8/V8ObjectConstructor.h"
 #include "core/SVGNames.h"
 #include "core/dom/Document.h"
-#include "core/dom/custom/CustomElementProcessingStack.h"
+#include "core/dom/custom/V0CustomElementProcessingStack.h"
 #include "wtf/GetPtr.h"
 #include "wtf/RefPtr.h"
 
@@ -23,7 +23,7 @@ namespace blink {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wglobal-constructors"
 #endif
-const WrapperTypeInfo V8SVGTestInterface::wrapperTypeInfo = { gin::kEmbedderBlink, V8SVGTestInterface::domTemplate, V8SVGTestInterface::refObject, V8SVGTestInterface::derefObject, V8SVGTestInterface::trace, 0, V8SVGTestInterface::preparePrototypeAndInterfaceObject, V8SVGTestInterface::installConditionallyEnabledProperties, "SVGTestInterface", 0, WrapperTypeInfo::WrapperTypeObjectPrototype, WrapperTypeInfo::ObjectClassId, WrapperTypeInfo::NotInheritFromEventTarget, WrapperTypeInfo::Dependent, WrapperTypeInfo::RefCountedObject };
+const WrapperTypeInfo V8SVGTestInterface::wrapperTypeInfo = { gin::kEmbedderBlink, V8SVGTestInterface::domTemplate, V8SVGTestInterface::trace, V8SVGTestInterface::traceWrappers, 0, 0, V8SVGTestInterface::preparePrototypeAndInterfaceObject, nullptr, "SVGTestInterface", 0, WrapperTypeInfo::WrapperTypeObjectPrototype, WrapperTypeInfo::ObjectClassId, WrapperTypeInfo::NotInheritFromEventTarget, WrapperTypeInfo::Dependent };
 #if defined(COMPONENT_BUILD) && defined(WIN32) && COMPILER(CLANG)
 #pragma clang diagnostic pop
 #endif
@@ -54,14 +54,14 @@ static void typeAttributeSetter(v8::Local<v8::Value> v8Value, const v8::Function
     V8StringResource<> cppValue = v8Value;
     if (!cppValue.prepare())
         return;
-    CustomElementProcessingStack::CallbackDeliveryScope deliveryScope;
+    V0CustomElementProcessingStack::CallbackDeliveryScope deliveryScope;
     impl->setAttribute(SVGNames::typeAttr, cppValue);
 }
 
 static void typeAttributeSetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
 {
     v8::Local<v8::Value> v8Value = info[0];
-    CustomElementProcessingStack::CallbackDeliveryScope deliveryScope;
+    V0CustomElementProcessingStack::CallbackDeliveryScope deliveryScope;
     SVGTestInterfaceV8Internal::typeAttributeSetter(v8Value, info);
 }
 
@@ -71,26 +71,25 @@ const V8DOMConfiguration::AccessorConfiguration V8SVGTestInterfaceAccessors[] = 
     {"type", SVGTestInterfaceV8Internal::typeAttributeGetterCallback, SVGTestInterfaceV8Internal::typeAttributeSetterCallback, 0, 0, 0, v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::ExposedToAllScripts, V8DOMConfiguration::OnPrototype, V8DOMConfiguration::CheckHolder},
 };
 
-static void installV8SVGTestInterfaceTemplate(v8::Local<v8::FunctionTemplate> functionTemplate, v8::Isolate* isolate)
+static void installV8SVGTestInterfaceTemplate(v8::Isolate* isolate, const DOMWrapperWorld& world, v8::Local<v8::FunctionTemplate> interfaceTemplate)
 {
-    functionTemplate->ReadOnlyPrototype();
-
-    v8::Local<v8::Signature> defaultSignature;
-    defaultSignature = V8DOMConfiguration::installDOMClassTemplate(isolate, functionTemplate, V8SVGTestInterface::wrapperTypeInfo.interfaceName, v8::Local<v8::FunctionTemplate>(), V8SVGTestInterface::internalFieldCount,
-        0, 0,
-        V8SVGTestInterfaceAccessors, WTF_ARRAY_LENGTH(V8SVGTestInterfaceAccessors),
-        0, 0);
-    v8::Local<v8::ObjectTemplate> instanceTemplate = functionTemplate->InstanceTemplate();
+    // Initialize the interface object's template.
+    V8DOMConfiguration::initializeDOMInterfaceTemplate(isolate, interfaceTemplate, V8SVGTestInterface::wrapperTypeInfo.interfaceName, v8::Local<v8::FunctionTemplate>(), V8SVGTestInterface::internalFieldCount);
+    v8::Local<v8::Signature> signature = v8::Signature::New(isolate, interfaceTemplate);
+    ALLOW_UNUSED_LOCAL(signature);
+    v8::Local<v8::ObjectTemplate> instanceTemplate = interfaceTemplate->InstanceTemplate();
     ALLOW_UNUSED_LOCAL(instanceTemplate);
-    v8::Local<v8::ObjectTemplate> prototypeTemplate = functionTemplate->PrototypeTemplate();
+    v8::Local<v8::ObjectTemplate> prototypeTemplate = interfaceTemplate->PrototypeTemplate();
     ALLOW_UNUSED_LOCAL(prototypeTemplate);
-    V8DOMConfiguration::setClassString(isolate, prototypeTemplate, V8SVGTestInterface::wrapperTypeInfo.interfaceName);
+    // Register DOM constants, attributes and operations.
+    V8DOMConfiguration::installAccessors(isolate, world, instanceTemplate, prototypeTemplate, interfaceTemplate, signature, V8SVGTestInterfaceAccessors, WTF_ARRAY_LENGTH(V8SVGTestInterfaceAccessors));
 }
 
-v8::Local<v8::FunctionTemplate> V8SVGTestInterface::domTemplate(v8::Isolate* isolate)
+v8::Local<v8::FunctionTemplate> V8SVGTestInterface::domTemplate(v8::Isolate* isolate, const DOMWrapperWorld& world)
 {
-    return V8DOMConfiguration::domClassTemplate(isolate, const_cast<WrapperTypeInfo*>(&wrapperTypeInfo), installV8SVGTestInterfaceTemplate);
+    return V8DOMConfiguration::domClassTemplate(isolate, world, const_cast<WrapperTypeInfo*>(&wrapperTypeInfo), installV8SVGTestInterfaceTemplate);
 }
+
 
 bool V8SVGTestInterface::hasInstance(v8::Local<v8::Value> v8Value, v8::Isolate* isolate)
 {
@@ -104,17 +103,7 @@ v8::Local<v8::Object> V8SVGTestInterface::findInstanceInPrototypeChain(v8::Local
 
 SVGTestInterface* V8SVGTestInterface::toImplWithTypeCheck(v8::Isolate* isolate, v8::Local<v8::Value> value)
 {
-    return hasInstance(value, isolate) ? toImpl(v8::Local<v8::Object>::Cast(value)) : 0;
-}
-
-void V8SVGTestInterface::refObject(ScriptWrappable* scriptWrappable)
-{
-    scriptWrappable->toImpl<SVGTestInterface>()->ref();
-}
-
-void V8SVGTestInterface::derefObject(ScriptWrappable* scriptWrappable)
-{
-    scriptWrappable->toImpl<SVGTestInterface>()->deref();
+    return hasInstance(value, isolate) ? toImpl(v8::Local<v8::Object>::Cast(value)) : nullptr;
 }
 
 } // namespace blink

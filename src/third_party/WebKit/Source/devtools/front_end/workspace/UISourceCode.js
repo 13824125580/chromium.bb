@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 /**
  * @constructor
  * @extends {WebInspector.Object}
@@ -52,6 +51,8 @@ WebInspector.UISourceCode = function(project, url, contentType)
     this._requestContentCallback = null;
     /** @type {?Promise<?string>} */
     this._requestContentPromise = null;
+    /** @type {!Map<string, !Map<number, !WebInspector.UISourceCode.LineMarker>>} */
+    this._lineDecorations = new Map();
 
     /** @type {!Array.<!WebInspector.Revision>} */
     this.history = [];
@@ -71,6 +72,8 @@ WebInspector.UISourceCode.Events = {
     SourceMappingChanged: "SourceMappingChanged",
     MessageAdded: "MessageAdded",
     MessageRemoved: "MessageRemoved",
+    LineDecorationAdded: "LineDecorationAdded",
+    LineDecorationRemoved: "LineDecorationRemoved"
 }
 
 WebInspector.UISourceCode.prototype = {
@@ -529,7 +532,7 @@ WebInspector.UISourceCode.prototype = {
      */
     extension: function()
     {
-        return WebInspector.TextUtils.extension(this._name);
+        return WebInspector.ParsedURL.extractExtension(this._name);
     },
 
     /**
@@ -550,12 +553,21 @@ WebInspector.UISourceCode.prototype = {
     searchInContent: function(query, caseSensitive, isRegex, callback)
     {
         var content = this.content();
-        if (content) {
-            WebInspector.StaticContentProvider.searchInContent(content, query, caseSensitive, isRegex, callback);
+        if (!content) {
+            this._project.searchInFileContent(this, query, caseSensitive, isRegex, callback);
             return;
         }
 
-        this._project.searchInFileContent(this, query, caseSensitive, isRegex, callback);
+        // searchInContent should call back later.
+        setTimeout(doSearch.bind(null, content), 0);
+
+        /**
+         * @param {string} content
+         */
+        function doSearch(content)
+        {
+            callback(WebInspector.ContentProvider.performSearchInContent(content, query, caseSensitive, isRegex));
+        }
     },
 
     /**
@@ -642,6 +654,64 @@ WebInspector.UISourceCode.prototype = {
         this._messages = [];
         for (var message of messages)
             this.dispatchEventToListeners(WebInspector.UISourceCode.Events.MessageRemoved, message);
+    },
+
+    /**
+     * @param {number} lineNumber
+     * @param {string} type
+     * @param {?} data
+     */
+    addLineDecoration: function(lineNumber, type, data)
+    {
+        var markers = this._lineDecorations.get(type);
+        if (!markers) {
+            markers = new Map();
+            this._lineDecorations.set(type, markers);
+        }
+        var marker = new WebInspector.UISourceCode.LineMarker(lineNumber, type, data);
+        markers.set(lineNumber, marker);
+        this.dispatchEventToListeners(WebInspector.UISourceCode.Events.LineDecorationAdded, marker);
+    },
+
+    /**
+     * @param {number} lineNumber
+     * @param {string} type
+     */
+    removeLineDecoration: function(lineNumber, type)
+    {
+        var markers = this._lineDecorations.get(type);
+        if (!markers)
+            return;
+        var marker = markers.get(lineNumber);
+        if (!marker)
+            return;
+        markers.delete(lineNumber);
+        this.dispatchEventToListeners(WebInspector.UISourceCode.Events.LineDecorationRemoved, marker);
+        if (!markers.size)
+            this._lineDecorations.delete(type);
+    },
+
+    /**
+     * @param {string} type
+     */
+    removeAllLineDecorations: function(type)
+    {
+        var markers = this._lineDecorations.get(type);
+        if (!markers)
+            return;
+        this._lineDecorations.delete(type);
+        markers.forEach(marker => {
+            this.dispatchEventToListeners(WebInspector.UISourceCode.Events.LineDecorationRemoved, marker);
+        });
+    },
+
+    /**
+     * @param {string} type
+     * @return {?Map<number, !WebInspector.UISourceCode.LineMarker>}
+     */
+    lineDecorations: function(type)
+    {
+        return this._lineDecorations.get(type) || null;
     },
 
     __proto__: WebInspector.Object.prototype
@@ -837,7 +907,8 @@ WebInspector.UISourceCode.Message.prototype = {
     /**
      * @return {!WebInspector.TextRange}
      */
-    range: function() {
+    range: function()
+    {
         return this._range;
     },
 
@@ -869,5 +940,44 @@ WebInspector.UISourceCode.Message.prototype = {
     remove: function()
     {
         this._uiSourceCode.removeMessage(this);
+    }
+}
+
+/**
+ * @constructor
+ * @param {number} line
+ * @param {string} type
+ * @param {?} data
+ */
+WebInspector.UISourceCode.LineMarker = function(line, type, data)
+{
+    this._line = line;
+    this._type = type;
+    this._data = data;
+}
+
+WebInspector.UISourceCode.LineMarker.prototype = {
+    /**
+     * @return {number}
+     */
+    line: function()
+    {
+        return this._line;
+    },
+
+    /**
+     * @return {string}
+     */
+    type: function()
+    {
+        return this._type;
+    },
+
+    /**
+     * @return {*}
+     */
+    data: function()
+    {
+        return this._data;
     }
 }

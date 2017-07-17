@@ -26,6 +26,7 @@
 #include "core/html/track/vtt/VTTElement.h"
 
 #include "core/HTMLElementFactory.h"
+#include "core/dom/StyleChangeReason.h"
 
 namespace blink {
 
@@ -58,7 +59,7 @@ static const QualifiedName& nodeTypeToTagName(VTTNodeType nodeType)
         return vTag;
     case VTTNodeTypeNone:
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return cTag; // Make the compiler happy.
     }
 }
@@ -70,28 +71,28 @@ VTTElement::VTTElement(VTTNodeType nodeType, Document* document)
 {
 }
 
-PassRefPtrWillBeRawPtr<VTTElement> VTTElement::create(VTTNodeType nodeType, Document* document)
+VTTElement* VTTElement::create(VTTNodeType nodeType, Document* document)
 {
-    return adoptRefWillBeNoop(new VTTElement(nodeType, document));
+    return new VTTElement(nodeType, document);
 }
 
-PassRefPtrWillBeRawPtr<Element> VTTElement::cloneElementWithoutAttributesAndChildren()
+Element* VTTElement::cloneElementWithoutAttributesAndChildren()
 {
-    RefPtrWillBeRawPtr<VTTElement> clone = create(static_cast<VTTNodeType>(m_webVTTNodeType), &document());
+    VTTElement* clone = create(static_cast<VTTNodeType>(m_webVTTNodeType), &document());
     clone->setLanguage(m_language);
-    return clone.release();
+    return clone;
 }
 
-PassRefPtrWillBeRawPtr<HTMLElement> VTTElement::createEquivalentHTMLElement(Document& document)
+HTMLElement* VTTElement::createEquivalentHTMLElement(Document& document)
 {
-    RefPtrWillBeRawPtr<HTMLElement> htmlElement = nullptr;
+    HTMLElement* htmlElement = nullptr;
     switch (m_webVTTNodeType) {
     case VTTNodeTypeClass:
     case VTTNodeTypeLanguage:
     case VTTNodeTypeVoice:
         htmlElement = HTMLElementFactory::createHTMLElement(HTMLNames::spanTag.localName(), document);
-        htmlElement.get()->setAttribute(HTMLNames::titleAttr, getAttribute(voiceAttributeName()));
-        htmlElement.get()->setAttribute(HTMLNames::langAttr, getAttribute(langAttributeName()));
+        htmlElement->setAttribute(HTMLNames::titleAttr, getAttribute(voiceAttributeName()));
+        htmlElement->setAttribute(HTMLNames::langAttr, getAttribute(langAttributeName()));
         break;
     case VTTNodeTypeItalic:
         htmlElement = HTMLElementFactory::createHTMLElement(HTMLNames::iTag.localName(), document);
@@ -109,10 +110,10 @@ PassRefPtrWillBeRawPtr<HTMLElement> VTTElement::createEquivalentHTMLElement(Docu
         htmlElement = HTMLElementFactory::createHTMLElement(HTMLNames::rtTag.localName(), document);
         break;
     default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
     }
 
-    htmlElement.get()->setAttribute(HTMLNames::classAttr, getAttribute(HTMLNames::classAttr));
+    htmlElement->setAttribute(HTMLNames::classAttr, getAttribute(HTMLNames::classAttr));
     return htmlElement;
 }
 

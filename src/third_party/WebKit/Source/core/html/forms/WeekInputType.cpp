@@ -36,7 +36,6 @@
 #include "core/html/forms/DateTimeFieldsState.h"
 #include "platform/DateComponents.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -47,9 +46,9 @@ static const int weekDefaultStepBase = -259200000; // The first day of 1970-W01.
 static const int weekDefaultStep = 1;
 static const int weekStepScaleFactor = 604800000;
 
-PassRefPtrWillBeRawPtr<InputType> WeekInputType::create(HTMLInputElement& element)
+InputType* WeekInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new WeekInputType(element));
+    return new WeekInputType(element);
 }
 
 void WeekInputType::countUsage()
@@ -71,14 +70,14 @@ StepRange WeekInputType::createStepRange(AnyStepHandling anyStepHandling) const
 
 bool WeekInputType::parseToDateComponentsInternal(const String& string, DateComponents* out) const
 {
-    ASSERT(out);
+    DCHECK(out);
     unsigned end;
     return out->parseWeek(string, 0, end) && end == string.length();
 }
 
 bool WeekInputType::setMillisecondToDateComponents(double value, DateComponents* date) const
 {
-    ASSERT(date);
+    DCHECK(date);
     return date->setMillisecondsSinceEpochForWeek(value);
 }
 
@@ -88,7 +87,6 @@ void WeekInputType::warnIfValueIsInvalid(const String& value) const
         addWarningToConsole("The specified value %s does not conform to the required format.  The format is \"yyyy-Www\" where yyyy is year in four or more digits, and ww is 01-53.", value);
 }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
 String WeekInputType::formatDateTimeFieldsState(const DateTimeFieldsState& dateTimeFieldsState) const
 {
     if (!dateTimeFieldsState.hasYear() || !dateTimeFieldsState.hasWeekOfYear())
@@ -111,6 +109,5 @@ bool WeekInputType::isValidFormat(bool hasYear, bool hasMonth, bool hasWeek, boo
 {
     return hasYear && hasWeek;
 }
-#endif
 
 } // namespace blink

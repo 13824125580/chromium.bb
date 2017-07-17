@@ -10,8 +10,7 @@
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/windows_version.h"
 #include "ui/aura/window.h"
-#include "ui/gfx/screen.h"
-#include "ui/gfx/win/dpi.h"
+#include "ui/display/win/screen_win.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 #include "ui/views/win/hwnd_util.h"
 
@@ -126,7 +125,7 @@ class TopMostFinder : public BaseWindowFinder {
         target_(window),
         is_top_most_(false),
         tmp_region_(CreateRectRgn(0, 0, 0, 0)) {
-    screen_loc_ = gfx::win::DIPToScreenPoint(screen_loc);
+    screen_loc_ = display::win::ScreenWin::DIPToScreenPoint(screen_loc);
     EnumWindows(WindowCallbackProc, as_lparam());
   }
 
@@ -203,7 +202,7 @@ class LocalProcessWindowFinder : public BaseWindowFinder {
       CHECK(SUCCEEDED(virtual_desktop_manager_.CreateInstance(
           __uuidof(VirtualDesktopManager))));
     }
-    screen_loc_ = gfx::win::DIPToScreenPoint(screen_loc);
+    screen_loc_ = display::win::ScreenWin::DIPToScreenPoint(screen_loc);
     EnumThreadWindows(GetCurrentThreadId(), WindowCallbackProc, as_lparam());
   }
 
@@ -233,7 +232,7 @@ std::set<HWND> RemapIgnoreSet(const std::set<gfx::NativeView>& ignore) {
 
 }  // namespace
 
-gfx::NativeWindow GetLocalProcessWindowAtPoint(
+gfx::NativeWindow WindowFinder::GetLocalProcessWindowAtPoint(
     const gfx::Point& screen_point,
     const std::set<gfx::NativeWindow>& ignore) {
   return LocalProcessWindowFinder::GetProcessWindowAtPoint(

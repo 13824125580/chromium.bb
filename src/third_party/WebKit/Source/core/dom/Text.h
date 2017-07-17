@@ -36,25 +36,25 @@ class CORE_EXPORT Text : public CharacterData {
 public:
     static const unsigned defaultLengthLimit = 1 << 16;
 
-    static PassRefPtrWillBeRawPtr<Text> create(Document&, const String&);
-    static PassRefPtrWillBeRawPtr<Text> createEditingText(Document&, const String&);
+    static Text* create(Document&, const String&);
+    static Text* createEditingText(Document&, const String&);
 
     LayoutText* layoutObject() const;
 
     // mergeNextSiblingNodesIfPossible() merges next sibling nodes if possible
     // then returns a node not merged.
-    PassRefPtrWillBeRawPtr<Node> mergeNextSiblingNodesIfPossible();
-    PassRefPtrWillBeRawPtr<Text> splitText(unsigned offset, ExceptionState&);
+    Node* mergeNextSiblingNodesIfPossible();
+    Text* splitText(unsigned offset, ExceptionState&);
 
     // DOM Level 3: http://www.w3.org/TR/DOM-Level-3-Core/core.html#ID-1312295772
 
     String wholeText() const;
-    PassRefPtrWillBeRawPtr<Text> replaceWholeText(const String&);
+    Text* replaceWholeText(const String&);
 
     void recalcTextStyle(StyleRecalcChange, Text* nextTextSibling);
-    bool textLayoutObjectIsNeeded(const ComputedStyle&, const LayoutObject& parent);
+    bool textLayoutObjectIsNeeded(const ComputedStyle&, const LayoutObject& parent) const;
     LayoutText* createTextLayoutObject(const ComputedStyle&);
-    void updateTextLayoutObject(unsigned offsetOfReplacedData, unsigned lengthOfReplacedData, RecalcStyleBehavior = DoNotRecalcStyle);
+    void updateTextLayoutObject(unsigned offsetOfReplacedData, unsigned lengthOfReplacedData);
 
     void attach(const AttachContext& = AttachContext()) final;
     void reattachIfNeeded(const AttachContext& = AttachContext());
@@ -70,13 +70,13 @@ protected:
 
 private:
     String nodeName() const override;
-    PassRefPtrWillBeRawPtr<Node> cloneNode(bool deep) final;
+    Node* cloneNode(bool deep) final;
 
     bool isTextNode() const = delete; // This will catch anyone doing an unnecessary check.
 
     bool needsWhitespaceLayoutObject();
 
-    virtual PassRefPtrWillBeRawPtr<Text> cloneWithData(const String&);
+    virtual Text* cloneWithData(const String&);
 
 #ifndef NDEBUG
     void formatForDebugger(char* buffer, unsigned length) const override;

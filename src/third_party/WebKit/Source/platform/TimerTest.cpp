@@ -11,6 +11,9 @@
 #include "public/platform/WebViewScheduler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "wtf/PtrUtil.h"
+#include "wtf/RefCounted.h"
+#include <memory>
 #include <queue>
 
 using testing::ElementsAre;
@@ -19,10 +22,10 @@ namespace blink {
 namespace {
 double gCurrentTimeSecs = 0.0;
 
-// This class exists because gcc doesn't know how to move an OwnPtr.
+// This class exists because gcc doesn't know how to move an std::unique_ptr.
 class RefCountedTaskContainer : public RefCounted<RefCountedTaskContainer> {
 public:
-    explicit RefCountedTaskContainer(WebTaskRunner::Task* task) : m_task(adoptPtr(task)) { }
+    explicit RefCountedTaskContainer(WebTaskRunner::Task* task) : m_task(wrapUnique(task)) { }
 
     ~RefCountedTaskContainer() { }
 
@@ -32,7 +35,7 @@ public:
     }
 
 private:
-    OwnPtr<WebTaskRunner::Task> m_task;
+    std::unique_ptr<WebTaskRunner::Task> m_task;
 };
 
 class DelayedTask {
@@ -185,11 +188,11 @@ public:
     }
 
     void shutdown() override {}
-    WebPassOwnPtr<WebViewScheduler> createWebViewScheduler(blink::WebView*) override { return nullptr; }
+    std::unique_ptr<WebViewScheduler> createWebViewScheduler(blink::WebView*) override { return nullptr; }
     void suspendTimerQueue() override { }
     void resumeTimerQueue() override { }
-    void addPendingNavigation() override { }
-    void removePendingNavigation() override { }
+    void addPendingNavigation(WebScheduler::NavigatingFrameType) override { }
+    void removePendingNavigation(WebScheduler::NavigatingFrameType) override { }
     void onNavigationStarted() override { }
 
 private:
@@ -199,7 +202,7 @@ private:
 
 class FakeWebThread : public WebThread {
 public:
-    FakeWebThread() : m_webScheduler(adoptPtr(new MockWebScheduler())) { }
+    FakeWebThread() : m_webScheduler(wrapUnique(new MockWebScheduler())) { }
     ~FakeWebThread() override { }
 
     virtual bool isCurrentThread() const
@@ -214,7 +217,7 @@ public:
         return 0;
     }
 
-    WebTaskRunner* taskRunner() override
+    WebTaskRunner* getWebTaskRunner() override
     {
         ASSERT_NOT_REACHED();
         return nullptr;
@@ -236,13 +239,13 @@ public:
     }
 
 private:
-    OwnPtr<MockWebScheduler> m_webScheduler;
+    std::unique_ptr<MockWebScheduler> m_webScheduler;
 };
 
 class TimerTestPlatform : public TestingPlatformSupport {
 public:
     TimerTestPlatform()
-        : m_webThread(adoptPtr(new FakeWebThread())) { }
+        : m_webThread(wrapUnique(new FakeWebThread())) { }
     ~TimerTestPlatform() override { }
 
     WebThread* currentThread() override
@@ -281,7 +284,7 @@ private:
         return static_cast<MockWebScheduler*>(m_webThread->scheduler());
     }
 
-    OwnPtr<FakeWebThread> m_webThread;
+    std::unique_ptr<FakeWebThread> m_webThread;
 };
 
 class TimerTest : public testing::Test {
@@ -696,6 +699,21 @@ TEST_F(TimerTest, AugmentRepeatInterval)
 
     runUntilIdleOrDeadlinePassed(m_startTime + 50.0);
     EXPECT_THAT(m_runTimes, ElementsAre(m_startTime + 20.0, m_startTime + 40.0));
+}
+
+TEST_F(TimerTest, AugmentRepeatInterval_TimerFireDelayed)
+{
+    Timer<TimerTest> timer(this, &TimerTest::countingTask);
+    timer.startRepeating(10, BLINK_FROM_HERE);
+    EXPECT_FLOAT_EQ(10.0, timer.repeatInterval());
+    EXPECT_FLOAT_EQ(10.0, timer.nextFireInterval());
+
+    advanceTimeBy(123.0); // Make the timer long overdue.
+    timer.augmentRepeatInterval(10);
+
+    EXPECT_FLOAT_EQ(20.0, timer.repeatInterval());
+    // The timer is overdue so it should be scheduled to fire immediatly.
+    EXPECT_FLOAT_EQ(0.0, timer.nextFireInterval());
 }
 
 TEST_F(TimerTest, RepeatingTimerDoesNotDrift)

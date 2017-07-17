@@ -19,12 +19,13 @@ TestNavigationURLLoaderFactory::~TestNavigationURLLoaderFactory() {
   NavigationURLLoader::SetFactoryForTesting(NULL);
 }
 
-scoped_ptr<NavigationURLLoader> TestNavigationURLLoaderFactory::CreateLoader(
+std::unique_ptr<NavigationURLLoader>
+TestNavigationURLLoaderFactory::CreateLoader(
     BrowserContext* browser_context,
-    scoped_ptr<NavigationRequestInfo> request_info,
-    ServiceWorkerNavigationHandle* service_worker_handle,
+    std::unique_ptr<NavigationRequestInfo> request_info,
+    ServiceWorkerContextWrapper* service_worker_context_wrapper,
     NavigationURLLoaderDelegate* delegate) {
-  return scoped_ptr<NavigationURLLoader>(
+  return std::unique_ptr<NavigationURLLoader>(
       new TestNavigationURLLoader(std::move(request_info), delegate));
 }
 

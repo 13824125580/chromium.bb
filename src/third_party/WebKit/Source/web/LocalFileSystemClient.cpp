@@ -38,13 +38,15 @@
 #include "public/web/WebContentSettingsClient.h"
 #include "web/WebLocalFrameImpl.h"
 #include "web/WorkerContentSettingsClient.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<FileSystemClient> LocalFileSystemClient::create()
+std::unique_ptr<FileSystemClient> LocalFileSystemClient::create()
 {
-    return adoptPtr(static_cast<FileSystemClient*>(new LocalFileSystemClient()));
+    return wrapUnique(static_cast<FileSystemClient*>(new LocalFileSystemClient()));
 }
 
 LocalFileSystemClient::~LocalFileSystemClient()
@@ -53,21 +55,21 @@ LocalFileSystemClient::~LocalFileSystemClient()
 
 bool LocalFileSystemClient::requestFileSystemAccessSync(ExecutionContext* context)
 {
-    ASSERT(context);
+    DCHECK(context);
     if (context->isDocument()) {
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return false;
     }
 
-    ASSERT(context->isWorkerGlobalScope());
+    DCHECK(context->isWorkerGlobalScope());
     return WorkerContentSettingsClient::from(*toWorkerGlobalScope(context))->requestFileSystemAccessSync();
 }
 
-void LocalFileSystemClient::requestFileSystemAccessAsync(ExecutionContext* context, PassOwnPtr<ContentSettingCallbacks> callbacks)
+void LocalFileSystemClient::requestFileSystemAccessAsync(ExecutionContext* context, std::unique_ptr<ContentSettingCallbacks> callbacks)
 {
-    ASSERT(context);
+    DCHECK(context);
     if (!context->isDocument()) {
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return;
     }
 
@@ -77,7 +79,7 @@ void LocalFileSystemClient::requestFileSystemAccessAsync(ExecutionContext* conte
         callbacks->onAllowed();
         return;
     }
-    webFrame->contentSettingsClient()->requestFileSystemAccessAsync(callbacks);
+    webFrame->contentSettingsClient()->requestFileSystemAccessAsync(std::move(callbacks));
 }
 
 LocalFileSystemClient::LocalFileSystemClient()

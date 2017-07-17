@@ -37,7 +37,6 @@
 #include "bindings/core/v8/V8Binding.h"
 #include "core/CoreExport.h"
 #include "wtf/PassRefPtr.h"
-#include "wtf/RawPtr.h"
 #include "wtf/text/AtomicString.h"
 #include <v8.h>
 
@@ -49,7 +48,7 @@ struct WrapperTypeInfo;
 class V8DOMWrapper {
     STATIC_ONLY(V8DOMWrapper);
 public:
-    static v8::Local<v8::Object> createWrapper(v8::Isolate*, v8::Local<v8::Object> creationContext, const WrapperTypeInfo*, ScriptWrappable*);
+    static v8::Local<v8::Object> createWrapper(v8::Isolate*, v8::Local<v8::Object> creationContext, const WrapperTypeInfo*);
     static bool isWrapper(v8::Isolate*, v8::Local<v8::Value>);
 
     // Associates the given ScriptWrappable with the given |wrapper| if the
@@ -58,8 +57,7 @@ public:
     // The caller should always use the returned value rather than |wrapper|.
     static v8::Local<v8::Object> associateObjectWithWrapper(v8::Isolate*, ScriptWrappable*, const WrapperTypeInfo*, v8::Local<v8::Object> wrapper) WARN_UNUSED_RETURN;
     static v8::Local<v8::Object> associateObjectWithWrapper(v8::Isolate*, Node*, const WrapperTypeInfo*, v8::Local<v8::Object> wrapper) WARN_UNUSED_RETURN;
-    static void setNativeInfo(v8::Local<v8::Object>, const WrapperTypeInfo*, ScriptWrappable*);
-    static void clearNativeInfo(v8::Local<v8::Object>, const WrapperTypeInfo*);
+    static void setNativeInfo(v8::Isolate*, v8::Local<v8::Object>, const WrapperTypeInfo*, ScriptWrappable*);
     // hasInternalFieldsSet only checks if the value has the internal fields for
     // wrapper obejct and type, and does not check if it's valid or not.  The
     // value may not be a Blink's wrapper object.  In order to make sure of it,
@@ -67,51 +65,51 @@ public:
     CORE_EXPORT static bool hasInternalFieldsSet(v8::Local<v8::Value>);
 };
 
-inline void V8DOMWrapper::setNativeInfo(v8::Local<v8::Object> wrapper, const WrapperTypeInfo* wrapperTypeInfo, ScriptWrappable* scriptWrappable)
+inline void V8DOMWrapper::setNativeInfo(v8::Isolate* isolate, v8::Local<v8::Object> wrapper, const WrapperTypeInfo* wrapperTypeInfo, ScriptWrappable* scriptWrappable)
 {
     ASSERT(wrapper->InternalFieldCount() >= 2);
     ASSERT(scriptWrappable);
     ASSERT(wrapperTypeInfo);
     wrapper->SetAlignedPointerInInternalField(v8DOMWrapperObjectIndex, scriptWrappable);
     wrapper->SetAlignedPointerInInternalField(v8DOMWrapperTypeIndex, const_cast<WrapperTypeInfo*>(wrapperTypeInfo));
-}
-
-inline void V8DOMWrapper::clearNativeInfo(v8::Local<v8::Object> wrapper, const WrapperTypeInfo* wrapperTypeInfo)
-{
-    ASSERT(wrapper->InternalFieldCount() >= 2);
-    ASSERT(wrapperTypeInfo);
-    // clearNativeInfo() is used only by NP objects, which are not garbage collected.
-    ASSERT(wrapperTypeInfo->gcType == WrapperTypeInfo::RefCountedObject);
-    wrapper->SetAlignedPointerInInternalField(v8DOMWrapperTypeIndex, const_cast<WrapperTypeInfo*>(wrapperTypeInfo));
-    wrapper->SetAlignedPointerInInternalField(v8DOMWrapperObjectIndex, 0);
+    if (RuntimeEnabledFeatures::traceWrappablesEnabled()) {
+        auto perIsolateData = V8PerIsolateData::from(isolate);
+        // We notify ScriptWrappableVisitor about the new wrapper association,
+        // so the visitor can make sure to trace the association (in case it is
+        // currently tracing).  Because of some optimizations, V8 will not
+        // necessarily detect wrappers created during its incremental marking.
+        perIsolateData->scriptWrappableVisitor()
+            ->RegisterV8Reference(std::make_pair(
+                const_cast<WrapperTypeInfo*>(wrapperTypeInfo), scriptWrappable));
+    }
 }
 
 inline v8::Local<v8::Object> V8DOMWrapper::associateObjectWithWrapper(v8::Isolate* isolate, ScriptWrappable* impl, const WrapperTypeInfo* wrapperTypeInfo, v8::Local<v8::Object> wrapper)
 {
     if (DOMDataStore::setWrapper(isolate, impl, wrapperTypeInfo, wrapper)) {
-        wrapperTypeInfo->refObject(impl);
-        setNativeInfo(wrapper, wrapperTypeInfo, impl);
+        wrapperTypeInfo->wrapperCreated();
+        setNativeInfo(isolate, wrapper, wrapperTypeInfo, impl);
         ASSERT(hasInternalFieldsSet(wrapper));
     }
-    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(toScriptWrappable(wrapper) == impl);
+    SECURITY_CHECK(toScriptWrappable(wrapper) == impl);
     return wrapper;
 }
 
 inline v8::Local<v8::Object> V8DOMWrapper::associateObjectWithWrapper(v8::Isolate* isolate, Node* node, const WrapperTypeInfo* wrapperTypeInfo, v8::Local<v8::Object> wrapper)
 {
     if (DOMDataStore::setWrapper(isolate, node, wrapperTypeInfo, wrapper)) {
-        wrapperTypeInfo->refObject(ScriptWrappable::fromNode(node));
-        setNativeInfo(wrapper, wrapperTypeInfo, ScriptWrappable::fromNode(node));
+        wrapperTypeInfo->wrapperCreated();
+        setNativeInfo(isolate, wrapper, wrapperTypeInfo, ScriptWrappable::fromNode(node));
         ASSERT(hasInternalFieldsSet(wrapper));
     }
-    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(toScriptWrappable(wrapper) == ScriptWrappable::fromNode(node));
+    SECURITY_CHECK(toScriptWrappable(wrapper) == ScriptWrappable::fromNode(node));
     return wrapper;
 }
 
 class V8WrapperInstantiationScope {
     STACK_ALLOCATED();
 public:
-    V8WrapperInstantiationScope(v8::Local<v8::Object> creationContext, v8::Isolate* isolate, bool withSecurityCheck = true)
+    V8WrapperInstantiationScope(v8::Local<v8::Object> creationContext, v8::Isolate* isolate, bool withSecurityCheck)
         : m_didEnterContext(false)
         , m_context(isolate->GetCurrentContext())
         , m_tryCatch(isolate)

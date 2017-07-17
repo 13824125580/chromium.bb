@@ -29,11 +29,12 @@ void PopupBlockedInfoBarDelegate::Create(content::WebContents* web_contents,
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
-  scoped_ptr<infobars::InfoBar> infobar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new PopupBlockedInfoBarDelegate(
-          num_popups,
-          url,
-          HostContentSettingsMapFactory::GetForProfile(profile)))));
+  std::unique_ptr<infobars::InfoBar> infobar(
+      infobar_service->CreateConfirmInfoBar(
+          std::unique_ptr<ConfirmInfoBarDelegate>(
+              new PopupBlockedInfoBarDelegate(
+                  num_popups, url,
+                  HostContentSettingsMapFactory::GetForProfile(profile)))));
 
   // See if there is an existing popup infobar already.
   // TODO(dfalcantara) When triggering more than one popup the infobar
@@ -73,15 +74,15 @@ PopupBlockedInfoBarDelegate::PopupBlockedInfoBarDelegate(
     HostContentSettingsMap* map)
     : ConfirmInfoBarDelegate(), num_popups_(num_popups), url_(url), map_(map) {
   content_settings::SettingInfo setting_info;
-  scoped_ptr<base::Value> setting = map->GetWebsiteSetting(
+  std::unique_ptr<base::Value> setting = map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_POPUPS, std::string(), &setting_info);
   can_show_popups_ =
       setting_info.source != content_settings::SETTING_SOURCE_POLICY;
 }
 
 base::string16 PopupBlockedInfoBarDelegate::GetMessageText() const {
-  return l10n_util::GetStringFUTF16Int(IDS_POPUPS_BLOCKED_INFOBAR_TEXT,
-                                       num_popups_);
+  return l10n_util::GetPluralStringFUTF16(IDS_POPUPS_BLOCKED_INFOBAR_TEXT,
+                                          num_popups_);
 }
 
 int PopupBlockedInfoBarDelegate::GetButtons() const {

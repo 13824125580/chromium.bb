@@ -9,15 +9,16 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/PrivateScriptRunner.h"
 #include "bindings/core/v8/ScriptPromise.h"
+#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8DOMConfiguration.h"
 #include "bindings/core/v8/V8Document.h"
 #include "bindings/core/v8/V8Node.h"
 #include "bindings/core/v8/V8ObjectConstructor.h"
 #include "bindings/core/v8/V8TestInterface.h"
-#include "bindings/tests/idls/modules/TestPartialInterfaceImplementation3.h"
+#include "bindings/tests/idls/modules/TestInterfacePartial3Implementation.h"
+#include "bindings/tests/idls/modules/TestInterfacePartial4.h"
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
-#include "core/inspector/ConsoleMessage.h"
 #include "core/origin_trials/OriginTrials.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/ScriptForbiddenScope.h"
@@ -28,6 +29,35 @@ namespace blink {
 
 namespace TestInterfaceImplementationPartialV8Internal {
 
+static void partial4LongAttributeAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    v8::Local<v8::Object> holder = info.Holder();
+    TestInterfaceImplementation* impl = V8TestInterface::toImpl(holder);
+    v8SetReturnValueInt(info, TestInterfacePartial4::partial4LongAttribute(*impl));
+}
+
+static void partial4LongAttributeAttributeGetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    TestInterfaceImplementationPartialV8Internal::partial4LongAttributeAttributeGetter(info);
+}
+
+static void partial4LongAttributeAttributeSetter(v8::Local<v8::Value> v8Value, const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    v8::Local<v8::Object> holder = info.Holder();
+    ExceptionState exceptionState(ExceptionState::SetterContext, "partial4LongAttribute", "TestInterface", holder, info.GetIsolate());
+    TestInterfaceImplementation* impl = V8TestInterface::toImpl(holder);
+    int cppValue = toInt32(info.GetIsolate(), v8Value, NormalConversion, exceptionState);
+    if (exceptionState.throwIfNeeded())
+        return;
+    TestInterfacePartial4::setPartial4LongAttribute(*impl, cppValue);
+}
+
+static void partial4LongAttributeAttributeSetterCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    v8::Local<v8::Value> v8Value = info[0];
+    TestInterfaceImplementationPartialV8Internal::partial4LongAttributeAttributeSetter(v8Value, info);
+}
+
 static void voidMethodPartialOverload3Method(const v8::FunctionCallbackInfo<v8::Value>& info)
 {
     TestInterfaceImplementation* impl = V8TestInterface::toImpl(info.Holder());
@@ -37,7 +67,7 @@ static void voidMethodPartialOverload3Method(const v8::FunctionCallbackInfo<v8::
         if (!value.prepare())
             return;
     }
-    TestPartialInterfaceImplementation3::voidMethodPartialOverload(*impl, value);
+    TestInterfacePartial3Implementation::voidMethodPartialOverload(*impl, value);
 }
 
 static void voidMethodPartialOverloadMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -68,7 +98,7 @@ static void staticVoidMethodPartialOverload2Method(const v8::FunctionCallbackInf
         if (!value.prepare())
             return;
     }
-    TestPartialInterfaceImplementation3::staticVoidMethodPartialOverload(value);
+    TestInterfacePartial3Implementation::staticVoidMethodPartialOverload(value);
 }
 
 static void staticVoidMethodPartialOverloadMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -102,7 +132,7 @@ static void promiseMethodPartialOverload3Method(const v8::FunctionCallbackInfo<v
             return;
         }
     }
-    v8SetReturnValue(info, TestPartialInterfaceImplementation3::promiseMethodPartialOverload(*impl, document).v8Value());
+    v8SetReturnValue(info, TestInterfacePartial3Implementation::promiseMethodPartialOverload(*impl, document).v8Value());
 }
 
 static void promiseMethodPartialOverloadMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -133,7 +163,7 @@ static void staticPromiseMethodPartialOverload2MethodPromise(const v8::FunctionC
         if (!value.prepare(exceptionState))
             return;
     }
-    v8SetReturnValue(info, TestPartialInterfaceImplementation3::staticPromiseMethodPartialOverload(value).v8Value());
+    v8SetReturnValue(info, TestInterfacePartial3Implementation::staticPromiseMethodPartialOverload(value).v8Value());
 }
 
 static void staticPromiseMethodPartialOverload2Method(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -173,7 +203,7 @@ static void partial2VoidMethod2Method(const v8::FunctionCallbackInfo<v8::Value>&
         if (!value.prepare())
             return;
     }
-    TestPartialInterfaceImplementation3::partial2VoidMethod(*impl, value);
+    TestInterfacePartial3Implementation::partial2VoidMethod(*impl, value);
 }
 
 static void partial2VoidMethod3Method(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -187,7 +217,7 @@ static void partial2VoidMethod3Method(const v8::FunctionCallbackInfo<v8::Value>&
             return;
         }
     }
-    TestPartialInterfaceImplementation3::partial2VoidMethod(*impl, node);
+    TestInterfacePartial3Implementation::partial2VoidMethod(*impl, node);
 }
 
 static void partial2VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -237,20 +267,11 @@ static void partialVoidTestEnumModulesArgMethodMethod(const v8::FunctionCallback
             return;
         }
     }
-    TestPartialInterfaceImplementation3::partialVoidTestEnumModulesArgMethod(*impl, arg);
+    TestInterfacePartial3Implementation::partialVoidTestEnumModulesArgMethod(*impl, arg);
 }
 
 static void partialVoidTestEnumModulesArgMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
 {
-    ExecutionContext* executionContext = currentExecutionContext(info.GetIsolate());
-    String errorMessage;
-    if (!OriginTrials::featureNameEnabled(executionContext, errorMessage)) {
-         v8SetReturnValue(info, v8::Undefined(info.GetIsolate()));
-         if (!errorMessage.isEmpty()) {
-             toDocument(executionContext)->addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage));
-         }
-         return;
-    }
     TestInterfaceImplementationPartialV8Internal::partialVoidTestEnumModulesArgMethodMethod(info);
 }
 
@@ -262,7 +283,7 @@ static void partial2StaticVoidMethod2Method(const v8::FunctionCallbackInfo<v8::V
         if (!value.prepare())
             return;
     }
-    TestPartialInterfaceImplementation3::partial2StaticVoidMethod(value);
+    TestInterfacePartial3Implementation::partial2StaticVoidMethod(value);
 }
 
 static void partial2StaticVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -288,21 +309,23 @@ static void partial2StaticVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Va
 static void unscopeableVoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
 {
     TestInterfaceImplementation* impl = V8TestInterface::toImpl(info.Holder());
-    TestPartialInterfaceImplementation3::unscopeableVoidMethod(*impl);
+    TestInterfacePartial3Implementation::unscopeableVoidMethod(*impl);
 }
 
 static void unscopeableVoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
 {
-    ExecutionContext* executionContext = currentExecutionContext(info.GetIsolate());
-    String errorMessage;
-    if (!OriginTrials::featureNameEnabled(executionContext, errorMessage)) {
-         v8SetReturnValue(info, v8::Undefined(info.GetIsolate()));
-         if (!errorMessage.isEmpty()) {
-             toDocument(executionContext)->addConsoleMessage(ConsoleMessage::create(JSMessageSource, ErrorMessageLevel, errorMessage));
-         }
-         return;
-    }
     TestInterfaceImplementationPartialV8Internal::unscopeableVoidMethodMethod(info);
+}
+
+static void partial4VoidMethodMethod(const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    TestInterfaceImplementation* impl = V8TestInterface::toImpl(info.Holder());
+    TestInterfacePartial4::partial4VoidMethod(*impl);
+}
+
+static void partial4VoidMethodMethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info)
+{
+    TestInterfaceImplementationPartialV8Internal::partial4VoidMethodMethod(info);
 }
 
 } // namespace TestInterfaceImplementationPartialV8Internal
@@ -312,29 +335,48 @@ const V8DOMConfiguration::MethodConfiguration V8TestInterfaceMethods[] = {
     {"unscopeableVoidMethod", TestInterfaceImplementationPartialV8Internal::unscopeableVoidMethodMethodCallback, 0, 0, v8::None, V8DOMConfiguration::ExposedToAllScripts, V8DOMConfiguration::OnPrototype},
 };
 
-void V8TestInterfacePartial::installV8TestInterfaceTemplate(v8::Local<v8::FunctionTemplate> functionTemplate, v8::Isolate* isolate)
+void V8TestInterfacePartial::installV8TestInterfaceTemplate(v8::Isolate* isolate, const DOMWrapperWorld& world, v8::Local<v8::FunctionTemplate> interfaceTemplate)
 {
-    V8TestInterface::installV8TestInterfaceTemplate(functionTemplate, isolate);
-
-    v8::Local<v8::Signature> defaultSignature;
-    defaultSignature = V8DOMConfiguration::installDOMClassTemplate(isolate, functionTemplate, V8TestInterface::wrapperTypeInfo.interfaceName, v8::Local<v8::FunctionTemplate>(), V8TestInterface::internalFieldCount,
-        0, 0,
-        0, 0,
-        V8TestInterfaceMethods, WTF_ARRAY_LENGTH(V8TestInterfaceMethods));
-    v8::Local<v8::ObjectTemplate> instanceTemplate = functionTemplate->InstanceTemplate();
+    // Initialize the interface object's template.
+    V8TestInterface::installV8TestInterfaceTemplate(isolate, world, interfaceTemplate);
+    v8::Local<v8::Signature> signature = v8::Signature::New(isolate, interfaceTemplate);
+    ALLOW_UNUSED_LOCAL(signature);
+    v8::Local<v8::ObjectTemplate> instanceTemplate = interfaceTemplate->InstanceTemplate();
     ALLOW_UNUSED_LOCAL(instanceTemplate);
-    v8::Local<v8::ObjectTemplate> prototypeTemplate = functionTemplate->PrototypeTemplate();
+    v8::Local<v8::ObjectTemplate> prototypeTemplate = interfaceTemplate->PrototypeTemplate();
     ALLOW_UNUSED_LOCAL(prototypeTemplate);
-    const V8DOMConfiguration::ConstantConfiguration V8TestInterfaceConstants[] = {
-        {"PARTIAL3_UNSIGNED_SHORT", 0, 0, V8DOMConfiguration::ConstantTypeUnsignedShort},
-    };
-    V8DOMConfiguration::installConstants(isolate, functionTemplate, prototypeTemplate, V8TestInterfaceConstants, WTF_ARRAY_LENGTH(V8TestInterfaceConstants));
-    functionTemplate->InstanceTemplate()->SetCallAsFunctionHandler(V8TestInterface::legacyCallCustom);
+    // Register DOM constants, attributes and operations.
+    if (RuntimeEnabledFeatures::featureNameEnabled()) {
+        const V8DOMConfiguration::ConstantConfiguration V8TestInterfaceConstants[] = {
+            {"PARTIAL3_UNSIGNED_SHORT", 0, 0, V8DOMConfiguration::ConstantTypeUnsignedShort},
+        };
+        V8DOMConfiguration::installConstants(isolate, interfaceTemplate, prototypeTemplate, V8TestInterfaceConstants, WTF_ARRAY_LENGTH(V8TestInterfaceConstants));
+        V8DOMConfiguration::installMethods(isolate, world, instanceTemplate, prototypeTemplate, interfaceTemplate, signature, V8TestInterfaceMethods, WTF_ARRAY_LENGTH(V8TestInterfaceMethods));
+    }
 }
 
-void V8TestInterfacePartial::preparePrototypeAndInterfaceObject(v8::Local<v8::Context> context, v8::Local<v8::Object> prototypeObject, v8::Local<v8::Function> interfaceObject, v8::Local<v8::FunctionTemplate> interfaceTemplate)
+
+void V8TestInterfacePartial::installOriginTrialPartialFeature(ScriptState* scriptState, v8::Local<v8::Object> instance)
 {
-    V8TestInterface::preparePrototypeAndInterfaceObject(context, prototypeObject, interfaceObject, interfaceTemplate);
+    v8::Local<v8::Object> prototype = instance->GetPrototype()->ToObject(scriptState->isolate());
+
+    V8PerIsolateData* perIsolateData = V8PerIsolateData::from(scriptState->isolate());
+    v8::Local<v8::FunctionTemplate> interfaceTemplate = perIsolateData->findInterfaceTemplate(scriptState->world(), &V8TestInterface::wrapperTypeInfo);
+    v8::Local<v8::Signature> signature = v8::Signature::New(scriptState->isolate(), interfaceTemplate);
+    ALLOW_UNUSED_LOCAL(signature);
+    V8PerContextData* perContextData = V8PerContextData::from(scriptState->context());
+    v8::Local<v8::Function> interface = perContextData->constructorForType(&V8TestInterface::wrapperTypeInfo);
+    const V8DOMConfiguration::AccessorConfiguration accessorpartial4LongAttributeConfiguration = \
+        {"partial4LongAttribute", TestInterfaceImplementationPartialV8Internal::partial4LongAttributeAttributeGetterCallback, TestInterfaceImplementationPartialV8Internal::partial4LongAttributeAttributeSetterCallback, 0, 0, 0, v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::None), V8DOMConfiguration::ExposedToAllScripts, V8DOMConfiguration::OnPrototype, V8DOMConfiguration::CheckHolder};
+    V8DOMConfiguration::installAccessor(scriptState->isolate(), scriptState->world(), instance, prototype, v8::Local<v8::Function>(), signature, accessorpartial4LongAttributeConfiguration);
+    const V8DOMConfiguration::ConstantConfiguration constantPartial4UnsignedShortConfiguration = {"PARTIAL4_UNSIGNED_SHORT", 4, 0, V8DOMConfiguration::ConstantTypeUnsignedShort};
+    V8DOMConfiguration::installConstant(scriptState->isolate(), interface, prototype, constantPartial4UnsignedShortConfiguration);
+    const V8DOMConfiguration::MethodConfiguration methodPartial4VoidmethodConfiguration = {"partial4VoidMethod", TestInterfaceImplementationPartialV8Internal::partial4VoidMethodMethodCallback, 0, 0, v8::None, V8DOMConfiguration::ExposedToAllScripts, V8DOMConfiguration::OnPrototype};
+    V8DOMConfiguration::installMethod(scriptState->isolate(), scriptState->world(), instance, prototype, interface, signature, methodPartial4VoidmethodConfiguration);
+}
+void V8TestInterfacePartial::preparePrototypeAndInterfaceObject(v8::Local<v8::Context> context, const DOMWrapperWorld& world, v8::Local<v8::Object> prototypeObject, v8::Local<v8::Function> interfaceObject, v8::Local<v8::FunctionTemplate> interfaceTemplate)
+{
+    V8TestInterface::preparePrototypeAndInterfaceObject(context, world, prototypeObject, interfaceObject, interfaceTemplate);
     v8::Isolate* isolate = context->GetIsolate();
     v8::Local<v8::Name> unscopablesSymbol(v8::Symbol::GetUnscopables(isolate));
     v8::Local<v8::Object> unscopeables;
@@ -348,7 +390,7 @@ void V8TestInterfacePartial::preparePrototypeAndInterfaceObject(v8::Local<v8::Co
 
 void V8TestInterfacePartial::initialize()
 {
-    // Should be invoked from initModules.
+    // Should be invoked from ModulesInitializer.
     V8TestInterface::updateWrapperTypeInfo(
         &V8TestInterfacePartial::installV8TestInterfaceTemplate,
         &V8TestInterfacePartial::preparePrototypeAndInterfaceObject);

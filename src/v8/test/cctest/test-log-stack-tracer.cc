@@ -36,7 +36,7 @@
 #include "src/disassembler.h"
 #include "src/isolate.h"
 #include "src/log.h"
-#include "src/profiler/sampler.h"
+#include "src/profiler/tick-sample.h"
 #include "src/vm-state-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/trace-extension.h"
@@ -57,7 +57,7 @@ using v8::internal::TickSample;
 
 
 static bool IsAddressWithinFuncCode(JSFunction* function, Address addr) {
-  i::Code* code = function->code();
+  i::AbstractCode* code = function->abstract_code();
   return code->contains(addr);
 }
 

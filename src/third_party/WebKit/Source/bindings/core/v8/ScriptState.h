@@ -9,7 +9,7 @@
 #include "bindings/core/v8/V8PerContextData.h"
 #include "core/CoreExport.h"
 #include "wtf/RefCounted.h"
-#include "wtf/Vector.h"
+#include <memory>
 #include <v8-debug.h>
 #include <v8.h>
 
@@ -74,8 +74,8 @@ public:
         ScriptState* scriptState = static_cast<ScriptState*>(context->GetAlignedPointerFromEmbedderData(v8ContextPerContextDataIndex));
         // ScriptState::from() must not be called for a context that does not have
         // valid embedder data in the embedder field.
-        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(scriptState);
-        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(scriptState->context() == context);
+        SECURITY_CHECK(scriptState);
+        SECURITY_CHECK(scriptState->context() == context);
         return scriptState;
     }
 
@@ -87,9 +87,8 @@ public:
     v8::Isolate* isolate() const { return m_isolate; }
     DOMWrapperWorld& world() const { return *m_world; }
     LocalDOMWindow* domWindow() const;
-    virtual ExecutionContext* executionContext() const;
+    virtual ExecutionContext* getExecutionContext() const;
     virtual void setExecutionContext(ExecutionContext*);
-    int contextIdInDebugger();
 
     // This can return an empty handle if the v8::Context is gone.
     v8::Local<v8::Context> context() const { return m_context.newLocal(m_isolate); }
@@ -103,9 +102,6 @@ public:
     V8PerContextData* perContextData() const { return m_perContextData.get(); }
     void disposePerContextData();
 
-    bool evalEnabled() const;
-    void setEvalEnabled(bool);
-    ScriptValue getFromGlobalObject(const char* name);
     ScriptValue getFromExtrasExports(const char* name);
 
 protected:
@@ -119,11 +115,11 @@ private:
     // This RefPtr doesn't cause a cycle because all persistent handles that DOMWrapperWorld holds are weak.
     RefPtr<DOMWrapperWorld> m_world;
 
-    // This OwnPtr causes a cycle:
-    // V8PerContextData --(Persistent)--> v8::Context --(RefPtr)--> ScriptState --(OwnPtr)--> V8PerContextData
-    // So you must explicitly clear the OwnPtr by calling disposePerContextData()
+    // This std::unique_ptr causes a cycle:
+    // V8PerContextData --(Persistent)--> v8::Context --(RefPtr)--> ScriptState --(std::unique_ptr)--> V8PerContextData
+    // So you must explicitly clear the std::unique_ptr by calling disposePerContextData()
     // once you no longer need V8PerContextData. Otherwise, the v8::Context will leak.
-    OwnPtr<V8PerContextData> m_perContextData;
+    std::unique_ptr<V8PerContextData> m_perContextData;
 
 #if ENABLE(ASSERT)
     bool m_globalObjectDetached;

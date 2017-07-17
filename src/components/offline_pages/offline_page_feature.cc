@@ -6,71 +6,45 @@
 
 #include <string>
 
-#include "base/command_line.h"
-#include "base/metrics/field_trial.h"
-#include "base/strings/string_util.h"
-#include "build/build_config.h"
-#include "components/offline_pages/offline_page_switches.h"
-
-#if defined(OS_ANDROID)
+#include "base/feature_list.h"
 
 namespace offline_pages {
 
-namespace {
-const char kOfflinePagesFieldTrialName[] = "OfflinePages";
-// The old experiment has only one mode to enable offline pages.
-const char kEnabledGroupName[] = "Enabled";
-// The new experiment supports two modes for offline pages.
-const char kEnabledAsBookmarksGroupName[] = "EnabledAsBookmarks";
-const char kEnabledAsSavedPagesGroupName[] = "EnabledAsSavedPages";
-}  // namespace
+const base::Feature kOfflineBookmarksFeature {
+   "OfflineBookmarks", base::FEATURE_DISABLED_BY_DEFAULT
+};
 
-FeatureMode GetOfflinePageFeatureMode() {
-  // Note: It's important to query the field trial state first, to ensure that
-  // UMA reports the correct group.
-  std::string group_name =
-      base::FieldTrialList::FindFullName(kOfflinePagesFieldTrialName);
+const base::Feature kOffliningRecentPagesFeature {
+   "OfflineRecentPages", base::FEATURE_DISABLED_BY_DEFAULT
+};
 
-  // The old experiment 'Enabled' defaults to showing saved page.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableOfflinePages)) {
-    return FeatureMode::ENABLED_AS_SAVED_PAGES;
-  }
-  // The new experiment can control showing either bookmark or saved page.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableOfflinePagesAsBookmarks)) {
-    return FeatureMode::ENABLED_AS_BOOKMARKS;
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableOfflinePagesAsSavedPages)) {
-    return FeatureMode::ENABLED_AS_SAVED_PAGES;
-  }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableOfflinePages)) {
-    return FeatureMode::DISABLED;
-  }
+const base::Feature kOfflinePagesBackgroundLoadingFeature {
+   "OfflinePagesBackgroundLoading", base::FEATURE_DISABLED_BY_DEFAULT
+};
 
-  // The old experiment 'Enabled' defaults to showing saved page.
-  if (group_name == kEnabledGroupName)
-    return FeatureMode::ENABLED_AS_SAVED_PAGES;
-  // The new experiment can control showing either bookmark or saved page.
-  if (base::StartsWith(group_name, kEnabledAsBookmarksGroupName,
-                       base::CompareCase::SENSITIVE)) {
-    return FeatureMode::ENABLED_AS_BOOKMARKS;
-  }
-  if (base::StartsWith(group_name, kEnabledAsSavedPagesGroupName,
-                       base::CompareCase::SENSITIVE)) {
-    return FeatureMode::ENABLED_AS_SAVED_PAGES;
-  }
-  return FeatureMode::DISABLED;
-}
+const base::Feature kOfflinePagesCTFeature {
+   "OfflinePagesCT", base::FEATURE_DISABLED_BY_DEFAULT
+};
 
 bool IsOfflinePagesEnabled() {
-  FeatureMode mode = GetOfflinePageFeatureMode();
-  return mode == FeatureMode::ENABLED_AS_BOOKMARKS ||
-         mode == FeatureMode::ENABLED_AS_SAVED_PAGES;
+  return IsOfflineBookmarksEnabled() || IsOffliningRecentPagesEnabled() ||
+         IsOfflinePagesBackgroundLoadingEnabled() || IsOfflinePagesCTEnabled();
+}
+
+bool IsOfflineBookmarksEnabled() {
+  return base::FeatureList::IsEnabled(kOfflineBookmarksFeature);
+}
+
+bool IsOffliningRecentPagesEnabled() {
+  return  base::FeatureList::IsEnabled(kOffliningRecentPagesFeature);
+}
+
+bool IsOfflinePagesBackgroundLoadingEnabled() {
+  return base::FeatureList::IsEnabled(kOfflinePagesBackgroundLoadingFeature);
+}
+
+bool IsOfflinePagesCTEnabled() {
+  return base::FeatureList::IsEnabled(kOfflinePagesCTFeature);
 }
 
 }  // namespace offline_pages
-
-#endif

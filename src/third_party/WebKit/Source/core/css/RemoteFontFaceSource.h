@@ -11,7 +11,7 @@
 
 namespace blink {
 
-class FontLoader;
+class CSSFontSelector;
 
 enum FontDisplay {
     FontDisplayAuto,
@@ -23,11 +23,12 @@ enum FontDisplay {
 };
 
 class RemoteFontFaceSource final : public CSSFontFaceSource, public FontResourceClient {
-    WILL_BE_USING_PRE_FINALIZER(RemoteFontFaceSource, dispose);
+    USING_PRE_FINALIZER(RemoteFontFaceSource, dispose);
+    USING_GARBAGE_COLLECTED_MIXIN(RemoteFontFaceSource);
 public:
     enum DisplayPeriod { BlockPeriod, SwapPeriod, FailurePeriod };
 
-    explicit RemoteFontFaceSource(PassRefPtrWillBeRawPtr<FontResource>, PassRefPtrWillBeRawPtr<FontLoader>, FontDisplay);
+    explicit RemoteFontFaceSource(FontResource*, CSSFontSelector*, FontDisplay);
     ~RemoteFontFaceSource() override;
     void dispose();
 
@@ -38,11 +39,12 @@ public:
 
     void beginLoadIfNeeded() override;
 
-    void didStartFontLoad(FontResource*) override;
-    void fontLoaded(FontResource*) override;
+    void notifyFinished(Resource*) override;
     void fontLoadShortLimitExceeded(FontResource*) override;
     void fontLoadLongLimitExceeded(FontResource*) override;
     String debugName() const override { return "RemoteFontFaceSource"; }
+
+    bool isBlank() override { return m_period == BlockPeriod; }
 
     // For UMA reporting
     bool hadBlankText() override { return m_histograms.hadBlankText(); }
@@ -62,14 +64,14 @@ private:
         FontLoadHistograms() : m_loadStartTime(0), m_blankPaintTime(0), m_isLongLimitExceeded(false) { }
         void loadStarted();
         void fallbackFontPainted(DisplayPeriod);
-        void fontLoaded(bool isInterventionTriggered);
+        void fontLoaded(bool isInterventionTriggered, bool isLoadedFromNetwork);
         void longLimitExceeded(bool isInterventionTriggered);
         void recordFallbackTime(const FontResource*);
         void recordRemoteFont(const FontResource*);
         bool hadBlankText() { return m_blankPaintTime; }
     private:
         void recordLoadTimeHistogram(const FontResource*, int duration);
-        void recordInterventionResult(bool triggered);
+        void recordInterventionResult(bool isTriggered, bool isLoadedFromNetwork);
         double m_loadStartTime;
         double m_blankPaintTime;
         bool m_isLongLimitExceeded;
@@ -78,12 +80,13 @@ private:
     void switchToSwapPeriod();
     void switchToFailurePeriod();
 
-    RefPtrWillBeMember<FontResource> m_font;
-    RefPtrWillBeMember<FontLoader> m_fontLoader;
+    Member<FontResource> m_font;
+    Member<CSSFontSelector> m_fontSelector;
     const FontDisplay m_display;
     DisplayPeriod m_period;
     FontLoadHistograms m_histograms;
     bool m_isInterventionTriggered;
+    bool m_isLoadedFromMemoryCache;
 };
 
 } // namespace blink

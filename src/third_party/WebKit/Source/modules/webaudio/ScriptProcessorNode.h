@@ -26,6 +26,7 @@
 #define ScriptProcessorNode_h
 
 #include "base/gtest_prod_util.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "modules/webaudio/AudioNode.h"
 #include "platform/audio/AudioBus.h"
 #include "wtf/Forward.h"
@@ -90,8 +91,9 @@ private:
     FRIEND_TEST_ALL_PREFIXES(ScriptProcessorNodeTest, BufferLifetime);
 };
 
-class ScriptProcessorNode final : public AudioNode {
+class ScriptProcessorNode final : public AudioNode, public ActiveScriptWrappable {
     DEFINE_WRAPPERTYPEINFO();
+    USING_GARBAGE_COLLECTED_MIXIN(ScriptProcessorNode);
 public:
     // bufferSize must be one of the following values: 256, 512, 1024, 2048,
     // 4096, 8192, 16384.
@@ -101,10 +103,18 @@ public:
     // latency. Higher numbers will be necessary to avoid audio breakup and
     // glitches.
     // The value chosen must carefully balance between latency and audio quality.
-    static ScriptProcessorNode* create(AbstractAudioContext&, float sampleRate, size_t bufferSize, unsigned numberOfInputChannels, unsigned numberOfOutputChannels);
+    static ScriptProcessorNode* create(AbstractAudioContext&, ExceptionState&);
+    static ScriptProcessorNode* create(AbstractAudioContext&, size_t bufferSize, ExceptionState&);
+    static ScriptProcessorNode* create(AbstractAudioContext&, size_t bufferSize, unsigned numberOfInputChannels, ExceptionState&);
+    static ScriptProcessorNode* create(AbstractAudioContext&, size_t bufferSize, unsigned numberOfInputChannels, unsigned numberOfOutputChannels, ExceptionState&);
 
     DEFINE_ATTRIBUTE_EVENT_LISTENER(audioprocess);
     size_t bufferSize() const;
+
+    // ActiveScriptWrappable
+    bool hasPendingActivity() const final;
+
+    DEFINE_INLINE_VIRTUAL_TRACE() { AudioNode::trace(visitor); }
 
 private:
     ScriptProcessorNode(AbstractAudioContext&, float sampleRate, size_t bufferSize, unsigned numberOfInputChannels, unsigned numberOfOutputChannels);

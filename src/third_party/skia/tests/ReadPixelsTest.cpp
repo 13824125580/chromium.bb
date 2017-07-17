@@ -52,7 +52,7 @@ static SkPMColor get_src_color(int x, int y) {
     }
     return SkPremultiplyARGBInline(a, r, g, b);
 }
-    
+
 static SkPMColor get_dst_bmp_init_color(int x, int y, int w) {
     int n = y * w + x;
 
@@ -200,8 +200,8 @@ static bool check_read(skiatest::Reporter* reporter,
                     bool didPremul;
                     SkPMColor pmPixel = convert_to_pmcolor(ct, at, pixel, &didPremul);
                     if (!check_read_pixel(pmPixel, canvasPixel, didPremul)) {
-                        ERRORF(reporter, "Expected readback pixel value 0x%08x, got 0x%08x. "
-                               "Readback was unpremul: %d", canvasPixel, pmPixel, didPremul);
+                        ERRORF(reporter, "Expected readback pixel (%d, %d) value 0x%08x, got 0x%08x. "
+                               "Readback was unpremul: %d", bx, by, canvasPixel, pmPixel, didPremul);
                         return false;
                     }
                 }
@@ -324,7 +324,7 @@ const SkIRect gReadPixelsTestRects[] = {
     SkIRect::MakeLTRB(3 * DEV_W / 4, -10, DEV_W + 10, DEV_H + 10),
 };
 
-static void test_readpixels(skiatest::Reporter* reporter, SkSurface* surface,
+static void test_readpixels(skiatest::Reporter* reporter, const sk_sp<SkSurface>& surface,
                             BitmapInit lastBitmapInit) {
     SkCanvas* canvas = surface->getCanvas();
     fill_src_canvas(canvas);
@@ -382,12 +382,12 @@ static void test_readpixels(skiatest::Reporter* reporter, SkSurface* surface,
 }
 DEF_TEST(ReadPixels, reporter) {
     const SkImageInfo info = SkImageInfo::MakeN32Premul(DEV_W, DEV_H);
-    SkAutoTUnref<SkSurface> surface(SkSurface::NewRaster(info));
+    auto surface(SkSurface::MakeRaster(info));
     // SW readback fails a premul check when reading back to an unaligned rowbytes.
     test_readpixels(reporter, surface, kLastAligned_BitmapInit);
 }
 #if SK_SUPPORT_GPU
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Gpu, reporter, context) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Gpu, reporter, ctxInfo) {
     for (auto& origin : {kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin}) {
         GrSurfaceDesc desc;
         desc.fFlags = kRenderTarget_GrSurfaceFlag;
@@ -396,8 +396,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Gpu, reporter, context) {
         desc.fConfig = kSkia8888_GrPixelConfig;
         desc.fOrigin = origin;
         SkAutoTUnref<GrTexture> surfaceTexture(
-            context->textureProvider()->createTexture(desc, SkBudgeted::kNo));
-        SkAutoTUnref<SkSurface> surface(SkSurface::NewRenderTargetDirect(surfaceTexture->asRenderTarget()));
+            ctxInfo.grContext()->textureProvider()->createTexture(desc, SkBudgeted::kNo));
+        auto surface(SkSurface::MakeRenderTargetDirect(surfaceTexture->asRenderTarget()));
         desc.fFlags = kNone_GrSurfaceFlags;
         test_readpixels(reporter, surface, kLast_BitmapInit);
     }
@@ -424,7 +424,8 @@ static void test_readpixels_texture(skiatest::Reporter* reporter, GrTexture* tex
                     GrPixelConfig dstConfig =
                             SkImageInfo2GrPixelConfig(gReadPixelsConfigs[c].fColorType,
                                                       gReadPixelsConfigs[c].fAlphaType,
-                                                      kLinear_SkColorProfileType);
+                                                      nullptr,
+                                                      *texture->getContext()->caps());
                     uint32_t flags = 0;
                     if (gReadPixelsConfigs[c].fAlphaType == kUnpremul_SkAlphaType) {
                         flags = GrContext::kUnpremul_PixelOpsFlag;
@@ -441,7 +442,7 @@ static void test_readpixels_texture(skiatest::Reporter* reporter, GrTexture* tex
         }
     }
 }
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Texture, reporter, context) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Texture, reporter, ctxInfo) {
     // On the GPU we will also try reading back from a non-renderable texture.
     for (auto& origin : {kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin}) {
         SkAutoTUnref<GrTexture> texture;
@@ -452,7 +453,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Texture, reporter, context) {
         desc.fConfig = kSkia8888_GrPixelConfig;
         desc.fOrigin = origin;
         desc.fFlags = kNone_GrSurfaceFlags;
-        texture.reset(context->textureProvider()->createTexture(desc, SkBudgeted::kNo));
+        texture.reset(ctxInfo.grContext()->textureProvider()->createTexture(desc,
+                                                                            SkBudgeted::kNo));
         test_readpixels_texture(reporter, texture);
     }
 }
@@ -556,8 +558,7 @@ static SkData* draw_into_surface(SkSurface* surf, const SkBitmap& bm, SkFilterQu
     canvas->translate(-SkScalarHalf(bm.width()), -SkScalarHalf(bm.height()));
     canvas->drawBitmap(bm, 0, 0, &paint);
 
-    SkAutoTUnref<SkImage> image(surf->newImageSnapshot());
-    return image->encode();
+    return surf->makeImageSnapshot()->encode();
 }
 
 #include "SkStream.h"
@@ -576,7 +577,7 @@ static void dump_to_file(const char name[], SkData* data) {
  *
  *  https://bug.skia.org/4351
  */
-DEF_GPUTEST_FOR_NATIVE_CONTEXT(ReadPixels_Subset_Gpu, reporter, context) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadPixels_Subset_Gpu, reporter, ctxInfo) {
     SkBitmap bitmap;
     make_ringed_bitmap(&bitmap, 6, 6);
     const SkIRect subset = SkIRect::MakeLTRB(2, 2, 4, 4);
@@ -585,8 +586,9 @@ DEF_GPUTEST_FOR_NATIVE_CONTEXT(ReadPixels_Subset_Gpu, reporter, context) {
     SkBitmap bm_subset, tx_subset;
 
     // ... one from a texture-subset
-    SkAutoTUnref<GrTexture> fullTx(GrRefCachedBitmapTexture(context, bitmap,
-                                                            GrTextureParams::ClampNoFilter()));
+    SkAutoTUnref<GrTexture> fullTx(GrRefCachedBitmapTexture(ctxInfo.grContext(), bitmap,
+                                                            GrTextureParams::ClampNoFilter(),
+                                                            SkSourceGammaTreatment::kRespect));
     SkBitmap tx_full;
     GrWrapTextureInBitmap(fullTx, bitmap.width(), bitmap.height(), true, &tx_full);
     tx_full.extractSubset(&tx_subset, subset);
@@ -594,8 +596,9 @@ DEF_GPUTEST_FOR_NATIVE_CONTEXT(ReadPixels_Subset_Gpu, reporter, context) {
     // ... one from a bitmap-subset
     SkBitmap tmp_subset;
     bitmap.extractSubset(&tmp_subset, subset);
-    SkAutoTUnref<GrTexture> subsetTx(GrRefCachedBitmapTexture(context, tmp_subset,
-                                                              GrTextureParams::ClampNoFilter()));
+    SkAutoTUnref<GrTexture> subsetTx(GrRefCachedBitmapTexture(ctxInfo.grContext(), tmp_subset,
+                                                              GrTextureParams::ClampNoFilter(),
+                                                              SkSourceGammaTreatment::kRespect));
     GrWrapTextureInBitmap(subsetTx, tmp_subset.width(), tmp_subset.height(), true, &bm_subset);
 
     // did we get the same subset?
@@ -603,8 +606,8 @@ DEF_GPUTEST_FOR_NATIVE_CONTEXT(ReadPixels_Subset_Gpu, reporter, context) {
 
     // do they draw the same?
     const SkImageInfo info = SkImageInfo::MakeN32Premul(128, 128);
-    SkAutoTUnref<SkSurface> surfA(SkSurface::NewRenderTarget(context, SkBudgeted::kNo, info, 0));
-    SkAutoTUnref<SkSurface> surfB(SkSurface::NewRenderTarget(context, SkBudgeted::kNo, info, 0));
+    auto surfA(SkSurface::MakeRenderTarget(ctxInfo.grContext(), SkBudgeted::kNo, info));
+    auto surfB(SkSurface::MakeRenderTarget(ctxInfo.grContext(), SkBudgeted::kNo, info));
 
     if (false) {
         //
@@ -613,8 +616,8 @@ DEF_GPUTEST_FOR_NATIVE_CONTEXT(ReadPixels_Subset_Gpu, reporter, context) {
         //
         SkFilterQuality quality = kLow_SkFilterQuality;
 
-        SkAutoTUnref<SkData> dataA(draw_into_surface(surfA, bm_subset, quality));
-        SkAutoTUnref<SkData> dataB(draw_into_surface(surfB, tx_subset, quality));
+        SkAutoTUnref<SkData> dataA(draw_into_surface(surfA.get(), bm_subset, quality));
+        SkAutoTUnref<SkData> dataB(draw_into_surface(surfB.get(), tx_subset, quality));
 
         REPORTER_ASSERT(reporter, dataA->equals(dataB));
         if (false) {

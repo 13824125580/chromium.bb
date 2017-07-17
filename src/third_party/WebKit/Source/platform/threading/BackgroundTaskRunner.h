@@ -7,7 +7,6 @@
 
 #include "platform/PlatformExport.h"
 #include "wtf/Functional.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -20,7 +19,7 @@ enum TaskSize {
     TaskSizeLongRunningTask,
 };
 
-PLATFORM_EXPORT void postOnBackgroundThread(const WebTraceLocation&, PassOwnPtr<Closure>, TaskSize);
+PLATFORM_EXPORT void postOnBackgroundThread(const WebTraceLocation&, std::unique_ptr<CrossThreadClosure>, TaskSize);
 
 } // BackgroundTaskRunner
 

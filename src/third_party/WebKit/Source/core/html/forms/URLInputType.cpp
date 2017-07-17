@@ -34,13 +34,12 @@
 #include "core/html/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> URLInputType::create(HTMLInputElement& element)
+InputType* URLInputType::create(HTMLInputElement& element)
 {
-    return adoptRefWillBeNoop(new URLInputType(element));
+    return new URLInputType(element);
 }
 
 void URLInputType::countUsage()

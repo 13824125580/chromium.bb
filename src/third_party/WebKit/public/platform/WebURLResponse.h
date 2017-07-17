@@ -31,18 +31,18 @@
 #ifndef WebURLResponse_h
 #define WebURLResponse_h
 
+#include "public/platform/WebCString.h"
 #include "public/platform/WebCommon.h"
 #include "public/platform/WebPrivateOwnPtr.h"
 #include "public/platform/WebString.h"
+#include "public/platform/WebVector.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
 
 namespace blink {
 
 class ResourceResponse;
-class WebCString;
 class WebHTTPHeaderVisitor;
 class WebHTTPLoadInfo;
-class WebString;
 class WebURL;
 class WebURLLoadTiming;
 class WebURLResponsePrivate;
@@ -62,8 +62,49 @@ public:
         SecurityStyleAuthenticated
     };
 
+    struct SignedCertificateTimestamp {
+        SignedCertificateTimestamp() {}
+        SignedCertificateTimestamp(
+            WebString status,
+            WebString origin,
+            WebString logDescription,
+            WebString logId,
+            int64_t timestamp,
+            WebString hashAlgorithm,
+            WebString signatureAlgorithm,
+            WebString signatureData)
+            : status(status)
+            , origin(origin)
+            , logDescription(logDescription)
+            , logId(logId)
+            , timestamp(timestamp)
+            , hashAlgorithm(hashAlgorithm)
+            , signatureAlgorithm(signatureAlgorithm)
+            , signatureData(signatureData)
+        {
+        }
+        WebString status;
+        WebString origin;
+        WebString logDescription;
+        WebString logId;
+        int64_t timestamp;
+        WebString hashAlgorithm;
+        WebString signatureAlgorithm;
+        WebString signatureData;
+    };
+
+    using SignedCertificateTimestampList = WebVector<SignedCertificateTimestamp>;
+
     struct WebSecurityDetails {
-        WebSecurityDetails(const WebString& protocol, const WebString& keyExchange, const WebString& cipher, const WebString& mac, int certId, size_t numUnknownScts, size_t numInvalidScts, size_t numValidScts)
+        WebSecurityDetails(const WebString& protocol,
+            const WebString& keyExchange,
+            const WebString& cipher,
+            const WebString& mac,
+            int certId,
+            size_t numUnknownScts,
+            size_t numInvalidScts,
+            size_t numValidScts,
+            const SignedCertificateTimestampList& sctList)
             : protocol(protocol)
             , keyExchange(keyExchange)
             , cipher(cipher)
@@ -72,6 +113,7 @@ public:
             , numUnknownScts(numUnknownScts)
             , numInvalidScts(numInvalidScts)
             , numValidScts(numValidScts)
+            , sctList(sctList)
         {
         }
         // All strings are human-readable values.
@@ -85,6 +127,7 @@ public:
         size_t numUnknownScts;
         size_t numInvalidScts;
         size_t numValidScts;
+        SignedCertificateTimestampList sctList;
     };
 
     class ExtraData {
@@ -174,7 +217,7 @@ public:
 
     BLINK_PLATFORM_EXPORT void setHasMajorCertificateErrors(bool);
 
-    BLINK_PLATFORM_EXPORT SecurityStyle securityStyle() const;
+    BLINK_PLATFORM_EXPORT SecurityStyle getSecurityStyle() const;
     BLINK_PLATFORM_EXPORT void setSecurityStyle(SecurityStyle);
 
     BLINK_PLATFORM_EXPORT void setSecurityDetails(const WebSecurityDetails&);
@@ -225,9 +268,18 @@ public:
     BLINK_PLATFORM_EXPORT WebURL originalURLViaServiceWorker() const;
     BLINK_PLATFORM_EXPORT void setOriginalURLViaServiceWorker(const WebURL&);
 
-    // Flag whether this request is part of a multipart response.
-    BLINK_PLATFORM_EXPORT bool isMultipartPayload() const;
-    BLINK_PLATFORM_EXPORT void setIsMultipartPayload(bool);
+    // The boundary of the response. Set only when this is a multipart response.
+    BLINK_PLATFORM_EXPORT void setMultipartBoundary(const char* bytes, size_t /* size */);
+
+    // The cache name of the CacheStorage from where the response is served via
+    // the ServiceWorker. Null if the response isn't from the CacheStorage.
+    BLINK_PLATFORM_EXPORT WebString cacheStorageCacheName() const;
+    BLINK_PLATFORM_EXPORT void setCacheStorageCacheName(const WebString&);
+
+    // The headers that should be exposed according to CORS. Only guaranteed
+    // to be set if the response was fetched by a ServiceWorker.
+    BLINK_PLATFORM_EXPORT WebVector<WebString> corsExposedHeaderNames() const;
+    BLINK_PLATFORM_EXPORT void setCorsExposedHeaderNames(const WebVector<WebString>&);
 
     // This indicates the location of a downloaded response if the
     // WebURLRequest had the downloadToFile flag set to true. This file path
@@ -249,7 +301,7 @@ public:
     // deleted when the last resource response is destroyed. Setting the extra
     // data pointer will cause the underlying resource response to be
     // dissociated from any existing non-null extra data pointer.
-    BLINK_PLATFORM_EXPORT ExtraData* extraData() const;
+    BLINK_PLATFORM_EXPORT ExtraData* getExtraData() const;
     BLINK_PLATFORM_EXPORT void setExtraData(ExtraData*);
 
 protected:

@@ -4,7 +4,7 @@
 
 #include "content/utility/webthread_impl_for_utility_thread.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace content {
 
@@ -25,13 +25,13 @@ blink::PlatformThreadId WebThreadImplForUtilityThread::threadId() const {
   return thread_id_;
 }
 
-base::SingleThreadTaskRunner* WebThreadImplForUtilityThread::TaskRunner()
+base::SingleThreadTaskRunner* WebThreadImplForUtilityThread::GetTaskRunner()
     const {
   return task_runner_.get();
 }
 
 scheduler::SingleThreadIdleTaskRunner*
-WebThreadImplForUtilityThread::IdleTaskRunner() const {
+WebThreadImplForUtilityThread::GetIdleTaskRunner() const {
   NOTIMPLEMENTED();
   return nullptr;
 }

@@ -4,6 +4,7 @@
 
 #include "modules/imagebitmap/ImageBitmapRenderingContext.h"
 
+#include "bindings/modules/v8/RenderingContext.h"
 #include "core/frame/ImageBitmap.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/StaticBitmapImage.h"
@@ -19,7 +20,12 @@ ImageBitmapRenderingContext::ImageBitmapRenderingContext(HTMLCanvasElement* canv
 
 ImageBitmapRenderingContext::~ImageBitmapRenderingContext() { }
 
-void ImageBitmapRenderingContext::transferImageBitmap(ImageBitmap* imageBitmap)
+void ImageBitmapRenderingContext::setCanvasGetContextResult(RenderingContext& result)
+{
+    result.setImageBitmapRenderingContext(this);
+}
+
+void ImageBitmapRenderingContext::transferFromImageBitmap(ImageBitmap* imageBitmap)
 {
     m_image = imageBitmap->bitmapImage();
     if (!m_image)
@@ -28,14 +34,14 @@ void ImageBitmapRenderingContext::transferImageBitmap(ImageBitmap* imageBitmap)
     RefPtr<SkImage> skImage = m_image->imageForCurrentFrame();
     if (skImage->isTextureBacked()) {
         // TODO(junov): crbug.com/585607 Eliminate this readback and use an ExternalTextureLayer
-        RefPtr<SkSurface> surface = adoptRef(SkSurface::NewRasterN32Premul(skImage->width(), skImage->height()));
+        sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(skImage->width(), skImage->height());
         if (!surface) {
             // silent failure
             m_image.clear();
             return;
         }
         surface->getCanvas()->drawImage(skImage.get(), 0, 0);
-        m_image = StaticBitmapImage::create(adoptRef(surface->newImageSnapshot()));
+        m_image = StaticBitmapImage::create(fromSkSp(surface->makeImageSnapshot()));
     }
     canvas()->didDraw(FloatRect(FloatPoint(), FloatSize(m_image->width(), m_image->height())));
 }
@@ -47,16 +53,16 @@ bool ImageBitmapRenderingContext::paint(GraphicsContext& gc, const IntRect& r)
 
     // With impl-side painting, it is unsafe to use a gpu-backed SkImage
     ASSERT(!m_image->imageForCurrentFrame()->isTextureBacked());
-    gc.drawImage(m_image.get(), r, m_hasAlpha ? SkXfermode::kSrcOver_Mode : SkXfermode::kSrc_Mode);
+    gc.drawImage(m_image.get(), r, nullptr, m_hasAlpha ? SkXfermode::kSrcOver_Mode : SkXfermode::kSrc_Mode);
 
     return true;
 }
 
-PassOwnPtrWillBeRawPtr<CanvasRenderingContext> ImageBitmapRenderingContext::Factory::create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document& document)
+CanvasRenderingContext* ImageBitmapRenderingContext::Factory::create(HTMLCanvasElement* canvas, const CanvasContextCreationAttributes& attrs, Document& document)
 {
     if (!RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled())
         return nullptr;
-    return adoptPtrWillBeNoop(new ImageBitmapRenderingContext(canvas, attrs, document));
+    return new ImageBitmapRenderingContext(canvas, attrs, document);
 }
 
 void ImageBitmapRenderingContext::stop()

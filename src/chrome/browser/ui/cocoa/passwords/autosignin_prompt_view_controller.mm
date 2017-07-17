@@ -4,15 +4,38 @@
 
 #import "chrome/browser/ui/cocoa/passwords/autosignin_prompt_view_controller.h"
 
+#include <Carbon/Carbon.h>
+
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/string16.h"
+#import "chrome/browser/ui/cocoa/key_equivalent_constants.h"
 #import "chrome/browser/ui/cocoa/passwords/passwords_bubble_utils.h"
 #include "chrome/browser/ui/passwords/password_dialog_controller.h"
 #include "chrome/browser/ui/passwords/password_dialog_prompts.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/cocoa/controls/hyperlink_text_view.h"
 #include "ui/base/l10n/l10n_util.h"
+
+@interface AutoSigninPromptView : NSView
+@property (nonatomic, copy) BOOL (^escHandler)(NSEvent* theEvent);
+@end
+
+@implementation AutoSigninPromptView
+@synthesize escHandler = _escHandler;
+
+-(void)dealloc {
+  [_escHandler release];
+  [super dealloc];
+}
+
+- (BOOL)performKeyEquivalent:(NSEvent*)theEvent {
+  if (_escHandler(theEvent))
+    return YES;
+  return [super performKeyEquivalent:theEvent];
+}
+
+@end
 
 @interface AutoSigninPromptViewController () {
   NSButton* _okButton;
@@ -21,6 +44,7 @@
 }
 - (void)onOkClicked:(id)sender;
 - (void)onTurnOffClicked:(id)sender;
+- (BOOL)handleEscPress:(NSEvent*)theEvent;
 @end
 
 @implementation AutoSigninPromptViewController
@@ -42,7 +66,13 @@
 // |              [ Turn Off ] [ OK ] |
 // ------------------------------------
 - (void)loadView {
-  base::scoped_nsobject<NSView> view([[NSView alloc] initWithFrame:NSZeroRect]);
+  base::scoped_nsobject<AutoSigninPromptView> view(
+      [[AutoSigninPromptView alloc] initWithFrame:NSZeroRect]);
+  __block AutoSigninPromptViewController* weakSelf = self;
+  [view setEscHandler:^(NSEvent* theEvent) {
+      return [weakSelf handleEscPress:theEvent];
+  }];
+
 
   // Title.
   base::string16 titleText =
@@ -66,14 +96,14 @@
 
   // Buttons.
   _okButton =
-      DialogButton(l10n_util::GetNSString(IDS_AUTO_SIGNIN_FIRST_RUN_OK));
+      BiggerDialogButton(l10n_util::GetNSString(IDS_AUTO_SIGNIN_FIRST_RUN_OK));
   [_okButton setTarget:self];
   [_okButton setAction:@selector(onOkClicked:)];
-  [_okButton setKeyEquivalent:@"\r"];
+  [_okButton setKeyEquivalent:kKeyEquivalentReturn];
   [view addSubview:_okButton];
 
-  _turnOffButton =
-      DialogButton(l10n_util::GetNSString(IDS_AUTO_SIGNIN_FIRST_RUN_TURN_OFF));
+  _turnOffButton = BiggerDialogButton(
+       l10n_util::GetNSString(IDS_AUTO_SIGNIN_FIRST_RUN_TURN_OFF));
   [_turnOffButton setTarget:self];
   [_turnOffButton setAction:@selector(onTurnOffClicked:)];
   [view addSubview:_turnOffButton];
@@ -122,6 +152,15 @@
 - (void)onTurnOffClicked:(id)sender {
   if (_bridge && _bridge->GetDialogController())
     _bridge->GetDialogController()->OnAutoSigninTurnOff();
+}
+
+- (BOOL)handleEscPress:(NSEvent*)theEvent {
+  if ([theEvent keyCode] == kVK_Escape) {
+    if (_bridge)
+      _bridge->PerformClose();
+    return YES;
+  }
+  return NO;
 }
 
 @end

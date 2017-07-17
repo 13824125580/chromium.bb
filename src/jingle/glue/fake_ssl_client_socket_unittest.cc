@@ -6,15 +6,17 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/test_completion_callback.h"
 #include "net/log/net_log.h"
 #include "net/socket/socket_test_util.h"
@@ -98,9 +100,9 @@ class FakeSSLClientSocketTest : public testing::Test {
 
   ~FakeSSLClientSocketTest() override {}
 
-  scoped_ptr<net::StreamSocket> MakeClientSocket() {
+  std::unique_ptr<net::StreamSocket> MakeClientSocket() {
     return mock_client_socket_factory_.CreateTransportClientSocket(
-        net::AddressList(), NULL, net::NetLog::Source());
+        net::AddressList(), NULL, NULL, net::NetLog::Source());
   }
 
   void SetData(const net::MockConnect& mock_connect,
@@ -272,14 +274,14 @@ class FakeSSLClientSocketTest : public testing::Test {
   base::MessageLoop message_loop_;
 
   net::MockClientSocketFactory mock_client_socket_factory_;
-  scoped_ptr<net::StaticSocketDataProvider> static_socket_data_provider_;
+  std::unique_ptr<net::StaticSocketDataProvider> static_socket_data_provider_;
 };
 
 TEST_F(FakeSSLClientSocketTest, PassThroughMethods) {
-  scoped_ptr<MockClientSocket> mock_client_socket(new MockClientSocket());
+  std::unique_ptr<MockClientSocket> mock_client_socket(new MockClientSocket());
   const int kReceiveBufferSize = 10;
   const int kSendBufferSize = 20;
-  net::IPEndPoint ip_endpoint(net::IPAddressNumber(net::kIPv4AddressSize), 80);
+  net::IPEndPoint ip_endpoint(net::IPAddress::IPv4AllZeros(), 80);
   const int kPeerAddress = 30;
   net::BoundNetLog net_log;
   EXPECT_CALL(*mock_client_socket, SetReceiveBufferSize(kReceiveBufferSize));

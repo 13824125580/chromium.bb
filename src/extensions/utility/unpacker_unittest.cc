@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
@@ -13,11 +15,13 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_paths.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/strings/grit/extensions_strings.h"
 #include "extensions/test/test_extensions_client.h"
 #include "extensions/utility/unpacker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/zlib/google/zip.h"
+#include "ui/base/l10n/l10n_util.h"
 
 using base::ASCIIToUTF16;
 
@@ -54,7 +58,7 @@ class UnpackerTest : public testing::Test {
 
  protected:
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<Unpacker> unpacker_;
+  std::unique_ptr<Unpacker> unpacker_;
 };
 
 TEST_F(UnpackerTest, EmptyDefaultLocale) {
@@ -98,9 +102,12 @@ TEST_F(UnpackerTest, MissingDefaultData) {
 
 TEST_F(UnpackerTest, MissingDefaultLocaleHasLocalesFolder) {
   SetupUnpacker("missing_default_has_locales.crx");
+  const base::string16 kExpectedError =
+      l10n_util::GetStringUTF16(
+          IDS_EXTENSION_LOCALES_NO_DEFAULT_LOCALE_SPECIFIED);
+
   EXPECT_FALSE(unpacker_->Run());
-  EXPECT_EQ(ASCIIToUTF16(errors::kLocalesNoDefaultLocaleSpecified),
-            unpacker_->error_message());
+  EXPECT_EQ(kExpectedError, unpacker_->error_message());
 }
 
 TEST_F(UnpackerTest, MissingMessagesFile) {

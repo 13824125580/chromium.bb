@@ -15,10 +15,10 @@
 #include "content/public/browser/url_data_source.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_resource.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 
 class ExtensionIconSet;
 class Profile;
+class SkBitmap;
 
 namespace extensions {
 class Extension;
@@ -152,9 +152,9 @@ class ExtensionIconSource : public content::URLDataSource,
   // Maps request_ids to ExtensionIconRequests.
   std::map<int, ExtensionIconRequest*> request_map_;
 
-  scoped_ptr<SkBitmap> default_app_data_;
+  std::unique_ptr<SkBitmap> default_app_data_;
 
-  scoped_ptr<SkBitmap> default_extension_data_;
+  std::unique_ptr<SkBitmap> default_extension_data_;
 
   base::CancelableTaskTracker cancelable_task_tracker_;
 

@@ -38,10 +38,8 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   bool IsWindowModalSheet() const;
 
   // Deletes |bridge_| and informs |delegate_| that the native widget is
-  // destroyed.
-  // This is usually called from the NSWindowDelegate. A derived class can
-  // override this method for an early hook into the native window teardown.
-  virtual void OnWindowWillClose();
+  // destroyed. This is usually called from the NSWindowDelegate.
+  void OnWindowWillClose();
 
   // Returns the vertical position that sheets should be anchored, in pixels
   // from the bottom of the window.
@@ -80,6 +78,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   gfx::Rect GetWindowBoundsInScreen() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   gfx::Rect GetRestoredBounds() const override;
+  std::string GetWorkspace() const override;
   void SetBounds(const gfx::Rect& bounds) override;
   void SetSize(const gfx::Size& size) override;
   void StackAbove(gfx::NativeView native_view) override;
@@ -106,8 +105,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   void Restore() override;
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
-  void SetOpacity(unsigned char opacity) override;
-  void SetUseDragFrame(bool use_drag_frame) override;
+  void SetOpacity(float opacity) override;
   void FlashFrame(bool flash_frame) override;
   void RunShellDrag(View* view,
                     const ui::OSExchangeData& data,
@@ -133,6 +131,7 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   bool IsTranslucentWindowOpacitySupported() const override;
   void OnSizeConstraintsChanged() override;
   void RepostNativeEvent(gfx::NativeEvent native_event) override;
+  std::string GetName() const override;
 
  protected:
   // Creates the NSWindow that will be passed to the BridgedNativeWidget.
@@ -147,9 +146,12 @@ class VIEWS_EXPORT NativeWidgetMac : public internal::NativeWidgetPrivate {
   friend class test::HitTestNativeWidgetMac;
 
   internal::NativeWidgetDelegate* delegate_;
-  scoped_ptr<BridgedNativeWidget> bridge_;
+  std::unique_ptr<BridgedNativeWidget> bridge_;
 
   Widget::InitParams::Ownership ownership_;
+
+  // Internal name.
+  std::string name_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeWidgetMac);
 };

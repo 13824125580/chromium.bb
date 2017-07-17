@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
 #include "components/mus/public/interfaces/mus_constants.mojom.h"
@@ -60,9 +61,14 @@ class ServerWindowObserver {
 
   virtual void OnWillChangeWindowVisibility(ServerWindow* window) {}
   virtual void OnWindowVisibilityChanged(ServerWindow* window) {}
+  virtual void OnWindowOpacityChanged(ServerWindow* window,
+                                      float old_opacity,
+                                      float new_opacity) {}
 
   virtual void OnWindowPredefinedCursorChanged(ServerWindow* window,
                                                int32_t cursor_id) {}
+  virtual void OnWindowNonClientCursorChanged(ServerWindow* window,
+                                              int32_t cursor_id) {}
 
   virtual void OnWindowTextInputStateChanged(ServerWindow* window,
                                              const ui::TextInputState& state) {}

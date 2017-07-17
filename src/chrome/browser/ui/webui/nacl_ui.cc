@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -159,10 +161,10 @@ void NaClDomHandler::RegisterMessages() {
 void AddPair(base::ListValue* list,
              const base::string16& key,
              const base::string16& value) {
-  base::DictionaryValue* results = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> results(new base::DictionaryValue());
   results->SetString("key", key);
   results->SetString("value", value);
-  list->Append(results);
+  list->Append(std::move(results));
 }
 
 // Generate an empty data-pair which acts as a line break.
@@ -306,7 +308,7 @@ void NaClDomHandler::OnGotPlugins(
 void NaClDomHandler::PopulatePageInformation(base::DictionaryValue* naclInfo) {
   DCHECK(pnacl_path_validated_);
   // Store Key-Value pairs of about-information.
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   // Display the operating system and chrome version information.
   AddOperatingSystemInfo(list.get());
   // Display the list of plugins serving NaCl.
@@ -332,7 +334,7 @@ void CheckVersion(const base::FilePath& pnacl_path, std::string* version) {
       pnacl_path.AppendASCII("pnacl_public_pnacl_json");
   JSONFileValueDeserializer deserializer(pnacl_json_path);
   std::string error;
-  scoped_ptr<base::Value> root = deserializer.Deserialize(NULL, &error);
+  std::unique_ptr<base::Value> root = deserializer.Deserialize(NULL, &error);
   if (!root || !root->IsType(base::Value::TYPE_DICTIONARY))
     return;
 
@@ -372,7 +374,7 @@ void NaClDomHandler::MaybeRespondToPage() {
 
   base::DictionaryValue naclInfo;
   PopulatePageInformation(&naclInfo);
-  web_ui()->CallJavascriptFunction("nacl.returnNaClInfo", naclInfo);
+  web_ui()->CallJavascriptFunctionUnsafe("nacl.returnNaClInfo", naclInfo);
 }
 
 }  // namespace

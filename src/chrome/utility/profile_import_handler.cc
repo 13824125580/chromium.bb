@@ -8,8 +8,8 @@
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/common/importer/profile_import_process_messages.h"
 #include "chrome/utility/importer/external_process_importer_bridge.h"
@@ -70,7 +70,7 @@ void ProfileImportHandler::OnImportStart(
   }
   import_thread_->task_runner()->PostTask(
       FROM_HERE, base::Bind(&Importer::StartImport, importer_.get(),
-                            source_profile, items, bridge_));
+                            source_profile, items, base::RetainedRef(bridge_)));
 }
 
 void ProfileImportHandler::OnImportCancel() {

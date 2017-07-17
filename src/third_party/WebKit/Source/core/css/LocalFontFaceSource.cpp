@@ -57,7 +57,7 @@ PassRefPtr<SimpleFontData> LocalFontFaceSource::createFontData(const FontDescrip
     else {
         fontData = FontCache::fontCache()->getFontData(fontDescription, m_fontName, true);
     }
-    m_histograms.record(fontData);
+    m_histograms.record(fontData.get());
     return fontData.release();
 }
 

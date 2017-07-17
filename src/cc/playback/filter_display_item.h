@@ -7,7 +7,9 @@
 
 #include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "cc/base/cc_export.h"
 #include "cc/output/filter_operations.h"
 #include "cc/playback/display_item.h"
@@ -16,7 +18,6 @@
 class SkCanvas;
 
 namespace cc {
-class ImageSerializationProcessor;
 
 class CC_EXPORT FilterDisplayItem : public DisplayItem {
  public:
@@ -24,18 +25,14 @@ class CC_EXPORT FilterDisplayItem : public DisplayItem {
   explicit FilterDisplayItem(const proto::DisplayItem& proto);
   ~FilterDisplayItem() override;
 
-  void ToProtobuf(proto::DisplayItem* proto,
-                  ImageSerializationProcessor* image_serialization_processor)
-      const override;
+  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
   size_t ExternalMemoryUsage() const override;
 
   int ApproximateOpCount() const { return 1; }
-  bool IsSuitableForGpuRasterization() const { return true; }
 
  private:
   void SetNew(const FilterOperations& filters, const gfx::RectF& bounds);
@@ -50,22 +47,18 @@ class CC_EXPORT EndFilterDisplayItem : public DisplayItem {
   explicit EndFilterDisplayItem(const proto::DisplayItem& proto);
   ~EndFilterDisplayItem() override;
 
-  static scoped_ptr<EndFilterDisplayItem> Create() {
-    return make_scoped_ptr(new EndFilterDisplayItem());
+  static std::unique_ptr<EndFilterDisplayItem> Create() {
+    return base::WrapUnique(new EndFilterDisplayItem());
   }
 
-  void ToProtobuf(proto::DisplayItem* proto,
-                  ImageSerializationProcessor* image_serialization_processor)
-      const override;
+  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
   size_t ExternalMemoryUsage() const override;
 
   int ApproximateOpCount() const { return 0; }
-  bool IsSuitableForGpuRasterization() const { return true; }
 };
 
 }  // namespace cc

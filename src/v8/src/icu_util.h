@@ -15,6 +15,11 @@ namespace internal {
 bool InitializeICU(const char* icu_data_file);
 bool InitializeICUWithData(const void* icu_data);
 
+// Like above, but using the default icudtl.dat location if icu_data_file is
+// not specified.
+bool InitializeICUDefaultLocation(const char* exec_path,
+                                  const char* icu_data_file);
+
 }  // namespace internal
 }  // namespace v8
 

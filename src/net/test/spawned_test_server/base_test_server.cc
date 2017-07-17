@@ -64,24 +64,24 @@ std::string GetClientCertType(SSLClientCertType type) {
 
 void GetKeyExchangesList(int key_exchange, base::ListValue* values) {
   if (key_exchange & BaseTestServer::SSLOptions::KEY_EXCHANGE_RSA)
-    values->Append(new base::StringValue("rsa"));
+    values->AppendString("rsa");
   if (key_exchange & BaseTestServer::SSLOptions::KEY_EXCHANGE_DHE_RSA)
-    values->Append(new base::StringValue("dhe_rsa"));
+    values->AppendString("dhe_rsa");
   if (key_exchange & BaseTestServer::SSLOptions::KEY_EXCHANGE_ECDHE_RSA)
-    values->Append(new base::StringValue("ecdhe_rsa"));
+    values->AppendString("ecdhe_rsa");
 }
 
 void GetCiphersList(int cipher, base::ListValue* values) {
   if (cipher & BaseTestServer::SSLOptions::BULK_CIPHER_RC4)
-    values->Append(new base::StringValue("rc4"));
+    values->AppendString("rc4");
   if (cipher & BaseTestServer::SSLOptions::BULK_CIPHER_AES128)
-    values->Append(new base::StringValue("aes128"));
+    values->AppendString("aes128");
   if (cipher & BaseTestServer::SSLOptions::BULK_CIPHER_AES256)
-    values->Append(new base::StringValue("aes256"));
+    values->AppendString("aes256");
   if (cipher & BaseTestServer::SSLOptions::BULK_CIPHER_3DES)
-    values->Append(new base::StringValue("3des"));
+    values->AppendString("3des");
   if (cipher & BaseTestServer::SSLOptions::BULK_CIPHER_AES128GCM)
-    values->Append(new base::StringValue("aes128gcm"));
+    values->AppendString("aes128gcm");
 }
 
 base::StringValue* GetTLSIntoleranceType(
@@ -114,10 +114,11 @@ bool GetLocalCertificatesDir(const base::FilePath& certificates_dir,
   return true;
 }
 
-scoped_ptr<base::ListValue> GetTokenBindingParams(std::vector<int> params) {
-  scoped_ptr<base::ListValue> values(new base::ListValue());
+std::unique_ptr<base::ListValue> GetTokenBindingParams(
+    std::vector<int> params) {
+  std::unique_ptr<base::ListValue> values(new base::ListValue());
   for (int param : params) {
-    values->Append(new base::FundamentalValue(param));
+    values->AppendInteger(param);
   }
   return values;
 }
@@ -265,7 +266,8 @@ std::string BaseTestServer::GetScheme() const {
 bool BaseTestServer::GetAddressList(AddressList* address_list) const {
   DCHECK(address_list);
 
-  scoped_ptr<HostResolver> resolver(HostResolver::CreateDefaultResolver(NULL));
+  std::unique_ptr<HostResolver> resolver(
+      HostResolver::CreateDefaultResolver(NULL));
   HostResolver::RequestInfo info(host_port_pair_);
   // Limit the lookup to IPv4. When started with the default
   // address of kLocalhost, testserver.py only supports IPv4.
@@ -406,7 +408,7 @@ void BaseTestServer::SetResourcePath(const base::FilePath& document_root,
 bool BaseTestServer::ParseServerData(const std::string& server_data) {
   VLOG(1) << "Server data: " << server_data;
   base::JSONReader json_reader;
-  scoped_ptr<base::Value> value(json_reader.ReadToValue(server_data));
+  std::unique_ptr<base::Value> value(json_reader.ReadToValue(server_data));
   if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY)) {
     LOG(ERROR) << "Could not parse server data: "
                << json_reader.GetErrorMessage();
@@ -490,7 +492,7 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
     // Check the client certificate related arguments.
     if (ssl_options_.request_client_certificate)
       arguments->Set("ssl-client-auth", base::Value::CreateNullValue());
-    scoped_ptr<base::ListValue> ssl_client_certs(new base::ListValue());
+    std::unique_ptr<base::ListValue> ssl_client_certs(new base::ListValue());
 
     std::vector<base::FilePath>::const_iterator it;
     for (it = ssl_options_.client_authorities.begin();
@@ -500,16 +502,16 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
                    << " doesn't exist. Can't launch https server.";
         return false;
       }
-      ssl_client_certs->Append(new base::StringValue(it->value()));
+      ssl_client_certs->AppendString(it->value());
     }
 
     if (ssl_client_certs->GetSize())
       arguments->Set("ssl-client-ca", ssl_client_certs.release());
 
-    scoped_ptr<base::ListValue> client_cert_types(new base::ListValue());
+    std::unique_ptr<base::ListValue> client_cert_types(new base::ListValue());
     for (size_t i = 0; i < ssl_options_.client_cert_types.size(); i++) {
-      client_cert_types->Append(new base::StringValue(
-          GetClientCertType(ssl_options_.client_cert_types[i])));
+      client_cert_types->AppendString(
+          GetClientCertType(ssl_options_.client_cert_types[i]));
     }
     if (client_cert_types->GetSize())
       arguments->Set("ssl-client-cert-type", client_cert_types.release());
@@ -527,12 +529,12 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
     }
 
     // Check key exchange argument.
-    scoped_ptr<base::ListValue> key_exchange_values(new base::ListValue());
+    std::unique_ptr<base::ListValue> key_exchange_values(new base::ListValue());
     GetKeyExchangesList(ssl_options_.key_exchanges, key_exchange_values.get());
     if (key_exchange_values->GetSize())
       arguments->Set("ssl-key-exchange", key_exchange_values.release());
     // Check bulk cipher argument.
-    scoped_ptr<base::ListValue> bulk_cipher_values(new base::ListValue());
+    std::unique_ptr<base::ListValue> bulk_cipher_values(new base::ListValue());
     GetCiphersList(ssl_options_.bulk_ciphers, bulk_cipher_values.get());
     if (bulk_cipher_values->GetSize())
       arguments->Set("ssl-bulk-cipher", bulk_cipher_values.release());
@@ -558,9 +560,9 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
                      base::Value::CreateNullValue());
     }
     if (!ssl_options_.npn_protocols.empty()) {
-      scoped_ptr<base::ListValue> npn_protocols(new base::ListValue());
+      std::unique_ptr<base::ListValue> npn_protocols(new base::ListValue());
       for (const std::string& proto : ssl_options_.npn_protocols) {
-        npn_protocols->Append(new base::StringValue(proto));
+        npn_protocols->AppendString(proto);
       }
       arguments->Set("npn-protocols", std::move(npn_protocols));
     }
@@ -574,7 +576,8 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
                      base::Value::CreateNullValue());
     }
     if (!ssl_options_.supported_token_binding_params.empty()) {
-      scoped_ptr<base::ListValue> token_binding_params(new base::ListValue());
+      std::unique_ptr<base::ListValue> token_binding_params(
+          new base::ListValue());
       arguments->Set(
           "token-binding-params",
           GetTokenBindingParams(ssl_options_.supported_token_binding_params));

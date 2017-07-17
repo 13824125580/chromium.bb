@@ -28,7 +28,7 @@
 
 #include "platform/image-decoders/ImageDecoder.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 class GIFImageReader;
 
@@ -47,7 +47,7 @@ public:
 
     // ImageDecoder:
     String filenameExtension() const override { return "gif"; }
-    void onSetData(SharedBuffer* data) override;
+    void onSetData(SegmentReader* data) override;
     int repetitionCount() const override;
     bool frameIsCompleteAtIndex(size_t) const override;
     float frameDurationAtIndex(size_t) const override;
@@ -84,9 +84,12 @@ private:
     // Like clearCacheExceptFrame(), but preserves two frames instead of one.
     size_t clearCacheExceptTwoFrames(size_t, size_t);
 
+    void updateAggressivePurging(size_t index);
+
     bool m_currentBufferSawAlpha;
+    bool m_purgeAggressively;
     mutable int m_repetitionCount;
-    OwnPtr<GIFImageReader> m_reader;
+    std::unique_ptr<GIFImageReader> m_reader;
 };
 
 } // namespace blink

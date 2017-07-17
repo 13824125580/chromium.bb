@@ -7,13 +7,17 @@
 
 #include <stdint.h>
 
+#include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/sync_driver/backend_data_type_configurer.h"
@@ -79,7 +83,7 @@ class SyncBackendHostImpl
   // SyncBackendHost implementation.
   void Initialize(
       sync_driver::SyncFrontend* frontend,
-      scoped_ptr<base::Thread> sync_thread,
+      std::unique_ptr<base::Thread> sync_thread,
       const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
       const scoped_refptr<base::SingleThreadTaskRunner>& file_thread,
       const syncer::WeakHandle<syncer::JsEventHandler>& event_handler,
@@ -87,13 +91,13 @@ class SyncBackendHostImpl
       const std::string& sync_user_agent,
       const syncer::SyncCredentials& credentials,
       bool delete_sync_data_folder,
-      scoped_ptr<syncer::SyncManagerFactory> sync_manager_factory,
+      std::unique_ptr<syncer::SyncManagerFactory> sync_manager_factory,
       const syncer::WeakHandle<syncer::UnrecoverableErrorHandler>&
           unrecoverable_error_handler,
       const base::Closure& report_unrecoverable_error_function,
       const HttpPostProviderFactoryGetter& http_post_provider_factory_getter,
-      scoped_ptr<syncer::SyncEncryptionHandler::NigoriState> saved_nigori_state)
-      override;
+      std::unique_ptr<syncer::SyncEncryptionHandler::NigoriState>
+          saved_nigori_state) override;
   void TriggerRefresh(const syncer::ModelTypeSet& types) override;
   void UpdateCredentials(const syncer::SyncCredentials& credentials) override;
   void StartSyncingWithServer() override;
@@ -102,7 +106,8 @@ class SyncBackendHostImpl
   bool SetDecryptionPassphrase(const std::string& passphrase) override
       WARN_UNUSED_RESULT;
   void StopSyncingForShutdown() override;
-  scoped_ptr<base::Thread> Shutdown(syncer::ShutdownReason reason) override;
+  std::unique_ptr<base::Thread> Shutdown(
+      syncer::ShutdownReason reason) override;
   void UnregisterInvalidationIds() override;
   syncer::ModelTypeSet ConfigureDataTypes(
       syncer::ConfigureReason reason,
@@ -117,7 +122,7 @@ class SyncBackendHostImpl
   void DeactivateDirectoryDataType(syncer::ModelType type) override;
   void ActivateNonBlockingDataType(
       syncer::ModelType type,
-      scoped_ptr<syncer_v2::ActivationContext>) override;
+      std::unique_ptr<syncer_v2::ActivationContext>) override;
   void DeactivateNonBlockingDataType(syncer::ModelType type) override;
   void EnableEncryptEverything() override;
   syncer::UserShare* GetUserShare() const override;
@@ -144,6 +149,7 @@ class SyncBackendHostImpl
   void RefreshTypesForTest(syncer::ModelTypeSet types) override;
   void ClearServerData(
       const syncer::SyncManager::ClearServerDataCallback& callback) override;
+  void OnCookieJarChanged(bool account_mismatch, bool empty_jar) override;
 
   // InvalidationHandler implementation.
   void OnInvalidatorStateChange(syncer::InvalidatorState state) override;
@@ -156,7 +162,7 @@ class SyncBackendHostImpl
   // subclasses can use them.
 
   // Allows tests to perform alternate core initialization work.
-  virtual void InitCore(scoped_ptr<DoInitializeOptions> options);
+  virtual void InitCore(std::unique_ptr<DoInitializeOptions> options);
 
   // Request the syncer to reconfigure with the specfied params.
   // Virtual for testing.
@@ -183,14 +189,13 @@ class SyncBackendHostImpl
   // Reports backend initialization success.  Includes some objects from sync
   // manager initialization to be passed back to the UI thread.
   //
-  // |sync_context_proxy| points to an object owned by the SyncManager.
-  // Ownership is not transferred, but we can obtain our own copy of the object
-  // using its Clone() method.
+  // |model_type_connector| is our ModelTypeConnector, which is owned because in
+  // production it is a proxy object to the real ModelTypeConnector.
   virtual void HandleInitializationSuccessOnFrontendLoop(
       const syncer::WeakHandle<syncer::JsBackend> js_backend,
       const syncer::WeakHandle<syncer::DataTypeDebugInfoListener>
           debug_info_listener,
-      syncer_v2::SyncContextProxy* sync_context_proxy,
+      std::unique_ptr<syncer_v2::ModelTypeConnector> model_type_connector,
       const std::string& cache_guid);
 
   // Forwards a ProtocolEvent to the frontend.  Will not be called unless a
@@ -315,9 +320,9 @@ class SyncBackendHostImpl
   void ClearServerDataDoneOnFrontendLoop(
       const syncer::SyncManager::ClearServerDataCallback& frontend_callback);
 
-  // A reference to the MessageLoop used to construct |this|, so we know how
-  // to safely talk back to the SyncFrontend.
-  base::MessageLoop* const frontend_loop_;
+  // A reference to the TaskRUnner used to construct |this|, so we know how to
+  // safely talk back to the SyncFrontend.
+  scoped_refptr<base::SingleThreadTaskRunner> const frontend_task_runner_;
 
   sync_driver::SyncClient* const sync_client_;
 
@@ -332,14 +337,15 @@ class SyncBackendHostImpl
   // sync loop.
   scoped_refptr<SyncBackendHostCore> core_;
 
-  // A handle referencing the main interface for non-blocking sync types.
-  scoped_ptr<syncer_v2::SyncContextProxy> sync_context_proxy_;
+  // A handle referencing the main interface for non-blocking sync types. This
+  // object is owned because in production code it is a proxy object.
+  std::unique_ptr<syncer_v2::ModelTypeConnector> model_type_connector_;
 
   bool initialized_;
 
   const base::WeakPtr<sync_driver::SyncPrefs> sync_prefs_;
 
-  scoped_ptr<SyncBackendRegistrar> registrar_;
+  std::unique_ptr<SyncBackendRegistrar> registrar_;
 
   // The frontend which we serve (and are owned by).
   sync_driver::SyncFrontend* frontend_;

@@ -4,9 +4,10 @@
 
 #include "content/browser/renderer_host/media/video_capture_host.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
@@ -90,8 +91,7 @@ void VideoCaptureHost::OnBufferDestroyed(VideoCaptureControllerID controller_id,
 void VideoCaptureHost::OnBufferReady(
     VideoCaptureControllerID controller_id,
     int buffer_id,
-    const scoped_refptr<media::VideoFrame>& video_frame,
-    const base::TimeTicks& timestamp) {
+    const scoped_refptr<media::VideoFrame>& video_frame) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (entries_.find(controller_id) == entries_.end())
     return;
@@ -99,7 +99,7 @@ void VideoCaptureHost::OnBufferReady(
   VideoCaptureMsg_BufferReady_Params params;
   params.device_id = controller_id;
   params.buffer_id = buffer_id;
-  params.timestamp = timestamp;
+  params.timestamp = video_frame->timestamp();
   video_frame->metadata()->MergeInternalValuesInto(&params.metadata);
   params.pixel_format = video_frame->format();
   params.storage_type = video_frame->storage_type();
@@ -147,6 +147,8 @@ bool VideoCaptureHost::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Start, OnStartCapture)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Pause, OnPauseCapture)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Resume, OnResumeCapture)
+    IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_RequestRefreshFrame,
+                        OnRequestRefreshFrame)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Stop, OnStopCapture)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_BufferReady,
                         OnRendererFinishedWithBuffer)
@@ -259,6 +261,22 @@ void VideoCaptureHost::OnResumeCapture(
   if (it->second) {
     media_stream_manager_->video_capture_manager()->ResumeCaptureForClient(
         session_id, params, it->second.get(), controller_id, this);
+  }
+}
+
+void VideoCaptureHost::OnRequestRefreshFrame(int device_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DVLOG(1) << "VideoCaptureHost::OnRequestRefreshFrame, device_id "
+           << device_id;
+
+  VideoCaptureControllerID controller_id(device_id);
+  EntryMap::iterator it = entries_.find(controller_id);
+  if (it == entries_.end())
+    return;
+
+  if (VideoCaptureController* controller = it->second.get()) {
+    media_stream_manager_->video_capture_manager()
+        ->RequestRefreshFrameForClient(controller);
   }
 }
 

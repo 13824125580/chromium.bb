@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_OPAQUE_BROWSER_FRAME_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_OPAQUE_BROWSER_FRAME_VIEW_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/avatar_button_manager.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
@@ -79,7 +80,6 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   int GetIconSize() const override;
   gfx::Size GetBrowserViewMinimumSize() const override;
   bool ShouldShowCaptionButtons() const override;
-  bool ShouldShowAvatar() const override;
   bool IsRegularOrGuestSession() const override;
   gfx::ImageSkia GetOTRAvatarIcon() const override;
   bool IsMaximized() const override;
@@ -102,7 +102,7 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
 
   // BrowserNonClientFrameView:
   bool ShouldPaintAsThemed() const override;
-  void UpdateAvatar() override;
+  void UpdateProfileIcons() override;
 
  private:
   // views::NonClientFrameView:
@@ -172,10 +172,10 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   AvatarButtonManager profile_switcher_;
 
   // Background painter for the window frame.
-  scoped_ptr<views::FrameBackground> frame_background_;
+  std::unique_ptr<views::FrameBackground> frame_background_;
 
   // Observer that handles platform dependent configuration.
-  scoped_ptr<OpaqueBrowserFrameViewPlatformSpecific> platform_observer_;
+  std::unique_ptr<OpaqueBrowserFrameViewPlatformSpecific> platform_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(OpaqueBrowserFrameView);
 };

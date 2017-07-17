@@ -100,7 +100,6 @@ Scope::Scope(Zone* zone, Scope* outer_scope, ScopeType scope_type,
               function_kind);
   // The outermost scope must be a script scope.
   DCHECK(scope_type == SCRIPT_SCOPE || outer_scope != NULL);
-  DCHECK(!HasIllegalRedeclaration());
 }
 
 Scope::Scope(Zone* zone, Scope* inner_scope, ScopeType scope_type,
@@ -169,16 +168,17 @@ void Scope::SetDefaults(ScopeType scope_type, Scope* outer_scope,
   function_ = nullptr;
   arguments_ = nullptr;
   this_function_ = nullptr;
-  illegal_redecl_ = nullptr;
   scope_inside_with_ = false;
-  scope_contains_with_ = false;
   scope_calls_eval_ = false;
   scope_uses_arguments_ = false;
   scope_uses_super_property_ = false;
   asm_module_ = false;
   asm_function_ = outer_scope != NULL && outer_scope->asm_module_;
   // Inherit the language mode from the parent scope.
-  language_mode_ = outer_scope != NULL ? outer_scope->language_mode_ : SLOPPY;
+  language_mode_ =
+      is_module_scope()
+          ? STRICT
+          : (outer_scope != NULL ? outer_scope->language_mode_ : SLOPPY);
   outer_scope_calls_sloppy_eval_ = false;
   inner_scope_calls_eval_ = false;
   scope_nonlinear_ = false;
@@ -196,6 +196,7 @@ void Scope::SetDefaults(ScopeType scope_type, Scope* outer_scope,
   scope_info_ = scope_info;
   start_position_ = RelocInfo::kNoPosition;
   end_position_ = RelocInfo::kNoPosition;
+  is_hidden_ = false;
   if (!scope_info.is_null()) {
     scope_calls_eval_ = scope_info->CallsEval();
     language_mode_ = scope_info->language_mode();
@@ -210,15 +211,14 @@ Scope* Scope::DeserializeScopeChain(Isolate* isolate, Zone* zone,
   // Reconstruct the outer scope chain from a closure's context chain.
   Scope* current_scope = NULL;
   Scope* innermost_scope = NULL;
-  bool contains_with = false;
   while (!context->IsNativeContext()) {
-    if (context->IsWithContext()) {
+    if (context->IsWithContext() || context->IsDebugEvaluateContext()) {
+      // For scope analysis, debug-evaluate is equivalent to a with scope.
       Scope* with_scope = new (zone)
           Scope(zone, current_scope, WITH_SCOPE, Handle<ScopeInfo>::null(),
                 script_scope->ast_value_factory_);
       current_scope = with_scope;
       // All the inner scopes are inside a with.
-      contains_with = true;
       for (Scope* s = innermost_scope; s != NULL; s = s->outer_scope()) {
         s->scope_inside_with_ = true;
       }
@@ -252,13 +252,7 @@ Scope* Scope::DeserializeScopeChain(Isolate* isolate, Zone* zone,
           script_scope->ast_value_factory_->GetString(Handle<String>(name)),
           script_scope->ast_value_factory_);
     }
-    if (contains_with) current_scope->RecordWithStatement();
     if (innermost_scope == NULL) innermost_scope = current_scope;
-
-    // Forget about a with when we move to a context for a different function.
-    if (context->previous()->closure() != context->closure()) {
-      contains_with = false;
-    }
     context = context->previous();
   }
 
@@ -297,6 +291,7 @@ bool Scope::Analyze(ParseInfo* info) {
                                : FLAG_print_scopes) {
     scope->Print();
   }
+  scope->CheckScopePositions();
 #endif
 
   info->set_scope(scope);
@@ -392,7 +387,6 @@ void Scope::PropagateUsageFlagsToScope(Scope* other) {
   if (uses_arguments()) other->RecordArgumentsUsage();
   if (uses_super_property()) other->RecordSuperPropertyUsage();
   if (calls_eval()) other->RecordEvalCall();
-  if (scope_contains_with_) other->RecordWithStatement();
 }
 
 
@@ -564,37 +558,29 @@ Variable* Scope::NewTemporary(const AstRawString* name) {
   return var;
 }
 
-
-bool Scope::RemoveTemporary(Variable* var) {
+int Scope::RemoveTemporary(Variable* var) {
+  DCHECK_NOT_NULL(var);
+  // Temporaries are only placed in ClosureScopes.
+  DCHECK_EQ(ClosureScope(), this);
+  DCHECK_EQ(var->scope()->ClosureScope(), var->scope());
+  // If the temporary is not here, return quickly.
+  if (var->scope() != this) return -1;
   // Most likely (always?) any temporary variable we want to remove
   // was just added before, so we search backwards.
   for (int i = temps_.length(); i-- > 0;) {
     if (temps_[i] == var) {
-      temps_.Remove(i);
-      return true;
+      // Don't shrink temps_, as callers of this method expect
+      // the returned indices to be unique per-scope.
+      temps_[i] = nullptr;
+      return i;
     }
   }
-  return false;
+  return -1;
 }
 
 
 void Scope::AddDeclaration(Declaration* declaration) {
   decls_.Add(declaration, zone());
-}
-
-
-void Scope::SetIllegalRedeclaration(Expression* expression) {
-  // Record only the first illegal redeclaration.
-  if (!HasIllegalRedeclaration()) {
-    illegal_redecl_ = expression;
-  }
-  DCHECK(HasIllegalRedeclaration());
-}
-
-
-Expression* Scope::GetIllegalRedeclaration() {
-  DCHECK(HasIllegalRedeclaration());
-  return illegal_redecl_;
 }
 
 
@@ -656,6 +642,7 @@ void Scope::CollectStackAndContextLocals(ZoneList<Variable*>* stack_locals,
   // context as a whole has forced context allocation.
   for (int i = 0; i < temps_.length(); i++) {
     Variable* var = temps_[i];
+    if (var == nullptr) continue;
     if (var->is_used()) {
       if (var->IsContextSlot()) {
         DCHECK(has_forced_context_allocation());
@@ -817,25 +804,7 @@ Handle<ScopeInfo> Scope::GetScopeInfo(Isolate* isolate) {
   return scope_info_;
 }
 
-
-void Scope::GetNestedScopeChain(Isolate* isolate,
-                                List<Handle<ScopeInfo> >* chain, int position) {
-  if (!is_eval_scope()) chain->Add(Handle<ScopeInfo>(GetScopeInfo(isolate)));
-
-  for (int i = 0; i < inner_scopes_.length(); i++) {
-    Scope* scope = inner_scopes_[i];
-    int beg_pos = scope->start_position();
-    int end_pos = scope->end_position();
-    DCHECK(beg_pos >= 0 && end_pos >= 0);
-    if (beg_pos <= position && position < end_pos) {
-      scope->GetNestedScopeChain(isolate, chain, position);
-      return;
-    }
-  }
-}
-
-
-void Scope::CollectNonLocals(HashMap* non_locals) {
+Handle<StringSet> Scope::CollectNonLocals(Handle<StringSet> non_locals) {
   // Collect non-local variables referenced in the scope.
   // TODO(yangguo): store non-local variables explicitly if we can no longer
   //                rely on unresolved_ to find them.
@@ -843,28 +812,12 @@ void Scope::CollectNonLocals(HashMap* non_locals) {
     VariableProxy* proxy = unresolved_[i];
     if (proxy->is_resolved() && proxy->var()->IsStackAllocated()) continue;
     Handle<String> name = proxy->name();
-    void* key = reinterpret_cast<void*>(name.location());
-    HashMap::Entry* entry = non_locals->LookupOrInsert(key, name->Hash());
-    entry->value = key;
+    non_locals = StringSet::Add(non_locals, name);
   }
   for (int i = 0; i < inner_scopes_.length(); i++) {
-    inner_scopes_[i]->CollectNonLocals(non_locals);
+    non_locals = inner_scopes_[i]->CollectNonLocals(non_locals);
   }
-}
-
-
-void Scope::ReportMessage(int start_position, int end_position,
-                          MessageTemplate::Template message,
-                          const AstRawString* arg) {
-  // Propagate the error to the topmost scope targeted by this scope analysis
-  // phase.
-  Scope* top = this;
-  while (!top->is_script_scope() && !top->outer_scope()->already_resolved()) {
-    top = top->outer_scope();
-  }
-
-  top->pending_error_handler_.ReportMessageAt(start_position, end_position,
-                                              message, arg, kReferenceError);
+  return non_locals;
 }
 
 
@@ -875,7 +828,10 @@ static const char* Header(ScopeType scope_type, FunctionKind function_kind,
     case EVAL_SCOPE: return "eval";
     // TODO(adamk): Should we print concise method scopes specially?
     case FUNCTION_SCOPE:
-      return IsArrowFunction(function_kind) ? "arrow" : "function";
+      if (IsGeneratorFunction(function_kind)) return "function*";
+      if (IsAsyncFunction(function_kind)) return "async function";
+      if (IsArrowFunction(function_kind)) return "arrow";
+      return "function";
     case MODULE_SCOPE: return "module";
     case SCRIPT_SCOPE: return "global";
     case CATCH_SCOPE: return "catch";
@@ -998,8 +954,9 @@ void Scope::Print(int n) {
   if (is_strict(language_mode())) {
     Indent(n1, "// strict mode scope\n");
   }
+  if (asm_module_) Indent(n1, "// scope is an asm module\n");
+  if (asm_function_) Indent(n1, "// scope is an asm function\n");
   if (scope_inside_with_) Indent(n1, "// scope inside 'with'\n");
-  if (scope_contains_with_) Indent(n1, "// scope contains 'with'\n");
   if (scope_calls_eval_) Indent(n1, "// scope calls 'eval'\n");
   if (scope_uses_arguments_) Indent(n1, "// scope uses 'arguments'\n");
   if (scope_uses_super_property_)
@@ -1025,9 +982,15 @@ void Scope::Print(int n) {
   }
 
   if (temps_.length() > 0) {
-    Indent(n1, "// temporary vars:\n");
+    bool printed_header = false;
     for (int i = 0; i < temps_.length(); i++) {
-      PrintVar(n1, temps_[i]);
+      if (temps_[i] != nullptr) {
+        if (!printed_header) {
+          printed_header = true;
+          Indent(n1, "// temporary vars:\n");
+        }
+        PrintVar(n1, temps_[i]);
+      }
     }
   }
 
@@ -1052,6 +1015,16 @@ void Scope::Print(int n) {
   }
 
   Indent(n0, "}\n");
+}
+
+void Scope::CheckScopePositions() {
+  // A scope is allowed to have invalid positions if it is hidden and has no
+  // inner scopes
+  if (!is_hidden() && inner_scopes_.length() == 0) {
+    CHECK_NE(RelocInfo::kNoPosition, start_position());
+    CHECK_NE(RelocInfo::kNoPosition, end_position());
+  }
+  for (Scope* scope : inner_scopes_) scope->CheckScopePositions();
 }
 #endif  // DEBUG
 
@@ -1129,12 +1102,15 @@ Variable* Scope::LookupRecursive(VariableProxy* proxy,
     if (var != NULL && proxy->is_assigned()) var->set_maybe_assigned();
     *binding_kind = DYNAMIC_LOOKUP;
     return NULL;
-  } else if (calls_sloppy_eval() && !is_script_scope() &&
-             name_can_be_shadowed) {
+  } else if (calls_sloppy_eval() && is_declaration_scope() &&
+             !is_script_scope() && name_can_be_shadowed) {
     // A variable binding may have been found in an outer scope, but the current
     // scope makes a sloppy 'eval' call, so the found variable may not be
     // the correct one (the 'eval' may introduce a binding with the same name).
     // In that case, change the lookup result to reflect this situation.
+    // Only scopes that can host var bindings (declaration scopes) need be
+    // considered here (this excludes block and catch scopes), and variable
+    // lookups at script scope are always dynamic.
     if (*binding_kind == BOUND) {
       *binding_kind = BOUND_EVAL_SHADOWED;
     } else if (*binding_kind == UNBOUND) {
@@ -1271,8 +1247,8 @@ bool Scope::MustAllocate(Variable* var) {
   // visible name.
   if ((var->is_this() || !var->raw_name()->IsEmpty()) &&
       (var->has_forced_context_allocation() || scope_calls_eval_ ||
-       inner_scope_calls_eval_ || scope_contains_with_ || is_catch_scope() ||
-       is_block_scope() || is_module_scope() || is_script_scope())) {
+       inner_scope_calls_eval_ || is_catch_scope() || is_block_scope() ||
+       is_module_scope() || is_script_scope())) {
     var->set_is_used();
     if (scope_calls_eval_ || inner_scope_calls_eval_) var->set_maybe_assigned();
   }
@@ -1295,10 +1271,8 @@ bool Scope::MustAllocateInContext(Variable* var) {
   if (var->mode() == TEMPORARY) return false;
   if (is_catch_scope() || is_module_scope()) return true;
   if (is_script_scope() && IsLexicalVariableMode(var->mode())) return true;
-  return var->has_forced_context_allocation() ||
-      scope_calls_eval_ ||
-      inner_scope_calls_eval_ ||
-      scope_contains_with_;
+  return var->has_forced_context_allocation() || scope_calls_eval_ ||
+         inner_scope_calls_eval_;
 }
 
 
@@ -1446,6 +1420,7 @@ void Scope::AllocateDeclaredGlobal(Isolate* isolate, Variable* var) {
 void Scope::AllocateNonParameterLocalsAndDeclaredGlobals(Isolate* isolate) {
   // All variables that have no rewrite yet are non-parameter locals.
   for (int i = 0; i < temps_.length(); i++) {
+    if (temps_[i] == nullptr) continue;
     AllocateNonParameterLocal(isolate, temps_[i]);
   }
 

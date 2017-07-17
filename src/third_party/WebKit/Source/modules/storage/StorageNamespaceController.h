@@ -8,7 +8,7 @@
 #include "core/page/Page.h"
 #include "modules/ModulesExport.h"
 #include "platform/Supplementable.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -16,16 +16,15 @@ class InspectorDOMStorageAgent;
 class StorageClient;
 class StorageNamespace;
 
-class MODULES_EXPORT StorageNamespaceController final : public NoBaseWillBeGarbageCollectedFinalized<StorageNamespaceController>, public WillBeHeapSupplement<Page> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(StorageNamespaceController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StorageNamespaceController);
+class MODULES_EXPORT StorageNamespaceController final : public GarbageCollectedFinalized<StorageNamespaceController>, public Supplement<Page> {
+    USING_GARBAGE_COLLECTED_MIXIN(StorageNamespaceController);
 public:
     StorageNamespace* sessionStorage(bool optionalCreate = true);
-    StorageClient* storageClient() { return m_client; }
+    StorageClient* getStorageClient() { return m_client; }
     ~StorageNamespaceController();
 
     static void provideStorageNamespaceTo(Page&, StorageClient*);
-    static StorageNamespaceController* from(Page* page) { return static_cast<StorageNamespaceController*>(WillBeHeapSupplement<Page>::from(page, supplementName())); }
+    static StorageNamespaceController* from(Page* page) { return static_cast<StorageNamespaceController*>(Supplement<Page>::from(page, supplementName())); }
 
     DECLARE_TRACE();
 
@@ -34,9 +33,9 @@ public:
 private:
     explicit StorageNamespaceController(StorageClient*);
     static const char* supplementName();
-    OwnPtr<StorageNamespace> m_sessionStorage;
+    std::unique_ptr<StorageNamespace> m_sessionStorage;
     StorageClient* m_client;
-    RawPtrWillBeMember<InspectorDOMStorageAgent> m_inspectorAgent;
+    Member<InspectorDOMStorageAgent> m_inspectorAgent;
 };
 
 } // namespace blink

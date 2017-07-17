@@ -38,11 +38,12 @@ class StyleEngine;
 
 class ShadowTreeStyleSheetCollection final : public TreeScopeStyleSheetCollection {
     WTF_MAKE_NONCOPYABLE(ShadowTreeStyleSheetCollection);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ShadowTreeStyleSheetCollection);
 public:
     explicit ShadowTreeStyleSheetCollection(ShadowRoot&);
 
     void updateActiveStyleSheets(StyleEngine&, StyleResolverUpdateMode);
+
+    bool isShadowTreeStyleSheetCollection() const final { return true; }
 
     DEFINE_INLINE_VIRTUAL_TRACE()
     {
@@ -52,6 +53,8 @@ public:
 private:
     void collectStyleSheets(StyleEngine&, StyleSheetCollection&);
 };
+
+DEFINE_TYPE_CASTS(ShadowTreeStyleSheetCollection, TreeScopeStyleSheetCollection, value, value->isShadowTreeStyleSheetCollection(), value.isShadowTreeStyleSheetCollection());
 
 } // namespace blink
 

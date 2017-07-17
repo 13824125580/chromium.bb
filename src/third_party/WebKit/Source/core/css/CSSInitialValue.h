@@ -28,14 +28,8 @@ namespace blink {
 
 class CSSInitialValue : public CSSValue {
 public:
-    static PassRefPtrWillBeRawPtr<CSSInitialValue> createExplicit()
-    {
-        return adoptRefWillBeNoop(new CSSInitialValue(/* implicit */ false));
-    }
-    static PassRefPtrWillBeRawPtr<CSSInitialValue> createImplicit()
-    {
-        return adoptRefWillBeNoop(new CSSInitialValue(/* implicit */ true));
-    }
+    static CSSInitialValue* create();
+    static CSSInitialValue* createLegacyImplicit(); // crbug.com/471917
 
     String customCSSText() const;
 
@@ -46,6 +40,8 @@ public:
     DEFINE_INLINE_TRACE_AFTER_DISPATCH() { CSSValue::traceAfterDispatch(visitor); }
 
 private:
+    friend class CSSValuePool;
+
     explicit CSSInitialValue(bool implicit)
         : CSSValue(InitialClass)
         , m_isImplicit(implicit)

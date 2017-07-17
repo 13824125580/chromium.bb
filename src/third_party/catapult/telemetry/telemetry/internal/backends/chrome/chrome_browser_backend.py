@@ -26,8 +26,7 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
   # It is OK to have abstract methods. pylint: disable=abstract-method
 
   def __init__(self, platform_backend, supports_tab_control,
-               supports_extensions, browser_options, output_profile_path,
-               extensions_to_load):
+               supports_extensions, browser_options):
     super(ChromeBrowserBackend, self).__init__(
         platform_backend=platform_backend,
         supports_extensions=supports_extensions,
@@ -39,8 +38,8 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
     self._devtools_client = None
     self._system_info_backend = None
 
-    self._output_profile_path = output_profile_path
-    self._extensions_to_load = extensions_to_load
+    self._output_profile_path = browser_options.output_profile_path
+    self._extensions_to_load = browser_options.extensions_to_load
 
     if (self.browser_options.dont_override_profile and
         not options_for_unittests.AreSet()):
@@ -117,25 +116,14 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
     if self.browser_options.disable_default_apps:
       args.append('--disable-default-apps')
 
-    if self.browser_options.enable_logging:
-      args.append('--enable-logging')
-      args.append('--v=1')
-    return args
+    if (self.browser_options.logging_verbosity ==
+        self.browser_options.NON_VERBOSE_LOGGING):
+      args.extend(['--enable-logging', '--v=0'])
+    elif (self.browser_options.logging_verbosity ==
+          self.browser_options.VERBOSE_LOGGING):
+      args.extend(['--enable-logging', '--v=1'])
 
-  # TODO(crbug.com/404771): Move this check to network_controller_backend
-  def _UseHostResolverRules(self):
-    """Returns True to add --host-resolver-rules to send requests to replay."""
-    if self._platform_backend.forwarder_factory.does_forwarder_override_dns:
-      # Avoid --host-resolver-rules when the forwarder will map DNS requests
-      # from the target platform to replay (on the host platform).
-      # This allows the browser to exercise DNS requests.
-      return False
-    if self.browser_options.netsim and self.platform_backend.is_host_platform:
-      # Avoid --host-resolver-rules when replay will configure the platform to
-      # resolve hosts to replay.
-      # This allows the browser to exercise DNS requests.
-      return False
-    return True
+    return args
 
   def GetReplayBrowserStartupArgs(self):
     network_backend = self.platform_backend.network_controller_backend
@@ -146,9 +134,8 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
       # Ignore certificate errors if the platform backend has not created
       # and installed a root certificate.
       replay_args.append('--ignore-certificate-errors')
-    if self._UseHostResolverRules():
-      # Force hostnames to resolve to the replay's host_ip.
-      replay_args.append('--host-resolver-rules=MAP * %s,EXCLUDE localhost' %
+    # Force hostnames to resolve to the replay's host_ip.
+    replay_args.append('--host-resolver-rules=MAP * %s,EXCLUDE localhost' %
                          network_backend.host_ip)
     # Force the browser to send HTTP/HTTPS requests to fixed ports if they
     # are not the standard HTTP/HTTPS ports.
@@ -254,19 +241,13 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
   def supports_tracing(self):
     return True
 
-  def StartTracing(self, trace_options, custom_categories=None,
+  def StartTracing(self, trace_options,
                    timeout=web_contents.DEFAULT_WEB_CONTENTS_TIMEOUT):
     """
     Args:
         trace_options: An tracing_options.TracingOptions instance.
-        custom_categories: An optional string containing a list of
-                         comma separated categories that will be traced
-                         instead of the default category set.  Example: use
-                         "webkit,cc,disabled-by-default-cc.debug" to trace only
-                         those three event categories.
     """
-    return self.devtools_client.StartChromeTracing(
-        trace_options, custom_categories, timeout)
+    return self.devtools_client.StartChromeTracing(trace_options, timeout)
 
   def StopTracing(self, trace_data_builder):
     self.devtools_client.StopChromeTracing(trace_data_builder)

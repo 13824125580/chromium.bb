@@ -56,6 +56,8 @@ component("gcm") {
 
   defines = [ "GCM_IMPLEMENTATION" ]
 
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
   public_deps = [
     ":proto",
   ]
@@ -79,6 +81,7 @@ proto_library("proto") {
 
   cc_generator_options = "dllexport_decl=GCM_EXPORT:"
   cc_include = "google_apis/gcm/base/gcm_export.h"
+  component_build_force_source_set = true
   defines = [ "GCM_IMPLEMENTATION" ]
 }
 
@@ -106,21 +109,24 @@ source_set("test_support") {
 }
 
 # A standalone MCS (mobile connection server) client.
-executable("mcs_probe") {
-  testonly = true
-  sources = [
-    "tools/mcs_probe.cc",
-  ]
+if (!is_ios) {
+  executable("mcs_probe") {
+    testonly = true
+    sources = [
+      "tools/mcs_probe.cc",
+    ]
 
-  deps = [
-    ":gcm",
-    ":test_support",
-    "//base",
-    "//build/config/sanitizers:deps",
-    "//net",
-    "//net:test_support",
-    "//third_party/protobuf:protobuf_lite",
-  ]
+    deps = [
+      ":gcm",
+      ":test_support",
+      "//base",
+      "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
+      "//net",
+      "//net:test_support",
+      "//third_party/protobuf:protobuf_lite",
+    ]
+  }
 }
 
 test("gcm_unit_tests") {

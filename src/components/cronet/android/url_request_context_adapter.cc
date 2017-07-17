@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <limits>
 #include <utility>
 
@@ -13,6 +14,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -34,6 +36,7 @@
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_storage.h"
 #include "net/url_request/url_request_job_factory_impl.h"
+#include "url/scheme_host_port.h"
 
 namespace {
 
@@ -50,14 +53,14 @@ class BasicNetworkDelegate : public net::NetworkDelegateImpl {
     return net::OK;
   }
 
-  int OnBeforeSendHeaders(net::URLRequest* request,
-                          const net::CompletionCallback& callback,
-                          net::HttpRequestHeaders* headers) override {
+  int OnBeforeStartTransaction(net::URLRequest* request,
+                               const net::CompletionCallback& callback,
+                               net::HttpRequestHeaders* headers) override {
     return net::OK;
   }
 
-  void OnSendHeaders(net::URLRequest* request,
-                     const net::HttpRequestHeaders& headers) override {}
+  void OnStartTransaction(net::URLRequest* request,
+                          const net::HttpRequestHeaders& headers) override {}
 
   int OnHeadersReceived(
       net::URLRequest* request,
@@ -121,7 +124,7 @@ URLRequestContextAdapter::URLRequestContextAdapter(
 }
 
 void URLRequestContextAdapter::Initialize(
-    scoped_ptr<URLRequestContextConfig> config) {
+    std::unique_ptr<URLRequestContextConfig> config) {
   network_thread_ = new base::Thread("network");
   base::Thread::Options options;
   options.message_loop_type = base::MessageLoop::TYPE_IO;
@@ -144,17 +147,11 @@ void URLRequestContextAdapter::InitRequestContextOnNetworkThread() {
   // TODO(mmenke):  Add method to have the builder enable SPDY.
   net::URLRequestContextBuilder context_builder;
 
-  // TODO(mef): Remove this work around for crbug.com/543366 once it is fixed.
-  net::URLRequestContextBuilder::HttpNetworkSessionParams
-      custom_http_network_session_params;
-  custom_http_network_session_params.parse_alternative_services = false;
-  context_builder.set_http_network_session_params(
-      custom_http_network_session_params);
-
   context_builder.set_network_delegate(
-      make_scoped_ptr(new BasicNetworkDelegate()));
+      base::WrapUnique(new BasicNetworkDelegate()));
   context_builder.set_proxy_config_service(std::move(proxy_config_service_));
-  config_->ConfigureURLRequestContextBuilder(&context_builder, nullptr);
+  config_->ConfigureURLRequestContextBuilder(&context_builder, nullptr,
+                                             nullptr);
 
   context_ = context_builder.Build();
 
@@ -164,10 +161,7 @@ void URLRequestContextAdapter::InitRequestContextOnNetworkThread() {
         new net::SdchOwner(context_->sdch_manager(), context_.get()));
   }
 
-  // Currently (circa M39) enabling QUIC requires setting probability threshold.
   if (config_->enable_quic) {
-    context_->http_server_properties()
-        ->SetAlternativeServiceProbabilityThreshold(0.0f);
     for (size_t hint = 0; hint < config_->quic_hints.size(); ++hint) {
       const URLRequestContextConfig::QuicHint& quic_hint =
           *config_->quic_hints[hint];
@@ -198,14 +192,12 @@ void URLRequestContextAdapter::InitRequestContextOnNetworkThread() {
         continue;
       }
 
-      net::HostPortPair quic_hint_host_port_pair(canon_host,
-                                                 quic_hint.port);
+      url::SchemeHostPort quic_server("https", canon_host, quic_hint.port);
       net::AlternativeService alternative_service(
           net::AlternateProtocol::QUIC, "",
           static_cast<uint16_t>(quic_hint.alternate_port));
       context_->http_server_properties()->SetAlternativeService(
-          quic_hint_host_port_pair, alternative_service, 1.0f,
-          base::Time::Max());
+          quic_server, alternative_service, base::Time::Max());
     }
   }
   load_disable_cache_ = config_->load_disable_cache;

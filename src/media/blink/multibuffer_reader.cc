@@ -6,7 +6,9 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/blink/multibuffer_reader.h"
 #include "net/base/net_errors.h"
 
@@ -24,6 +26,8 @@ MultiBufferReader::MultiBufferReader(
       preload_low_(0),
       max_buffer_forward_(0),
       max_buffer_backward_(0),
+      current_buffer_size_(0),
+      pinned_range_(0, 0),
       pos_(start),
       preload_pos_(-1),
       loading_(true),
@@ -35,11 +39,9 @@ MultiBufferReader::MultiBufferReader(
 }
 
 MultiBufferReader::~MultiBufferReader() {
+  PinRange(0, 0);
   multibuffer_->RemoveReader(preload_pos_, this);
-  multibuffer_->IncrementMaxSize(
-      -block_ceil(max_buffer_forward_ + max_buffer_backward_));
-  multibuffer_->PinRange(block(pos_ - max_buffer_backward_),
-                         block_ceil(pos_ + max_buffer_forward_), -1);
+  multibuffer_->IncrementMaxSize(-current_buffer_size_);
   multibuffer_->CleanupWriters(preload_pos_);
 }
 
@@ -47,14 +49,8 @@ void MultiBufferReader::Seek(int64_t pos) {
   DCHECK_GE(pos, 0);
   if (pos == pos_)
     return;
-  // Use a rangemap to compute the diff in pinning.
-  IntervalMap<MultiBuffer::BlockId, int32_t> tmp;
-  tmp.IncrementInterval(block(pos_ - max_buffer_backward_),
-                        block_ceil(pos_ + max_buffer_forward_), -1);
-  tmp.IncrementInterval(block(pos - max_buffer_backward_),
-                        block_ceil(pos + max_buffer_forward_), 1);
-
-  multibuffer_->PinRanges(tmp);
+  PinRange(block(pos - max_buffer_backward_),
+           block_ceil(pos + max_buffer_forward_));
 
   multibuffer_->RemoveReader(preload_pos_, this);
   MultiBufferBlockId old_preload_pos = preload_pos_;
@@ -64,22 +60,19 @@ void MultiBufferReader::Seek(int64_t pos) {
   multibuffer_->CleanupWriters(old_preload_pos);
 }
 
-void MultiBufferReader::SetMaxBuffer(int64_t backward, int64_t forward) {
+void MultiBufferReader::SetMaxBuffer(int64_t buffer_size) {
   // Safe, because we know this doesn't actually prune the cache right away.
-  multibuffer_->IncrementMaxSize(
-      -block_ceil(max_buffer_forward_ + max_buffer_backward_));
-  // Use a rangemap to compute the diff in pinning.
-  IntervalMap<MultiBuffer::BlockId, int32_t> tmp;
-  tmp.IncrementInterval(block(pos_ - max_buffer_backward_),
-                        block_ceil(pos_ + max_buffer_forward_), -1);
+  int64_t new_buffer_size = block_ceil(buffer_size);
+  multibuffer_->IncrementMaxSize(new_buffer_size - current_buffer_size_);
+  current_buffer_size_ = new_buffer_size;
+}
+
+void MultiBufferReader::SetPinRange(int64_t backward, int64_t forward) {
+  // Safe, because we know this doesn't actually prune the cache right away.
   max_buffer_backward_ = backward;
   max_buffer_forward_ = forward;
-  tmp.IncrementInterval(block(pos_ - max_buffer_backward_),
-                        block_ceil(pos_ + max_buffer_forward_), 1);
-  multibuffer_->PinRanges(tmp);
-
-  multibuffer_->IncrementMaxSize(
-      block_ceil(max_buffer_forward_ + max_buffer_backward_));
+  PinRange(block(pos_ - max_buffer_backward_),
+           block_ceil(pos_ + max_buffer_forward_));
 }
 
 int64_t MultiBufferReader::Available() const {
@@ -155,7 +148,7 @@ void MultiBufferReader::CheckWait() {
       (Available() >= current_wait_size_ || Available() == -1)) {
     // We redirect the call through a weak pointer to ourselves to guarantee
     // there are no callbacks from us after we've been destroyed.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&MultiBufferReader::Call, weak_factory_.GetWeakPtr(),
                    base::ResetAndReturn(&cb_)));
@@ -187,15 +180,16 @@ void MultiBufferReader::NotifyAvailableRange(
   if (!progress_callback_.is_null()) {
     // We redirect the call through a weak pointer to ourselves to guarantee
     // there are no callbacks from us after we've been destroyed.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&MultiBufferReader::Call, weak_factory_.GetWeakPtr(),
-                   base::Bind(progress_callback_,
-                              static_cast<int64_t>(range.begin)
-                                  << multibuffer_->block_size_shift(),
-                              static_cast<int64_t>(range.end)
-                                  << multibuffer_->block_size_shift())));
-    // We may be destroyed, do not touch |this|.
+        base::Bind(
+            &MultiBufferReader::Call, weak_factory_.GetWeakPtr(),
+            base::Bind(progress_callback_,
+                       static_cast<int64_t>(range.begin)
+                           << multibuffer_->block_size_shift(),
+                       (static_cast<int64_t>(range.end)
+                        << multibuffer_->block_size_shift()) +
+                           multibuffer_->UncommittedBytesAt(range.end))));
   }
 }
 
@@ -241,6 +235,17 @@ void MultiBufferReader::UpdateInternalState() {
     }
   }
   CheckWait();
+}
+
+void MultiBufferReader::PinRange(MultiBuffer::BlockId begin,
+                                 MultiBuffer::BlockId end) {
+  // Use a rangemap to compute the diff in pinning.
+  IntervalMap<MultiBuffer::BlockId, int32_t> tmp;
+  tmp.IncrementInterval(pinned_range_.begin, pinned_range_.end, -1);
+  tmp.IncrementInterval(begin, end, 1);
+  multibuffer_->PinRanges(tmp);
+  pinned_range_.begin = begin;
+  pinned_range_.end = end;
 }
 
 }  // namespace media

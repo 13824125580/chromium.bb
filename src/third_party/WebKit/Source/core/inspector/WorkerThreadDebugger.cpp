@@ -30,8 +30,11 @@
 
 #include "core/inspector/WorkerThreadDebugger.h"
 
+#include "bindings/core/v8/ScriptState.h"
+#include "bindings/core/v8/SourceLocation.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
-#include "core/inspector/WorkerDebuggerAgent.h"
+#include "core/inspector/ConsoleMessage.h"
+#include "core/workers/WorkerReportingProxy.h"
 #include "core/workers/WorkerThread.h"
 #include <v8.h>
 
@@ -39,10 +42,18 @@ namespace blink {
 
 static const int workerContextGroupId = 1;
 
-WorkerThreadDebugger::WorkerThreadDebugger(WorkerThread* workerThread)
-    : ThreadDebugger(v8::Isolate::GetCurrent())
+WorkerThreadDebugger* WorkerThreadDebugger::from(v8::Isolate* isolate)
+{
+    V8PerIsolateData* data = V8PerIsolateData::from(isolate);
+    if (!data->threadDebugger())
+        return nullptr;
+    ASSERT(data->threadDebugger()->isWorker());
+    return static_cast<WorkerThreadDebugger*>(data->threadDebugger());
+}
+
+WorkerThreadDebugger::WorkerThreadDebugger(WorkerThread* workerThread, v8::Isolate* isolate)
+    : ThreadDebugger(isolate)
     , m_workerThread(workerThread)
-    , m_paused(false)
 {
 }
 
@@ -50,9 +61,14 @@ WorkerThreadDebugger::~WorkerThreadDebugger()
 {
 }
 
-void WorkerThreadDebugger::setContextDebugData(v8::Local<v8::Context> context)
+void WorkerThreadDebugger::contextCreated(v8::Local<v8::Context> context)
 {
-    V8Debugger::setContextDebugData(context, "worker", workerContextGroupId);
+    debugger()->contextCreated(V8ContextInfo(context, workerContextGroupId, true, m_workerThread->workerGlobalScope()->url().getString(), "", "", false));
+}
+
+void WorkerThreadDebugger::contextWillBeDestroyed(v8::Local<v8::Context> context)
+{
+    debugger()->contextDestroyed(context);
 }
 
 int WorkerThreadDebugger::contextGroupId()
@@ -63,24 +79,37 @@ int WorkerThreadDebugger::contextGroupId()
 void WorkerThreadDebugger::runMessageLoopOnPause(int contextGroupId)
 {
     ASSERT(contextGroupId == workerContextGroupId);
-    m_paused = true;
-    WorkerThread::TaskQueueResult result;
-    m_workerThread->willRunDebuggerTasks();
-    do {
-        result = m_workerThread->runDebuggerTask();
-    // Keep waiting until execution is resumed.
-    } while (result == WorkerThread::TaskReceived && m_paused);
-    m_workerThread->didRunDebuggerTasks();
+    m_workerThread->startRunningDebuggerTasksOnPauseOnWorkerThread();
 }
 
 void WorkerThreadDebugger::quitMessageLoopOnPause()
 {
-    m_paused = false;
+    m_workerThread->stopRunningDebuggerTasksOnPauseOnWorkerThread();
 }
 
 bool WorkerThreadDebugger::callingContextCanAccessContext(v8::Local<v8::Context> calling, v8::Local<v8::Context> target)
 {
     return true;
+}
+
+v8::Local<v8::Context> WorkerThreadDebugger::ensureDefaultContextInGroup(int contextGroupId)
+{
+    ASSERT(contextGroupId == workerContextGroupId);
+    ScriptState* scriptState = m_workerThread->workerGlobalScope()->scriptController()->getScriptState();
+    return scriptState ? scriptState->context() : v8::Local<v8::Context>();
+}
+
+void WorkerThreadDebugger::messageAddedToConsole(int contextGroupId, MessageSource source, MessageLevel level, const String16& message, const String16& url, unsigned lineNumber, unsigned columnNumber, V8StackTrace* stackTrace)
+{
+    DCHECK(contextGroupId == workerContextGroupId);
+    ConsoleMessage* consoleMessage = ConsoleMessage::create(source, level, message, SourceLocation::create(url, lineNumber, columnNumber, stackTrace ? stackTrace->clone() : nullptr, 0));
+    m_workerThread->workerReportingProxy().reportConsoleMessage(consoleMessage);
+}
+
+v8::MaybeLocal<v8::Value> WorkerThreadDebugger::memoryInfo(v8::Isolate*, v8::Local<v8::Context>)
+{
+    ASSERT_NOT_REACHED();
+    return v8::MaybeLocal<v8::Value>();
 }
 
 } // namespace blink

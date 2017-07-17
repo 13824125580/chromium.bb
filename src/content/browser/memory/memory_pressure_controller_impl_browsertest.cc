@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+
 #include "base/bind.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "content/browser/memory/memory_message_filter.h"
@@ -17,36 +19,36 @@ namespace content {
 
 MATCHER_P(IsSetSuppressedMessage, suppressed, "") {
   // Ensure that the message is deleted upon return.
-  scoped_ptr<IPC::Message> message(arg);
+  std::unique_ptr<IPC::Message> message(arg);
   if (message == nullptr)
     return false;
   MemoryMsg_SetPressureNotificationsSuppressed::Param param;
   if (!MemoryMsg_SetPressureNotificationsSuppressed::Read(message.get(),
                                                           &param))
     return false;
-  return suppressed == base::get<0>(param);
+  return suppressed == std::get<0>(param);
 }
 
 MATCHER_P(IsSimulateMessage, level, "") {
   // Ensure that the message is deleted upon return.
-  scoped_ptr<IPC::Message> message(arg);
+  std::unique_ptr<IPC::Message> message(arg);
   if (message == nullptr)
     return false;
   MemoryMsg_SimulatePressureNotification::Param param;
   if (!MemoryMsg_SimulatePressureNotification::Read(message.get(), &param))
     return false;
-  return level == base::get<0>(param);
+  return level == std::get<0>(param);
 }
 
 MATCHER_P(IsPressureMessage, level, "") {
   // Ensure that the message is deleted upon return.
-  scoped_ptr<IPC::Message> message(arg);
+  std::unique_ptr<IPC::Message> message(arg);
   if (message == nullptr)
     return false;
   MemoryMsg_PressureNotification::Param param;
   if (!MemoryMsg_PressureNotification::Read(message.get(), &param))
     return false;
-  return level == base::get<0>(param);
+  return level == std::get<0>(param);
 }
 
 class MemoryMessageFilterForTesting : public MemoryMessageFilter {
@@ -216,7 +218,7 @@ IN_PROC_BROWSER_TEST_F(MemoryPressureControllerImplBrowserTest,
                        SimulatePressureNotificationInAllProcesses) {
   scoped_refptr<MemoryMessageFilterForTesting> filter(
       new MemoryMessageFilterForTesting);
-  scoped_ptr<base::MemoryPressureListener> listener(
+  std::unique_ptr<base::MemoryPressureListener> listener(
       new base::MemoryPressureListener(
           base::Bind(&MemoryPressureControllerImplBrowserTest::OnMemoryPressure,
                      base::Unretained(this))));

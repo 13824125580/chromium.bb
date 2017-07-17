@@ -12,8 +12,6 @@
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/models/table_model.h"
 #include "ui/views/context_menu_controller.h"
-#include "ui/views/controls/button/label_button.h"
-#include "ui/views/controls/link_listener.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/table/table_grouper.h"
 #include "ui/views/controls/table/table_view_observer.h"
@@ -22,7 +20,6 @@
 class Browser;
 
 namespace views {
-class LabelButton;
 class Link;
 class TableView;
 class View;
@@ -35,18 +32,16 @@ class TaskManagerTableModel;
 // The new task manager UI container.
 class NewTaskManagerView
     : public TableViewDelegate,
-      public views::ButtonListener,
       public views::DialogDelegateView,
       public views::TableGrouper,
       public views::TableViewObserver,
-      public views::LinkListener,
       public views::ContextMenuController,
       public ui::SimpleMenuModel::Delegate {
  public:
   ~NewTaskManagerView() override;
 
   // Shows the Task Manager window, or re-activates an existing one.
-  static void Show(Browser* browser);
+  static task_management::TaskManagerTableModel* Show(Browser* browser);
 
   // Hides the Task Manager if it is showing.
   static void Hide();
@@ -59,14 +54,8 @@ class NewTaskManagerView
   void ToggleSortOrder(int visible_column_index) override;
 
   // views::View:
-  void Layout() override;
   gfx::Size GetPreferredSize() const override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
-
-  // views::ButtonListener:
-  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::DialogDelegateView:
   bool CanResize() const override;
@@ -75,9 +64,13 @@ class NewTaskManagerView
   bool ExecuteWindowsCommand(int command_id) override;
   base::string16 GetWindowTitle() const override;
   std::string GetWindowName() const override;
+  bool Accept() override;
+  bool Close() override;
   int GetDialogButtons() const override;
+  base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
+  bool IsDialogButtonEnabled(ui::DialogButton button) const override;
   void WindowClosing() override;
-  bool UseNewStyleForThisDialog() const override;
+  bool ShouldUseCustomFrame() const override;
 
   // views::TableGrouper:
   void GetGroupRange(int model_index, views::GroupRange* range) override;
@@ -86,9 +79,6 @@ class NewTaskManagerView
   void OnSelectionChanged() override;
   void OnDoubleClick() override;
   void OnKeyDown(ui::KeyboardCode keycode) override;
-
-  // views::LinkListener:
-  void LinkClicked(views::Link* source, int event_flags) override;
 
   // views::ContextMenuController:
   void ShowContextMenuForView(views::View* source,
@@ -119,17 +109,15 @@ class NewTaskManagerView
   void ActivateFocusedTab();
 
   // Restores saved "always on top" state from a previous session.
-  void RetriveSavedAlwaysOnTopState();
+  void RetrieveSavedAlwaysOnTopState();
 
-  scoped_ptr<TaskManagerTableModel> table_model_;
+  std::unique_ptr<TaskManagerTableModel> table_model_;
 
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // We need to own the text of the menu, the Windows API does not copy it.
   base::string16 always_on_top_menu_text_;
 
-  views::LabelButton* kill_button_;
-  views::Link* about_memory_link_;
   views::TableView* tab_table_;
   views::View* tab_table_parent_;
 

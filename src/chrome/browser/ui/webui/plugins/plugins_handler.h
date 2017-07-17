@@ -17,15 +17,15 @@
 #include "content/public/common/webplugininfo.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
-class PluginsHandler : public MojoWebUIHandler,
-                       public PluginsHandlerMojo,
-                       public content::NotificationObserver {
+class PluginsPageHandler : public MojoWebUIHandler,
+                           public mojom::PluginsPageHandler,
+                           public content::NotificationObserver {
  public:
-  PluginsHandler(content::WebUI* web_ui,
-                 mojo::InterfaceRequest<PluginsHandlerMojo> request);
-  ~PluginsHandler() override;
+  PluginsPageHandler(content::WebUI* web_ui,
+                     mojo::InterfaceRequest<mojom::PluginsPageHandler> request);
+  ~PluginsPageHandler() override;
 
-  // PluginsHandlerMojo overrides:
+  // mojom::PluginsPageHandler overrides:
   void GetPluginsData(const GetPluginsDataCallback& callback) override;
   void GetShowDetails(const GetShowDetailsCallback& callback) override;
   void SaveShowDetailsToPrefs(bool details_mode) override;
@@ -34,7 +34,7 @@ class PluginsHandler : public MojoWebUIHandler,
   void SetPluginEnabled(const mojo::String& plugin_path, bool enable) override;
   void SetPluginGroupEnabled(const mojo::String& group_name,
                              bool enable) override;
-  void SetClientPage(PluginsPageMojoPtr page) override;
+  void SetClientPage(mojom::PluginsPagePtr page) override;
 
   // content::NotificationObserver implementation.
   void Observe(int type,
@@ -42,12 +42,12 @@ class PluginsHandler : public MojoWebUIHandler,
                const content::NotificationDetails& details) override;
 
  private:
-  mojo::Array<PluginDataPtr> GeneratePluginsData(
+  mojo::Array<mojom::PluginDataPtr> GeneratePluginsData(
       const std::vector<content::WebPluginInfo>& plugins);
 
-  PluginFilePtr GeneratePluginFile(const content::WebPluginInfo& plugin,
-                                   const base::string16& group_name,
-                                   bool plugin_enabled) const;
+  mojom::PluginFilePtr GeneratePluginFile(const content::WebPluginInfo& plugin,
+                                          const base::string16& group_name,
+                                          bool plugin_enabled) const;
 
   // Detect a plugin's enabled mode (one of enabledByUser, disabledByUser,
   // enabledByPolicy, disabledByPolicy).
@@ -58,7 +58,7 @@ class PluginsHandler : public MojoWebUIHandler,
   // Detect a plugin group's enabled mode (one of enabledByUser, disabledByUser,
   // enabledByPolicy, disabledByPolicy, managedByPolicy).
   std::string GetPluginGroupEnabledMode(
-      const mojo::Array<PluginFilePtr>& plugin_files,
+      const mojo::Array<mojom::PluginFilePtr>& plugin_files,
       bool group_enabled) const;
 
   // Called on the UI thread when the plugin info requested fom GetPluginsData
@@ -81,14 +81,14 @@ class PluginsHandler : public MojoWebUIHandler,
   // Owned by RenderFrameHostImpl.
   content::WebUI* web_ui_;
 
-  mojo::Binding<PluginsHandlerMojo> binding_;
+  mojo::Binding<mojom::PluginsPageHandler> binding_;
 
   // Handle back to the page by which JS methods can be called.
-  PluginsPageMojoPtr page_;
+  mojom::PluginsPagePtr page_;
 
-  base::WeakPtrFactory<PluginsHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<PluginsPageHandler> weak_ptr_factory_;
 
-  DISALLOW_COPY_AND_ASSIGN(PluginsHandler);
+  DISALLOW_COPY_AND_ASSIGN(PluginsPageHandler);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_PLUGINS_PLUGINS_HANDLER_H_

@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
@@ -15,7 +15,7 @@
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
-#include "chrome/browser/signin/fake_gaia_cookie_manager_service.h"
+#include "chrome/browser/signin/fake_gaia_cookie_manager_service_builder.h"
 #include "chrome/browser/signin/fake_profile_oauth2_token_service_builder.h"
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
@@ -27,6 +27,7 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/fake_gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
@@ -47,7 +48,7 @@ namespace {
 
 class MockAccountReconcilor : public testing::StrictMock<AccountReconcilor> {
  public:
-  static scoped_ptr<KeyedService> Build(content::BrowserContext* context);
+  static std::unique_ptr<KeyedService> Build(content::BrowserContext* context);
 
   MockAccountReconcilor(ProfileOAuth2TokenService* token_service,
                         SigninManagerBase* signin_manager,
@@ -60,10 +61,10 @@ class MockAccountReconcilor : public testing::StrictMock<AccountReconcilor> {
 };
 
 // static
-scoped_ptr<KeyedService> MockAccountReconcilor::Build(
+std::unique_ptr<KeyedService> MockAccountReconcilor::Build(
     content::BrowserContext* context) {
   Profile* profile = Profile::FromBrowserContext(context);
-  scoped_ptr<AccountReconcilor> reconcilor(new MockAccountReconcilor(
+  std::unique_ptr<AccountReconcilor> reconcilor(new MockAccountReconcilor(
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
       SigninManagerFactory::GetForProfile(profile),
       ChromeSigninClientFactory::GetForProfile(profile),
@@ -141,7 +142,7 @@ class AccountReconcilorTest : public ::testing::TestWithParam<bool> {
   FakeGaiaCookieManagerService* cookie_manager_service_;
   MockAccountReconcilor* mock_reconcilor_;
   net::FakeURLFetcherFactory url_fetcher_factory_;
-  scoped_ptr<TestingProfileManager> testing_profile_manager_;
+  std::unique_ptr<TestingProfileManager> testing_profile_manager_;
   base::HistogramTester histogram_tester_;
   GURL get_check_connection_info_url_;
 
@@ -178,18 +179,17 @@ void AccountReconcilorTest::SetUp() {
   factories.push_back(std::make_pair(
       ProfileOAuth2TokenServiceFactory::GetInstance(),
       BuildFakeProfileOAuth2TokenService));
-  factories.push_back(std::make_pair(
-      GaiaCookieManagerServiceFactory::GetInstance(),
-      FakeGaiaCookieManagerService::Build));
+  factories.push_back(
+      std::make_pair(GaiaCookieManagerServiceFactory::GetInstance(),
+                     BuildFakeGaiaCookieManagerService));
   factories.push_back(std::make_pair(SigninManagerFactory::GetInstance(),
                                      BuildFakeSigninManagerBase));
   factories.push_back(std::make_pair(AccountReconcilorFactory::GetInstance(),
       MockAccountReconcilor::Build));
 
-  profile_ = testing_profile_manager_.get()->CreateTestingProfile("name",
-                              scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
-                              base::UTF8ToUTF16("name"), 0, std::string(),
-                              factories);
+  profile_ = testing_profile_manager_.get()->CreateTestingProfile(
+      "name", std::unique_ptr<syncable_prefs::PrefServiceSyncable>(),
+      base::UTF8ToUTF16("name"), 0, std::string(), factories);
 
   test_signin_client_ =
       static_cast<TestSigninClient*>(
@@ -341,9 +341,12 @@ TEST_F(AccountReconcilorTest, GetAccountsFromCookieSuccess) {
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_RUNNING, reconcilor->GetState());
 
   std::vector<gaia::ListedAccount> accounts;
-  ASSERT_TRUE(cookie_manager_service()->ListAccounts(&accounts));
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+  ASSERT_TRUE(cookie_manager_service()->ListAccounts(
+      &accounts, &signed_out_accounts));
   ASSERT_EQ(1u, accounts.size());
   ASSERT_EQ(account_id, accounts[0].id);
+  ASSERT_EQ(0u, signed_out_accounts.size());
 }
 
 TEST_F(AccountReconcilorTest, GetAccountsFromCookieFailure) {
@@ -361,8 +364,11 @@ TEST_F(AccountReconcilorTest, GetAccountsFromCookieFailure) {
   base::RunLoop().RunUntilIdle();
 
   std::vector<gaia::ListedAccount> accounts;
-  ASSERT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+  ASSERT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, &signed_out_accounts));
   ASSERT_EQ(0u, accounts.size());
+  ASSERT_EQ(0u, signed_out_accounts.size());
 
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(signin_metrics::ACCOUNT_RECONCILOR_ERROR,
@@ -410,7 +416,8 @@ TEST_P(AccountReconcilorTest, StartReconcileCookiesDisabled) {
   base::RunLoop().RunUntilIdle();
   std::vector<gaia::ListedAccount> accounts;
   // This will be the first call to ListAccounts.
-  ASSERT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  ASSERT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr));
   ASSERT_FALSE(reconcilor->is_reconcile_started_);
 }
 
@@ -473,8 +480,8 @@ TEST_P(AccountReconcilorTest, StartReconcileContentSettingsInvalidPattern) {
       AccountReconcilorFactory::GetForProfile(profile());
   ASSERT_TRUE(reconcilor);
 
-  scoped_ptr<ContentSettingsPattern::BuilderInterface>
-      builder(ContentSettingsPattern::CreateBuilder(false));
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
+      ContentSettingsPattern::CreateBuilder(false));
   builder->Invalid();
 
   SimulateCookieContentSettingsChanged(reconcilor, builder->Build());

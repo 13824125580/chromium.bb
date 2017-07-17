@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_bubble_sign_in_delegate.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/test_extension_service.h"
@@ -21,6 +22,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "ui/events/event_constants.h"
@@ -59,13 +61,18 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleSignInDelegateTest, OnSignInLinkClicked) {
   ReplaceBlank(browser());
   int starting_tab_count = browser()->tab_strip_model()->count();
 
-  scoped_ptr<BubbleSyncPromoDelegate> delegate;
+  std::unique_ptr<BubbleSyncPromoDelegate> delegate;
   delegate.reset(new BookmarkBubbleSignInDelegate(browser()));
 
   delegate->OnSignInLinkClicked();
 
   if (kHasProfileChooser) {
-    EXPECT_TRUE(ProfileChooserView::IsShowing());
+    if (switches::UsePasswordSeparatedSigninFlow()) {
+      EXPECT_TRUE(browser()->signin_view_controller()->delegate());
+    } else {
+      EXPECT_TRUE(ProfileChooserView::IsShowing());
+    }
+
     EXPECT_EQ(starting_tab_count, browser()->tab_strip_model()->count());
   } else {
     EXPECT_EQ(starting_tab_count + 1, browser()->tab_strip_model()->count());
@@ -76,13 +83,18 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleSignInDelegateTest,
                        OnSignInLinkClickedReusesBlank) {
   int starting_tab_count = browser()->tab_strip_model()->count();
 
-  scoped_ptr<BubbleSyncPromoDelegate> delegate;
+  std::unique_ptr<BubbleSyncPromoDelegate> delegate;
   delegate.reset(new BookmarkBubbleSignInDelegate(browser()));
 
   delegate->OnSignInLinkClicked();
 
   if (kHasProfileChooser) {
-    EXPECT_TRUE(ProfileChooserView::IsShowing());
+    if (switches::UsePasswordSeparatedSigninFlow()) {
+      EXPECT_TRUE(browser()->signin_view_controller()->delegate());
+    } else {
+      EXPECT_TRUE(ProfileChooserView::IsShowing());
+    }
+
     EXPECT_EQ(starting_tab_count, browser()->tab_strip_model()->count());
   } else {
     EXPECT_EQ(starting_tab_count, browser()->tab_strip_model()->count());
@@ -98,7 +110,7 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleSignInDelegateTest,
   int starting_tab_count_incognito =
       incognito_browser->tab_strip_model()->count();
 
-  scoped_ptr<BubbleSyncPromoDelegate> delegate;
+  std::unique_ptr<BubbleSyncPromoDelegate> delegate;
   delegate.reset(new BookmarkBubbleSignInDelegate(incognito_browser));
 
   delegate->OnSignInLinkClicked();
@@ -126,7 +138,7 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleSignInDelegateTest, BrowserRemoved) {
 
   int starting_tab_count = extra_browser->tab_strip_model()->count();
 
-  scoped_ptr<BubbleSyncPromoDelegate> delegate;
+  std::unique_ptr<BubbleSyncPromoDelegate> delegate;
   delegate.reset(new BookmarkBubbleSignInDelegate(browser()));
 
   BrowserList::SetLastActive(extra_browser);
@@ -139,7 +151,11 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleSignInDelegateTest, BrowserRemoved) {
   delegate->OnSignInLinkClicked();
 
   if (kHasProfileChooser) {
-    EXPECT_TRUE(ProfileChooserView::IsShowing());
+    if (switches::UsePasswordSeparatedSigninFlow()) {
+      EXPECT_TRUE(extra_browser->signin_view_controller()->delegate());
+    } else {
+      EXPECT_TRUE(ProfileChooserView::IsShowing());
+    }
   } else {
     // A new tab should have been opened in the extra browser, which should be
     // visible.

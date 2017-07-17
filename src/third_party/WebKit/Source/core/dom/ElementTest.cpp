@@ -9,14 +9,15 @@
 #include "core/html/HTMLHtmlElement.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
 TEST(ElementTest, SupportsFocus)
 {
-    OwnPtr<DummyPageHolder> pageHolder = DummyPageHolder::create();
+    std::unique_ptr<DummyPageHolder> pageHolder = DummyPageHolder::create();
     Document& document = pageHolder->document();
-    ASSERT(isHTMLHtmlElement(document.documentElement()));
+    DCHECK(isHTMLHtmlElement(document.documentElement()));
     document.setDesignMode("on");
     document.view()->updateAllLifecyclePhases();
     EXPECT_TRUE(document.documentElement()->supportsFocus())

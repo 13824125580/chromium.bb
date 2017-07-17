@@ -188,8 +188,8 @@ bool ChromePermissionMessageProvider::IsAPIOrManifestPrivilegeIncrease(
   // Ugly hack: Before M46 beta, we didn't store the parameter for settings
   // override permissions in prefs (which is where |old_permissions| is coming
   // from). To avoid a spurious permission increase warning, drop the parameter.
-  // See crbug.com/533086.
-  // TODO(treib,devlin): Remove this for M48, when hopefully all users will have
+  // See crbug.com/533086 and crbug.com/619759.
+  // TODO(treib,devlin): Remove this for M56, when hopefully all users will have
   // updated prefs.
   const APIPermission::ID kSettingsOverrideIDs[] = {
       APIPermission::kHomepage, APIPermission::kSearchProvider,

@@ -2,19 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_PAGE_LOAD_METRICS_WEB_CONTENTS_OBSERVER_H_
-#define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_PAGE_LOAD_METRICS_WEB_CONTENTS_OBSERVER_H_
+#ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_METRICS_WEB_CONTENTS_OBSERVER_H_
+#define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_METRICS_WEB_CONTENTS_OBSERVER_H_
 
 #include <map>
+#include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "net/base/net_errors.h"
+#include "third_party/WebKit/public/web/WebInputEvent.h"
 
 namespace content {
 class NavigationHandle;
@@ -35,7 +39,8 @@ extern const char kErrorEvents[];
 extern const char kAbortChainSizeReload[];
 extern const char kAbortChainSizeForwardBack[];
 extern const char kAbortChainSizeNewNavigation[];
-
+extern const char kAbortChainSizeNoCommit[];
+extern const char kAbortChainSizeSameURL[];
 
 }  // namespace internal
 
@@ -84,8 +89,16 @@ enum InternalErrorLoadEvent {
   // latest aborted load is used to track the chain size.
   ERR_NAVIGATION_SIGNALS_MULIPLE_ABORTED_LOADS,
 
+  // Receives user input before navigation start
+  ERR_USER_INPUT_WITH_NO_RELEVANT_LOAD,
+
+  // A TimeTicks value in the browser process has value less than
+  // navigation_start_. This could happen if navigation_start_ was computed in
+  // renderer process and the system clock has inter process time tick skew.
+  ERR_INTER_PROCESS_TIME_TICK_SKEW,
+
   // Add values before this final count.
-  ERR_LAST_ENTRY
+  ERR_LAST_ENTRY,
 };
 
 // This class serves as a functional interface to various chrome// features.
@@ -104,11 +117,15 @@ class PageLoadMetricsEmbedderInterface {
 class PageLoadTracker {
  public:
   // Caller must guarantee that the embedder_interface pointer outlives this
-  // class.
+  // class. The PageLoadTracker must not hold on to
+  // currently_committed_load_or_null or navigation_handle beyond the scope of
+  // the constructor.
   PageLoadTracker(bool in_foreground,
                   PageLoadMetricsEmbedderInterface* embedder_interface,
+                  const GURL& currently_committed_url,
                   content::NavigationHandle* navigation_handle,
-                  int abort_chain_size);
+                  int aborted_chain_size,
+                  int aborted_chain_size_same_url);
   ~PageLoadTracker();
   void Redirect(content::NavigationHandle* navigation_handle);
   void Commit(content::NavigationHandle* navigation_handle);
@@ -116,25 +133,40 @@ class PageLoadTracker {
   void WebContentsHidden();
   void WebContentsShown();
 
+  void OnInputEvent(const blink::WebInputEvent& event);
+
+  void NotifyClientRedirectTo(const PageLoadTracker& destination);
+
   // Returns true if the timing was successfully updated.
-  bool UpdateTiming(const PageLoadTiming& timing);
-  bool HasBackgrounded();
+  bool UpdateTiming(const PageLoadTiming& timing,
+                    const PageLoadMetadata& metadata);
 
   void set_renderer_tracked(bool renderer_tracked);
   bool renderer_tracked() const { return renderer_tracked_; }
 
   int aborted_chain_size() const { return aborted_chain_size_; }
+  int aborted_chain_size_same_url() const {
+    return aborted_chain_size_same_url_;
+  }
 
   UserAbortType abort_type() const { return abort_type_; }
   base::TimeTicks abort_time() const { return abort_time_; }
 
-  void AddObserver(scoped_ptr<PageLoadMetricsObserver> observer);
+  void AddObserver(std::unique_ptr<PageLoadMetricsObserver> observer);
 
   // If the user performs some abort-like action while we are tracking this page
   // load, notify the tracker. Note that we may not classify this as an abort if
   // we've already performed a first paint.
-  void NotifyAbort(UserAbortType abort_type, base::TimeTicks timestamp);
-  void UpdateAbort(UserAbortType abort_type, base::TimeTicks timestamp);
+  // is_certainly_browser_timestamp signifies if the timestamp passed is taken
+  // in the
+  // browser process or not. We need this to possibly clamp browser timestamp on
+  // a machine with inter process time tick skew.
+  void NotifyAbort(UserAbortType abort_type,
+                   base::TimeTicks timestamp,
+                   bool is_certainly_browser_timestamp);
+  void UpdateAbort(UserAbortType abort_type,
+                   base::TimeTicks timestamp,
+                   bool is_certainly_browser_timestamp);
 
   // This method returns true if this page load has been aborted with type of
   // ABORT_OTHER, and the |abort_cause_time| is within a sufficiently close
@@ -143,14 +175,35 @@ class PageLoadTracker {
   // and is simpler than other feasible methods. See https://goo.gl/WKRG98.
   bool IsLikelyProvisionalAbort(base::TimeTicks abort_cause_time);
 
- private:
-  PageLoadExtraInfo GetPageLoadMetricsInfo();
+  bool MatchesOriginalNavigation(content::NavigationHandle* navigation_handle);
+
   // Only valid to call post-commit.
-  const GURL& committed_url();
+  const GURL& committed_url() const {
+    DCHECK(!commit_time_.is_null());
+    return url_;
+  }
+
+  base::TimeTicks navigation_start() const { return navigation_start_; }
+
+  PageLoadExtraInfo ComputePageLoadExtraInfo();
+
+ private:
+  // This function converts a TimeTicks value taken in the browser process
+  // to navigation_start_ if:
+  // - base::TimeTicks is not comparable across processes because the clock
+  // is not system wide monotonic.
+  // - *event_time < navigation_start_
+  void ClampBrowserTimestampIfInterProcessTimeTickSkew(
+      base::TimeTicks* event_time);
 
   void UpdateAbortInternal(UserAbortType abort_type,
-                           base::TimeTicks timestamp);
-  void LogAbortChainHistograms(ui::PageTransition committed_transition);
+                           base::TimeTicks timestamp,
+                           bool is_certainly_browser_timestamp);
+
+  // If |final_navigation| is null, then this is an "unparented" abort chain,
+  // and represents a sequence of provisional aborts that never ends with a
+  // committed load.
+  void LogAbortChainHistograms(content::NavigationHandle* final_navigation);
 
   // Whether the renderer should be sending timing IPCs to this page load.
   bool renderer_tracked_;
@@ -158,10 +211,13 @@ class PageLoadTracker {
   // The navigation start in TimeTicks, not the wall time reported by Blink.
   const base::TimeTicks navigation_start_;
 
-  // URL and time this page load was committed. If this page load hasn't
-  // committed, |committed_url_| will be empty, and |commit_time_| will be zero.
-  GURL committed_url_;
+  // Time this page load was committed. If this page load hasn't committed,
+  // |commit_time_| will be zero.
   base::TimeTicks commit_time_;
+
+  // The URL of this page load. This is the provisional url before commit
+  // (before redirects), and the committed url after commit.
+  GURL url_;
 
   // Will be ABORT_NONE if we have not aborted this load yet. Otherwise will
   // be the first abort action the user performed.
@@ -176,6 +232,7 @@ class PageLoadTracker {
   bool started_in_foreground_;
 
   PageLoadTiming timing_;
+  PageLoadMetadata metadata_;
 
   // This is a subtle member. If a provisional load A gets aborted by
   // provisional load B, which gets aborted by C that eventually commits, then
@@ -185,10 +242,14 @@ class PageLoadTracker {
   // reload will produce a long chain with the RELOAD transition.
   const int aborted_chain_size_;
 
+  // This member counts consecutive provisional aborts that share a url. It will
+  // always be less than or equal to |aborted_chain_size_|.
+  const int aborted_chain_size_same_url_;
+
   // Interface to chrome features. Must outlive the class.
   PageLoadMetricsEmbedderInterface* const embedder_interface_;
 
-  std::vector<scoped_ptr<PageLoadMetricsObserver>> observers_;
+  std::vector<std::unique_ptr<PageLoadMetricsObserver>> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(PageLoadTracker);
 };
@@ -198,15 +259,16 @@ class PageLoadTracker {
 // MetricsRenderFrameObserver.
 class MetricsWebContentsObserver
     : public content::WebContentsObserver,
-      public content::WebContentsUserData<MetricsWebContentsObserver> {
+      public content::WebContentsUserData<MetricsWebContentsObserver>,
+      public content::RenderWidgetHost::InputEventObserver {
  public:
   // Note that the returned metrics is owned by the web contents.
   static MetricsWebContentsObserver* CreateForWebContents(
       content::WebContents* web_contents,
-      scoped_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
+      std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
   MetricsWebContentsObserver(
       content::WebContents* web_contents,
-      scoped_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
+      std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
   ~MetricsWebContentsObserver() override;
 
   // content::WebContentsObserver implementation:
@@ -219,9 +281,15 @@ class MetricsWebContentsObserver
   void DidRedirectNavigation(
       content::NavigationHandle* navigation_handle) override;
   void NavigationStopped() override;
+  void OnInputEvent(const blink::WebInputEvent& event) override;
   void WasShown() override;
   void WasHidden() override;
   void RenderProcessGone(base::TerminationStatus status) override;
+  void RenderViewHostChanged(content::RenderViewHost* old_host,
+                             content::RenderViewHost* new_host) override;
+
+  // This getter function is required for testing.
+  const PageLoadExtraInfo GetPageLoadExtraInfoForCommittedLoad();
 
  private:
   friend class content::WebContentsUserData<MetricsWebContentsObserver>;
@@ -230,42 +298,53 @@ class MetricsWebContentsObserver
   // that might abort them.
   void NotifyAbortAllLoads(UserAbortType abort_type);
   void NotifyAbortAllLoadsWithTimestamp(UserAbortType abort_type,
-                                        base::TimeTicks timestamp);
+                                        base::TimeTicks timestamp,
+                                        bool is_certainly_browser_timestamp);
+
+  // Register / Unregister input event callback to given RenderViewHost
+  void RegisterInputEventObserver(content::RenderViewHost* host);
+  void UnregisterInputEventObserver(content::RenderViewHost* host);
+
   // Notify aborted provisional loads that a new navigation occurred. This is
   // used for more consistent attribution tracking for aborted provisional
-  // loads. This method returns the provisional load abort chain size, to
-  // instantiate the new PageLoadTracker.
-  int NotifyAbortedProvisionalLoadsNewNavigation(
+  // loads. This method returns the provisional load that was likely aborted
+  // by this navigation, to help instantiate the new PageLoadTracker.
+  std::unique_ptr<PageLoadTracker> NotifyAbortedProvisionalLoadsNewNavigation(
       content::NavigationHandle* new_navigation);
 
-  void OnTimingUpdated(content::RenderFrameHost*, const PageLoadTiming& timing);
+  void OnTimingUpdated(content::RenderFrameHost*,
+                       const PageLoadTiming& timing,
+                       const PageLoadMetadata& metadata);
 
   // True if the web contents is currently in the foreground.
   bool in_foreground_;
 
   // The PageLoadTrackers must be deleted before the |embedded_interface_|,
   // because they hold a pointer to the |embedder_interface_|.
-  scoped_ptr<PageLoadMetricsEmbedderInterface> embedder_interface_;
+  std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface_;
 
   // This map tracks all of the navigations ongoing that are not committed
   // yet. Once a navigation is committed, it moves from the map to
   // committed_load_. Note that a PageLoadTrackers NavigationHandle is only
   // valid until commit time, when we remove it from the map.
-  std::map<content::NavigationHandle*, scoped_ptr<PageLoadTracker>>
+  std::map<content::NavigationHandle*, std::unique_ptr<PageLoadTracker>>
       provisional_loads_;
 
   // Tracks aborted provisional loads for a little bit longer than usual (one
   // more navigation commit at the max), in order to better understand how the
-  // navigation failed. This is because most provisional loads are destroyed and
-  // vanish before we get signal about what caused the abort (new navigation,
-  // stop button, etc.).
-  std::vector<scoped_ptr<PageLoadTracker>> aborted_provisional_loads_;
+  // navigation failed. This is because most provisional loads are destroyed
+  // and vanish before we get signal about what caused the abort (new
+  // navigation, stop button, etc.).
+  std::vector<std::unique_ptr<PageLoadTracker>> aborted_provisional_loads_;
 
-  scoped_ptr<PageLoadTracker> committed_load_;
+  std::unique_ptr<PageLoadTracker> committed_load_;
+
+  // Has the MWCO observed at least one navigation?
+  bool has_navigated_;
 
   DISALLOW_COPY_AND_ASSIGN(MetricsWebContentsObserver);
 };
 
 }  // namespace page_load_metrics
 
-#endif  // COMPONENTS_PAGE_LOAD_METRICS_BROWSER_PAGE_LOAD_METRICS_WEB_CONTENTS_OBSERVER_H_
+#endif  // COMPONENTS_PAGE_LOAD_METRICS_BROWSER_METRICS_WEB_CONTENTS_OBSERVER_H_

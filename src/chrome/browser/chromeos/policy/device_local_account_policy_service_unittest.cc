@@ -13,13 +13,14 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/policy/device_local_account_policy_provider.h"
 #include "chrome/browser/chromeos/policy/fake_affiliated_invalidation_service_provider.h"
@@ -102,7 +103,7 @@ class DeviceLocalAccountPolicyServiceTestBase
   MockDeviceManagementService mock_device_management_service_;
   FakeAffiliatedInvalidationServiceProvider
       affiliated_invalidation_service_provider_;
-  scoped_ptr<DeviceLocalAccountPolicyService> service_;
+  std::unique_ptr<DeviceLocalAccountPolicyService> service_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DeviceLocalAccountPolicyServiceTestBase);
@@ -142,12 +143,10 @@ DeviceLocalAccountPolicyServiceTestBase::
 void DeviceLocalAccountPolicyServiceTestBase::SetUp() {
   chromeos::DeviceSettingsTestBase::SetUp();
 
-  expected_policy_map_.Set(key::kDisableSpdy,
-                           POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_USER,
-                           POLICY_SOURCE_CLOUD,
-                           new base::FundamentalValue(true),
-                           NULL);
+  expected_policy_map_.Set(key::kDisableSpdy, POLICY_LEVEL_MANDATORY,
+                           POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+                           base::WrapUnique(new base::FundamentalValue(true)),
+                           nullptr);
 
   device_local_account_policy_.payload().mutable_disablespdy()->set_value(
       true);
@@ -507,7 +506,7 @@ class DeviceLocalAccountPolicyExtensionCacheTest
   base::FilePath GetCacheDirectoryForAccountID(const std::string& account_id);
 
   base::ScopedTempDir cache_root_dir_;
-  scoped_ptr<base::ScopedPathOverride> cache_root_dir_override_;
+  std::unique_ptr<base::ScopedPathOverride> cache_root_dir_override_;
 
   base::FilePath cache_dir_1_;
   base::FilePath cache_dir_2_;
@@ -785,7 +784,7 @@ class DeviceLocalAccountPolicyProviderTest
   void TearDown() override;
 
   SchemaRegistry schema_registry_;
-  scoped_ptr<DeviceLocalAccountPolicyProvider> provider_;
+  std::unique_ptr<DeviceLocalAccountPolicyProvider> provider_;
   MockConfigurationPolicyObserver provider_observer_;
 
  private:
@@ -806,32 +805,24 @@ void DeviceLocalAccountPolicyProviderTest::SetUp() {
   provider_->AddObserver(&provider_observer_);
 
   // Values implicitly enforced for public accounts.
-  expected_policy_map_.Set(key::kLidCloseAction,
-                           POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_MACHINE,
-                           POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-                           new base::FundamentalValue(
-                               chromeos::PowerPolicyController::
-                                   ACTION_STOP_SESSION),
-                           NULL);
-  expected_policy_map_.Set(key::kShelfAutoHideBehavior,
-                           POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_MACHINE,
-                           POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-                           new base::StringValue("Never"),
-                           NULL);
-  expected_policy_map_.Set(key::kShowLogoutButtonInTray,
-                           POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_MACHINE,
-                           POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-                           new base::FundamentalValue(true),
-                           NULL);
-  expected_policy_map_.Set(key::kFullscreenAllowed,
-                           POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_MACHINE,
-                           POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-                           new base::FundamentalValue(false),
-                           NULL);
+  expected_policy_map_.Set(
+      key::kLidCloseAction, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+      base::WrapUnique(new base::FundamentalValue(
+          chromeos::PowerPolicyController::ACTION_STOP_SESSION)),
+      nullptr);
+  expected_policy_map_.Set(
+      key::kShelfAutoHideBehavior, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+      base::WrapUnique(new base::StringValue("Never")), nullptr);
+  expected_policy_map_.Set(
+      key::kShowLogoutButtonInTray, POLICY_LEVEL_MANDATORY,
+      POLICY_SCOPE_MACHINE, POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+      base::WrapUnique(new base::FundamentalValue(true)), nullptr);
+  expected_policy_map_.Set(
+      key::kFullscreenAllowed, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+      base::WrapUnique(new base::FundamentalValue(false)), nullptr);
 }
 
 void DeviceLocalAccountPolicyProviderTest::TearDown() {
@@ -891,14 +882,11 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, Policy) {
   FlushDeviceSettings();
   Mock::VerifyAndClearExpectations(&provider_observer_);
 
-  expected_policy_bundle.Get(
-      PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
-      .Set(key::kDisableSpdy,
-           POLICY_LEVEL_MANDATORY,
-           POLICY_SCOPE_USER,
+  expected_policy_bundle
+      .Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+      .Set(key::kDisableSpdy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
            POLICY_SOURCE_CLOUD,
-           new base::FundamentalValue(false),
-           NULL);
+           base::WrapUnique(new base::FundamentalValue(false)), nullptr);
   EXPECT_TRUE(expected_policy_bundle.Equals(provider_->policies()));
 
   // Any values set for the |ShelfAutoHideBehavior|, |ShowLogoutButtonInTray|

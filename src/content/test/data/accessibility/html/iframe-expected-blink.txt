@@ -1,5 +1,4 @@
 rootWebArea
 ++group
-++++iframe
-++++++webArea
-<-- End-of-file -->
+++++iframe name='Empty iframe'
+++++++rootWebArea

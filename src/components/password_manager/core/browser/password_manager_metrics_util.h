@@ -9,8 +9,6 @@
 
 #include <string>
 
-class PrefService;
-
 namespace password_manager {
 
 namespace metrics_util {
@@ -55,11 +53,6 @@ enum UIDismissalReason {
   AUTO_SIGNIN_TOAST_CLICKED_OBSOLETE,  // obsolete.
   CLICKED_BRAND_NAME,
   NUM_UI_RESPONSES,
-
-  // If we add the omnibox icon _without_ intending to display the bubble,
-  // we actually call Close() after creating the bubble view. We don't want
-  // that to count in the metrics, so we need this placeholder value.
-  NOT_DISPLAYED
 };
 
 enum FormDeserializationStatus {
@@ -123,47 +116,41 @@ enum MultiAccountUpdateBubbleUserAction {
   MULTI_ACCOUNT_UPDATE_BUBBLE_USER_ACTION_COUNT
 };
 
-// We monitor the performance of the save password heuristic for a handful of
-// domains. For privacy reasons we are not reporting UMA signals by domain, but
-// by a domain group. A domain group can contain multiple domains, and a domain
-// can be contained in multiple groups.
-// For more information see http://goo.gl/vUuFd5.
+enum AutoSigninPromoUserAction {
+  AUTO_SIGNIN_NO_ACTION,
+  AUTO_SIGNIN_TURN_OFF,
+  AUTO_SIGNIN_OK_GOT_IT,
+  AUTO_SIGNIN_PROMO_ACTION_COUNT
+};
 
-// The number of groups in which each monitored website appears.
-// It is a half of the total number of groups.
-const size_t kGroupsPerDomain = 10u;
+enum AccountChooserUserAction {
+  ACCOUNT_CHOOSER_DISMISSED,
+  ACCOUNT_CHOOSER_CREDENTIAL_CHOSEN,
+  ACCOUNT_CHOOSER_SIGN_IN,
+  ACCOUNT_CHOOSER_ACTION_COUNT
+};
 
-// Check whether the |url_host| is monitored or not. If yes, we return
-// the id of the group which contains the domain name otherwise
-// returns 0. |pref_service| needs to be the profile preference service.
-size_t MonitoredDomainGroupId(const std::string& url_host,
-                              PrefService* pref_service);
+enum SyncSignInUserAction {
+  CHROME_SIGNIN_DISMISSED,
+  CHROME_SIGNIN_OK,
+  CHROME_SIGNIN_CANCEL,
+  CHROME_SIGNIN_ACTION_COUNT
+};
 
-// A version of the UMA_HISTOGRAM_ENUMERATION macro that allows the |name|
-// to vary over the program's runtime.
-void LogUMAHistogramEnumeration(const std::string& name,
-                                int sample,
-                                int boundary_value);
+enum AccountChooserUsabilityMetric {
+  ACCOUNT_CHOOSER_LOOKS_OK,
+  ACCOUNT_CHOOSER_EMPTY_USERNAME,
+  ACCOUNT_CHOOSER_DUPLICATES,
+  ACCOUNT_CHOOSER_EMPTY_USERNAME_AND_DUPLICATES,
+  ACCOUNT_CHOOSER_USABILITY_COUNT,
+};
 
 // A version of the UMA_HISTOGRAM_BOOLEAN macro that allows the |name|
 // to vary over the program's runtime.
 void LogUMAHistogramBoolean(const std::string& name, bool sample);
 
-// Returns a string which contains group_|group_id|. If the
-// |group_id| corresponds to an unmonitored domain returns an empty string.
-std::string GroupIdToString(size_t group_id);
-
 // Log the |reason| a user dismissed the password manager UI.
 void LogUIDismissalReason(UIDismissalReason reason);
-
-// Given a ResponseType, log the appropriate UIResponse. We'll use this
-// mapping to migrate from "PasswordManager.InfoBarResponse" to
-// "PasswordManager.UIDismissalReason" so we can accurately evaluate the
-// impact of the bubble UI.
-//
-// TODO(mkwst): Drop this (and the infobar metric itself) once the new metric
-// has rolled out to stable.
-void LogUIDismissalReason(ResponseType type);
 
 // Log the appropriate display disposition.
 void LogUIDisplayDisposition(UIDisplayDisposition disposition);
@@ -191,6 +178,19 @@ void LogUpdatePasswordSubmissionEvent(UpdatePasswordSubmissionEvent event);
 // accounts.
 void LogMultiAccountUpdateBubbleUserAction(
     MultiAccountUpdateBubbleUserAction action);
+
+// Log a user action on showing the autosignin first run experience.
+void LogAutoSigninPromoUserAction(AutoSigninPromoUserAction action);
+
+// Log a user action on showing the account chooser for one or many accounts.
+void LogAccountChooserUserActionOneAccount(AccountChooserUserAction action);
+void LogAccountChooserUserActionManyAccounts(AccountChooserUserAction action);
+
+// Log a user action on showing the Chrome sign in promo.
+void LogAutoSigninPromoUserAction(SyncSignInUserAction action);
+
+// Log if the account chooser has empty username or duplicate usernames.
+void LogAccountChooserUsability(AccountChooserUsabilityMetric usability);
 
 }  // namespace metrics_util
 

@@ -1,19 +1,40 @@
 {
+  "name": "Content Root Layer",
   "bounds": [800, 600],
   "children": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true,
-      "repaintRects": [
-        [220, 100, 80, 200],
-        [210, 100, 90, 200],
-        [100, 220, 200, 80],
-        [100, 210, 200, 90]
-      ],
-      "paintInvalidationClients": [
-        "LayoutBlockFlow DIV id='target'"
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [100, 210, 200, 90],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [100, 220, 200, 80],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [210, 100, 90, 200],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [220, 100, 80, 200],
+          "reason": "incremental"
+        }
       ]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV id='target'",
+      "reason": "incremental"
     }
   ]
 }

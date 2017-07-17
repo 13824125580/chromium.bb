@@ -24,7 +24,7 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "chromeos/chromeos_switches.h"
-#include "components/drive/file_system_interface.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/service/fake_drive_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
@@ -229,10 +229,12 @@ class FileManagerTestListener : public content::NotificationObserver {
     entry.message = type != extensions::NOTIFICATION_EXTENSION_TEST_PASSED
                         ? *content::Details<std::string>(details).ptr()
                         : std::string();
-    entry.function =
-        type == extensions::NOTIFICATION_EXTENSION_TEST_MESSAGE
-            ? content::Source<extensions::TestSendMessageFunction>(source).ptr()
-            : NULL;
+    if (type == extensions::NOTIFICATION_EXTENSION_TEST_MESSAGE) {
+      entry.function =
+          content::Source<extensions::TestSendMessageFunction>(source).ptr();
+      *content::Details<std::pair<std::string, bool*>>(details).ptr()->second =
+          true;
+    }
     messages_.push_back(entry);
     base::MessageLoopForUI::current()->QuitWhenIdle();
   }
@@ -376,7 +378,8 @@ class DriveTestVolume : public TestVolume {
 
     // Obtain the parent entry.
     drive::FileError error = drive::FILE_ERROR_OK;
-    scoped_ptr<drive::ResourceEntry> parent_entry(new drive::ResourceEntry);
+    std::unique_ptr<drive::ResourceEntry> parent_entry(
+        new drive::ResourceEntry);
     integration_service_->file_system()->GetResourceEntry(
         drive::util::GetDriveMyDriveRootPath().Append(path).DirName(),
         google_apis::test_util::CreateCopyResultCallback(&error,
@@ -403,7 +406,7 @@ class DriveTestVolume : public TestVolume {
                        const std::string& target_name,
                        const base::Time& modification_time) {
     google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     fake_drive_service_->AddNewDirectory(
         parent_id, target_name, drive::AddNewDirectoryOptions(),
         google_apis::test_util::CreateCopyResultCallback(&error, &entry));
@@ -436,7 +439,7 @@ class DriveTestVolume : public TestVolume {
       ASSERT_TRUE(base::ReadFileToString(source_file_path, &content_data));
     }
 
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     fake_drive_service_->AddNewFile(
         mime_type, content_data, parent_id, target_name, shared_with_me,
         google_apis::test_util::CreateCopyResultCallback(&error, &entry));
@@ -576,15 +579,17 @@ void FileManagerBrowserTestBase::RunTestMessageLoop() {
     }
 
     // Parse the message value as JSON.
-    const scoped_ptr<const base::Value> value =
+    const std::unique_ptr<const base::Value> value =
         base::JSONReader::Read(entry.message);
 
     // If the message is not the expected format, just ignore it.
     const base::DictionaryValue* message_dictionary = NULL;
     std::string name;
     if (!value || !value->GetAsDictionary(&message_dictionary) ||
-        !message_dictionary->GetString("name", &name))
+        !message_dictionary->GetString("name", &name)) {
+      entry.function->Reply(std::string());
       continue;
+    }
 
     std::string output;
     OnMessage(name, *message_dictionary, &output);

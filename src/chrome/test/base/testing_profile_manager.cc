@@ -60,7 +60,7 @@ bool TestingProfileManager::SetUp() {
 
 TestingProfile* TestingProfileManager::CreateTestingProfile(
     const std::string& profile_name,
-    scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs,
+    std::unique_ptr<syncable_prefs::PrefServiceSyncable> prefs,
     const base::string16& user_name,
     int avatar_id,
     const std::string& supervised_user_id,
@@ -87,6 +87,7 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   builder.SetPath(profile_path);
   builder.SetPrefService(std::move(prefs));
   builder.SetSupervisedUserId(supervised_user_id);
+  builder.SetProfileName(profile_name);
 
   for (TestingProfile::TestingFactories::const_iterator it = factories.begin();
        it != factories.end(); ++it) {
@@ -94,7 +95,6 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   }
 
   TestingProfile* profile = builder.Build().release();
-  profile->set_profile_name(profile_name);
   profile_manager_->AddProfile(profile);  // Takes ownership.
 
   // Update the user metadata.
@@ -114,10 +114,10 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
 TestingProfile* TestingProfileManager::CreateTestingProfile(
     const std::string& name) {
   DCHECK(called_set_up_);
-  return CreateTestingProfile(name,
-                              scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
-                              base::UTF8ToUTF16(name), 0, std::string(),
-                              TestingProfile::TestingFactories());
+  return CreateTestingProfile(
+      name, std::unique_ptr<syncable_prefs::PrefServiceSyncable>(),
+      base::UTF8ToUTF16(name), 0, std::string(),
+      TestingProfile::TestingFactories());
 }
 
 TestingProfile* TestingProfileManager::CreateGuestProfile() {

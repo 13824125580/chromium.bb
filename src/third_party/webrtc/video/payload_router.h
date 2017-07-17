@@ -15,9 +15,10 @@
 
 #include "webrtc/base/constructormagic.h"
 #include "webrtc/base/criticalsection.h"
-#include "webrtc/base/scoped_ptr.h"
 #include "webrtc/base/thread_annotations.h"
 #include "webrtc/common_types.h"
+#include "webrtc/config.h"
+#include "webrtc/video_encoder.h"
 #include "webrtc/system_wrappers/include/atomic32.h"
 
 namespace webrtc {
@@ -28,53 +29,45 @@ struct RTPVideoHeader;
 
 // PayloadRouter routes outgoing data to the correct sending RTP module, based
 // on the simulcast layer in RTPVideoHeader.
-class PayloadRouter {
+class PayloadRouter : public EncodedImageCallback {
  public:
-  PayloadRouter();
+  // Rtp modules are assumed to be sorted in simulcast index order.
+  explicit PayloadRouter(const std::vector<RtpRtcp*>& rtp_modules,
+                         int payload_type);
   ~PayloadRouter();
 
   static size_t DefaultMaxPayloadLength();
-
-  // Rtp modules are assumed to be sorted in simulcast index order.
-  void SetSendingRtpModules(const std::vector<RtpRtcp*>& rtp_modules);
+  void SetSendStreams(const std::vector<VideoStream>& streams);
 
   // PayloadRouter will only route packets if being active, all packets will be
   // dropped otherwise.
   void set_active(bool active);
   bool active();
 
-  // Input parameters according to the signature of RtpRtcp::SendOutgoingData.
-  // Returns true if the packet was routed / sent, false otherwise.
-  bool RoutePayload(FrameType frame_type,
-                    int8_t payload_type,
-                    uint32_t time_stamp,
-                    int64_t capture_time_ms,
-                    const uint8_t* payload_data,
-                    size_t payload_size,
-                    const RTPFragmentationHeader* fragmentation,
-                    const RTPVideoHeader* rtp_video_hdr);
+  // Implements EncodedImageCallback.
+  // Returns 0 if the packet was routed / sent, -1 otherwise.
+  int32_t Encoded(const EncodedImage& encoded_image,
+                  const CodecSpecificInfo* codec_specific_info,
+                  const RTPFragmentationHeader* fragmentation) override;
 
-  // Configures current target bitrate per module. 'stream_bitrates' is assumed
-  // to be in the same order as 'SetSendingRtpModules'.
-  void SetTargetSendBitrates(const std::vector<uint32_t>& stream_bitrates);
+  // Configures current target bitrate.
+  void SetTargetSendBitrate(uint32_t bitrate_bps);
 
   // Returns the maximum allowed data payload length, given the configured MTU
   // and RTP headers.
   size_t MaxPayloadLength() const;
 
-  void AddRef() { ++ref_count_; }
-  void Release() { if (--ref_count_ == 0) { delete this; } }
-
  private:
-  // TODO(mflodman): When the new video API has launched, remove crit_ and
-  // assume rtp_modules_ will never change during a call.
+  void UpdateModuleSendingState() EXCLUSIVE_LOCKS_REQUIRED(crit_);
+
   rtc::CriticalSection crit_;
-
-  // Active sending RTP modules, in layer order.
-  std::vector<RtpRtcp*> rtp_modules_ GUARDED_BY(crit_);
   bool active_ GUARDED_BY(crit_);
+  std::vector<VideoStream> streams_ GUARDED_BY(crit_);
+  size_t num_sending_modules_ GUARDED_BY(crit_);
 
-  Atomic32 ref_count_;
+  // Rtp modules are assumed to be sorted in simulcast index order. Not owned.
+  const std::vector<RtpRtcp*> rtp_modules_;
+  const int payload_type_;
 
   RTC_DISALLOW_COPY_AND_ASSIGN(PayloadRouter);
 };

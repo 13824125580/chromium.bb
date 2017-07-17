@@ -9,7 +9,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_service_client.h"
@@ -637,7 +637,7 @@ void NetworkConnectionHandler::CallShillConnect(
 void NetworkConnectionHandler::HandleConfigurationFailure(
     const std::string& service_path,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   ConnectRequest* request = GetPendingRequest(service_path);
   if (!request) {
     NET_LOG_ERROR("HandleConfigurationFailure called with no pending request.",

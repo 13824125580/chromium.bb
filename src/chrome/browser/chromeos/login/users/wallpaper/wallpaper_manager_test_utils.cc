@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -166,7 +166,7 @@ void WaitAsyncWallpaperLoadFinished() {
 }
 
 void CreateCmdlineWallpapers(const base::ScopedTempDir& dir,
-                             scoped_ptr<base::CommandLine>* command_line) {
+                             std::unique_ptr<base::CommandLine>* command_line) {
   std::vector<std::string> options;
   options.push_back(std::string("WM_Test_cmdline"));
   const base::FilePath small_file =

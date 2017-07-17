@@ -16,10 +16,12 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.IBinder;
 import android.support.customtabs.CustomTabsIntent;
+import android.support.customtabs.CustomTabsSessionToken;
 import android.text.TextUtils;
 import android.util.Pair;
+import android.view.View;
+import android.widget.RemoteViews;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Log;
@@ -54,12 +56,6 @@ public class CustomTabIntentDataProvider {
     public static final String EXTRA_IS_OPENED_BY_CHROME =
             "org.chromium.chrome.browser.customtabs.IS_OPENED_BY_CHROME";
 
-    /**
-     * Herb: Extra used by the main Chrome browser to enable the bookmark icon in the menu.
-     */
-    public static final String EXTRA_SHOW_STAR_ICON =
-            "org.chromium.chrome.browser.customtabs.SHOW_STAR_ICON";
-
     private static final int MAX_CUSTOM_MENU_ITEMS = 5;
     private static final String ANIMATION_BUNDLE_PREFIX =
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? "android:activity." : "android:";
@@ -68,7 +64,7 @@ public class CustomTabIntentDataProvider {
             ANIMATION_BUNDLE_PREFIX + "animEnterRes";
     private static final String BUNDLE_EXIT_ANIMATION_RESOURCE =
             ANIMATION_BUNDLE_PREFIX + "animExitRes";
-    private final IBinder mSession;
+    private final CustomTabsSessionToken mSession;
     private final Intent mKeepAliveServiceIntent;
     private final int mTitleVisibilityState;
     private int mToolbarColor;
@@ -81,21 +77,21 @@ public class CustomTabIntentDataProvider {
     private boolean mShowShareItem;
     private CustomButtonParams mToolbarButton;
     private List<CustomButtonParams> mBottombarButtons = new ArrayList<>(2);
+    private RemoteViews mRemoteViews;
+    private int[] mClickableViewIds;
+    private PendingIntent mRemoteViewsPendingIntent;
     // OnFinished listener for PendingIntents. Used for testing only.
     private PendingIntent.OnFinished mOnFinished;
 
     /** Herb: Whether this CustomTabActivity was explicitly started by another Chrome Activity. */
     private boolean mIsOpenedByChrome;
 
-    /** Herb: Whether or not the bookmark button should be shown. */
-    private boolean mShowBookmarkItem;
-
     /**
      * Constructs a {@link CustomTabIntentDataProvider}.
      */
     public CustomTabIntentDataProvider(Intent intent, Context context) {
         if (intent == null) assert false;
-        mSession = IntentUtils.safeGetBinderExtra(intent, CustomTabsIntent.EXTRA_SESSION);
+        mSession = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
         parseHerbExtras(intent, context);
 
         retrieveCustomButtons(intent, context);
@@ -138,6 +134,12 @@ public class CustomTabIntentDataProvider {
                 CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE, CustomTabsIntent.NO_TITLE);
         mShowShareItem = IntentUtils.safeGetBooleanExtra(intent,
                 CustomTabsIntent.EXTRA_DEFAULT_SHARE_MENU_ITEM, false);
+        mRemoteViews = IntentUtils.safeGetParcelableExtra(intent,
+                CustomTabsIntent.EXTRA_REMOTEVIEWS);
+        mClickableViewIds = IntentUtils.safeGetIntArrayExtra(intent,
+                CustomTabsIntent.EXTRA_REMOTEVIEWS_VIEW_IDS);
+        mRemoteViewsPendingIntent = IntentUtils.safeGetParcelableExtra(intent,
+                CustomTabsIntent.EXTRA_REMOTEVIEWS_PENDINGINTENT);
     }
 
     /**
@@ -191,7 +193,7 @@ public class CustomTabIntentDataProvider {
     /**
      * @return The session specified in the intent, or null.
      */
-    public IBinder getSession() {
+    public CustomTabsSessionToken getSession() {
         return mSession;
     }
 
@@ -242,13 +244,6 @@ public class CustomTabIntentDataProvider {
     }
 
     /**
-     * @return Whether the bookmark item should be shown in the menu.
-     */
-    public boolean shouldShowBookmarkMenuItem() {
-        return mShowBookmarkItem;
-    }
-
-    /**
      * @return The params for the custom button that shows on the toolbar. If there is no applicable
      *         buttons, returns null.
      */
@@ -267,7 +262,7 @@ public class CustomTabIntentDataProvider {
      * @return Whether the bottom bar should be shown.
      */
     public boolean shouldShowBottomBar() {
-        return !mBottombarButtons.isEmpty();
+        return !mBottombarButtons.isEmpty() || mRemoteViews != null;
     }
 
     /**
@@ -275,6 +270,28 @@ public class CustomTabIntentDataProvider {
      */
     public int getBottomBarColor() {
         return mBottomBarColor;
+    }
+
+    /**
+     * @return The {@link RemoteViews} to show on the bottom bar, or null if the extra is not
+     *         specified.
+     */
+    public RemoteViews getBottomBarRemoteViews() {
+        return mRemoteViews;
+    }
+
+    /**
+     * @return A array of {@link View} ids, of which the onClick event is handled by the custom tab.
+     */
+    public int[] getClickableViewIDs() {
+        return mClickableViewIds.clone();
+    }
+
+    /**
+     * @return The {@link PendingIntent} that is sent when the user clicks on the remote view.
+     */
+    public PendingIntent getRemoteViewsPendingIntent() {
+        return mRemoteViewsPendingIntent;
     }
 
     /**
@@ -414,7 +431,5 @@ public class CustomTabIntentDataProvider {
 
         mIsOpenedByChrome = IntentUtils.safeGetBooleanExtra(
                 intent, EXTRA_IS_OPENED_BY_CHROME, false);
-        mShowBookmarkItem = IntentUtils.safeGetBooleanExtra(
-                intent, EXTRA_SHOW_STAR_ICON, false);
     }
 }

@@ -21,14 +21,13 @@ static const char touchEventEmulationEnabled[] = "touchEventEmulationEnabled";
 static const char emulatedMedia[] = "emulatedMedia";
 }
 
-PassOwnPtrWillBeRawPtr<InspectorEmulationAgent> InspectorEmulationAgent::create(WebLocalFrameImpl* webLocalFrameImpl, Client* client)
+InspectorEmulationAgent* InspectorEmulationAgent::create(WebLocalFrameImpl* webLocalFrameImpl, Client* client)
 {
-    return adoptPtrWillBeNoop(new InspectorEmulationAgent(webLocalFrameImpl, client));
+    return new InspectorEmulationAgent(webLocalFrameImpl, client);
 }
 
 InspectorEmulationAgent::InspectorEmulationAgent(WebLocalFrameImpl* webLocalFrameImpl, Client* client)
-    : InspectorBaseAgent<InspectorEmulationAgent, protocol::Frontend::Emulation>("Emulation")
-    , m_webLocalFrameImpl(webLocalFrameImpl)
+    : m_webLocalFrameImpl(webLocalFrameImpl)
     , m_client(client)
 {
 }
@@ -47,7 +46,7 @@ void InspectorEmulationAgent::restore()
     ErrorString error;
     setScriptExecutionDisabled(&error, m_state->booleanProperty(EmulationAgentState::scriptExecutionDisabled, false));
     setTouchEmulationEnabled(&error, m_state->booleanProperty(EmulationAgentState::touchEventEmulationEnabled, false), protocol::Maybe<String>());
-    String emulatedMedia;
+    String16 emulatedMedia;
     m_state->getString(EmulationAgentState::emulatedMedia, &emulatedMedia);
     setEmulatedMedia(&error, emulatedMedia);
 }

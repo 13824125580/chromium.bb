@@ -4,10 +4,10 @@
 
 syntax = "proto2";
 
-import "display_list_recording_source.proto";
 import "layer_position_constraint.proto";
 import "point3f.proto";
 import "pointf.proto";
+import "recording_source.proto";
 import "region.proto";
 import "rect.proto";
 import "scroll_offset.proto";
@@ -29,6 +29,7 @@ message LayerNode {
     LAYER = 1;
     PICTURE_LAYER = 2;
     HEADS_UP_DISPLAY_LAYER = 3;
+    SOLID_COLOR_SCROLLBAR_LAYER = 4;
 
     // TODO(nyquist): Add the rest of the necessary LayerTypes.
   };
@@ -53,10 +54,6 @@ message LayerUpdate {
 message LayerProperties {
   // required
   optional int32 id = 1;
-  // required
-  optional bool needs_push_properties = 3;
-  // required
-  optional int32 num_dependents_need_push_properties = 4;
 
   // The properties below are only read if |needs_push_properties| is set.
   // The Layer base class and each descendant have different proto messages
@@ -67,12 +64,14 @@ message LayerProperties {
   // TODO(dtrainor): use a 'oneof' union when it's supported in Chromium.  See
   // crbug.com/570371.
   optional PictureLayerProperties picture = 6;
+  optional SolidColorScrollbarLayerProperties solid_scrollbar = 7;
 }
 
-// NEXT ID: 53
+// NEXT ID: 55
 message BaseLayerProperties {
   optional Point3F transform_origin = 1;
   optional uint32 background_color = 2;
+  optional uint32 safe_opaque_background_color = 53;
   optional Size bounds = 3;
   optional int64 transform_free_index = 4;
   optional int64 effect_tree_index = 5;
@@ -82,8 +81,8 @@ message BaseLayerProperties {
   optional bool double_sided = 8;
   optional bool draws_content = 9;
   optional bool hide_layer_and_subtree = 10;
-  optional bool has_render_surface = 11;
   optional bool subtree_property_changed = 47;
+  optional bool layer_property_changed = 54;
   // TODO(nyquist): Add support for FilterOperation. See crbug.com/541321.
   // repeated FilterOperation filters = 12;
   // repeated FilterOperation background_filters = 13;
@@ -110,6 +109,7 @@ message BaseLayerProperties {
   optional bool transform_is_invertible = 34;
   optional int32 sorting_context_id = 35;
   optional int32 num_descendants_that_draw_content = 36;
+  optional bool has_will_change_transform_hint = 48;
 
   optional int32 scroll_clip_layer_id = 37;
   optional bool user_scrollable_horizontal = 38;
@@ -122,23 +122,32 @@ message BaseLayerProperties {
   repeated int32 clip_children_ids = 43;
 
   optional ScrollOffset scroll_offset = 44;
-  optional Vector2dF scroll_compensation_adjustment = 45;
 
   optional Rect update_rect = 46;
 
   // TODO(nyquist): Figure out what to do with LayerAnimationController.
-  // optional LayerAnimationController layer_animation_controller = 48;
-
-  // TODO(nyquist): Figure out what to do with FrameTimingRequests.
-  // repeated FrameTimingRequest frame_timing_requests = 49;
+  // optional LayerAnimationController layer_animation_controller = ???;
 }
 
 message PictureLayerProperties {
-  optional DisplayListRecordingSource recording_source = 1;
+  optional RecordingSource recording_source = 1;
   optional Region invalidation = 2;
   optional Rect last_updated_visible_layer_rect = 3;
   optional bool is_mask = 4;
   optional bool nearest_neighbor = 5;
 
   optional int64 update_source_frame_number = 6;
+}
+
+message SolidColorScrollbarLayerProperties {
+  enum ScrollbarOrientation {
+    HORIZONTAL = 0;
+    VERTICAL = 1;
+  };
+
+  optional int32 scroll_layer_id = 1;
+  optional int32 thumb_thickness = 2;
+  optional int32 track_start = 3;
+  optional bool is_left_side_vertical_scrollbar = 4;
+  optional ScrollbarOrientation orientation = 5;
 }

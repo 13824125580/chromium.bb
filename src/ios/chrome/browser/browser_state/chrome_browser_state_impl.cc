@@ -72,7 +72,9 @@ void BlockFileThreadOnDirectoryCreate(base::WaitableEvent* done_creating) {
 void CreateBrowserStateDirectory(
     base::SequencedTaskRunner* sequenced_task_runner,
     const base::FilePath& path) {
-  base::WaitableEvent* done_creating = new base::WaitableEvent(false, false);
+  base::WaitableEvent* done_creating =
+      new base::WaitableEvent(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
   sequenced_task_runner->PostTask(
       FROM_HERE, base::Bind(&CreateDirectoryAndSignal, path, done_creating));
   // Block the FILE thread until directory is created on I/O pool to make sure
@@ -176,7 +178,7 @@ ChromeBrowserStateImpl::GetOffTheRecordChromeBrowserState() {
 }
 
 bool ChromeBrowserStateImpl::HasOffTheRecordChromeBrowserState() const {
-  return otr_state_;
+  return !!otr_state_;
 }
 
 void ChromeBrowserStateImpl::DestroyOffTheRecordChromeBrowserState() {
@@ -199,7 +201,7 @@ base::FilePath ChromeBrowserStateImpl::GetStatePath() const {
 }
 
 void ChromeBrowserStateImpl::SetOffTheRecordChromeBrowserState(
-    scoped_ptr<ios::ChromeBrowserState> otr_state) {
+    std::unique_ptr<ios::ChromeBrowserState> otr_state) {
   DCHECK(!otr_state_);
   otr_state_ = std::move(otr_state);
 }

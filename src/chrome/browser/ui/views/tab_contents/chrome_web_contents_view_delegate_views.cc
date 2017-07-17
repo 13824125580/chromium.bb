@@ -24,10 +24,6 @@
 #include "ui/views/focus/view_storage.h"
 #include "ui/views/widget/widget.h"
 
-#if defined(USE_AURA)
-#include "chrome/browser/ui/views/link_disambiguation/link_disambiguation_popup.h"
-#endif
-
 ChromeWebContentsViewDelegateViews::ChromeWebContentsViewDelegateViews(
     content::WebContents* web_contents)
     : ContextMenuDelegate(web_contents),
@@ -119,11 +115,11 @@ void ChromeWebContentsViewDelegateViews::RestoreFocus() {
   }
 }
 
-scoped_ptr<RenderViewContextMenuBase>
+std::unique_ptr<RenderViewContextMenuBase>
 ChromeWebContentsViewDelegateViews::BuildMenu(
     content::WebContents* web_contents,
     const content::ContextMenuParams& params) {
-  scoped_ptr<RenderViewContextMenuBase> menu;
+  std::unique_ptr<RenderViewContextMenuBase> menu;
   content::RenderFrameHost* focused_frame = web_contents->GetFocusedFrame();
   // If the frame tree does not have a focused frame at this point, do not
   // bother creating RenderViewContextMenuViews.
@@ -137,7 +133,7 @@ ChromeWebContentsViewDelegateViews::BuildMenu(
 }
 
 void ChromeWebContentsViewDelegateViews::ShowMenu(
-    scoped_ptr<RenderViewContextMenuBase> menu) {
+    std::unique_ptr<RenderViewContextMenuBase> menu) {
   context_menu_ = std::move(menu);
   if (!context_menu_)
     return;
@@ -151,36 +147,6 @@ void ChromeWebContentsViewDelegateViews::ShowContextMenu(
   ShowMenu(
       BuildMenu(content::WebContents::FromRenderFrameHost(render_frame_host),
                 params));
-}
-
-void ChromeWebContentsViewDelegateViews::ShowDisambiguationPopup(
-    const gfx::Rect& target_rect,
-    const SkBitmap& zoomed_bitmap,
-    const gfx::NativeView content,
-    const base::Callback<void(ui::GestureEvent*)>& gesture_cb,
-    const base::Callback<void(ui::MouseEvent*)>& mouse_cb) {
-#if defined(USE_AURA)
-  // If we are attempting to show a link disambiguation popup while already
-  // showing one this means that the popup itself received an ambiguous touch.
-  // Don't show another popup in this case.
-  if (link_disambiguation_popup_) {
-    link_disambiguation_popup_.reset();
-    return;
-  }
-
-  link_disambiguation_popup_.reset(new LinkDisambiguationPopup);
-  link_disambiguation_popup_->Show(
-      views::Widget::GetTopLevelWidgetForNativeView(GetActiveNativeView()),
-      zoomed_bitmap,
-      target_rect,
-      content,
-      gesture_cb,
-      mouse_cb);
-#endif
-}
-
-void ChromeWebContentsViewDelegateViews::HideDisambiguationPopup() {
-  link_disambiguation_popup_.reset();
 }
 
 void ChromeWebContentsViewDelegateViews::SizeChanged(const gfx::Size& size) {

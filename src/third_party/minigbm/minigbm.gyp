@@ -17,15 +17,18 @@
           ],
           'sources': [
             'src/cirrus.c',
+            'src/evdi.c',
             'src/exynos.c',
             'src/gbm.c',
             'src/gma500.c',
             'src/helpers.c',
             'src/i915.c',
+            'src/marvell.c',
             'src/mediatek.c',
             'src/rockchip.c',
             'src/tegra.c',
             'src/udl.c',
+            'src/virtio_gpu.c',
           ],
           'include_dirs': [
             'src',

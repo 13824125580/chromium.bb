@@ -8,6 +8,7 @@
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/frame/LocalFrame.h"
 #include "modules/EventTargetModules.h"
 
 namespace blink {
@@ -22,7 +23,7 @@ const AtomicString& PresentationReceiver::interfaceName() const
     return EventTargetNames::PresentationReceiver;
 }
 
-ExecutionContext* PresentationReceiver::executionContext() const
+ExecutionContext* PresentationReceiver::getExecutionContext() const
 {
     return frame() ? frame()->document() : nullptr;
 }
@@ -39,7 +40,7 @@ ScriptPromise PresentationReceiver::getConnections(ScriptState* scriptState)
 
 DEFINE_TRACE(PresentationReceiver)
 {
-    RefCountedGarbageCollectedEventTargetWithInlineData<PresentationReceiver>::trace(visitor);
+    EventTargetWithInlineData::trace(visitor);
     DOMWindowProperty::trace(visitor);
 }
 

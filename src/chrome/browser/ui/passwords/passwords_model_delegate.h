@@ -26,7 +26,7 @@ class GURL;
 // and notify about user actions.
 class PasswordsModelDelegate {
  public:
-  // Returns the origin of the current page.
+  // Returns the URL of the site the current forms are retrieved for.
   virtual const GURL& GetOrigin() const = 0;
 
   // Returns the current tab state.
@@ -88,6 +88,8 @@ class PasswordsModelDelegate {
   virtual void NavigateToSmartLockHelpPage() = 0;
   // Open a new tab, pointing to the password manager settings page.
   virtual void NavigateToPasswordManagerSettingsPage() = 0;
+  // Starts the Chrome Sign in flow.
+  virtual void NavigateToChromeSignIn() = 0;
 
   // Called from the dialog controller when the dialog is hidden.
   virtual void OnDialogHidden() = 0;

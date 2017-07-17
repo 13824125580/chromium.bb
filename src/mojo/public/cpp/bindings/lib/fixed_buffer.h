@@ -7,8 +7,8 @@
 
 #include <stddef.h>
 
+#include "base/macros.h"
 #include "mojo/public/cpp/bindings/lib/buffer.h"
-#include "mojo/public/cpp/system/macros.h"
 
 namespace mojo {
 namespace internal {
@@ -51,14 +51,12 @@ class FixedBuffer : public Buffer {
   // memory is zero-filled.
   void* Allocate(size_t num_bytes) override;
 
-  PickleBuffer* AsPickleBuffer() override;
-
  protected:
   char* ptr_;
   size_t cursor_;
   size_t size_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(FixedBuffer);
+  DISALLOW_COPY_AND_ASSIGN(FixedBuffer);
 };
 
 class FixedBufferForTesting : public FixedBuffer {
@@ -73,7 +71,7 @@ class FixedBufferForTesting : public FixedBuffer {
   void* Leak();
 
  private:
-  MOJO_DISALLOW_COPY_AND_ASSIGN(FixedBufferForTesting);
+  DISALLOW_COPY_AND_ASSIGN(FixedBufferForTesting);
 };
 
 }  // namespace internal

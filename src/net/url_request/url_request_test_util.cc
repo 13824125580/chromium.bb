@@ -9,18 +9,22 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "net/base/host_port_pair.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/transport_security_state.h"
+#include "net/proxy/proxy_retry_info.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/default_channel_id_store.h"
 #include "net/url_request/static_http_user_agent_settings.h"
@@ -37,8 +41,8 @@ namespace {
 // |TestNetworkDelegate::next_states_| to check that we do not send
 // events in the wrong order.
 const int kStageBeforeURLRequest = 1 << 0;
-const int kStageBeforeSendHeaders = 1 << 1;
-const int kStageSendHeaders = 1 << 2;
+const int kStageBeforeStartTransaction = 1 << 1;
+const int kStageStartTransaction = 1 << 2;
 const int kStageHeadersReceived = 1 << 3;
 const int kStageAuthRequired = 1 << 4;
 const int kStageBeforeRedirect = 1 << 5;
@@ -50,19 +54,10 @@ const int kStageDestruction = 1 << 10;
 
 }  // namespace
 
-TestURLRequestContext::TestURLRequestContext()
-    : initialized_(false),
-      client_socket_factory_(nullptr),
-      proxy_delegate_(nullptr),
-      context_storage_(this) {
-  Init();
-}
+TestURLRequestContext::TestURLRequestContext() : TestURLRequestContext(false) {}
 
 TestURLRequestContext::TestURLRequestContext(bool delay_initialization)
-    : initialized_(false),
-      client_socket_factory_(nullptr),
-      proxy_delegate_(nullptr),
-      context_storage_(this) {
+    : context_storage_(this) {
   if (!delay_initialization)
     Init();
 }
@@ -78,14 +73,23 @@ void TestURLRequestContext::Init() {
 
   if (!host_resolver())
     context_storage_.set_host_resolver(
-        scoped_ptr<HostResolver>(new MockCachingHostResolver()));
+        std::unique_ptr<HostResolver>(new MockCachingHostResolver()));
   if (!proxy_service())
     context_storage_.set_proxy_service(ProxyService::CreateDirect());
   if (!cert_verifier())
     context_storage_.set_cert_verifier(CertVerifier::CreateDefault());
-  if (!transport_security_state())
+  if (!transport_security_state()) {
     context_storage_.set_transport_security_state(
-        make_scoped_ptr(new TransportSecurityState()));
+        base::WrapUnique(new TransportSecurityState()));
+  }
+  if (!cert_transparency_verifier()) {
+    context_storage_.set_cert_transparency_verifier(
+        base::WrapUnique(new MultiLogCTVerifier()));
+  }
+  if (!ct_policy_enforcer()) {
+    context_storage_.set_ct_policy_enforcer(
+        base::WrapUnique(new CTPolicyEnforcer));
+  }
   if (!ssl_config_service())
     context_storage_.set_ssl_config_service(new SSLConfigServiceDefaults());
   if (!http_auth_handler_factory()) {
@@ -94,7 +98,19 @@ void TestURLRequestContext::Init() {
   }
   if (!http_server_properties()) {
     context_storage_.set_http_server_properties(
-        scoped_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
+        std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
+  }
+  // In-memory cookie store.
+  if (!cookie_store()) {
+    context_storage_.set_cookie_store(
+        base::WrapUnique(new CookieMonster(nullptr, nullptr)));
+  }
+  // In-memory Channel ID service.  Must be created before the
+  // HttpNetworkSession.
+  if (!channel_id_service()) {
+    context_storage_.set_channel_id_service(base::WrapUnique(
+        new ChannelIDService(new DefaultChannelIDStore(nullptr),
+                             base::WorkerPool::GetTaskRunner(true))));
   }
   if (http_transaction_factory()) {
     // Make sure we haven't been passed an object we're not going to use.
@@ -108,36 +124,28 @@ void TestURLRequestContext::Init() {
     params.proxy_delegate = proxy_delegate();
     params.host_resolver = host_resolver();
     params.cert_verifier = cert_verifier();
+    params.cert_transparency_verifier = cert_transparency_verifier();
+    params.ct_policy_enforcer = ct_policy_enforcer();
     params.transport_security_state = transport_security_state();
     params.proxy_service = proxy_service();
     params.ssl_config_service = ssl_config_service();
     params.http_auth_handler_factory = http_auth_handler_factory();
-    params.network_delegate = network_delegate();
     params.http_server_properties = http_server_properties();
     params.net_log = net_log();
     params.channel_id_service = channel_id_service();
     context_storage_.set_http_network_session(
-        make_scoped_ptr(new HttpNetworkSession(params)));
-    context_storage_.set_http_transaction_factory(make_scoped_ptr(
+        base::WrapUnique(new HttpNetworkSession(params)));
+    context_storage_.set_http_transaction_factory(base::WrapUnique(
         new HttpCache(context_storage_.http_network_session(),
                       HttpCache::DefaultBackend::InMemory(0), false)));
   }
-  // In-memory cookie store.
-  if (!cookie_store())
-    context_storage_.set_cookie_store(new CookieMonster(nullptr, nullptr));
-  // In-memory Channel ID service.
-  if (!channel_id_service()) {
-    context_storage_.set_channel_id_service(make_scoped_ptr(
-        new ChannelIDService(new DefaultChannelIDStore(nullptr),
-                             base::WorkerPool::GetTaskRunner(true))));
-  }
   if (!http_user_agent_settings()) {
-    context_storage_.set_http_user_agent_settings(make_scoped_ptr(
+    context_storage_.set_http_user_agent_settings(base::WrapUnique(
         new StaticHttpUserAgentSettings("en-us,fr", std::string())));
   }
   if (!job_factory()) {
     context_storage_.set_job_factory(
-        make_scoped_ptr(new URLRequestJobFactoryImpl()));
+        base::WrapUnique(new URLRequestJobFactoryImpl()));
   }
 }
 
@@ -149,7 +157,7 @@ TestURLRequestContextGetter::TestURLRequestContextGetter(
 
 TestURLRequestContextGetter::TestURLRequestContextGetter(
     const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner,
-    scoped_ptr<TestURLRequestContext> context)
+    std::unique_ptr<TestURLRequestContext> context)
     : network_task_runner_(network_task_runner), context_(std::move(context)) {
   DCHECK(network_task_runner_.get());
 }
@@ -338,8 +346,8 @@ TestNetworkDelegate::TestNetworkDelegate()
       blocked_get_cookies_count_(0),
       blocked_set_cookie_count_(0),
       set_cookie_count_(0),
-      observed_before_proxy_headers_sent_callbacks_(0),
-      before_send_headers_count_(0),
+      before_send_headers_with_proxy_count_(0),
+      before_start_transaction_count_(0),
       headers_received_count_(0),
       total_network_bytes_received_(0),
       total_network_bytes_sent_(0),
@@ -391,47 +399,53 @@ int TestNetworkDelegate::OnBeforeURLRequest(
   EXPECT_TRUE(next_states_[req_id] & kStageBeforeURLRequest) <<
       event_order_[req_id];
   next_states_[req_id] =
-      kStageBeforeSendHeaders |
+      kStageBeforeStartTransaction |
       kStageResponseStarted |  // data: URLs do not trigger sending headers
-      kStageBeforeRedirect |  // a delegate can trigger a redirection
-      kStageCompletedError |  // request canceled by delegate
-      kStageAuthRequired;  // Auth can come next for FTP requests
+      kStageBeforeRedirect |   // a delegate can trigger a redirection
+      kStageCompletedError |   // request canceled by delegate
+      kStageAuthRequired;      // Auth can come next for FTP requests
   created_requests_++;
   return OK;
 }
 
-int TestNetworkDelegate::OnBeforeSendHeaders(
+int TestNetworkDelegate::OnBeforeStartTransaction(
     URLRequest* request,
     const CompletionCallback& callback,
     HttpRequestHeaders* headers) {
   int req_id = request->identifier();
   InitRequestStatesIfNew(req_id);
-  event_order_[req_id] += "OnBeforeSendHeaders\n";
-  EXPECT_TRUE(next_states_[req_id] & kStageBeforeSendHeaders) <<
-      event_order_[req_id];
-  next_states_[req_id] =
-      kStageSendHeaders |
-      kStageCompletedError;  // request canceled by delegate
-  before_send_headers_count_++;
+  event_order_[req_id] += "OnBeforeStartTransaction\n";
+  EXPECT_TRUE(next_states_[req_id] & kStageBeforeStartTransaction)
+      << event_order_[req_id];
+  next_states_[req_id] = kStageStartTransaction |
+                         kStageCompletedError;  // request canceled by delegate
+  before_start_transaction_count_++;
   return OK;
 }
 
-void TestNetworkDelegate::OnBeforeSendProxyHeaders(
+void TestNetworkDelegate::OnBeforeSendHeaders(
     URLRequest* request,
     const ProxyInfo& proxy_info,
+    const ProxyRetryInfoMap& proxy_retry_info,
     HttpRequestHeaders* headers) {
-  ++observed_before_proxy_headers_sent_callbacks_;
+  if (!proxy_info.is_http() && !proxy_info.is_https() && !proxy_info.is_quic())
+    return;
+  if (!request || request->url().SchemeIs("https") ||
+      request->url().SchemeIsWSOrWSS()) {
+    return;
+  }
+  ++before_send_headers_with_proxy_count_;
   last_observed_proxy_ = proxy_info.proxy_server().host_port_pair();
 }
 
-void TestNetworkDelegate::OnSendHeaders(
+void TestNetworkDelegate::OnStartTransaction(
     URLRequest* request,
     const HttpRequestHeaders& headers) {
   int req_id = request->identifier();
   InitRequestStatesIfNew(req_id);
-  event_order_[req_id] += "OnSendHeaders\n";
-  EXPECT_TRUE(next_states_[req_id] & kStageSendHeaders) <<
-      event_order_[req_id];
+  event_order_[req_id] += "OnStartTransaction\n";
+  EXPECT_TRUE(next_states_[req_id] & kStageStartTransaction)
+      << event_order_[req_id];
   if (!will_be_intercepted_on_next_error_)
     next_states_[req_id] = kStageHeadersReceived | kStageCompletedError;
   else
@@ -458,7 +472,7 @@ int TestNetworkDelegate::OnHeadersReceived(
 
   // Basic authentication sends a second request from the URLRequestHttpJob
   // layer before the URLRequest reports that a response has started.
-  next_states_[req_id] |= kStageBeforeSendHeaders;
+  next_states_[req_id] |= kStageBeforeStartTransaction;
 
   if (!redirect_on_headers_received_url_.is_empty()) {
     *override_response_headers =
@@ -491,9 +505,10 @@ void TestNetworkDelegate::OnBeforeRedirect(URLRequest* request,
   EXPECT_TRUE(next_states_[req_id] & kStageBeforeRedirect) <<
       event_order_[req_id];
   next_states_[req_id] =
-      kStageBeforeURLRequest |  // HTTP redirects trigger this.
-      kStageBeforeSendHeaders |  // Redirects from the network delegate do not
-                                 // trigger onBeforeURLRequest.
+      kStageBeforeURLRequest |        // HTTP redirects trigger this.
+      kStageBeforeStartTransaction |  // Redirects from the network delegate do
+                                      // not
+                                      // trigger onBeforeURLRequest.
       kStageCompletedError;
 
   // A redirect can lead to a file or a data URL. In this case, we do not send
@@ -586,7 +601,8 @@ NetworkDelegate::AuthRequiredResponse TestNetworkDelegate::OnAuthRequired(
   event_order_[req_id] += "OnAuthRequired\n";
   EXPECT_TRUE(next_states_[req_id] & kStageAuthRequired) <<
       event_order_[req_id];
-  next_states_[req_id] = kStageBeforeSendHeaders |
+  next_states_[req_id] =
+      kStageBeforeStartTransaction |
       kStageAuthRequired |  // For example, proxy auth followed by server auth.
       kStageHeadersReceived |  // Request canceled by delegate simulates empty
                                // response.
@@ -655,7 +671,8 @@ URLRequestJob* TestJobInterceptor::MaybeCreateJob(
   return main_intercept_job_.release();
 }
 
-void TestJobInterceptor::set_main_intercept_job(scoped_ptr<URLRequestJob> job) {
+void TestJobInterceptor::set_main_intercept_job(
+    std::unique_ptr<URLRequestJob> job) {
   main_intercept_job_ = std::move(job);
 }
 

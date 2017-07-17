@@ -47,8 +47,62 @@ from v8_utilities import (has_extended_attribute_value, is_unforgeable,
 # interface's configure*Template() function.
 CUSTOM_REGISTRATION_EXTENDED_ATTRIBUTES = frozenset([
     'DoNotCheckSecurity',
-    'DoNotCheckSignature',
 ])
+
+
+def method_is_visible(method, interface_is_partial):
+    if 'overloads' in method:
+        return method['overloads']['visible'] and not (method['overloads']['has_partial_overloads'] and interface_is_partial)
+    return method['visible'] and 'overload_index' not in method
+
+
+def conditionally_exposed(method):
+    return method['overloads']['exposed_test_all'] if 'overloads' in method else method['exposed_test']
+
+
+def filter_conditionally_exposed(methods, interface_is_partial):
+    return [method for method in methods if (
+        method_is_visible(method, interface_is_partial) and conditionally_exposed(method))]
+
+
+def custom_registration(method):
+    if 'overloads' in method:
+        return (method['overloads']['has_custom_registration_all'] or
+                method['overloads']['runtime_determined_lengths'] or
+                (method['overloads']['runtime_enabled_function_all'] and not conditionally_exposed(method)))
+    return (method['has_custom_registration'] or
+            (method['runtime_enabled_function'] and not conditionally_exposed(method)))
+
+
+def filter_custom_registration(methods, interface_is_partial):
+    return [method for method in methods if (
+        method_is_visible(method, interface_is_partial) and custom_registration(method))]
+
+
+def filter_method_configuration(methods, interface_is_partial):
+    return [method for method in methods if
+            method_is_visible(method, interface_is_partial) and
+            method['should_be_exposed_to_script'] and
+            not method['origin_trial_feature_name'] and
+            not conditionally_exposed(method) and
+            not custom_registration(method)]
+
+
+def method_for_origin_trial_feature(methods, feature_name, interface_is_partial):
+    """Filters the list of methods, and returns those defined for the named origin trial feature."""
+    return [method for method in methods if
+            method_is_visible(method, interface_is_partial) and
+            method['should_be_exposed_to_script'] and
+            method['origin_trial_feature_name'] == feature_name and
+            not conditionally_exposed(method) and
+            not custom_registration(method)]
+
+
+def method_filters():
+    return {'conditionally_exposed': filter_conditionally_exposed,
+            'custom_registration': filter_custom_registration,
+            'has_method_configuration': filter_method_configuration,
+            'method_for_origin_trial_feature': method_for_origin_trial_feature}
 
 
 def use_local_result(method):
@@ -56,6 +110,7 @@ def use_local_result(method):
     idl_type = method.idl_type
     return (has_extended_attribute_value(method, 'CallWith', 'ScriptState') or
             'ImplementedInPrivateScript' in extended_attributes or
+            'NewObject' in extended_attributes or
             'RaisesException' in extended_attributes or
             idl_type.is_union_type or
             idl_type.is_explicit_nullable)
@@ -101,9 +156,12 @@ def method_context(interface, method, is_visible=True):
     if is_check_security_for_receiver or is_check_security_for_return_value:
         includes.add('bindings/core/v8/BindingSecurity.h')
 
+    is_ce_reactions = 'CEReactions' in extended_attributes
+    if is_ce_reactions:
+        includes.add('core/dom/custom/CEReactionsScope.h')
     is_custom_element_callbacks = 'CustomElementCallbacks' in extended_attributes
     if is_custom_element_callbacks:
-        includes.add('core/dom/custom/CustomElementProcessingStack.h')
+        includes.add('core/dom/custom/V0CustomElementProcessingStack.h')
 
     is_raises_exception = 'RaisesException' in extended_attributes
     is_custom_call_prologue = has_extended_attribute_value(method, 'Custom', 'CallPrologue')
@@ -111,19 +169,10 @@ def method_context(interface, method, is_visible=True):
     is_post_message = 'PostMessage' in extended_attributes
     if is_post_message:
         includes.add('bindings/core/v8/SerializedScriptValueFactory.h')
-        includes.add('core/dom/DOMArrayBuffer.h')
-        includes.add('core/dom/MessagePort.h')
-        includes.add('core/frame/ImageBitmap.h')
+        includes.add('bindings/core/v8/Transferables.h')
 
     if 'LenientThis' in extended_attributes:
         raise Exception('[LenientThis] is not supported for operations.')
-
-    if 'RuntimeEnabled' in extended_attributes:
-        includes.add('platform/RuntimeEnabledFeatures.h')
-
-    if 'OriginTrialEnabled' in extended_attributes:
-        includes.add('core/inspector/ConsoleMessage.h')
-        includes.add('core/origin_trials/OriginTrials.h')
 
     argument_contexts = [
         argument_context(interface, method, argument, index, is_visible=is_visible)
@@ -142,6 +191,7 @@ def method_context(interface, method, is_visible=True):
             CUSTOM_REGISTRATION_EXTENDED_ATTRIBUTES.intersection(
                 extended_attributes.iterkeys()),
         'deprecate_as': v8_utilities.deprecate_as(method),  # [DeprecateAs]
+        'do_not_test_new_object': 'DoNotTestNewObject' in extended_attributes,
         'exposed_test': v8_utilities.exposed(method, interface),  # [Exposed]
         # TODO(yukishiino): Retire has_custom_registration flag.  Should be
         # replaced with V8DOMConfiguration::PropertyLocationConfiguration.
@@ -158,11 +208,11 @@ def method_context(interface, method, is_visible=True):
             any(True for argument_context in argument_contexts
                 if argument_context['is_optional_without_default_value']),
         'idl_type': idl_type.base_type,
-        'is_origin_trial_enabled': v8_utilities.origin_trial_enabled_function(method) or v8_utilities.origin_trial_enabled_function(interface),  # [OriginTrialEnabled]
         'is_call_with_execution_context': has_extended_attribute_value(method, 'CallWith', 'ExecutionContext'),
         'is_call_with_script_arguments': is_call_with_script_arguments,
         'is_call_with_script_state': is_call_with_script_state,
         'is_call_with_this_value': is_call_with_this_value,
+        'is_ce_reactions': is_ce_reactions,
         'is_check_security_for_receiver': is_check_security_for_receiver,
         'is_check_security_for_return_value': is_check_security_for_return_value,
         'is_custom': 'Custom' in extended_attributes and
@@ -171,9 +221,9 @@ def method_context(interface, method, is_visible=True):
         'is_custom_call_epilogue': is_custom_call_epilogue,
         'is_custom_element_callbacks': is_custom_element_callbacks,
         'is_do_not_check_security': is_do_not_check_security,
-        'is_do_not_check_signature': 'DoNotCheckSignature' in extended_attributes,
         'is_explicit_nullable': idl_type.is_explicit_nullable,
         'is_implemented_in_private_script': is_implemented_in_private_script,
+        'is_new_object': 'NewObject' in extended_attributes,
         'is_partial_interface_member':
             'PartialInterfaceImplementedAs' in extended_attributes,
         'is_per_world_bindings': 'PerWorldBindings' in extended_attributes,
@@ -195,8 +245,8 @@ def method_context(interface, method, is_visible=True):
         'on_interface': v8_utilities.on_interface(interface, method),
         'on_prototype': v8_utilities.on_prototype(interface, method),
         'only_exposed_to_private_script': is_only_exposed_to_private_script,
-        'origin_trial_enabled': v8_utilities.origin_trial_enabled_function(method),  # [OriginTrialEnabled]
-        'origin_trial_enabled_per_interface': v8_utilities.origin_trial_enabled_function(interface),  # [OriginTrialEnabled]
+        'origin_trial_enabled_function': v8_utilities.origin_trial_enabled_function_name(method),  # [OriginTrialEnabled]
+        'origin_trial_feature_name': v8_utilities.origin_trial_feature_name(method),  # [OriginTrialEnabled]
         'private_script_v8_value_to_local_cpp_value': idl_type.v8_value_to_local_cpp_value(
             extended_attributes, 'v8Value', 'cppValue', isolate='scriptState->isolate()', bailout_return_value='false'),
         'property_attributes': property_attributes(interface, method),
@@ -296,16 +346,6 @@ def argument_declarations_for_private_script(interface, method):
 ################################################################################
 
 def cpp_value(interface, method, number_of_arguments):
-    def cpp_argument(argument):
-        idl_type = argument.idl_type
-        if idl_type.name == 'EventListener':
-            return argument.name
-        if (idl_type.name in ['NodeFilter', 'NodeFilterOrNull',
-                              'XPathNSResolver', 'XPathNSResolverOrNull']):
-            # FIXME: remove this special case
-            return '%s.release()' % argument.name
-        return argument.name
-
     # Truncate omitted optional arguments
     arguments = method.arguments[:number_of_arguments]
     cpp_arguments = []
@@ -326,7 +366,7 @@ def cpp_value(interface, method, number_of_arguments):
             'ImplementedInPrivateScript' not in method.extended_attributes and
             not method.is_static):
         cpp_arguments.append('*impl')
-    cpp_arguments.extend(cpp_argument(argument) for argument in arguments)
+    cpp_arguments.extend(argument.name for argument in arguments)
 
     if 'ImplementedInPrivateScript' in method.extended_attributes:
         if method.idl_type.name != 'void':
@@ -367,7 +407,6 @@ def v8_set_return_value(interface_name, method, cpp_value, for_main_world=False)
             not idl_type.is_basic_type):
         raise Exception('Private scripts supports only primitive types and DOM wrappers.')
 
-    release = False
     # [CallWith=ScriptState], [RaisesException]
     if use_local_result(method):
         if idl_type.is_explicit_nullable:
@@ -375,10 +414,9 @@ def v8_set_return_value(interface_name, method, cpp_value, for_main_world=False)
             cpp_value = 'result.get()'
         else:
             cpp_value = 'result'
-        release = idl_type.release
 
     script_wrappable = 'impl' if inherits_interface(interface_name, 'Node') else ''
-    return idl_type.v8_set_return_value(cpp_value, extended_attributes, script_wrappable=script_wrappable, release=release, for_main_world=for_main_world, is_static=method.is_static)
+    return idl_type.v8_set_return_value(cpp_value, extended_attributes, script_wrappable=script_wrappable, for_main_world=for_main_world, is_static=method.is_static)
 
 
 def v8_value_to_local_cpp_variadic_value(method, argument, index, return_promise):

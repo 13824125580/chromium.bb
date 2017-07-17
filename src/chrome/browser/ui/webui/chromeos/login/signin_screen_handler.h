@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_SIGNIN_SCREEN_HANDLER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -14,7 +15,6 @@
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/screens/network_error_model.h"
 #include "chrome/browser/chromeos/login/signin_specifics.h"
@@ -24,6 +24,7 @@
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/browser/ui/webui/chromeos/touch_view_controller_delegate.h"
+#include "chromeos/dbus/power_manager_client.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "components/proximity_auth/screenlock_bridge.h"
 #include "components/user_manager/user_manager.h"
@@ -49,6 +50,7 @@ class CaptivePortalWindowProxy;
 class CoreOobeActor;
 class ErrorScreensHistogramHelper;
 class GaiaScreenHandler;
+class LoginFeedback;
 class NativeWindowDelegate;
 class SupervisedUserCreationScreenHandler;
 class User;
@@ -196,13 +198,14 @@ class SigninScreenHandlerDelegate {
   virtual ~SigninScreenHandlerDelegate() {}
 };
 
-// A class that handles the WebUI hooks in sign-in screen in OobeDisplay
-// and LoginDisplay.
+// A class that handles the WebUI hooks in sign-in screen in OobeUI and
+// LoginDisplay.
 class SigninScreenHandler
     : public BaseScreenHandler,
       public LoginDisplayWebUIHandler,
       public content::NotificationObserver,
       public NetworkStateInformer::NetworkStateInformerObserver,
+      public PowerManagerClient::Observer,
       public input_method::ImeKeyboard::Observer,
       public TouchViewControllerDelegate::Observer,
       public OobeUI::Observer {
@@ -239,8 +242,8 @@ class SigninScreenHandler
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // OobeUI::Observer implemetation.
-  void OnCurrentScreenChanged(OobeUI::Screen current_screen,
-                              OobeUI::Screen new_screen) override;
+  void OnCurrentScreenChanged(OobeScreen current_screen,
+                              OobeScreen new_screen) override;
 
   void SetFocusPODCallbackForTesting(base::Closure callback);
 
@@ -311,6 +314,9 @@ class SigninScreenHandler
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
+  // PowerManagerClient::Observer implementation:
+  void SuspendDone(const base::TimeDelta& sleep_duration) override;
+
   // TouchViewControllerDelegate::Observer implementation:
   void OnMaximizeModeStarted() override;
   void OnMaximizeModeEnded() override;
@@ -319,6 +325,9 @@ class SigninScreenHandler
 
   // Restore input focus to current user pod.
   void RefocusCurrentPod();
+
+  // Hides the PIN keyboard if it is no longer available.
+  void HidePinKeyboardIfNeeded(const AccountId& account_id);
 
   // WebUI message handlers.
   void HandleGetUsers();
@@ -371,7 +380,7 @@ class SigninScreenHandler
   void SendPublicSessionKeyboardLayouts(
       const AccountId& account_id,
       const std::string& locale,
-      scoped_ptr<base::ListValue> keyboard_layouts);
+      std::unique_ptr<base::ListValue> keyboard_layouts);
 
   // Returns true iff
   // (i)   log in is restricted to some user list,
@@ -381,9 +390,6 @@ class SigninScreenHandler
   // Cancels password changed flow - switches back to login screen.
   // Called as a callback after cookies are cleared.
   void CancelPasswordChangedFlowInternal();
-
-  // Returns current visible screen.
-  OobeUI::Screen GetCurrentScreen() const;
 
   // Returns true if current visible screen is the Gaia sign-in page.
   bool IsGaiaVisible() const;
@@ -415,8 +421,8 @@ class SigninScreenHandler
   // Returns OobeUI object of NULL.
   OobeUI* GetOobeUI() const;
 
-  // Callback invoked after the syslog feedback is sent.
-  void OnSysLogFeedbackSent(bool sent);
+  // Callback invoked after the feedback is finished.
+  void OnFeedbackFinished();
 
   // Current UI state of the signin screen.
   UIState ui_state_ = UI_STATE_UNKNOWN;
@@ -465,12 +471,22 @@ class SigninScreenHandler
 
   bool caps_lock_enabled_ = false;
 
+  // If network has accidentally changed to the one that requires proxy
+  // authentication, we will automatically reload gaia page that will bring
+  // "Proxy authentication" dialog to the user. To prevent flakiness, we will do
+  // it at most 3 times.
+  int proxy_auth_dialog_reload_times_;
+
+  // True if we need to reload gaia page to bring back "Proxy authentication"
+  // dialog.
+  bool proxy_auth_dialog_need_reload_ = false;
+
   // Non-owning ptr.
   // TODO(antrim@): remove this dependency.
   GaiaScreenHandler* gaia_screen_handler_ = nullptr;
 
   // Maximized mode controller delegate.
-  scoped_ptr<TouchViewControllerDelegate> max_mode_delegate_;
+  std::unique_ptr<TouchViewControllerDelegate> max_mode_delegate_;
 
   // Input Method Engine state used at signin screen.
   scoped_refptr<input_method::InputMethodManager::State> ime_state_;
@@ -483,7 +499,9 @@ class SigninScreenHandler
 
   bool zero_offline_timeout_for_test_ = false;
 
-  scoped_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+  std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+
+  std::unique_ptr<LoginFeedback> login_feedback_;
 
   base::WeakPtrFactory<SigninScreenHandler> weak_factory_;
 

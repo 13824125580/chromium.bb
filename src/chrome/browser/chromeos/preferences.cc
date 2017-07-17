@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "ash/autoclick/autoclick_controller.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/wm_shell.h"
 #include "ash/display/display_manager.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
@@ -23,10 +25,12 @@
 #include "chrome/browser/chromeos/input_method/input_method_syncer.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/net/wake_on_wifi_manager.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/system/statistics_provider.h"
@@ -42,11 +46,11 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "third_party/cros_system_api/dbus/update_engine/dbus-constants.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
-#include "ui/chromeos/accessibility_types.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
 #include "url/gurl.h"
@@ -62,8 +66,8 @@ Preferences::Preferences()
       user_is_primary_(false) {
   // Do not observe shell, if there is no shell instance; e.g., in some unit
   // tests.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->AddShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->AddShellObserver(this);
 }
 
 Preferences::Preferences(input_method::InputMethodManager* input_method_manager)
@@ -73,8 +77,8 @@ Preferences::Preferences(input_method::InputMethodManager* input_method_manager)
       user_is_primary_(false) {
   // Do not observe shell, if there is no shell instance; e.g., in some unit
   // tests.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->AddShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->AddShellObserver(this);
 }
 
 Preferences::~Preferences() {
@@ -82,8 +86,8 @@ Preferences::~Preferences() {
   user_manager::UserManager::Get()->RemoveSessionStateObserver(this);
   // If shell instance is destoryed before this preferences instance, there is
   // no need to remove this shell observer.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->RemoveShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->RemoveShellObserver(this);
 }
 
 // static
@@ -92,9 +96,14 @@ void Preferences::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kOwnerTapToClickEnabled, true);
   registry->RegisterBooleanPref(prefs::kAccessibilityVirtualKeyboardEnabled,
                                 false);
+  registry->RegisterBooleanPref(prefs::kAccessibilityMonoAudioEnabled,
+                                false);
   registry->RegisterStringPref(prefs::kLogoutStartedLast, std::string());
   registry->RegisterBooleanPref(prefs::kResolveDeviceTimezoneByGeolocation,
                                 true);
+  registry->RegisterIntegerPref(
+      prefs::kSystemTimezoneAutomaticDetectionPolicy,
+      enterprise_management::SystemTimezoneProto::USERS_DECIDE);
 }
 
 // static
@@ -159,8 +168,7 @@ void Preferences::RegisterProfilePrefs(
       prefs::kAccessibilityScreenMagnifierEnabled, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
-      prefs::kAccessibilityScreenMagnifierType,
-      ui::kDefaultMagnifierType,
+      prefs::kAccessibilityScreenMagnifierType, ash::kDefaultMagnifierType,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterDoublePref(prefs::kAccessibilityScreenMagnifierScale,
                                std::numeric_limits<double>::min());
@@ -170,15 +178,34 @@ void Preferences::RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kAccessibilityAutoclickDelayMs,
-      ash::AutoclickController::kDefaultAutoclickDelayMs,
+      int{ash::AutoclickController::GetDefaultAutoclickDelay()
+              .InMilliseconds()},
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kAccessibilityVirtualKeyboardEnabled,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
-      prefs::kShouldAlwaysShowAccessibilityMenu,
+      prefs::kAccessibilityMonoAudioEnabled,
       false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityCaretHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityCursorHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityFocusHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilitySelectToSpeakEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilitySwitchAccessEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kShouldAlwaysShowAccessibilityMenu, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kMouseSensitivity,
@@ -287,6 +314,14 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kForceMaximizeOnFirstRun, false);
 
   registry->RegisterBooleanPref(prefs::kLanguageImeMenuActivated, false);
+
+  registry->RegisterInt64Pref(prefs::kHatsLastInteractionTimestamp,
+                              base::Time().ToInternalValue());
+
+  // We don't sync EOL related prefs because they are device specific.
+  registry->RegisterBooleanPref(prefs::kEolNotificationDismissed, false);
+  registry->RegisterIntegerPref(prefs::kEolStatus,
+                                update_engine::EndOfLifeStatus::kSupported);
 }
 
 void Preferences::InitUserPrefs(syncable_prefs::PrefServiceSyncable* prefs) {
@@ -320,6 +355,10 @@ void Preferences::InitUserPrefs(syncable_prefs::PrefServiceSyncable* prefs) {
   previous_input_method_.Init(prefs::kLanguagePreviousInputMethod,
                               prefs, callback);
   ime_menu_activated_.Init(prefs::kLanguageImeMenuActivated, prefs, callback);
+  // Notifies the system tray to remove the IME items.
+  if (base::FeatureList::IsEnabled(features::kOptInImeMenu) &&
+      ime_menu_activated_.GetValue())
+    input_method::InputMethodManager::Get()->ImeMenuActivationChanged(true);
 
   xkb_auto_repeat_enabled_.Init(
       prefs::kLanguageXkbAutoRepeatEnabled, prefs, callback);
@@ -354,6 +393,12 @@ void Preferences::Init(Profile* profile, const user_manager::User* user) {
   UserSessionManager* session_manager = UserSessionManager::GetInstance();
   DCHECK(session_manager);
   ime_state_ = session_manager->GetDefaultIMEState(profile);
+
+  if (user_is_primary_) {
+    g_browser_process->platform_part()
+        ->GetTimezoneResolverManager()
+        ->SetPrimaryUserPrefs(prefs_);
+  }
 
   // Initialize preferences to currently saved state.
   ApplyPreferences(REASON_INITIALIZATION, "");
@@ -586,7 +631,8 @@ void Preferences::ApplyPreferences(ApplyReason reason,
   }
 
   if (pref_name == prefs::kLanguageImeMenuActivated &&
-      (reason == REASON_PREF_CHANGED || reason == REASON_ACTIVE_USER_CHANGED)) {
+      (reason == REASON_PREF_CHANGED || reason == REASON_ACTIVE_USER_CHANGED) &&
+      base::FeatureList::IsEnabled(features::kOptInImeMenu)) {
     const bool activated = ime_menu_activated_.GetValue();
     input_method::InputMethodManager::Get()->ImeMenuActivationChanged(
         activated);
@@ -621,15 +667,13 @@ void Preferences::ApplyPreferences(ApplyReason reason,
           prefs::kResolveDeviceTimezoneByGeolocation, value);
     }
     if (user_is_primary_) {
-      if (value) {
-        g_browser_process->platform_part()->GetTimezoneResolver()->Start();
-      } else {
-        g_browser_process->platform_part()->GetTimezoneResolver()->Stop();
-        if (reason == REASON_PREF_CHANGED) {
-          // Allow immediate timezone update on Stop + Start.
-          g_browser_process->local_state()->ClearPref(
-              TimeZoneResolver::kLastTimeZoneRefreshTime);
-        }
+      g_browser_process->platform_part()
+          ->GetTimezoneResolverManager()
+          ->UpdateTimezoneResolver();
+      if (!value && reason == REASON_PREF_CHANGED) {
+        // Allow immediate timezone update on Stop + Start.
+        g_browser_process->local_state()->ClearPref(
+            TimeZoneResolver::kLastTimeZoneRefreshTime);
       }
     }
   }

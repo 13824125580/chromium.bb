@@ -9,10 +9,11 @@
 #include "base/base64.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "base/timer/timer.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
+#include "net/test/test_data_directory.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/protocol/authenticator.h"
 #include "remoting/protocol/channel_authenticator.h"
@@ -84,11 +85,12 @@ void AuthenticatorTestBase::ContinueAuthExchangeWith(Authenticator* sender,
                                                      Authenticator* receiver,
                                                      bool sender_started,
                                                      bool receiver_started) {
-  scoped_ptr<buzz::XmlElement> message;
+  std::unique_ptr<buzz::XmlElement> message;
   ASSERT_NE(Authenticator::WAITING_MESSAGE, sender->state());
   if (sender->state() == Authenticator::ACCEPTED ||
-      sender->state() == Authenticator::REJECTED)
+      sender->state() == Authenticator::REJECTED) {
     return;
+  }
 
   // Verify that once the started flag for either party is set to true,
   // it should always stay true.
@@ -146,7 +148,7 @@ void AuthenticatorTestBase::RunChannelAuth(bool expected_fail) {
   base::Timer shutdown_timer(false, false);
   shutdown_timer.Start(FROM_HERE, TestTimeouts::action_timeout(),
                        base::MessageLoop::QuitWhenIdleClosure());
-  message_loop_.Run();
+  base::RunLoop().Run();
   shutdown_timer.Stop();
 
   testing::Mock::VerifyAndClearExpectations(&client_callback_);
@@ -160,14 +162,14 @@ void AuthenticatorTestBase::RunChannelAuth(bool expected_fail) {
 
 void AuthenticatorTestBase::OnHostConnected(
     int error,
-    scoped_ptr<P2PStreamSocket> socket) {
+    std::unique_ptr<P2PStreamSocket> socket) {
   host_callback_.OnDone(error);
   host_socket_ = std::move(socket);
 }
 
 void AuthenticatorTestBase::OnClientConnected(
     int error,
-    scoped_ptr<P2PStreamSocket> socket) {
+    std::unique_ptr<P2PStreamSocket> socket) {
   client_callback_.OnDone(error);
   client_socket_ = std::move(socket);
 }

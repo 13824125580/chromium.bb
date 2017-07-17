@@ -26,6 +26,7 @@
 
 #include "core/editing/Editor.h"
 
+#include "core/editing/EditingUtilities.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/frame/LocalFrame.h"
 #include "core/page/EditorClient.h"
@@ -41,7 +42,7 @@ bool Editor::handleEditingKeyboardEvent(KeyboardEvent* evt)
         return false;
 
     String commandName = behavior().interpretKeyEvent(*evt);
-    Command command = this->command(commandName);
+    Command command = this->createCommand(commandName);
 
     if (keyEvent->type() == PlatformEvent::RawKeyDown) {
         // WebKit doesn't have enough information about mode to decide how
@@ -59,6 +60,10 @@ bool Editor::handleEditingKeyboardEvent(KeyboardEvent* evt)
 
     if (!behavior().shouldInsertCharacter(*evt) || !canEdit())
         return false;
+
+    // Return true to prevent default action. e.g. Space key scroll.
+    if (dispatchBeforeInputInsertText(evt->target(), evt->keyEvent()->text()) != DispatchEventResult::NotCanceled)
+        return true;
 
     return insertText(evt->keyEvent()->text(), evt);
 }

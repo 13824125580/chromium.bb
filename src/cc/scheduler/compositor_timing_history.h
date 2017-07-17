@@ -5,8 +5,9 @@
 #ifndef CC_SCHEDULER_COMPOSITOR_TIMING_HISTORY_H_
 #define CC_SCHEDULER_COMPOSITOR_TIMING_HISTORY_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/base/rolling_time_delta_history.h"
 
 namespace base {
@@ -35,9 +36,6 @@ class CC_EXPORT CompositorTimingHistory {
   virtual ~CompositorTimingHistory();
 
   void AsValueInto(base::trace_event::TracedValue* state) const;
-
-  // Deprecated: http://crbug.com/552004
-  virtual base::TimeDelta BeginMainFrameToCommitDurationEstimate() const;
 
   // The main thread responsiveness depends heavily on whether or not the
   // on_critical_path flag is set, so we record response times separately.
@@ -83,7 +81,7 @@ class CC_EXPORT CompositorTimingHistory {
   void SetBeginMainFrameCommittingContinuously(bool active);
   void SetCompositorDrawingContinuously(bool active);
 
-  static scoped_ptr<UMAReporter> CreateUMAReporter(UMACategory category);
+  static std::unique_ptr<UMAReporter> CreateUMAReporter(UMACategory category);
   virtual base::TimeTicks Now() const;
 
   bool using_synchronous_renderer_compositor_;
@@ -98,7 +96,6 @@ class CC_EXPORT CompositorTimingHistory {
   base::TimeTicks new_active_tree_draw_end_time_prev_;
   base::TimeTicks draw_end_time_prev_;
 
-  RollingTimeDeltaHistory begin_main_frame_sent_to_commit_duration_history_;
   RollingTimeDeltaHistory begin_main_frame_queue_duration_history_;
   RollingTimeDeltaHistory begin_main_frame_queue_duration_critical_history_;
   RollingTimeDeltaHistory begin_main_frame_queue_duration_not_critical_history_;
@@ -120,7 +117,7 @@ class CC_EXPORT CompositorTimingHistory {
   base::TimeTicks draw_start_time_;
   base::TimeTicks swap_start_time_;
 
-  scoped_ptr<UMAReporter> uma_reporter_;
+  std::unique_ptr<UMAReporter> uma_reporter_;
   RenderingStatsInstrumentation* rendering_stats_instrumentation_;
 
  private:

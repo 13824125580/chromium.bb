@@ -9,6 +9,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/metrics/field_trial.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/crash_service_uploader.h"
 #include "chrome/common/variations/variations_util.h"
@@ -16,6 +17,7 @@
 #include "content/public/browser/background_tracing_config.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "net/base/network_change_notifier.h"
 #include "url/gurl.h"
 
 namespace tracing {
@@ -38,13 +40,23 @@ void OnUploadComplete(TraceCrashServiceUploader* uploader,
 
 void UploadCallback(const std::string& upload_url,
                     const scoped_refptr<base::RefCountedString>& file_contents,
-                    scoped_ptr<const base::DictionaryValue> metadata,
+                    std::unique_ptr<const base::DictionaryValue> metadata,
                     base::Closure callback) {
   TraceCrashServiceUploader* uploader = new TraceCrashServiceUploader(
       g_browser_process->system_request_context());
 
   if (GURL(upload_url).is_valid())
     uploader->SetUploadURL(upload_url);
+
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  auto connection_type = net::NetworkChangeNotifier::GetConnectionType();
+  if (connection_type != net::NetworkChangeNotifier::CONNECTION_WIFI &&
+      connection_type != net::NetworkChangeNotifier::CONNECTION_ETHERNET &&
+      connection_type != net::NetworkChangeNotifier::CONNECTION_BLUETOOTH) {
+    // Allow only 100KiB for uploads over data.
+    uploader->SetMaxUploadBytes(100 * 1024);
+  }
+#endif  // defined(OS_ANDROID) || defined(OS_IOS)
 
   uploader->DoUpload(
       file_contents->data(), content::TraceUploader::UNCOMPRESSED_UPLOAD,
@@ -70,7 +82,7 @@ void SetupBackgroundTracingFieldTrial() {
   if (g_config_text_filter_for_testing)
     (*g_config_text_filter_for_testing)(&config_text);
 
-  scoped_ptr<base::Value> value = base::JSONReader::Read(config_text);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(config_text);
   if (!value)
     return;
 
@@ -78,7 +90,7 @@ void SetupBackgroundTracingFieldTrial() {
   if (!value->GetAsDictionary(&dict))
     return;
 
-  scoped_ptr<content::BackgroundTracingConfig> config =
+  std::unique_ptr<content::BackgroundTracingConfig> config =
       content::BackgroundTracingConfig::FromDict(dict);
   if (!config)
     return;

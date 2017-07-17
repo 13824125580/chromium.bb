@@ -45,7 +45,7 @@
                i18n-values="label:PASTE_INTO_FOLDER_BUTTON_LABEL">
       <command id="rename" i18n-values="label:RENAME_BUTTON_LABEL"
                shortcut="Enter-Ctrl">
-      <command id="delete" shortcut="U+007F">
+      <command id="delete" shortcut="U+0008-Alt U+007F">
       <command id="refresh" i18n-values="label:REFRESH_BUTTON_LABEL"
                shortcut="U+0042-Ctrl" hidden>
       <command id="create-folder-shortcut"
@@ -91,7 +91,7 @@
                shortcut="U+00BE-Ctrl" hide-shortcut-text>
 
       <command id="default-task">
-      <command id="open-with" i18n-values="label:OPEN_WITH_BUTTON_LABEL">
+      <command id="open-with" i18n-values="label:MORE_ACTIONS_BUTTON_LABEL">
       <command id="zip-selection"
                i18n-values="label:ZIP_SELECTION_BUTTON_LABEL">
       <command id="set-wallpaper"
@@ -117,7 +117,7 @@
 
       <command id="install-new-extension"
                i18n-values="label:INSTALL_NEW_EXTENSION_LABEL">
-      <command id="open-gear-menu" shortcut="U+0045-Alt">
+      <command id="open-gear-menu" shortcut="U+0045-Alt U+0046-Alt">
     </commands>
 
     <cr-menu id="file-context-menu" class="chrome-menu files-menu"
@@ -262,7 +262,7 @@
         <paper-input-container no-label-float>
           <input is="iron-input" type="search" tabindex="13"
                  i18n-values="aria-label:SEARCH_TEXT_LABEL;placeholder:SEARCH_TEXT_LABEL">
-          <span class="clear"></span>
+          <span class="clear" suffix></span>
         </paper-input-container>
       </div>
       <button id="refresh-button" class="icon-button" tabindex="14" hidden
@@ -280,14 +280,14 @@
                   tabindex="15"
                   i18n-values="aria-label:CLOUD_IMPORT_COMMAND"
                   has-tooltip>
-            <iron-icon icon="cloud-queue"></iron-icon>
+            <iron-icon icon="files:cloud-queue"></iron-icon>
           </button>
           <button id="cloud-import-details-button"
                   class="icon-button"
                   tabindex="-1"
                   i18n-values="aria-label:CLOUD_IMPORT_SHOW_DETAILS"
                   has-tooltip>
-            <iron-icon icon="arrow-drop-down"></iron-icon>
+            <iron-icon icon="files:arrow-drop-down"></iron-icon>
           </button>
         </div>
         <div class="ripples">
@@ -309,7 +309,13 @@
         <files-toggle-ripple></files-toggle-ripple>
         <div class="icon"></div>
       </button>
-      <button id="gear-button" class="icon-button" tabindex="18"
+      <button id="details-button" class="icon-button" tabindex="18"
+              i18n-values="aria-label:DETAIL_BUTTON_TOOLTIP"
+              has-tooltip>
+        <files-toggle-ripple></files-toggle-ripple>
+        <div class="icon"></div>
+      </button>
+      <button id="gear-button" class="icon-button" tabindex="19"
               menu="#gear-menu"
               i18n-values="aria-label:GEAR_BUTTON_TOOLTIP"
               aria-activedescendant="gear-menu"
@@ -326,7 +332,7 @@
       </div>
       <div class="main">
         <div class="status">
-          <iron-icon icon="cloud-queue"></iron-icon>
+          <iron-icon icon="files:cloud-queue"></iron-icon>
           <div class="content"></div>
         </div>
         <div class="progress"><div class="value"></div></div>
@@ -342,7 +348,7 @@
     <div class="dialog-container">
       <div class="dialog-navigation-list">
         <div class="dialog-navigation-list-contents">
-          <tree id="directory-tree" tabindex="19"></tree>
+          <tree id="directory-tree" tabindex="20"></tree>
         </div>
         <div class="dialog-navigation-list-footer">
           <div id="progress-center" hidden>
@@ -385,14 +391,13 @@
               <div id="list-container">
                 <div id="empty-folder" hidden>
                   <div class="image"></div>
-                  <span class="label" i18n-content="EMPTY_FOLDER"></span>
+                  <span id="empty-folder-label" class="label" i18n-content="EMPTY_FOLDER"></span>
                 </div>
                 <div class="detail-table" id="detail-table" tabindex="1" autofocus>
                 </div>
                 <grid class="thumbnail-grid" tabindex="2"></grid>
                 <paper-progress class="loading-indicator" indeterminate hidden></paper-progress>
                 <div class="drive-welcome page"></div>
-                <div id="no-search-results"></div>
               </div>
             </div>
           </div>
@@ -401,6 +406,55 @@
             <div class="error"></div>
             <button id="format-button" command="#format"></button>
           </div>
+        </div>
+      </div>
+      <div class="splitter" id="list-details-splitter"></div>
+      <div id="details-container" class="details-container">
+        <div id="single-file-details">
+          <div class="filename-container">
+            <div class="filename-icon detail-icon"></div>
+            <div class="filename"></div>
+          </div>
+          <div class="thumbnail-container">
+            <div class="thumbnail"></div>
+          </div>
+          <ul class="details-list">
+            <li class='modification-time'>
+              <span i18n-content="DATE_COLUMN_LABEL"></span>:
+              <span class='content'></span>
+            </li>
+            <li class='file-size'>
+              <span i18n-content="SIZE_COLUMN_LABEL"></span>:
+              <span class='content'></span>
+            </li>
+            <li class='image-size'>
+              <span i18n-content="IMAGE_RESOLUTION_COLUMN_LABEL"></span>:
+              <span class='content'></span>
+            </li>
+            <li class='media-title'>
+              <span i18n-content="MEDIA_TITLE_COLUMN_LABEL"></span>:
+              <span class='content'></span>
+            </li>
+            <li class='media-artist'>
+              <span i18n-content="MEDIA_ARTIST_COLUMN_LABEL"></span>:
+              <span class='content'></span>
+            </li>
+          </ul>
+        </div>
+        <div id="multi-file-details">
+          <div class="thumbnail-container">
+            <div class="thumbnail" generic-thumbnail="folder"></div>
+          </div>
+          <ul class="details-list">
+            <li class='file-count'>
+              <span i18n-content="TOTAL_FILE_COUNT"></span>:
+              <span class='content'></span>
+            </li>
+            <li class='file-size'>
+              <span i18n-content="TOTAL_FILE_SIZE"></span>:
+              <span class='content'></span>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
@@ -437,6 +491,7 @@
     </div>
     <div id="drag-container"></div>
     <files-tooltip></files-tooltip>
+    <files-quick-view id="quick-view"></files-quick-view>
     <iframe id="command-dispatcher" hidden aria-hidden="true"></iframe>
   </body>
 </html>

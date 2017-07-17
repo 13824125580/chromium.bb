@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "device/serial/serial_device_enumerator.h"
 #include "device/serial/serial_service_impl.h"
 #include "device/serial/test_serial_io_handler.h"
@@ -422,7 +422,7 @@ class SerialApiTest : public ApiTestBase {
 
   scoped_refptr<TestIoHandlerBase> io_handler_;
 
-  scoped_ptr<StashBackend> stash_backend_;
+  std::unique_ptr<StashBackend> stash_backend_;
 
  private:
   scoped_refptr<device::SerialIoHandler> GetIoHandler() {
@@ -437,7 +437,7 @@ class SerialApiTest : public ApiTestBase {
         new device::SerialConnectionFactory(
             base::Bind(&SerialApiTest::GetIoHandler, base::Unretained(this)),
             base::ThreadTaskRunnerHandle::Get()),
-        scoped_ptr<device::SerialDeviceEnumerator>(
+        std::unique_ptr<device::SerialDeviceEnumerator>(
             new FakeSerialDeviceEnumerator),
         std::move(request));
   }
@@ -488,7 +488,13 @@ TEST_F(SerialApiTest, GetConnections) {
   RunTest("serial_unittest.js", "testGetConnections");
 }
 
-TEST_F(SerialApiTest, GetControlSignals) {
+// https://crbug.com/599898
+#if defined(LEAK_SANITIZER)
+#define MAYBE_GetControlSignals DISABLED_GetControlSignals
+#else
+#define MAYBE_GetControlSignals GetControlSignals
+#endif
+TEST_F(SerialApiTest, MAYBE_GetControlSignals) {
   io_handler_ = new GetControlSignalsTestIoHandler;
   RunTest("serial_unittest.js", "testGetControlSignals");
   EXPECT_EQ(16u, io_handler_->num_calls());
@@ -500,13 +506,25 @@ TEST_F(SerialApiTest, SetControlSignals) {
   EXPECT_EQ(9u, io_handler_->num_calls());
 }
 
-TEST_F(SerialApiTest, Update) {
+// https://crbug.com/599898
+#if defined(LEAK_SANITIZER)
+#define MAYBE_Update DISABLED_Update
+#else
+#define MAYBE_Update Update
+#endif
+TEST_F(SerialApiTest, MAYBE_Update) {
   io_handler_ = new ConfigurePortTestIoHandler;
   RunTest("serial_unittest.js", "testUpdate");
   EXPECT_EQ(11u, io_handler_->num_calls());
 }
 
-TEST_F(SerialApiTest, UpdateAcrossSerialization) {
+// https://crbug.com/599898
+#if defined(LEAK_SANITIZER)
+#define MAYBE_UpdateAcrossSerialization DISABLED_UpdateAcrossSerialization
+#else
+#define MAYBE_UpdateAcrossSerialization UpdateAcrossSerialization
+#endif
+TEST_F(SerialApiTest, MAYBE_UpdateAcrossSerialization) {
   io_handler_ = new ConfigurePortTestIoHandler;
   RunTest("serial_unittest.js", "testUpdateAcrossSerialization");
   EXPECT_EQ(11u, io_handler_->num_calls());
@@ -684,7 +702,7 @@ TEST_F(SerialApiTest, SendUnknownConnectionId) {
 // https://crbug.com/538774
 TEST_F(SerialApiTest, DISABLED_StashAndRestoreDuringEcho) {
   ASSERT_NO_FATAL_FAILURE(RunTest("serial_unittest.js", "testSendAndStash"));
-  scoped_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
+  std::unique_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
   ApiTestEnvironment new_api_test_env(new_env.get());
   PrepareEnvironment(&new_api_test_env, stash_backend_.get());
   new_api_test_env.RunTest("serial_unittest.js", "testRestoreAndReceive");
@@ -695,17 +713,23 @@ TEST_F(SerialApiTest, DISABLED_StashAndRestoreDuringEchoError) {
       new ReceiveErrorTestIoHandler(device::serial::ReceiveError::DEVICE_LOST);
   ASSERT_NO_FATAL_FAILURE(
       RunTest("serial_unittest.js", "testRestoreAndReceiveErrorSetUp"));
-  scoped_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
+  std::unique_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
   ApiTestEnvironment new_api_test_env(new_env.get());
   PrepareEnvironment(&new_api_test_env, stash_backend_.get());
   new_api_test_env.RunTest("serial_unittest.js", "testRestoreAndReceiveError");
 }
 
-TEST_F(SerialApiTest, StashAndRestoreNoConnections) {
+// https://crbug.com/599898
+#if defined(LEAK_SANITIZER)
+#define MAYBE_StashAndRestoreNoConnections DISABLED_StashAndRestoreNoConnections
+#else
+#define MAYBE_StashAndRestoreNoConnections StashAndRestoreNoConnections
+#endif
+TEST_F(SerialApiTest, MAYBE_StashAndRestoreNoConnections) {
   ASSERT_NO_FATAL_FAILURE(
       RunTest("serial_unittest.js", "testStashNoConnections"));
   io_handler_ = nullptr;
-  scoped_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
+  std::unique_ptr<ModuleSystemTestEnvironment> new_env(CreateEnvironment());
   ApiTestEnvironment new_api_test_env(new_env.get());
   PrepareEnvironment(&new_api_test_env, stash_backend_.get());
   new_api_test_env.RunTest("serial_unittest.js", "testRestoreNoConnections");

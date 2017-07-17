@@ -64,24 +64,31 @@ class CONTENT_EXPORT DWriteFontCollectionProxy
                       IDWriteFontFileStream** font_file_stream) override;
 
   HRESULT STDMETHODCALLTYPE
-  RuntimeClassInitialize(IDWriteFactory* factory,
-                         const base::Callback<IPC::Sender*(void)>& sender);
+  RuntimeClassInitialize(IDWriteFactory* factory, IPC::Sender* sender_override);
 
   void Unregister();
 
   bool LoadFamily(UINT32 family_index,
                   IDWriteFontCollection** containing_collection);
 
+  // Gets the family at the specified index with the expected name. This can be
+  // used to avoid an IPC call when both the index and family name are known.
+  bool GetFontFamily(UINT32 family_index,
+                     const base::string16& family_name,
+                     IDWriteFontFamily** font_family);
+
   bool LoadFamilyNames(UINT32 family_index, IDWriteLocalizedStrings** strings);
 
   bool CreateFamily(UINT32 family_index);
 
  private:
+  IPC::Sender* GetSender();
+
   Microsoft::WRL::ComPtr<IDWriteFactory> factory_;
   std::vector<Microsoft::WRL::ComPtr<DWriteFontFamilyProxy>> families_;
   std::map<base::string16, UINT32> family_names_;
   UINT32 family_count_ = UINT_MAX;
-  base::Callback<IPC::Sender*(void)> sender_;
+  IPC::Sender* sender_override_;
 
   DISALLOW_ASSIGN(DWriteFontCollectionProxy);
 };
@@ -123,6 +130,8 @@ class CONTENT_EXPORT DWriteFontFamilyProxy
 
   void SetName(const base::string16& family_name);
 
+  const base::string16& GetName();
+
   bool IsLoaded();
 
  protected:
@@ -155,13 +164,12 @@ class CONTENT_EXPORT FontFileEnumerator
   HRESULT STDMETHODCALLTYPE
   RuntimeClassInitialize(IDWriteFactory* factory,
                          IDWriteFontFileLoader* loader,
-                         std::vector<base::string16>* file_names);
+                         std::vector<HANDLE>* files);
 
  private:
   Microsoft::WRL::ComPtr<IDWriteFactory> factory_;
   Microsoft::WRL::ComPtr<IDWriteFontFileLoader> loader_;
-  std::vector<base::string16> file_names_;
-  std::vector<Microsoft::WRL::ComPtr<IDWriteFontFileStream>> file_streams_;
+  std::vector<HANDLE> files_;
   UINT32 next_file_ = 0;
   UINT32 current_file_ = UINT_MAX;
 
@@ -171,7 +179,6 @@ class CONTENT_EXPORT FontFileEnumerator
 // Implements the DirectWrite font file stream interface that maps the file to
 // be loaded as a memory mapped file, and subsequently returns pointers into
 // the mapped memory block.
-// TODO(kulshin): confirm that using custom streams is actually an improvement
 class CONTENT_EXPORT FontFileStream
     : public Microsoft::WRL::RuntimeClass<
           Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
@@ -189,8 +196,7 @@ class CONTENT_EXPORT FontFileStream
                                              void** fragment_context) override;
   void STDMETHODCALLTYPE ReleaseFileFragment(void* fragment_context) override {}
 
-  HRESULT STDMETHODCALLTYPE
-  RuntimeClassInitialize(const base::string16& file_name);
+  HRESULT STDMETHODCALLTYPE RuntimeClassInitialize(HANDLE handle);
 
  private:
   base::MemoryMappedFile data_;

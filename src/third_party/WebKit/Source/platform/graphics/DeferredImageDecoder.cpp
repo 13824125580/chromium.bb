@@ -26,54 +26,64 @@
 #include "platform/graphics/DeferredImageDecoder.h"
 
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/SharedBuffer.h"
 #include "platform/graphics/DecodingImageGenerator.h"
-#include "platform/graphics/FrameData.h"
 #include "platform/graphics/ImageDecodingStore.h"
 #include "platform/graphics/ImageFrameGenerator.h"
+#include "platform/graphics/skia/SkiaUtils.h"
+#include "platform/image-decoders/SegmentReader.h"
 #include "third_party/skia/include/core/SkImage.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-bool DeferredImageDecoder::s_enabled = true;
+struct DeferredFrameData {
+    DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+    WTF_MAKE_NONCOPYABLE(DeferredFrameData);
+public:
+    DeferredFrameData()
+        : m_orientation(DefaultImageOrientation)
+        , m_duration(0)
+        , m_isComplete(false)
+        , m_frameBytes(0)
+        , m_uniqueID(DecodingImageGenerator::kNeedNewImageUniqueID)
+    {}
 
-PassOwnPtr<DeferredImageDecoder> DeferredImageDecoder::create(const SharedBuffer& data, ImageDecoder::AlphaOption alphaOption, ImageDecoder::GammaAndColorProfileOption colorOptions)
+    ImageOrientation m_orientation;
+    float m_duration;
+    bool m_isComplete;
+    size_t m_frameBytes;
+    uint32_t m_uniqueID;
+};
+
+std::unique_ptr<DeferredImageDecoder> DeferredImageDecoder::create(const SharedBuffer& data, ImageDecoder::AlphaOption alphaOption, ImageDecoder::GammaAndColorProfileOption colorOptions)
 {
-    OwnPtr<ImageDecoder> actualDecoder = ImageDecoder::create(data, alphaOption, colorOptions);
+    std::unique_ptr<ImageDecoder> actualDecoder = ImageDecoder::create(data, alphaOption, colorOptions);
 
     if (!actualDecoder)
         return nullptr;
 
-    return adoptPtr(new DeferredImageDecoder(actualDecoder.release()));
+    return wrapUnique(new DeferredImageDecoder(std::move(actualDecoder)));
 }
 
-PassOwnPtr<DeferredImageDecoder> DeferredImageDecoder::createForTesting(PassOwnPtr<ImageDecoder> actualDecoder)
+std::unique_ptr<DeferredImageDecoder> DeferredImageDecoder::createForTesting(std::unique_ptr<ImageDecoder> actualDecoder)
 {
-    return adoptPtr(new DeferredImageDecoder(std::move(actualDecoder)));
+    return wrapUnique(new DeferredImageDecoder(std::move(actualDecoder)));
 }
 
-DeferredImageDecoder::DeferredImageDecoder(PassOwnPtr<ImageDecoder> actualDecoder)
+DeferredImageDecoder::DeferredImageDecoder(std::unique_ptr<ImageDecoder> actualDecoder)
     : m_allDataReceived(false)
-    , m_lastDataSize(0)
     , m_actualDecoder(std::move(actualDecoder))
     , m_repetitionCount(cAnimationNone)
     , m_hasColorProfile(false)
     , m_canYUVDecode(false)
+    , m_hasHotSpot(false)
 {
 }
 
 DeferredImageDecoder::~DeferredImageDecoder()
 {
-}
-
-void DeferredImageDecoder::setEnabled(bool enabled)
-{
-    s_enabled = enabled;
-}
-
-bool DeferredImageDecoder::enabled()
-{
-    return s_enabled;
 }
 
 String DeferredImageDecoder::filenameExtension() const
@@ -89,37 +99,44 @@ PassRefPtr<SkImage> DeferredImageDecoder::createFrameAtIndex(size_t index)
     prepareLazyDecodedFrames();
 
     if (index < m_frameData.size()) {
-        FrameData* frameData = &m_frameData[index];
+        DeferredFrameData* frameData = &m_frameData[index];
+        if (m_actualDecoder)
+            frameData->m_frameBytes = m_actualDecoder->frameBytesAtIndex(index);
+        else
+            frameData->m_frameBytes = m_size.area() * sizeof(ImageFrame::PixelData);
         // ImageFrameGenerator has the latest known alpha state. There will be a
         // performance boost if this frame is opaque.
-        ASSERT(m_frameGenerator);
-        frameData->m_hasAlpha = m_frameGenerator->hasAlpha(index);
-        frameData->m_frameBytes = m_size.area() * sizeof(ImageFrame::PixelData);
-        return createFrameImageAtIndex(index, !frameData->m_hasAlpha);
+        DCHECK(m_frameGenerator);
+        return createFrameImageAtIndex(index, !m_frameGenerator->hasAlpha(index));
     }
 
     if (!m_actualDecoder || m_actualDecoder->failed())
         return nullptr;
 
     ImageFrame* frame = m_actualDecoder->frameBufferAtIndex(index);
-    if (!frame || frame->status() == ImageFrame::FrameEmpty)
+    if (!frame || frame->getStatus() == ImageFrame::FrameEmpty)
         return nullptr;
 
-    return adoptRef(SkImage::NewFromBitmap(frame->bitmap()));
+    return fromSkSp(SkImage::MakeFromBitmap(frame->bitmap()));
 }
 
 void DeferredImageDecoder::setData(SharedBuffer& data, bool allDataReceived)
 {
     if (m_actualDecoder) {
-        m_data = RefPtr<SharedBuffer>(data);
-        m_lastDataSize = data.size();
         m_allDataReceived = allDataReceived;
         m_actualDecoder->setData(&data, allDataReceived);
         prepareLazyDecodedFrames();
     }
 
-    if (m_frameGenerator)
-        m_frameGenerator->setData(&data, allDataReceived);
+    if (m_frameGenerator) {
+        if (!m_rwBuffer)
+            m_rwBuffer = wrapUnique(new SkRWBuffer(data.size()));
+
+        const char* segment = 0;
+        for (size_t length = data.getSomeData(segment, m_rwBuffer->size());
+            length; length = data.getSomeData(segment, m_rwBuffer->size()))
+            m_rwBuffer->append(segment, length);
+    }
 }
 
 bool DeferredImageDecoder::isSizeAvailable()
@@ -221,21 +238,21 @@ void DeferredImageDecoder::activateLazyDecoding()
         return;
 
     m_size = m_actualDecoder->size();
+    m_hasHotSpot = m_actualDecoder->hotSpot(m_hotSpot);
     m_filenameExtension = m_actualDecoder->filenameExtension();
     // JPEG images support YUV decoding: other decoders do not, WEBP could in future.
     m_canYUVDecode = RuntimeEnabledFeatures::decodeToYUVEnabled() && (m_filenameExtension == "jpg");
     m_hasColorProfile = m_actualDecoder->hasColorProfile();
 
     const bool isSingleFrame = m_actualDecoder->repetitionCount() == cAnimationNone || (m_allDataReceived && m_actualDecoder->frameCount() == 1u);
-    m_frameGenerator = ImageFrameGenerator::create(SkISize::Make(m_actualDecoder->decodedSize().width(), m_actualDecoder->decodedSize().height()), m_data, m_allDataReceived, !isSingleFrame);
+    const SkISize decodedSize = SkISize::Make(m_actualDecoder->decodedSize().width(), m_actualDecoder->decodedSize().height());
+    m_frameGenerator = ImageFrameGenerator::create(decodedSize, !isSingleFrame);
 }
 
 void DeferredImageDecoder::prepareLazyDecodedFrames()
 {
-    if (!s_enabled
-        || !m_actualDecoder
-        || !m_actualDecoder->isSizeAvailable()
-        || m_actualDecoder->filenameExtension() == "ico")
+    if (!m_actualDecoder
+        || !m_actualDecoder->isSizeAvailable())
         return;
 
     activateLazyDecoding();
@@ -248,7 +265,6 @@ void DeferredImageDecoder::prepareLazyDecodedFrames()
         return;
 
     for (size_t i = previousSize; i < m_frameData.size(); ++i) {
-        m_frameData[i].m_haveMetadata = true;
         m_frameData[i].m_duration = m_actualDecoder->frameDurationAtIndex(i);
         m_frameData[i].m_orientation = m_actualDecoder->orientation();
         m_frameData[i].m_isComplete = m_actualDecoder->frameIsCompleteAtIndex(i);
@@ -263,8 +279,8 @@ void DeferredImageDecoder::prepareLazyDecodedFrames()
 
     if (m_allDataReceived) {
         m_repetitionCount = m_actualDecoder->repetitionCount();
-        m_actualDecoder.clear();
-        m_data = nullptr;
+        m_actualDecoder.reset();
+        // Hold on to m_rwBuffer, which is still needed by createFrameAtIndex.
     }
 }
 
@@ -273,18 +289,27 @@ inline SkImageInfo imageInfoFrom(const SkISize& decodedSize, bool knownToBeOpaqu
     return SkImageInfo::MakeN32(decodedSize.width(), decodedSize.height(), knownToBeOpaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
 }
 
-PassRefPtr<SkImage> DeferredImageDecoder::createFrameImageAtIndex(size_t index, bool knownToBeOpaque) const
+PassRefPtr<SkImage> DeferredImageDecoder::createFrameImageAtIndex(size_t index, bool knownToBeOpaque)
 {
     const SkISize& decodedSize = m_frameGenerator->getFullSize();
     ASSERT(decodedSize.width() > 0);
     ASSERT(decodedSize.height() > 0);
 
-    DecodingImageGenerator* generator = new DecodingImageGenerator(m_frameGenerator, imageInfoFrom(decodedSize, knownToBeOpaque), index);
-    RefPtr<SkImage> image = adoptRef(SkImage::NewFromGenerator(generator)); // SkImage takes ownership of the generator.
+    RefPtr<SkROBuffer> roBuffer = adoptRef(m_rwBuffer->newRBufferSnapshot());
+    RefPtr<SegmentReader> segmentReader = SegmentReader::createFromSkROBuffer(roBuffer.release());
+    DecodingImageGenerator* generator = new DecodingImageGenerator(m_frameGenerator, imageInfoFrom(decodedSize, knownToBeOpaque), segmentReader.release(), m_allDataReceived, index, m_frameData[index].m_uniqueID);
+    RefPtr<SkImage> image = fromSkSp(SkImage::MakeFromGenerator(generator)); // SkImage takes ownership of the generator.
     if (!image)
         return nullptr;
 
-    generator->setGenerationId(image->uniqueID());
+    // We can consider decoded bitmap constant and reuse uniqueID only after all
+    // data is received.  We reuse it also for multiframe images when image data
+    // is partially received but the frame data is fully received.
+    if (m_allDataReceived || m_frameData[index].m_isComplete) {
+        DCHECK(m_frameData[index].m_uniqueID == DecodingImageGenerator::kNeedNewImageUniqueID || m_frameData[index].m_uniqueID == image->uniqueID());
+        m_frameData[index].m_uniqueID = image->uniqueID();
+    }
+
     generator->setCanYUVDecode(m_canYUVDecode);
 
     return image.release();
@@ -292,8 +317,18 @@ PassRefPtr<SkImage> DeferredImageDecoder::createFrameImageAtIndex(size_t index, 
 
 bool DeferredImageDecoder::hotSpot(IntPoint& hotSpot) const
 {
-    // TODO: Implement.
-    return m_actualDecoder ? m_actualDecoder->hotSpot(hotSpot) : false;
+    if (m_actualDecoder)
+        return m_actualDecoder->hotSpot(hotSpot);
+    if (m_hasHotSpot)
+        hotSpot = m_hotSpot;
+    return m_hasHotSpot;
 }
 
 } // namespace blink
+
+namespace WTF {
+template<> struct VectorTraits<blink::DeferredFrameData> : public SimpleClassVectorTraits<blink::DeferredFrameData> {
+    STATIC_ONLY(VectorTraits);
+    static const bool canInitializeWithMemset = false; // Not all DeferredFrameData members initialize to 0.
+};
+}

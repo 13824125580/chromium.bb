@@ -84,6 +84,7 @@
       'cvox2/background/background_test.extjs',
       'cvox2/background/cursors_test.extjs',
       'cvox2/background/editing_test.extjs',
+      'cvox2/background/i_search_test.extjs',
       'cvox2/background/live_regions_test.extjs',
       'cvox2/background/output_test.extjs',
       'cvox2/background/tree_walker_test.extjs',
@@ -109,16 +110,10 @@
         '<(DEPTH)/content/content_shell_and_tests.gyp:content_browser_test_base',
         '<(DEPTH)/testing/gmock.gyp:gmock',
         '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
+        '<(DEPTH)/v8/src/v8.gyp:v8',
         'chromevox_test_deps_js',
       ],
       'conditions': [
-        [ 'cld_version==0 or cld_version==2', {
-          'dependencies': [
-            # Interactive tests should use whatever CLD2 data access mode that
-            # the application embedder is using.
-            '<(DEPTH)/third_party/cld_2/cld_2.gyp:cld2_platform_impl', ],
-        }],
         ['disable_nacl==0 and disable_nacl_untrusted==0', {
           'dependencies': [
             '<(DEPTH)/components/nacl.gyp:nacl_helper',
@@ -153,7 +148,7 @@
           },
           'inputs': [
             '<(gypv8sh)',
-            '<(PRODUCT_DIR)/d8<(EXECUTABLE_SUFFIX)',
+            '<(PRODUCT_DIR)/v8_shell<(EXECUTABLE_SUFFIX)',
             '<(mock_js)',
             '<(test_api_js)',
             '<(js2gtest)',
@@ -168,7 +163,7 @@
           'action': [
             'python',
             '<(gypv8sh)',
-            '<(PRODUCT_DIR)/d8<(EXECUTABLE_SUFFIX)',
+            '<(PRODUCT_DIR)/v8_shell<(EXECUTABLE_SUFFIX)',
             '--deps_js', '<(chromevox_test_deps_js_file)',
             '--external', '<(external_v8)',
             '<(mock_js)',
@@ -197,7 +192,7 @@
           },
           'inputs': [
             '<(gypv8sh)',
-            '<(PRODUCT_DIR)/d8<(EXECUTABLE_SUFFIX)',
+            '<(PRODUCT_DIR)/v8_shell<(EXECUTABLE_SUFFIX)',
             '<(mock_js)',
             '<(test_api_js)',
             '<(js2gtest)',
@@ -211,7 +206,7 @@
           'action': [
             'python',
             '<(gypv8sh)',
-            '<(PRODUCT_DIR)/d8<(EXECUTABLE_SUFFIX)',
+            '<(PRODUCT_DIR)/v8_shell<(EXECUTABLE_SUFFIX)',
             '--external', '<(external_v8)',
             '<(mock_js)',
             '<(test_api_js)',

@@ -26,19 +26,19 @@
 
 namespace blink {
 
-void LineBreaker::skipLeadingWhitespace(InlineBidiResolver& resolver, LineInfo& lineInfo,
-    FloatingObject* lastFloatFromPreviousLine, LineWidth& width)
+void LineBreaker::skipLeadingWhitespace(InlineBidiResolver& resolver, LineInfo& lineInfo, LineWidth& width)
 {
     while (!resolver.position().atEnd() && !requiresLineBox(resolver.position(), lineInfo, LeadingWhitespace)) {
-        LayoutObject* object = resolver.position().getLineLayoutItem();
-        if (object->isOutOfFlowPositioned()) {
-            setStaticPositions(m_block, LineLayoutBox(toLayoutBox(object)), width.indentText());
-            if (object->style()->isOriginalDisplayInlineType()) {
-                resolver.runs().addRun(createRun(0, 1, LineLayoutItem(object), resolver));
+        LineLayoutItem lineLayoutItem = resolver.position().getLineLayoutItem();
+        if (lineLayoutItem.isOutOfFlowPositioned()) {
+            setStaticPositions(m_block, LineLayoutBox(lineLayoutItem), width.indentText());
+            if (lineLayoutItem.style()->isOriginalDisplayInlineType()) {
+                resolver.runs().addRun(createRun(0, 1, LineLayoutItem(lineLayoutItem), resolver));
                 lineInfo.incrementRunsFromLeadingWhitespace();
             }
-        } else if (object->isFloating()) {
-            m_block.positionNewFloatOnLine(*m_block.insertFloatingObject(*toLayoutBox(object)), lastFloatFromPreviousLine, lineInfo, width);
+        } else if (lineLayoutItem.isFloating()) {
+            m_block.insertFloatingObject(LineLayoutBox(lineLayoutItem));
+            m_block.positionNewFloats(&width);
         }
         resolver.position().increment(&resolver);
     }
@@ -49,12 +49,11 @@ void LineBreaker::reset()
 {
     m_positionedObjects.clear();
     m_hyphenated = false;
-    m_clear = CNONE;
+    m_clear = ClearNone;
 }
 
 InlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, LineInfo& lineInfo,
-    LayoutTextInfo& layoutTextInfo, FloatingObject* lastFloatFromPreviousLine,
-    WordMeasurements& wordMeasurements)
+    LayoutTextInfo& layoutTextInfo, WordMeasurements& wordMeasurements)
 {
     reset();
 
@@ -64,12 +63,12 @@ InlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, LineInfo
 
     LineWidth width(m_block, lineInfo.isFirstLine(), requiresIndent(lineInfo.isFirstLine(), lineInfo.previousLineBrokeCleanly(), m_block.styleRef()));
 
-    skipLeadingWhitespace(resolver, lineInfo, lastFloatFromPreviousLine, width);
+    skipLeadingWhitespace(resolver, lineInfo, width);
 
     if (resolver.position().atEnd())
         return resolver.position();
 
-    BreakingContext context(resolver, lineInfo, width, layoutTextInfo, lastFloatFromPreviousLine, appliedStartWidth, m_block);
+    BreakingContext context(resolver, lineInfo, width, layoutTextInfo, appliedStartWidth, m_block);
 
     while (context.currentItem()) {
         context.initializeForCurrentObject();

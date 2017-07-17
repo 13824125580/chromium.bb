@@ -32,7 +32,6 @@
 
 [
     Exposed=Window,
-    GarbageCollected
 ] interface PerformanceNavigation {
     const unsigned short TYPE_NAVIGATE = 0;
     const unsigned short TYPE_RELOAD = 1;
@@ -40,5 +39,5 @@
     const unsigned short TYPE_RESERVED = 255;
     readonly attribute unsigned short type;
     readonly attribute unsigned short redirectCount;
-    // TODO(philipj): serializer = {attribute};
+    // TODO(foolip): serializer = {attribute};
 };

@@ -32,8 +32,10 @@ class PPAPI_THUNK_EXPORT PPB_Graphics3D_API {
   virtual int32_t SetAttribs(const int32_t attrib_list[]) = 0;
   virtual int32_t GetError() = 0;
   virtual int32_t ResizeBuffers(int32_t width, int32_t height) = 0;
-  virtual int32_t SwapBuffers(scoped_refptr<TrackedCallback> callback,
-                              const gpu::SyncToken& sync_token) = 0;
+  virtual int32_t SwapBuffers(scoped_refptr<TrackedCallback> callback) = 0;
+  virtual int32_t SwapBuffersWithSyncToken(
+      scoped_refptr<TrackedCallback> callback,
+      const gpu::SyncToken& sync_token) = 0;
   virtual int32_t GetAttribMaxValue(int32_t attribute, int32_t* value) = 0;
 
   // Graphics3DTrusted API.
@@ -60,6 +62,7 @@ class PPAPI_THUNK_EXPORT PPB_Graphics3D_API {
   virtual void UnmapTexSubImage2DCHROMIUM(const void* mem) = 0;
 
   virtual void EnsureWorkVisible() = 0;
+  virtual void TakeFrontBuffer() = 0;
 };
 
 }  // namespace thunk

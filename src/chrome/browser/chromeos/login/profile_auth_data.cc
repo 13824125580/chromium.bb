@@ -12,7 +12,8 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -50,7 +51,7 @@ void ImportCookies(const net::CookieList& cookies,
     cookie_store->SetCookieWithDetailsAsync(
         cookie.Source(), cookie.Name(), cookie.Value(), domain, cookie.Path(),
         cookie.CreationDate(), cookie.ExpiryDate(), cookie.LastAccessDate(),
-        cookie.IsSecure(), cookie.IsHttpOnly(), cookie.IsSameSite(),
+        cookie.IsSecure(), cookie.IsHttpOnly(), cookie.SameSite(),
         // enforce_strict_secure should have been applied on the original
         // cookie, prior to import.
         false, cookie.Priority(), net::CookieStore::SetCookiesCallback());
@@ -323,7 +324,7 @@ void ProfileAuthDataTransferer::Finish() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!completion_callback_.is_null())
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, completion_callback_);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 }  // namespace

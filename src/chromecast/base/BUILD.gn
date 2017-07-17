@@ -10,6 +10,19 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
+declare_args() {
+  # Denotes the type of Cast product. This is #defined as CAST_PRODUCT_TYPE in
+  # version.h. This is an integer in the range [0-4].
+  cast_product_type = 0
+
+  # If true, IS_CAST_DEBUG_BUILD() will evaluate to 1 in version.h. Otherwise,
+  # it will evaluate to 0. Overriding this when is_debug=false is useful for
+  # doing engineering builds.
+  cast_is_debug = is_debug
+}
+
+assert(cast_product_type >= 0 && cast_product_type <= 4)
+
 # GYP target: chromecast.gyp:cast_base
 source_set("base") {
   sources = [
@@ -33,6 +46,8 @@ source_set("base") {
     "device_capabilities_impl.h",
     "error_codes.cc",
     "error_codes.h",
+    "init_command_line_shlib.cc",
+    "init_command_line_shlib.h",
     "path_utils.cc",
     "path_utils.h",
     "pref_names.cc",
@@ -78,6 +93,7 @@ source_set("test_support") {
 test("cast_base_unittests") {
   sources = [
     "bind_to_task_runner_unittest.cc",
+    "chromecast_switches_unittest.cc",
     "device_capabilities_impl_unittest.cc",
     "error_codes_unittest.cc",
     "path_utils_unittest.cc",
@@ -119,23 +135,62 @@ source_set("cast_sys_info") {
   }
 }
 
+# Target for OEM partners to override sys_info shared library, i.e.
+# libcast_sys_info_1.0.so.
+shared_library("libcast_sys_info_1.0") {
+  sources = [
+    "cast_sys_info_dummy.cc",
+    "cast_sys_info_dummy.h",
+    "cast_sys_info_shlib.cc",
+  ]
+
+  deps = [
+    "//chromecast/public",
+  ]
+}
+
+# Note: Android links //chromecast/base:cast_sys_info statically.
+source_set("cast_sys_info_shlib") {
+  if (!is_android) {
+    sources = [
+      "cast_sys_info_util_shlib.cc",
+    ]
+
+    deps = [
+      ":cast_sys_info",
+      ":libcast_sys_info_1.0",
+      "//base",
+      "//chromecast/public",
+    ]
+  }
+}
+
 process_version("cast_version") {
   template_file = "version.h.in"
   output = "$target_gen_dir/version.h"
+
   extra_args = [
     "-e",
     "VERSION_FULL=\"%s.%s.%s.%s\"%(MAJOR,MINOR,BUILD,PATCH)",
-
-    # TODO(slan): Populate the fields below with real values
     "-e",
-    "CAST_BUILD_INCREMENTAL=20150608.181153",
+    "CAST_BUILD_RELEASE=\"$cast_build_release\"",
     "-e",
-    "CAST_BUILD_RELEASE=1.15",
+    "CAST_BUILD_INCREMENTAL=\"$cast_build_incremental\"",
     "-e",
-    "CAST_IS_DEBUG_BUILD=1",
-    "-e",
-    "CAST_PRODUCT_TYPE=0",
+    "CAST_PRODUCT_TYPE=$cast_product_type",
   ]
+
+  if (cast_is_debug) {
+    extra_args += [
+      "-e",
+      "CAST_IS_DEBUG_BUILD=1",
+    ]
+  } else {
+    extra_args += [
+      "-e",
+      "CAST_IS_DEBUG_BUILD=0",
+    ]
+  }
 }
 
 if (is_android) {

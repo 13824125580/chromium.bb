@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/test/motion_event_test_utils.h"
@@ -101,8 +102,8 @@ class TouchSelectionControllerTest : public testing::Test,
     last_event_bounds_rect_ = controller_->GetRectBetweenBounds();
   }
 
-  scoped_ptr<TouchHandleDrawable> CreateDrawable() override {
-    return make_scoped_ptr(new MockTouchHandleDrawable(&dragging_enabled_));
+  std::unique_ptr<TouchHandleDrawable> CreateDrawable() override {
+    return base::WrapUnique(new MockTouchHandleDrawable(&dragging_enabled_));
   }
 
   void AllowShowingOnTapForEmptyEditable() {
@@ -121,15 +122,15 @@ class TouchSelectionControllerTest : public testing::Test,
   void SetDraggingEnabled(bool enabled) { dragging_enabled_ = enabled; }
 
   void ClearSelection() {
-    controller_->OnSelectionBoundsChanged(SelectionBound(),
-                                          SelectionBound());
+    controller_->OnSelectionBoundsChanged(gfx::SelectionBound(),
+                                          gfx::SelectionBound());
   }
 
   void ClearInsertion() { ClearSelection(); }
 
   void ChangeInsertion(const gfx::RectF& rect, bool visible) {
-    SelectionBound bound;
-    bound.set_type(SelectionBound::CENTER);
+    gfx::SelectionBound bound;
+    bound.set_type(gfx::SelectionBound::CENTER);
     bound.SetEdge(rect.origin(), rect.bottom_left());
     bound.set_visible(visible);
     controller_->OnSelectionBoundsChanged(bound, bound);
@@ -139,9 +140,9 @@ class TouchSelectionControllerTest : public testing::Test,
                        bool start_visible,
                        const gfx::RectF& end_rect,
                        bool end_visible) {
-    SelectionBound start_bound, end_bound;
-    start_bound.set_type(SelectionBound::LEFT);
-    end_bound.set_type(SelectionBound::RIGHT);
+    gfx::SelectionBound start_bound, end_bound;
+    start_bound.set_type(gfx::SelectionBound::LEFT);
+    end_bound.set_type(gfx::SelectionBound::RIGHT);
     start_bound.SetEdge(start_rect.origin(), start_rect.bottom_left());
     end_bound.SetEdge(end_rect.origin(), end_rect.bottom_left());
     start_bound.set_visible(start_visible);
@@ -238,7 +239,7 @@ class TouchSelectionControllerTest : public testing::Test,
   bool needs_animate_;
   bool animation_enabled_;
   bool dragging_enabled_;
-  scoped_ptr<TouchSelectionController> controller_;
+  std::unique_ptr<TouchSelectionController> controller_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerTest);
 };

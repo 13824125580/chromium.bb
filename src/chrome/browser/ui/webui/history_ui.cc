@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/webui/history_ui.h"
 
+#include <string>
+
 #include "base/command_line.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/history/web_history_service_factory.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -19,9 +20,11 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/browsing_data_ui/history_notice_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "grit/browser_resources.h"
@@ -41,6 +44,9 @@ static const char kHistoryJsFile[] = "history.js";
 static const char kOtherDevicesJsFile[] = "other_devices.js";
 
 namespace {
+
+static const char kMyActivityUrl[] =
+    "https://history.google.com/history/?utm_source=chrome_h";
 
 #if defined(OS_MACOSX)
 const char kIncognitoModeShortcut[] = "("
@@ -108,8 +114,6 @@ content::WebUIDataSource* CreateHistoryUIHTMLSource(Profile* profile) {
                              IDS_HISTORY_ACTION_MENU_DESCRIPTION);
   source->AddLocalizedString("removeFromHistory", IDS_HISTORY_REMOVE_PAGE);
   source->AddLocalizedString("moreFromSite", IDS_HISTORY_MORE_FROM_SITE);
-  source->AddLocalizedString("groupByDomainLabel",
-                             IDS_HISTORY_GROUP_BY_DOMAIN_LABEL);
   source->AddLocalizedString("rangeLabel", IDS_HISTORY_RANGE_LABEL);
   source->AddLocalizedString("rangeAllTime", IDS_HISTORY_RANGE_ALL_TIME);
   source->AddLocalizedString("rangeWeek", IDS_HISTORY_RANGE_WEEK);
@@ -118,23 +122,21 @@ content::WebUIDataSource* CreateHistoryUIHTMLSource(Profile* profile) {
   source->AddLocalizedString("rangeNext", IDS_HISTORY_RANGE_NEXT);
   source->AddLocalizedString("rangePrevious", IDS_HISTORY_RANGE_PREVIOUS);
   source->AddLocalizedString("numberVisits", IDS_HISTORY_NUMBER_VISITS);
-  source->AddLocalizedString("filterAllowed", IDS_HISTORY_FILTER_ALLOWED);
   source->AddLocalizedString("filterBlocked", IDS_HISTORY_FILTER_BLOCKED);
-  source->AddLocalizedString("inContentPack", IDS_HISTORY_IN_CONTENT_PACK);
-  source->AddLocalizedString("allowItems", IDS_HISTORY_FILTER_ALLOW_ITEMS);
-  source->AddLocalizedString("blockItems", IDS_HISTORY_FILTER_BLOCK_ITEMS);
   source->AddLocalizedString("blockedVisitText",
                              IDS_HISTORY_BLOCKED_VISIT_TEXT);
   source->AddLocalizedString("hasSyncedResults",
                              IDS_HISTORY_HAS_SYNCED_RESULTS);
   source->AddLocalizedString("noSyncedResults", IDS_HISTORY_NO_SYNCED_RESULTS);
+  source->AddString("otherFormsOfBrowsingHistory",
+                    l10n_util::GetStringFUTF16(
+                        IDS_HISTORY_OTHER_FORMS_OF_HISTORY,
+                        base::ASCIIToUTF16(kMyActivityUrl)));
   source->AddLocalizedString("cancel", IDS_CANCEL);
   source->AddLocalizedString("deleteConfirm",
                              IDS_HISTORY_DELETE_PRIOR_VISITS_CONFIRM_BUTTON);
   source->AddLocalizedString("bookmarked", IDS_HISTORY_ENTRY_BOOKMARKED);
   source->AddLocalizedString("entrySummary", IDS_HISTORY_ENTRY_SUMMARY);
-  source->AddBoolean("isFullHistorySyncEnabled",
-                     WebHistoryServiceFactory::GetForProfile(profile) != NULL);
   bool group_by_domain = base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kHistoryEnableGroupByDomain);
   // Supervised users get the "group by domain" version, but not on mobile,
@@ -174,6 +176,20 @@ HistoryUI::HistoryUI(content::WebUI* web_ui) : WebUIController(web_ui) {
     web_ui->AddMessageHandler(new HistoryLoginHandler());
   }
 #endif
+
+  // TODO(crbug.com/595332): Since the API to query other forms of browsing
+  // history is not ready yet, make it possible to test the history UI as if
+  // it were. If the user opens chrome://history/?reset_ofbh, we will assume
+  // that other forms of browsing history exist (for all accounts), and we will
+  // also reset the one-time notice shown in the Clear Browsing Data dialog.
+  // This code should be removed as soon as the API is ready.
+  GURL url = web_ui->GetWebContents()->GetVisibleURL();
+  if (url.has_query() && url.query() == "reset_ofbh") {
+    Profile::FromWebUI(web_ui)->GetPrefs()->SetInteger(
+        prefs::kClearBrowsingDataHistoryNoticeShownTimes, 0);
+    browsing_data_ui::testing::
+        g_override_other_forms_of_browsing_history_query = true;
+  }
 
   // Set up the chrome://history-frame/ source.
   Profile* profile = Profile::FromWebUI(web_ui);

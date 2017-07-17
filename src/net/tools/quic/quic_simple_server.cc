@@ -8,7 +8,7 @@
 
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/quic/crypto/crypto_handshake.h"
@@ -19,6 +19,7 @@
 #include "net/tools/quic/quic_dispatcher.h"
 #include "net/tools/quic/quic_simple_per_connection_packet_writer.h"
 #include "net/tools/quic/quic_simple_server_packet_writer.h"
+#include "net/tools/quic/quic_simple_server_session_helper.h"
 #include "net/udp/udp_server_socket.h"
 
 namespace net {
@@ -36,8 +37,16 @@ class SimpleQuicDispatcher : public QuicDispatcher {
   SimpleQuicDispatcher(const QuicConfig& config,
                        const QuicCryptoServerConfig* crypto_config,
                        const QuicVersionVector& supported_versions,
-                       QuicConnectionHelperInterface* helper)
-      : QuicDispatcher(config, crypto_config, supported_versions, helper) {}
+                       QuicConnectionHelperInterface* helper,
+                       QuicAlarmFactory* alarm_factory)
+      : QuicDispatcher(
+            config,
+            crypto_config,
+            supported_versions,
+            std::unique_ptr<QuicConnectionHelperInterface>(helper),
+            std::unique_ptr<QuicServerSessionBase::Helper>(
+                new QuicSimpleServerSessionHelper(QuicRandom::GetInstance())),
+            std::unique_ptr<QuicAlarmFactory>(alarm_factory)) {}
 
  protected:
   QuicServerSessionBase* CreateQuicSession(
@@ -63,10 +72,10 @@ QuicSimpleServer::QuicSimpleServer(ProofSource* proof_source,
                                    const QuicConfig& config,
                                    const QuicVersionVector& supported_versions)
     : helper_(
-          new QuicChromiumConnectionHelper(base::ThreadTaskRunnerHandle::Get()
-                                               .get(),
-                                           &clock_,
-                                           QuicRandom::GetInstance())),
+          new QuicChromiumConnectionHelper(&clock_, QuicRandom::GetInstance())),
+      alarm_factory_(new QuicChromiumAlarmFactory(
+          base::ThreadTaskRunnerHandle::Get().get(),
+          &clock_)),
       config_(config),
       crypto_config_(kSourceAddressTokenSecret,
                      QuicRandom::GetInstance(),
@@ -99,7 +108,7 @@ void QuicSimpleServer::Initialize() {
         kInitialSessionFlowControlWindow);
   }
 
-  scoped_ptr<CryptoHandshakeMessage> scfg(crypto_config_.AddDefaultConfig(
+  std::unique_ptr<CryptoHandshakeMessage> scfg(crypto_config_.AddDefaultConfig(
       helper_->GetRandomGenerator(), helper_->GetClock(),
       QuicCryptoServerConfig::ConfigOptions()));
 }
@@ -107,7 +116,7 @@ void QuicSimpleServer::Initialize() {
 QuicSimpleServer::~QuicSimpleServer() {}
 
 int QuicSimpleServer::Listen(const IPEndPoint& address) {
-  scoped_ptr<UDPServerSocket> socket(
+  std::unique_ptr<UDPServerSocket> socket(
       new UDPServerSocket(&net_log_, NetLog::Source()));
 
   socket->AllowAddressReuse();
@@ -144,8 +153,8 @@ int QuicSimpleServer::Listen(const IPEndPoint& address) {
 
   socket_.swap(socket);
 
-  dispatcher_.reset(new SimpleQuicDispatcher(config_, &crypto_config_,
-                                             supported_versions_, helper_));
+  dispatcher_.reset(new SimpleQuicDispatcher(
+      config_, &crypto_config_, supported_versions_, helper_, alarm_factory_));
   QuicSimpleServerPacketWriter* writer =
       new QuicSimpleServerPacketWriter(socket_.get(), dispatcher_.get());
   dispatcher_->InitializeWithWriter(writer);
@@ -202,7 +211,8 @@ void QuicSimpleServer::OnReadComplete(int result) {
     return;
   }
 
-  QuicEncryptedPacket packet(read_buffer_->data(), result, false);
+  QuicReceivedPacket packet(read_buffer_->data(), result,
+                            helper_->GetClock()->Now(), false);
   dispatcher_->ProcessPacket(server_address_, client_address_, packet);
 
   StartReading();

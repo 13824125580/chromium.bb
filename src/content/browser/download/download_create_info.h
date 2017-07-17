@@ -29,7 +29,7 @@ namespace content {
 struct CONTENT_EXPORT DownloadCreateInfo {
   DownloadCreateInfo(const base::Time& start_time,
                      const net::BoundNetLog& bound_net_log,
-                     scoped_ptr<DownloadSaveInfo> save_info);
+                     std::unique_ptr<DownloadSaveInfo> save_info);
   DownloadCreateInfo();
   ~DownloadCreateInfo();
 
@@ -45,6 +45,9 @@ struct CONTENT_EXPORT DownloadCreateInfo {
 
   // The URL that referred us.
   GURL referrer_url;
+
+  // Site URL for the site instance that initiated the download.
+  GURL site_url;
 
   // The URL of the tab that started us.
   GURL tab_url;
@@ -73,10 +76,10 @@ struct CONTENT_EXPORT DownloadCreateInfo {
   DownloadInterruptReason result;
 
   // The download file save info.
-  scoped_ptr<DownloadSaveInfo> save_info;
+  std::unique_ptr<DownloadSaveInfo> save_info;
 
   // The handle to the URLRequest sourcing this download.
-  scoped_ptr<DownloadRequestHandleInterface> request_handle;
+  std::unique_ptr<DownloadRequestHandleInterface> request_handle;
 
   // The request's |BoundNetLog|, for "source_dependency" linking with the
   // download item's.

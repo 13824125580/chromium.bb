@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBSITE_SETTINGS_WEBSITE_SETTINGS_UI_H_
 #define CHROME_BROWSER_UI_WEBSITE_SETTINGS_WEBSITE_SETTINGS_UI_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/website_settings/website_settings.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -49,8 +49,6 @@ class WebsiteSettingsUI {
   struct CookieInfo {
     CookieInfo();
 
-    // String describing the cookie source.
-    std::string cookie_source;
     // The number of allowed cookies.
     int allowed;
     // The number of blocked cookies.
@@ -81,12 +79,12 @@ class WebsiteSettingsUI {
   // chooser |type| that the current website has been granted access to.
   struct ChosenObjectInfo {
     ChosenObjectInfo(const WebsiteSettings::ChooserUIInfo& ui_info,
-                     scoped_ptr<base::DictionaryValue> object);
+                     std::unique_ptr<base::DictionaryValue> object);
     ~ChosenObjectInfo();
     // |ui_info| for this chosen object type.
     const WebsiteSettings::ChooserUIInfo& ui_info;
     // The opaque |object| representing the thing the user selected.
-    scoped_ptr<base::DictionaryValue> object;
+    std::unique_ptr<base::DictionaryValue> object;
   };
 
   // |IdentityInfo| contains information about the site's identity and

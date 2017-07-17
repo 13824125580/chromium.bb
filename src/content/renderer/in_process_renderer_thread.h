@@ -5,6 +5,7 @@
 #ifndef CONTENT_RENDERER_IN_PROCESS_RENDERER_THREAD_H_
 #define CONTENT_RENDERER_IN_PROCESS_RENDERER_THREAD_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"

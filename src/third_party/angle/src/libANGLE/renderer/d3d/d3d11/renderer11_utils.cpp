@@ -224,6 +224,8 @@ D3D11_QUERY ConvertQueryType(GLenum queryType)
       case GL_TIME_ELAPSED_EXT:
           // Two internal queries are also created for begin/end timestamps
           return D3D11_QUERY_TIMESTAMP_DISJOINT;
+      case GL_COMMANDS_COMPLETED_CHROMIUM:
+          return D3D11_QUERY_EVENT;
       default: UNREACHABLE();                        return D3D11_QUERY_EVENT;
     }
 }
@@ -325,16 +327,20 @@ GLint GetMaximumClientVersion(D3D_FEATURE_LEVEL featureLevel)
 {
     switch (featureLevel)
     {
-      case D3D_FEATURE_LEVEL_11_1:
-      case D3D_FEATURE_LEVEL_11_0:
-      case D3D_FEATURE_LEVEL_10_1:
-      case D3D_FEATURE_LEVEL_10_0: return 3;
+        case D3D_FEATURE_LEVEL_11_1:
+        case D3D_FEATURE_LEVEL_11_0:
+        case D3D_FEATURE_LEVEL_10_1:
+            return 3;
 
-      case D3D_FEATURE_LEVEL_9_3:
-      case D3D_FEATURE_LEVEL_9_2:
-      case D3D_FEATURE_LEVEL_9_1:  return 2;
+        case D3D_FEATURE_LEVEL_10_0:
+        case D3D_FEATURE_LEVEL_9_3:
+        case D3D_FEATURE_LEVEL_9_2:
+        case D3D_FEATURE_LEVEL_9_1:
+            return 2;
 
-      default: UNREACHABLE();      return 0;
+        default:
+            UNREACHABLE();
+            return 0;
     }
 }
 
@@ -358,21 +364,21 @@ static gl::TextureCaps GenerateTextureFormatCaps(GLint maxClientVersion, GLenum 
         }
     }
 
-    textureCaps.texturable = support.query(formatInfo.formatSet.texFormat, texSupportMask);
+    textureCaps.texturable = support.query(formatInfo.formatSet->texFormat, texSupportMask);
     textureCaps.filterable =
-        support.query(formatInfo.formatSet.srvFormat, D3D11_FORMAT_SUPPORT_SHADER_SAMPLE);
+        support.query(formatInfo.formatSet->srvFormat, D3D11_FORMAT_SUPPORT_SHADER_SAMPLE);
     textureCaps.renderable =
-        (support.query(formatInfo.formatSet.rtvFormat, D3D11_FORMAT_SUPPORT_RENDER_TARGET)) ||
-        (support.query(formatInfo.formatSet.dsvFormat, D3D11_FORMAT_SUPPORT_DEPTH_STENCIL));
+        (support.query(formatInfo.formatSet->rtvFormat, D3D11_FORMAT_SUPPORT_RENDER_TARGET)) ||
+        (support.query(formatInfo.formatSet->dsvFormat, D3D11_FORMAT_SUPPORT_DEPTH_STENCIL));
 
     DXGI_FORMAT renderFormat = DXGI_FORMAT_UNKNOWN;
-    if (formatInfo.formatSet.dsvFormat != DXGI_FORMAT_UNKNOWN)
+    if (formatInfo.formatSet->dsvFormat != DXGI_FORMAT_UNKNOWN)
     {
-        renderFormat = formatInfo.formatSet.dsvFormat;
+        renderFormat = formatInfo.formatSet->dsvFormat;
     }
-    else if (formatInfo.formatSet.rtvFormat != DXGI_FORMAT_UNKNOWN)
+    else if (formatInfo.formatSet->rtvFormat != DXGI_FORMAT_UNKNOWN)
     {
-        renderFormat = formatInfo.formatSet.rtvFormat;
+        renderFormat = formatInfo.formatSet->rtvFormat;
     }
     if (renderFormat != DXGI_FORMAT_UNKNOWN &&
         support.query(renderFormat, D3D11_FORMAT_SUPPORT_MULTISAMPLE_RENDERTARGET))
@@ -1229,11 +1235,13 @@ void GenerateCaps(ID3D11Device *device, ID3D11DeviceContext *deviceContext, cons
     extensions->fboRenderMipmap = false;
     extensions->debugMarker = true;
     extensions->eglImage                 = true;
+    extensions->eglImageExternal          = true;
+    extensions->eglImageExternalEssl3     = true;
+    extensions->eglStreamConsumerExternal = true;
     extensions->unpackSubimage           = true;
     extensions->packSubimage             = true;
-    extensions->vertexArrayObject        = true;
-    extensions->noError                  = true;
     extensions->lossyETCDecode           = true;
+    extensions->syncQuery                 = GetEventQuerySupport(featureLevel);
 
     // D3D11 Feature Level 10_0+ uses SV_IsFrontFace in HLSL to emulate gl_FrontFacing.
     // D3D11 Feature Level 9_3 doesn't support SV_IsFrontFace, and has no equivalent, so can't support gl_FrontFacing.
@@ -1366,7 +1374,7 @@ void GenerateInitialTextureData(GLint internalFormat,
     ASSERT(d3dFormatInfo.dataInitializerFunction != NULL);
 
     const d3d11::DXGIFormatSize &dxgiFormatInfo =
-        d3d11::GetDXGIFormatSizeInfo(d3dFormatInfo.formatSet.texFormat);
+        d3d11::GetDXGIFormatSizeInfo(d3dFormatInfo.formatSet->texFormat);
 
     outSubresourceData->resize(mipLevels);
     outData->resize(mipLevels);
@@ -1526,6 +1534,7 @@ void InitConstantBufferDesc(D3D11_BUFFER_DESC *constantBufferDescription, size_t
 TextureHelper11::TextureHelper11()
     : mTextureType(GL_NONE),
       mFormat(DXGI_FORMAT_UNKNOWN),
+      mANGLEFormat(d3d11::ANGLE_FORMAT_NONE),
       mSampleCount(0),
       mTexture2D(nullptr),
       mTexture3D(nullptr)
@@ -1536,6 +1545,7 @@ TextureHelper11::TextureHelper11(TextureHelper11 &&toCopy)
     : mTextureType(toCopy.mTextureType),
       mExtents(toCopy.mExtents),
       mFormat(toCopy.mFormat),
+      mANGLEFormat(toCopy.mANGLEFormat),
       mSampleCount(toCopy.mSampleCount),
       mTexture2D(toCopy.mTexture2D),
       mTexture3D(toCopy.mTexture3D)
@@ -1544,9 +1554,11 @@ TextureHelper11::TextureHelper11(TextureHelper11 &&toCopy)
 }
 
 // static
-TextureHelper11 TextureHelper11::MakeAndReference(ID3D11Resource *genericResource)
+TextureHelper11 TextureHelper11::MakeAndReference(ID3D11Resource *genericResource,
+                                                  d3d11::ANGLEFormat angleFormat)
 {
     TextureHelper11 newHelper;
+    newHelper.mANGLEFormat = angleFormat;
     newHelper.mTexture2D   = d3d11::DynamicCastComObject<ID3D11Texture2D>(genericResource);
     newHelper.mTexture3D   = d3d11::DynamicCastComObject<ID3D11Texture3D>(genericResource);
     newHelper.mTextureType = newHelper.mTexture2D ? GL_TEXTURE_2D : GL_TEXTURE_3D;
@@ -1555,9 +1567,11 @@ TextureHelper11 TextureHelper11::MakeAndReference(ID3D11Resource *genericResourc
 }
 
 // static
-TextureHelper11 TextureHelper11::MakeAndPossess2D(ID3D11Texture2D *texToOwn)
+TextureHelper11 TextureHelper11::MakeAndPossess2D(ID3D11Texture2D *texToOwn,
+                                                  d3d11::ANGLEFormat angleFormat)
 {
     TextureHelper11 newHelper;
+    newHelper.mANGLEFormat = angleFormat;
     newHelper.mTexture2D   = texToOwn;
     newHelper.mTextureType = GL_TEXTURE_2D;
     newHelper.initDesc();
@@ -1565,9 +1579,11 @@ TextureHelper11 TextureHelper11::MakeAndPossess2D(ID3D11Texture2D *texToOwn)
 }
 
 // static
-TextureHelper11 TextureHelper11::MakeAndPossess3D(ID3D11Texture3D *texToOwn)
+TextureHelper11 TextureHelper11::MakeAndPossess3D(ID3D11Texture3D *texToOwn,
+                                                  d3d11::ANGLEFormat angleFormat)
 {
     TextureHelper11 newHelper;
+    newHelper.mANGLEFormat = angleFormat;
     newHelper.mTexture3D   = texToOwn;
     newHelper.mTextureType = GL_TEXTURE_3D;
     newHelper.initDesc();
@@ -1600,6 +1616,7 @@ void TextureHelper11::initDesc()
         mFormat         = desc3D.Format;
         mSampleCount    = 1;
     }
+    ASSERT(mFormat == d3d11::GetANGLEFormatSet(mANGLEFormat).texFormat);
 }
 
 TextureHelper11::~TextureHelper11()
@@ -1622,6 +1639,7 @@ TextureHelper11 &TextureHelper11::operator=(TextureHelper11 &&texture)
     mTextureType = texture.mTextureType;
     mExtents     = texture.mExtents;
     mFormat      = texture.mFormat;
+    mANGLEFormat = texture.mANGLEFormat;
     mSampleCount = texture.mSampleCount;
     mTexture2D   = texture.mTexture2D;
     mTexture3D = texture.mTexture3D;
@@ -1640,10 +1658,13 @@ void TextureHelper11::reset()
 }
 
 gl::ErrorOrResult<TextureHelper11> CreateStagingTexture(GLenum textureType,
-                                                        DXGI_FORMAT dxgiFormat,
+                                                        d3d11::ANGLEFormat angleFormat,
                                                         const gl::Extents &size,
+                                                        StagingAccess readAndWriteAccess,
                                                         ID3D11Device *device)
 {
+    const auto &formatSet = d3d11::GetANGLEFormatSet(angleFormat);
+
     if (textureType == GL_TEXTURE_2D)
     {
         D3D11_TEXTURE2D_DESC stagingDesc;
@@ -1651,13 +1672,18 @@ gl::ErrorOrResult<TextureHelper11> CreateStagingTexture(GLenum textureType,
         stagingDesc.Height             = size.height;
         stagingDesc.MipLevels          = 1;
         stagingDesc.ArraySize          = 1;
-        stagingDesc.Format             = dxgiFormat;
+        stagingDesc.Format             = formatSet.texFormat;
         stagingDesc.SampleDesc.Count   = 1;
         stagingDesc.SampleDesc.Quality = 0;
         stagingDesc.Usage              = D3D11_USAGE_STAGING;
         stagingDesc.BindFlags          = 0;
         stagingDesc.CPUAccessFlags     = D3D11_CPU_ACCESS_READ;
         stagingDesc.MiscFlags          = 0;
+
+        if (readAndWriteAccess == StagingAccess::READ_WRITE)
+        {
+            stagingDesc.CPUAccessFlags |= D3D11_CPU_ACCESS_WRITE;
+        }
 
         ID3D11Texture2D *stagingTex = nullptr;
         HRESULT result = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
@@ -1667,7 +1693,7 @@ gl::ErrorOrResult<TextureHelper11> CreateStagingTexture(GLenum textureType,
                              result);
         }
 
-        return TextureHelper11::MakeAndPossess2D(stagingTex);
+        return TextureHelper11::MakeAndPossess2D(stagingTex, angleFormat);
     }
     ASSERT(textureType == GL_TEXTURE_3D);
 
@@ -1676,7 +1702,7 @@ gl::ErrorOrResult<TextureHelper11> CreateStagingTexture(GLenum textureType,
     stagingDesc.Height         = size.height;
     stagingDesc.Depth          = 1;
     stagingDesc.MipLevels      = 1;
-    stagingDesc.Format         = dxgiFormat;
+    stagingDesc.Format         = formatSet.texFormat;
     stagingDesc.Usage          = D3D11_USAGE_STAGING;
     stagingDesc.BindFlags      = 0;
     stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -1690,7 +1716,7 @@ gl::ErrorOrResult<TextureHelper11> CreateStagingTexture(GLenum textureType,
                          result);
     }
 
-    return TextureHelper11::MakeAndPossess3D(stagingTex);
+    return TextureHelper11::MakeAndPossess3D(stagingTex, angleFormat);
 }
 
 bool UsePresentPathFast(const Renderer11 *renderer,

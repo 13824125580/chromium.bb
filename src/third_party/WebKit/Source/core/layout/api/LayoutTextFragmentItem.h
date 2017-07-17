@@ -1,4 +1,3 @@
-
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -23,7 +22,7 @@ public:
     explicit LayoutTextFragmentItem(const LayoutTextItem& item)
         : LayoutTextItem(item)
     {
-        ASSERT(!item || item.isTextFragment());
+        ASSERT_WITH_SECURITY_IMPLICATION(!item || item.isTextFragment());
     }
 
     explicit LayoutTextFragmentItem(std::nullptr_t) : LayoutTextItem(nullptr) { }
@@ -47,4 +46,4 @@ private:
 
 } // namespace blink
 
-#endif // LayoutTextItem_h
+#endif // LayoutTextFragmentItem_h

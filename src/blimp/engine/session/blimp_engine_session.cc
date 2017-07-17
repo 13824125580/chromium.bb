@@ -6,30 +6,45 @@
 
 #include <string>
 
+#include "base/command_line.h"
+#include "base/memory/ptr_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
+#include "blimp/common/blob_cache/in_memory_blob_cache.h"
 #include "blimp/common/create_blimp_message.h"
 #include "blimp/common/proto/tab_control.pb.h"
 #include "blimp/engine/app/blimp_engine_config.h"
+#include "blimp/engine/app/settings_manager.h"
+#include "blimp/engine/app/switches.h"
 #include "blimp/engine/app/ui/blimp_layout_manager.h"
 #include "blimp/engine/app/ui/blimp_screen.h"
-#include "blimp/engine/app/ui/blimp_ui_context_factory.h"
+#include "blimp/engine/app/ui/blimp_window_tree_client.h"
 #include "blimp/engine/app/ui/blimp_window_tree_host.h"
 #include "blimp/engine/common/blimp_browser_context.h"
+#include "blimp/engine/common/blimp_user_agent.h"
+#include "blimp/engine/session/tab.h"
 #include "blimp/net/blimp_connection.h"
+#include "blimp/net/blimp_connection_statistics.h"
 #include "blimp/net/blimp_message_multiplexer.h"
 #include "blimp/net/blimp_message_thread_pipe.h"
+#include "blimp/net/blob_channel/blob_channel_sender_impl.h"
+#include "blimp/net/blob_channel/helium_blob_sender_delegate.h"
 #include "blimp/net/browser_connection_handler.h"
 #include "blimp/net/common.h"
 #include "blimp/net/engine_authentication_handler.h"
 #include "blimp/net/engine_connection_manager.h"
 #include "blimp/net/null_blimp_message_processor.h"
 #include "blimp/net/tcp_engine_transport.h"
+#include "blimp/net/thread_pipe_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
@@ -37,11 +52,12 @@
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/ime/input_method.h"
+#include "ui/base/ime/text_input_client.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/wm/core/base_focus_rules.h"
 #include "ui/wm/core/default_activation_client.h"
 #include "ui/wm/core/focus_controller.h"
-
 
 namespace blimp {
 namespace engine {
@@ -71,47 +87,84 @@ net::IPAddress GetIPv4AnyAddress() {
   return net::IPAddress(0, 0, 0, 0);
 }
 
+// Proxies calls to TaskRunner::PostTask while stripping the return value,
+// which provides a suitable function prototype for binding a base::Closure.
+void PostTask(const scoped_refptr<base::TaskRunner>& task_runner,
+              const base::Closure& closure) {
+  task_runner->PostTask(FROM_HERE, closure);
+}
+
+// Returns a closure that quits the current (bind-time) MessageLoop.
+base::Closure QuitCurrentMessageLoopClosure() {
+  return base::Bind(&PostTask, base::ThreadTaskRunnerHandle::Get(),
+                    base::MessageLoop::QuitWhenIdleClosure());
+}
+
+uint16_t GetListeningPort() {
+  unsigned port_parsed = 0;
+  if (!base::StringToUint(
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              kEnginePort),
+          &port_parsed)) {
+    return kDefaultPort;
+  }
+  if (port_parsed > 65535) {
+    LOG(FATAL) << "--engine-port must be a value between 0 and 65535.";
+    return kDefaultPort;
+  }
+  return port_parsed;
+}
+
 }  // namespace
 
 // EngineNetworkComponents is created by the BlimpEngineSession on the UI
 // thread, and then used and destroyed on the IO thread.
-class EngineNetworkComponents {
+class EngineNetworkComponents : public ConnectionHandler,
+                                public ConnectionErrorObserver {
  public:
-  explicit EngineNetworkComponents(net::NetLog* net_log);
-  ~EngineNetworkComponents();
+  // |net_log|: The log to use for network-related events.
+  // |quit_closure|: A closure which will terminate the engine when
+  //                 invoked.
+  EngineNetworkComponents(net::NetLog* net_log,
+                          const base::Closure& quit_closure);
+  ~EngineNetworkComponents() override;
 
   // Sets up network components and starts listening for incoming connection.
   // This should be called after all features have been registered so that
   // received messages can be properly handled.
   void Initialize(const std::string& client_token);
 
-  // Connects message pipes between the specified feature and the network layer,
-  // using |incoming_proxy| as the incoming message processor, and connecting
-  // |outgoing_pipe| to the actual message sender.
-  void RegisterFeature(BlimpMessage::Type type,
-                       scoped_ptr<BlimpMessageThreadPipe> outgoing_pipe,
-                       scoped_ptr<BlimpMessageProcessor> incoming_proxy);
+  uint16_t GetPortForTesting() { return port_; }
+
+  BrowserConnectionHandler* GetBrowserConnectionHandler();
 
  private:
+  // ConnectionHandler implementation.
+  void HandleConnection(std::unique_ptr<BlimpConnection> connection) override;
+
+  // ConnectionErrorObserver implementation.
+  // Signals the engine session that an authenticated connection was
+  // terminated.
+  void OnConnectionError(int error) override;
+
   net::NetLog* net_log_;
-  scoped_ptr<BrowserConnectionHandler> connection_handler_;
-  scoped_ptr<EngineAuthenticationHandler> authentication_handler_;
-  scoped_ptr<EngineConnectionManager> connection_manager_;
+  base::Closure quit_closure_;
+  uint16_t port_ = 0;
 
-  // Container for the feature-specific MessageProcessors.
-  std::vector<scoped_ptr<BlimpMessageProcessor>> incoming_proxies_;
-
-  // Containers for the MessageProcessors used to write feature-specific
-  // messages to the network, and the thread-pipe endpoints through which
-  // they are used from the UI thread.
-  std::vector<scoped_ptr<BlimpMessageProcessor>> outgoing_message_processors_;
-  std::vector<scoped_ptr<BlimpMessageThreadPipe>> outgoing_pipes_;
+  std::unique_ptr<BrowserConnectionHandler> connection_handler_;
+  std::unique_ptr<EngineAuthenticationHandler> authentication_handler_;
+  std::unique_ptr<EngineConnectionManager> connection_manager_;
+  BlimpConnectionStatistics blimp_connection_statistics_;
 
   DISALLOW_COPY_AND_ASSIGN(EngineNetworkComponents);
 };
 
-EngineNetworkComponents::EngineNetworkComponents(net::NetLog* net_log)
-    : net_log_(net_log) {}
+EngineNetworkComponents::EngineNetworkComponents(
+    net::NetLog* net_log,
+    const base::Closure& quit_closure)
+    : net_log_(net_log),
+      quit_closure_(quit_closure),
+      connection_handler_(new BrowserConnectionHandler) {}
 
 EngineNetworkComponents::~EngineNetworkComponents() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -119,63 +172,84 @@ EngineNetworkComponents::~EngineNetworkComponents() {
 
 void EngineNetworkComponents::Initialize(const std::string& client_token) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  DCHECK(connection_handler_);
-  DCHECK(!authentication_handler_);
+  DCHECK(!connection_manager_);
 
-  // Creates and connects net components.
-  // A BlimpConnection flows from
-  // connection_manager_ --> authentication_handler_ --> connection_handler_
-  authentication_handler_ = make_scoped_ptr(
-      new EngineAuthenticationHandler(connection_handler_.get(), client_token));
-  connection_manager_ = make_scoped_ptr(
+  // Plumb authenticated connections from the authentication handler
+  // to |this| (which will then pass it to |connection_handler_|.
+  authentication_handler_ =
+      base::WrapUnique(new EngineAuthenticationHandler(this, client_token));
+
+  // Plumb unauthenticated connections to |authentication_handler_|.
+  connection_manager_ = base::WrapUnique(
       new EngineConnectionManager(authentication_handler_.get()));
 
   // Adds BlimpTransports to connection_manager_.
-  net::IPEndPoint address(GetIPv4AnyAddress(), kDefaultPort);
-  connection_manager_->AddTransport(
-      make_scoped_ptr(new TCPEngineTransport(address, net_log_)));
+  net::IPEndPoint address(GetIPv4AnyAddress(), GetListeningPort());
+  TCPEngineTransport* transport =
+      new TCPEngineTransport(address, &blimp_connection_statistics_, net_log_);
+  connection_manager_->AddTransport(base::WrapUnique(transport));
+
+  transport->GetLocalAddress(&address);
+  port_ = address.port();
 }
 
-void EngineNetworkComponents::RegisterFeature(
-    BlimpMessage::Type type,
-    scoped_ptr<BlimpMessageThreadPipe> outgoing_pipe,
-    scoped_ptr<BlimpMessageProcessor> incoming_proxy) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+void EngineNetworkComponents::HandleConnection(
+    std::unique_ptr<BlimpConnection> connection) {
+  // Observe |connection| for disconnection events.
+  connection->AddConnectionErrorObserver(this);
+  connection_handler_->HandleConnection(std::move(connection));
+}
 
-  if (!connection_handler_) {
-    connection_handler_ = make_scoped_ptr(new BrowserConnectionHandler);
-  }
+void EngineNetworkComponents::OnConnectionError(int error) {
+  DVLOG(1) << "EngineNetworkComponents::OnConnectionError(" << error << ")";
+  quit_closure_.Run();
+}
 
-  // Registers |incoming_proxy| as the message processor for incoming
-  // messages with |type|. Sets the returned outgoing message processor as the
-  // target of the |outgoing_pipe|.
-  scoped_ptr<BlimpMessageProcessor> outgoing_message_processor =
-      connection_handler_->RegisterFeature(type, incoming_proxy.get());
-  outgoing_pipe->set_target_processor(outgoing_message_processor.get());
-
-  // This object manages the lifetimes of the pipe, proxy and target processor.
-  incoming_proxies_.push_back(std::move(incoming_proxy));
-  outgoing_pipes_.push_back(std::move(outgoing_pipe));
-  outgoing_message_processors_.push_back(std::move(outgoing_message_processor));
+BrowserConnectionHandler*
+EngineNetworkComponents::GetBrowserConnectionHandler() {
+  return connection_handler_.get();
 }
 
 BlimpEngineSession::BlimpEngineSession(
-    scoped_ptr<BlimpBrowserContext> browser_context,
+    std::unique_ptr<BlimpBrowserContext> browser_context,
     net::NetLog* net_log,
-    BlimpEngineConfig* engine_config)
-    : browser_context_(std::move(browser_context)),
+    BlimpEngineConfig* engine_config,
+    SettingsManager* settings_manager)
+    : screen_(new BlimpScreen),
+      browser_context_(std::move(browser_context)),
       engine_config_(engine_config),
-      screen_(new BlimpScreen),
-      net_components_(new EngineNetworkComponents(net_log)) {
+      settings_manager_(settings_manager),
+      settings_feature_(settings_manager_),
+      render_widget_feature_(settings_manager_),
+      net_components_(
+          new EngineNetworkComponents(net_log,
+                                      QuitCurrentMessageLoopClosure())) {
   DCHECK(engine_config_);
-  screen_->UpdateDisplayScaleAndSize(kDefaultScaleFactor,
-                                     gfx::Size(kDefaultDisplayWidth,
-                                               kDefaultDisplayHeight));
+  DCHECK(settings_manager_);
+
+  screen_->UpdateDisplayScaleAndSize(
+      kDefaultScaleFactor,
+      gfx::Size(kDefaultDisplayWidth, kDefaultDisplayHeight));
   render_widget_feature_.SetDelegate(kDummyTabId, this);
+
+  std::unique_ptr<HeliumBlobSenderDelegate> helium_blob_delegate(
+      new HeliumBlobSenderDelegate);
+  blob_delegate_ = helium_blob_delegate.get();
+  blob_channel_sender_ = base::WrapUnique(
+      new BlobChannelSenderImpl(base::WrapUnique(new InMemoryBlobCache),
+                                std::move(helium_blob_delegate)));
 }
 
 BlimpEngineSession::~BlimpEngineSession() {
   render_widget_feature_.RemoveDelegate(kDummyTabId);
+
+  window_tree_host_->GetInputMethod()->RemoveObserver(this);
+
+  // Ensure that all tabs are torn down first, since teardown will
+  // trigger RenderViewDeleted callbacks to their observers, which will in turn
+  // send messages to net_components_, which is already deleted due to the line
+  // below.
+  tab_.reset();
 
   // Safely delete network components on the IO thread.
   content::BrowserThread::DeleteSoon(content::BrowserThread::IO, FROM_HERE,
@@ -183,11 +257,9 @@ BlimpEngineSession::~BlimpEngineSession() {
 }
 
 void BlimpEngineSession::Initialize() {
-  DCHECK(!gfx::Screen::GetScreen());
-  gfx::Screen::SetScreenInstance(screen_.get());
+  DCHECK(!display::Screen::GetScreen());
+  display::Screen::SetScreenInstance(screen_.get());
 
-  context_factory_.reset(new BlimpUiContextFactory());
-  aura::Env::GetInstance()->set_context_factory(context_factory_.get());
   window_tree_host_.reset(new BlimpWindowTreeHost());
 
   screen_->set_window_tree_host(window_tree_host_.get());
@@ -202,18 +274,14 @@ void BlimpEngineSession::Initialize() {
   capture_client_.reset(
       new aura::client::DefaultCaptureClient(window_tree_host_->window()));
 
+  window_tree_client_.reset(
+      new BlimpWindowTreeClient(window_tree_host_->window()));
+
+  window_tree_host_->GetInputMethod()->AddObserver(this);
+
   window_tree_host_->SetBounds(gfx::Rect(screen_->GetPrimaryDisplay().size()));
 
-  // Register features' message senders and receivers.
-  tab_control_message_sender_ =
-      RegisterFeature(BlimpMessage::TAB_CONTROL, this);
-  navigation_message_sender_ = RegisterFeature(BlimpMessage::NAVIGATION, this);
-  render_widget_feature_.set_render_widget_message_sender(
-      RegisterFeature(BlimpMessage::RENDER_WIDGET, &render_widget_feature_));
-  render_widget_feature_.set_input_message_sender(
-      RegisterFeature(BlimpMessage::INPUT, &render_widget_feature_));
-  render_widget_feature_.set_compositor_message_sender(
-      RegisterFeature(BlimpMessage::COMPOSITOR, &render_widget_feature_));
+  RegisterFeatures();
 
   // Initialize must only be posted after the RegisterFeature calls have
   // completed.
@@ -224,59 +292,66 @@ void BlimpEngineSession::Initialize() {
                  engine_config_->client_token()));
 }
 
-scoped_ptr<BlimpMessageProcessor> BlimpEngineSession::RegisterFeature(
-    BlimpMessage::Type type,
-    BlimpMessageProcessor* incoming_processor) {
-  // Creates an outgoing pipe and a proxy for forwarding messages
-  // from features on the UI thread to network components on the IO thread.
-  scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
-      content::BrowserThread::GetMessageLoopProxyForThread(
-          content::BrowserThread::IO);
-  scoped_ptr<BlimpMessageThreadPipe> outgoing_pipe(
-      new BlimpMessageThreadPipe(io_task_runner));
-  scoped_ptr<BlimpMessageProcessor> outgoing_proxy =
-      outgoing_pipe->CreateProxy();
-
-  // Creates an incoming pipe and a proxy for receiving messages
-  // from network components on the IO thread.
-  scoped_ptr<BlimpMessageThreadPipe> incoming_pipe(new BlimpMessageThreadPipe(
-      content::BrowserThread::GetMessageLoopProxyForThread(
-          content::BrowserThread::UI)));
-  incoming_pipe->set_target_processor(incoming_processor);
-  scoped_ptr<BlimpMessageProcessor> incoming_proxy =
-      incoming_pipe->CreateProxy();
-
-  // Finishes registration on IO thread.
-  io_task_runner->PostTask(
-      FROM_HERE, base::Bind(&EngineNetworkComponents::RegisterFeature,
-                            base::Unretained(net_components_.get()), type,
-                            base::Passed(std::move(outgoing_pipe)),
-                            base::Passed(std::move(incoming_proxy))));
-
-  incoming_pipes_.push_back(std::move(incoming_pipe));
-  return outgoing_proxy;
+void BlimpEngineSession::GetEnginePortForTesting(
+    const GetPortCallback& callback) {
+  content::BrowserThread::PostTaskAndReplyWithResult(
+      content::BrowserThread::IO, FROM_HERE,
+      base::Bind(&EngineNetworkComponents::GetPortForTesting,
+                 base::Unretained(net_components_.get())),
+      callback);
 }
 
-bool BlimpEngineSession::CreateWebContents(const int target_tab_id) {
+void BlimpEngineSession::RegisterFeatures() {
+  thread_pipe_manager_.reset(new ThreadPipeManager(
+      content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::IO),
+      net_components_->GetBrowserConnectionHandler()));
+
+  // Register features' message senders and receivers.
+  tab_control_message_sender_ =
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kTabControl, this);
+  navigation_message_sender_ =
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kNavigation, this);
+  render_widget_feature_.set_render_widget_message_sender(
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kRenderWidget,
+                                            &render_widget_feature_));
+  render_widget_feature_.set_input_message_sender(
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kInput,
+                                            &render_widget_feature_));
+  render_widget_feature_.set_compositor_message_sender(
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kCompositor,
+                                            &render_widget_feature_));
+  render_widget_feature_.set_ime_message_sender(
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kIme,
+                                            &render_widget_feature_));
+  blob_delegate_->set_outgoing_message_processor(
+      thread_pipe_manager_->RegisterFeature(BlimpMessage::kBlobChannel,
+                                            blob_delegate_));
+
+  // The Settings feature does not need an outgoing message processor, since we
+  // don't send any messages to the client right now.
+  thread_pipe_manager_->RegisterFeature(BlimpMessage::kSettings,
+                                        &settings_feature_);
+}
+
+bool BlimpEngineSession::CreateTab(const int target_tab_id) {
   DVLOG(1) << "Create tab " << target_tab_id;
-  // TODO(haibinlu): Support more than one active WebContents (crbug/547231).
-  if (web_contents_) {
-    DLOG(WARNING) << "Tab " << target_tab_id << " already existed";
+  if (tab_) {
     return false;
   }
 
   content::WebContents::CreateParams create_params(browser_context_.get(),
                                                    nullptr);
-  scoped_ptr<content::WebContents> new_contents =
-      make_scoped_ptr(content::WebContents::Create(create_params));
-  PlatformSetContents(std::move(new_contents));
+  std::unique_ptr<content::WebContents> new_contents =
+      base::WrapUnique(content::WebContents::Create(create_params));
+  PlatformSetContents(std::move(new_contents), target_tab_id);
+
   return true;
 }
 
-void BlimpEngineSession::CloseWebContents(const int target_tab_id) {
+void BlimpEngineSession::CloseTab(const int target_tab_id) {
   DVLOG(1) << "Close tab " << target_tab_id;
-  DCHECK(web_contents_);
-  web_contents_->Close();
+  tab_.reset();
 }
 
 void BlimpEngineSession::HandleResize(float device_pixel_ratio,
@@ -284,78 +359,94 @@ void BlimpEngineSession::HandleResize(float device_pixel_ratio,
   DVLOG(1) << "Resize to " << size.ToString() << ", " << device_pixel_ratio;
   screen_->UpdateDisplayScaleAndSize(device_pixel_ratio, size);
   window_tree_host_->SetBounds(gfx::Rect(size));
-  if (web_contents_) {
-    const gfx::Size size_in_dips = screen_->GetPrimaryDisplay().bounds().size();
-    web_contents_->GetNativeView()->SetBounds(gfx::Rect(size_in_dips));
+  if (tab_) {
+    tab_->Resize(device_pixel_ratio,
+                 screen_->GetPrimaryDisplay().bounds().size());
   }
-
-  if (web_contents_ && web_contents_->GetRenderViewHost() &&
-      web_contents_->GetRenderViewHost()->GetWidget()) {
-    web_contents_->GetRenderViewHost()->GetWidget()->WasResized();
-  }
-}
-
-void BlimpEngineSession::LoadUrl(const int target_tab_id, const GURL& url) {
-  DVLOG(1) << "Load URL " << url << " in tab " << target_tab_id;
-  if (url.is_empty()) {
-    return;
-  }
-
-  // TODO(dtrainor, haibinlu): Fix up the URL with url_fixer.h.  If that doesn't
-  // produce a valid spec() then try to build a search query?
-  content::NavigationController::LoadURLParams params(url);
-  params.transition_type = ui::PageTransitionFromInt(
-      ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
-  web_contents_->GetController().LoadURLWithParams(params);
-  web_contents_->Focus();
-}
-
-void BlimpEngineSession::GoBack(const int target_tab_id) {
-  DVLOG(1) << "Back in tab " << target_tab_id;
-  web_contents_->GetController().GoBack();
-}
-
-void BlimpEngineSession::GoForward(const int target_tab_id) {
-  DVLOG(1) << "Forward in tab " << target_tab_id;
-  web_contents_->GetController().GoForward();
-}
-
-void BlimpEngineSession::Reload(const int target_tab_id) {
-  DVLOG(1) << "Reload in tab " << target_tab_id;
-  web_contents_->GetController().Reload(true);
 }
 
 void BlimpEngineSession::OnWebGestureEvent(
     content::RenderWidgetHost* render_widget_host,
-    scoped_ptr<blink::WebGestureEvent> event) {
-
+    std::unique_ptr<blink::WebGestureEvent> event) {
+  TRACE_EVENT1("blimp", "BlimpEngineSession::OnWebGestureEvent", "type",
+               event->type);
   render_widget_host->ForwardGestureEvent(*event);
 }
 
 void BlimpEngineSession::OnCompositorMessageReceived(
     content::RenderWidgetHost* render_widget_host,
     const std::vector<uint8_t>& message) {
+  TRACE_EVENT0("blimp", "BlimpEngineSession::OnCompositorMessageReceived");
 
   render_widget_host->HandleCompositorProto(message);
 }
 
+void BlimpEngineSession::OnTextInputTypeChanged(
+    const ui::TextInputClient* client) {}
+
+void BlimpEngineSession::OnFocus() {}
+
+void BlimpEngineSession::OnBlur() {}
+
+void BlimpEngineSession::OnCaretBoundsChanged(
+    const ui::TextInputClient* client) {}
+
+// Called when either:
+//  - the TextInputClient is changed (e.g. by a change of focus)
+//  - the TextInputType of the TextInputClient changes
+void BlimpEngineSession::OnTextInputStateChanged(
+    const ui::TextInputClient* client) {
+  if (!tab_ || !tab_->web_contents()->GetRenderWidgetHostView())
+    return;
+
+  ui::TextInputType type =
+      client ? client->GetTextInputType() : ui::TEXT_INPUT_TYPE_NONE;
+
+  // TODO(shaktisahu): Propagate the new type to the client.
+  // Hide IME, when text input is out of focus, i.e. if the text input type
+  // changes to ui::TEXT_INPUT_TYPE_NONE. For other text input types,
+  // OnShowImeIfNeeded is used instead to send show IME request to client.
+  if (type == ui::TEXT_INPUT_TYPE_NONE)
+    render_widget_feature_.SendHideImeRequest(
+        kDummyTabId,
+        tab_->web_contents()->GetRenderWidgetHostView()->GetRenderWidgetHost());
+}
+
+void BlimpEngineSession::OnInputMethodDestroyed(
+    const ui::InputMethod* input_method) {}
+
+// Called when a user input should trigger showing the IME.
+void BlimpEngineSession::OnShowImeIfNeeded() {
+  TRACE_EVENT0("blimp", "BlimpEngineSession::OnShowImeIfNeeded");
+  if (!tab_ || !tab_->web_contents()->GetRenderWidgetHostView() ||
+      !window_tree_host_->GetInputMethod()->GetTextInputClient())
+    return;
+
+  render_widget_feature_.SendShowImeRequest(
+      kDummyTabId,
+      tab_->web_contents()->GetRenderWidgetHostView()->GetRenderWidgetHost(),
+      window_tree_host_->GetInputMethod()->GetTextInputClient());
+}
+
 void BlimpEngineSession::ProcessMessage(
-    scoped_ptr<BlimpMessage> message,
+    std::unique_ptr<BlimpMessage> message,
     const net::CompletionCallback& callback) {
+  TRACE_EVENT1("blimp", "BlimpEngineSession::ProcessMessage", "TabId",
+               message->target_tab_id());
   DCHECK(!callback.is_null());
-  DCHECK(message->type() == BlimpMessage::TAB_CONTROL ||
-         message->type() == BlimpMessage::NAVIGATION);
+  DCHECK(BlimpMessage::kTabControl == message->feature_case() ||
+         BlimpMessage::kNavigation == message->feature_case());
 
   net::Error result = net::OK;
-  if (message->type() == BlimpMessage::TAB_CONTROL) {
-    switch (message->tab_control().type()) {
-      case TabControlMessage::CREATE_TAB:
-        if (!CreateWebContents(message->target_tab_id()))
+  if (message->has_tab_control()) {
+    switch (message->tab_control().tab_control_case()) {
+      case TabControlMessage::kCreateTab:
+        if (!CreateTab(message->target_tab_id()))
           result = net::ERR_FAILED;
         break;
-      case TabControlMessage::CLOSE_TAB:
-        CloseWebContents(message->target_tab_id());
-      case TabControlMessage::SIZE:
+      case TabControlMessage::kCloseTab:
+        CloseTab(message->target_tab_id());
+      case TabControlMessage::kSize:
         HandleResize(message->tab_control().size().device_pixel_ratio(),
                      gfx::Size(message->tab_control().size().width(),
                                message->tab_control().size().height()));
@@ -364,27 +455,30 @@ void BlimpEngineSession::ProcessMessage(
         NOTIMPLEMENTED();
         result = net::ERR_NOT_IMPLEMENTED;
     }
-  } else if (message->type() == BlimpMessage::NAVIGATION && web_contents_) {
-    switch (message->navigation().type()) {
-      case NavigationMessage::LOAD_URL:
-        LoadUrl(message->target_tab_id(),
-                GURL(message->navigation().load_url().url()));
-        break;
-      case NavigationMessage::GO_BACK:
-        GoBack(message->target_tab_id());
-        break;
-      case NavigationMessage::GO_FORWARD:
-        GoForward(message->target_tab_id());
-        break;
-      case NavigationMessage::RELOAD:
-        Reload(message->target_tab_id());
-        break;
-      default:
-        NOTIMPLEMENTED();
-        result = net::ERR_NOT_IMPLEMENTED;
+  } else if (message->has_navigation()) {
+    if (tab_) {
+      switch (message->navigation().type()) {
+        case NavigationMessage::LOAD_URL:
+          tab_->LoadUrl(GURL(message->navigation().load_url().url()));
+          break;
+        case NavigationMessage::GO_BACK:
+          tab_->GoBack();
+          break;
+        case NavigationMessage::GO_FORWARD:
+          tab_->GoForward();
+          break;
+        case NavigationMessage::RELOAD:
+          tab_->Reload();
+          break;
+        default:
+          NOTIMPLEMENTED();
+          result = net::ERR_NOT_IMPLEMENTED;
+      }
+    } else {
+      VLOG(1) << "Tab " << message->target_tab_id() << " does not exist";
     }
   } else {
-    DVLOG(1) << "No WebContents for navigation control";
+    NOTREACHED();
     result = net::ERR_FAILED;
   }
 
@@ -419,6 +513,8 @@ content::WebContents* BlimpEngineSession::OpenURLFromTab(
   load_url_params.should_replace_current_entry =
       params.should_replace_current_entry;
   load_url_params.is_renderer_initiated = params.is_renderer_initiated;
+  load_url_params.override_user_agent =
+      content::NavigationController::UA_OVERRIDE_TRUE;
 
   source->GetController().LoadURLWithParams(load_url_params);
   return source;
@@ -431,9 +527,8 @@ void BlimpEngineSession::RequestToLockMouse(content::WebContents* web_contents,
 }
 
 void BlimpEngineSession::CloseContents(content::WebContents* source) {
-  if (source == web_contents_.get()) {
-    Observe(nullptr);
-    web_contents_.reset();
+  if (source == tab_->web_contents()) {
+    tab_.reset();
   }
 }
 
@@ -444,6 +539,7 @@ void BlimpEngineSession::ActivateContents(content::WebContents* contents) {
 void BlimpEngineSession::ForwardCompositorProto(
     content::RenderWidgetHost* render_widget_host,
     const std::vector<uint8_t>& proto) {
+  TRACE_EVENT0("blimp", "BlimpEngineSession::ForwardCompositorProto");
   render_widget_feature_.SendCompositorMessage(kDummyTabId, render_widget_host,
                                                proto);
 }
@@ -451,66 +547,25 @@ void BlimpEngineSession::ForwardCompositorProto(
 void BlimpEngineSession::NavigationStateChanged(
     content::WebContents* source,
     content::InvalidateTypes changed_flags) {
-  if (source != web_contents_.get() || !changed_flags)
-    return;
-
-  NavigationMessage* navigation_message;
-  scoped_ptr<BlimpMessage> message =
-      CreateBlimpMessage(&navigation_message, kDummyTabId);
-  navigation_message->set_type(NavigationMessage::NAVIGATION_STATE_CHANGED);
-  NavigationStateChangeMessage* details =
-      navigation_message->mutable_navigation_state_changed();
-
-  if (changed_flags & content::InvalidateTypes::INVALIDATE_TYPE_URL)
-    details->set_url(source->GetURL().spec());
-
-  if (changed_flags & content::InvalidateTypes::INVALIDATE_TYPE_TAB) {
-    // TODO(dtrainor): Serialize the favicon?
-    NOTIMPLEMENTED();
-  }
-
-  if (changed_flags & content::InvalidateTypes::INVALIDATE_TYPE_TITLE)
-    details->set_title(base::UTF16ToUTF8(source->GetTitle()));
-
-  if (changed_flags & content::InvalidateTypes::INVALIDATE_TYPE_LOAD)
-    details->set_loading(source->IsLoading());
-
-  navigation_message_sender_->ProcessMessage(std::move(message),
-                                             net::CompletionCallback());
-}
-
-void BlimpEngineSession::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-  render_widget_feature_.OnRenderWidgetCreated(kDummyTabId,
-                                               render_view_host->GetWidget());
-}
-
-void BlimpEngineSession::RenderViewHostChanged(
-    content::RenderViewHost* old_host,
-    content::RenderViewHost* new_host) {
-  // Informs client that WebContents swaps its visible RenderViewHost with
-  // another one.
-  render_widget_feature_.OnRenderWidgetInitialized(kDummyTabId,
-                                                   new_host->GetWidget());
-}
-
-void BlimpEngineSession::RenderViewDeleted(
-    content::RenderViewHost* render_view_host) {
-  render_widget_feature_.OnRenderWidgetDeleted(kDummyTabId,
-                                               render_view_host->GetWidget());
+  TRACE_EVENT0("blimp", "BlimpEngineSession::NavigationStateChanged");
+  if (source == tab_->web_contents())
+    tab_->NavigationStateChanged(changed_flags);
 }
 
 void BlimpEngineSession::PlatformSetContents(
-    scoped_ptr<content::WebContents> new_contents) {
+    std::unique_ptr<content::WebContents> new_contents,
+    const int target_tab_id) {
   new_contents->SetDelegate(this);
-  Observe(new_contents.get());
-  web_contents_ = std::move(new_contents);
 
   aura::Window* parent = window_tree_host_->window();
-  aura::Window* content = web_contents_->GetNativeView();
+  aura::Window* content = new_contents->GetNativeView();
   if (!parent->Contains(content))
     parent->AddChild(content);
   content->Show();
+
+  tab_ = base::WrapUnique(new Tab(std::move(new_contents), target_tab_id,
+                                  &render_widget_feature_,
+                                  navigation_message_sender_.get()));
 }
 
 }  // namespace engine

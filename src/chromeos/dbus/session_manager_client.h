@@ -16,6 +16,10 @@
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_client_implementation_type.h"
 
+namespace cryptohome {
+class Identification;
+}
+
 namespace chromeos {
 
 // SessionManagerClient is used to communicate with the session manager.
@@ -43,6 +47,11 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
 
     // Called after EmitLoginPromptVisible is called.
     virtual void EmitLoginPromptVisibleCalled() {}
+
+    // Called when the ARC instance is stopped after it had already started.
+    // |clean| is true if the instance was stopped as a result of an explicit
+    // request, false if it died unexpectedly.
+    virtual void ArcInstanceStopped(bool clean) {}
   };
 
   // Interface for performing actions on behalf of the stub implementation.
@@ -78,7 +87,8 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   virtual void RestartJob(const std::vector<std::string>& argv) = 0;
 
   // Starts the session for the user.
-  virtual void StartSession(const std::string& user_email) = 0;
+  virtual void StartSession(
+      const cryptohome::Identification& cryptohome_id) = 0;
 
   // Stops the current session.
   virtual void StopSession() = 0;
@@ -102,19 +112,19 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   virtual void NotifySupervisedUserCreationFinished() = 0;
 
   // Map that is used to describe the set of active user sessions where |key|
-  // is user_id and |value| is user_id_hash.
-  typedef std::map<std::string, std::string> ActiveSessionsMap;
+  // is cryptohome id and |value| is user_id_hash.
+  using ActiveSessionsMap = std::map<cryptohome::Identification, std::string>;
 
   // The ActiveSessionsCallback is used for the RetrieveActiveSessions()
-  // method. It receives |sessions| argument where the keys are user_ids for
-  // all users that are currently active and |success| argument which indicates
-  // whether or not the request succeded.
+  // method. It receives |sessions| argument where the keys are cryptohome_ids
+  // for all users that are currently active and |success| argument which
+  // indicates whether or not the request succeded.
   typedef base::Callback<void(const ActiveSessionsMap& sessions,
                               bool success)> ActiveSessionsCallback;
 
   // Enumerates active user sessions. Usually Chrome naturally keeps track of
   // active users when they are added into current session. When Chrome is
-  // restarted after crash by session_manager it only receives user_id and
+  // restarted after crash by session_manager it only receives cryptohome id and
   // user_id_hash for one user. This method is used to retrieve list of all
   // active users.
   virtual void RetrieveActiveSessions(
@@ -131,10 +141,10 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   virtual void RetrieveDevicePolicy(const RetrievePolicyCallback& callback) = 0;
 
   // Fetches the user policy blob stored by the session manager for the given
-  // |username|. Upon completion of the retrieve attempt, we will call the
+  // |cryptohome_id|. Upon completion of the retrieve attempt, we will call the
   // provided callback.
   virtual void RetrievePolicyForUser(
-      const std::string& username,
+      const cryptohome::Identification& cryptohome_id,
       const RetrievePolicyCallback& callback) = 0;
 
   // Same as RetrievePolicyForUser() but blocks until a reply is received, and
@@ -144,7 +154,7 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   // considered acceptable (e.g. restarting the browser after a crash or after
   // a flag change).
   virtual std::string BlockingRetrievePolicyForUser(
-      const std::string& username) = 0;
+      const cryptohome::Identification& cryptohome_id) = 0;
 
   // Fetches the policy blob associated with the specified device-local account
   // from session manager.  |callback| is invoked up on completion.
@@ -162,11 +172,13 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   virtual void StoreDevicePolicy(const std::string& policy_blob,
                                  const StorePolicyCallback& callback) = 0;
 
-  // Attempts to asynchronously store |policy_blob| as user policy for the given
-  // |username|. Upon completion of the store attempt, we will call callback.
-  virtual void StorePolicyForUser(const std::string& username,
-                                  const std::string& policy_blob,
-                                  const StorePolicyCallback& callback) = 0;
+  // Attempts to asynchronously store |policy_blob| as user policy for the
+  // given |cryptohome_id|. Upon completion of the store attempt, we will call
+  // callback.
+  virtual void StorePolicyForUser(
+      const cryptohome::Identification& cryptohome_id,
+      const std::string& policy_blob,
+      const StorePolicyCallback& callback) = 0;
 
   // Sends a request to store a policy blob for the specified device-local
   // account. The result of the operation is reported through |callback|.
@@ -177,7 +189,7 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
 
   // Sets the flags to be applied next time by the session manager when Chrome
   // is restarted inside an already started session for a particular user.
-  virtual void SetFlagsForUser(const std::string& username,
+  virtual void SetFlagsForUser(const cryptohome::Identification& cryptohome_id,
                                const std::vector<std::string>& flags) = 0;
 
   typedef base::Callback<void(const std::vector<std::string>& state_keys)>
@@ -192,23 +204,44 @@ class CHROMEOS_EXPORT SessionManagerClient : public DBusClient {
   // will be invoked with an empty state key vector in case of errors.
   virtual void GetServerBackedStateKeys(const StateKeysCallback& callback) = 0;
 
-  // Used for CheckArcAvailability.  Takes a boolean indicating whether the
+  // Used for several ARC methods.  Takes a boolean indicating whether the
   // operation was successful or not.
   typedef base::Callback<void(bool)> ArcCallback;
 
+  // Used for GetArcStartTime. Takes a boolean indicating whether the
+  // operation was successful or not and the ticks of ARC start time if it
+  // is successful.
+  typedef base::Callback<void(bool success, base::TimeTicks ticks)>
+      GetArcStartTimeCallback;
+
   // Asynchronously checks if starting the ARC instance is available.
   // The result of the operation is reported through |callback|.
+  // If the operation fails, it is reported as unavailable.
   virtual void CheckArcAvailability(const ArcCallback& callback) = 0;
 
-  // Asynchronously starts the ARC instance using |socket_path| as the IPC
-  // socket for communication with the instance.  Upon completion, invokes
-  // |callback| with the result.
-  virtual void StartArcInstance(const std::string& socket_path,
+  // Asynchronously starts the ARC instance for the user whose cryptohome is
+  // located by |cryptohome_id|.  Upon completion, invokes |callback| with
+  // the result; true on success, false on failure (either session manager
+  // failed to start an instance or session manager can not be reached).
+  virtual void StartArcInstance(const cryptohome::Identification& cryptohome_id,
                                 const ArcCallback& callback) = 0;
 
   // Asynchronously stops the ARC instance.  Upon completion, invokes
-  // |callback| with the result.
+  // |callback| with the result; true on success, false on failure (either
+  // session manager failed to stop an instance or session manager can not be
+  // reached).
   virtual void StopArcInstance(const ArcCallback& callback) = 0;
+
+  // Asynchronously retrieves the timestamp which ARC instance is invoked or
+  // returns false if there is no ARC instance or ARC is not available.
+  virtual void GetArcStartTime(const GetArcStartTimeCallback& callback) = 0;
+
+  // Asynchronously removes all ARC user data for the user whose cryptohome is
+  // located by |cryptohome_id|. Upon completion, invokes |callback| with the
+  // result; true on success, false on failure (either session manager failed
+  // to remove user data or session manager can not be reached).
+  virtual void RemoveArcData(const cryptohome::Identification& cryptohome_id,
+                             const ArcCallback& callback) = 0;
 
   // Creates the instance.
   static SessionManagerClient* Create(DBusClientImplementationType type);

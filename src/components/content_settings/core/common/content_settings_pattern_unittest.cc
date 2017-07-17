@@ -620,25 +620,38 @@ TEST(ContentSettingsPatternTest, Compare) {
   EXPECT_EQ(ContentSettingsPattern::SUCCESSOR,
             Pattern("https://mail.google.com:*").Compare(
                 Pattern("*://mail.google.com:80")));
+}
 
-  // Test the wildcard pattern.
+TEST(ContentSettingsPatternTest, CompareWithWildcard) {
   EXPECT_EQ(ContentSettingsPattern::IDENTITY,
             ContentSettingsPattern::Wildcard().Compare(
                 ContentSettingsPattern::Wildcard()));
+  EXPECT_EQ(ContentSettingsPattern::IDENTITY,
+            ContentSettingsPattern::Wildcard().Compare(Pattern("*")));
 
   EXPECT_EQ(ContentSettingsPattern::PREDECESSOR,
             Pattern("[*.]google.com").Compare(
                 ContentSettingsPattern::Wildcard()));
+  EXPECT_EQ(ContentSettingsPattern::PREDECESSOR,
+            Pattern("[*.]google.com").Compare(Pattern("*")));
+
   EXPECT_EQ(ContentSettingsPattern::SUCCESSOR,
             ContentSettingsPattern::Wildcard().Compare(
                  Pattern("[*.]google.com")));
+  EXPECT_EQ(ContentSettingsPattern::SUCCESSOR,
+            Pattern("*").Compare(Pattern("[*.]google.com")));
 
   EXPECT_EQ(ContentSettingsPattern::PREDECESSOR,
             Pattern("mail.google.com").Compare(
                 ContentSettingsPattern::Wildcard()));
+  EXPECT_EQ(ContentSettingsPattern::PREDECESSOR,
+            Pattern("mail.google.com").Compare(Pattern("*")));
+
   EXPECT_EQ(ContentSettingsPattern::SUCCESSOR,
             ContentSettingsPattern::Wildcard().Compare(
                  Pattern("mail.google.com")));
+  EXPECT_EQ(ContentSettingsPattern::SUCCESSOR,
+            Pattern("*").Compare(Pattern("mail.google.com")));
 }
 
 // Legacy tests to ensure backwards compatibility.
@@ -706,4 +719,22 @@ TEST(ContentSettingsPatternTest, CanonicalizePattern_Legacy) {
   EXPECT_STREQ("", Pattern("example.*").ToString().c_str());
   EXPECT_STREQ("", Pattern("*\xC4\x87ira.com").ToString().c_str());
   EXPECT_STREQ("", Pattern("\xC4\x87ira.*").ToString().c_str());
+}
+
+TEST(ContentSettingsPatternTest, Schemes) {
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_HTTP,
+            Pattern("http://www.example.com").GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_HTTPS,
+            Pattern("https://www.example.com").GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_FILE,
+            Pattern("file:///tmp/file.html").GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_CHROMEEXTENSION,
+            Pattern("chrome-extension://peoadpeiejnhkmpaakpnompolbglelel/")
+                .GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_WILDCARD,
+            Pattern("192.168.0.1").GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_WILDCARD,
+            Pattern("www.example.com").GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_OTHER,
+            Pattern("filesystem:http://www.google.com/temporary/").GetScheme());
 }

@@ -7,20 +7,25 @@
 
 #include <alsa/asoundlib.h>
 #include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "device/udev_linux/scoped_udev.h"
 #include "media/midi/midi_export.h"
 #include "media/midi/midi_manager.h"
+
+namespace base {
+class ThreadChecker;
+}
 
 namespace media {
 namespace midi {
@@ -44,7 +49,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
   FRIEND_TEST_ALL_PREFIXES(MidiManagerAlsaTest, ToMidiPortState);
 
   class AlsaCard;
-  using AlsaCardMap = std::map<int, scoped_ptr<AlsaCard>>;
+  using AlsaCardMap = std::map<int, std::unique_ptr<AlsaCard>>;
 
   class MidiPort {
    public:
@@ -95,7 +100,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
     ~MidiPort();
 
     // Gets a Value representation of this object, suitable for serialization.
-    scoped_ptr<base::Value> Value() const;
+    std::unique_ptr<base::Value> Value() const;
 
     // Gets a string version of Value in JSON format.
     std::string JSONValue() const;
@@ -179,7 +184,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
 
   class MidiPortStateBase {
    public:
-    typedef std::vector<scoped_ptr<MidiPort>>::iterator iterator;
+    typedef std::vector<std::unique_ptr<MidiPort>>::iterator iterator;
 
     virtual ~MidiPortStateBase();
 
@@ -198,12 +203,12 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
    protected:
     MidiPortStateBase();
     iterator erase(iterator position) { return ports_.erase(position); }
-    void push_back(scoped_ptr<MidiPort> port) {
+    void push_back(std::unique_ptr<MidiPort> port) {
       ports_.push_back(std::move(port));
     }
 
    private:
-    std::vector<scoped_ptr<MidiPort>> ports_;
+    std::vector<std::unique_ptr<MidiPort>> ports_;
 
     DISALLOW_COPY_AND_ASSIGN(MidiPortStateBase);
   };
@@ -213,7 +218,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
     iterator erase(iterator position) {
       return MidiPortStateBase::erase(position);
     };
-    void push_back(scoped_ptr<MidiPort> port) {
+    void push_back(std::unique_ptr<MidiPort> port) {
       MidiPortStateBase::push_back(std::move(port));
     }
   };
@@ -223,7 +228,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
     MidiPortState();
 
     // Inserts a port at the end. Returns web_port_index.
-    uint32_t push_back(scoped_ptr<MidiPort> port);
+    uint32_t push_back(std::unique_ptr<MidiPort> port);
 
    private:
     uint32_t num_input_ports_ = 0;
@@ -249,7 +254,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
                    bool midi);
     void PortExit(int client_id, int port_id);
     snd_seq_client_type_t ClientType(int client_id) const;
-    scoped_ptr<TemporaryMidiPortState> ToMidiPortState(
+    std::unique_ptr<TemporaryMidiPortState> ToMidiPortState(
         const AlsaCardMap& alsa_cards);
 
     int card_client_count() { return card_client_count_; }
@@ -275,14 +280,14 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
 
     class Client {
      public:
-      using PortMap = std::map<int, scoped_ptr<Port>>;
+      using PortMap = std::map<int, std::unique_ptr<Port>>;
 
       Client(const std::string& name, snd_seq_client_type_t type);
       ~Client();
 
       std::string name() const { return name_; }
       snd_seq_client_type_t type() const { return type_; }
-      void AddPort(int addr, scoped_ptr<Port> port);
+      void AddPort(int addr, std::unique_ptr<Port> port);
       void RemovePort(int addr);
       PortMap::const_iterator begin() const;
       PortMap::const_iterator end() const;
@@ -295,7 +300,7 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
       DISALLOW_COPY_AND_ASSIGN(Client);
     };
 
-    std::map<int, scoped_ptr<Client>> clients_;
+    std::map<int, std::unique_ptr<Client>> clients_;
 
     // This is the current number of clients we know about that have
     // cards. When this number matches alsa_card_midi_count_, we know
@@ -362,8 +367,11 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
     };
   };
 
-  typedef base::hash_map<int, uint32_t> SourceMap;
-  typedef base::hash_map<uint32_t, int> OutPortMap;
+  using SourceMap = base::hash_map<int, uint32_t>;
+  using OutPortMap = base::hash_map<uint32_t, int>;
+  using ScopedSndSeqPtr = std::unique_ptr<snd_seq_t, SndSeqDeleter>;
+  using ScopedSndMidiEventPtr =
+      std::unique_ptr<snd_midi_event_t, SndMidiEventDeleter>;
 
   // An internal callback that runs on MidiSendThread.
   void SendMidiData(uint32_t port_index, const std::vector<uint8_t>& data);
@@ -392,19 +400,14 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
   // Returns true if successful.
   bool Subscribe(uint32_t port_index, int client_id, int port_id);
 
+  // Members initialized in the constructor are below.
+  // Our copies of the internal state of the ports of seq and udev.
   AlsaSeqState alsa_seq_state_;
   MidiPortState port_state_;
 
-  // ALSA seq handles.
-  scoped_ptr<snd_seq_t, SndSeqDeleter> in_client_;
-  int in_client_id_ = -1;
-  scoped_ptr<snd_seq_t, SndSeqDeleter> out_client_;
-  int out_client_id_ = -1;
-
   // One input port, many output ports.
-  int in_port_id_ = -1;
-  OutPortMap out_ports_;       // guarded by out_ports_lock_
   base::Lock out_ports_lock_;  // guards out_ports_
+  OutPortMap out_ports_;       // guarded by out_ports_lock_
 
   // Mapping from ALSA client:port to our index.
   SourceMap source_map_;
@@ -418,18 +421,37 @@ class MIDI_EXPORT MidiManagerAlsa final : public MidiManager {
   // wait for our information from ALSA and udev to get back in sync.
   int alsa_card_midi_count_ = 0;
 
+  base::Lock shutdown_lock_;            // guards event_thread_shutdown_
+  bool event_thread_shutdown_ = false;  // guarded by shutdown_lock_
+
+  // This lock is needed to ensure that members destroyed in Finalize
+  // will be visibly destroyed before the destructor is run in the
+  // other thread. Otherwise, the same objects may have their destructors
+  // run multiple times in different threads.
+  base::Lock lazy_init_member_lock_;  // guards members below
+
+  // Members initialized in StartInitialization() are below.
+  // Make sure to destroy these in Finalize()!
+  std::unique_ptr<base::ThreadChecker> initialization_thread_checker_;
+
+  // ALSA seq handles and ids.
+  ScopedSndSeqPtr in_client_;
+  int in_client_id_;
+  ScopedSndSeqPtr out_client_;
+  int out_client_id_;
+  int in_port_id_;
+
   // ALSA event -> MIDI coder.
-  scoped_ptr<snd_midi_event_t, SndMidiEventDeleter> decoder_;
+  ScopedSndMidiEventPtr decoder_;
 
   // udev, for querying hardware devices.
   device::ScopedUdevPtr udev_;
   device::ScopedUdevMonitorPtr udev_monitor_;
 
-  base::Thread send_thread_;
+  // Threads for sending and receiving. These are initialized in the
+  // constructor, but are started at the end of StartInitialization.
   base::Thread event_thread_;
-
-  bool event_thread_shutdown_ = false;  // guarded by shutdown_lock_
-  base::Lock shutdown_lock_;            // guards event_thread_shutdown_
+  base::Thread send_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(MidiManagerAlsa);
 };

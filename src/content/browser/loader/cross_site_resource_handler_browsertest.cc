@@ -7,7 +7,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -172,7 +172,7 @@ class TestResourceDispatcherHostDelegate
   RequestDeferredHook run_on_start_;
 
   // This lives on the UI thread.
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   // Set on the IO thread while |run_loop_| is non-nullptr, read on the UI
   // thread after deleting run_loop_.

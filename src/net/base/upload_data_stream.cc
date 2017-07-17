@@ -88,7 +88,7 @@ bool UploadDataStream::IsInMemory() const {
   return false;
 }
 
-const std::vector<scoped_ptr<UploadElementReader>>*
+const std::vector<std::unique_ptr<UploadElementReader>>*
 UploadDataStream::GetElementReaders() const {
   return NULL;
 }
@@ -109,17 +109,18 @@ void UploadDataStream::OnInitCompleted(int result) {
 }
 
 void UploadDataStream::OnReadCompleted(int result) {
-  DCHECK_GE(result, 0);
   DCHECK(initialized_successfully_);
+  DCHECK(result != 0 || is_eof_);
+  DCHECK_NE(ERR_IO_PENDING, result);
 
-  current_position_ += result;
-  if (!is_chunked_) {
-    DCHECK_LE(current_position_, total_size_);
-    if (current_position_ == total_size_)
-      is_eof_ = true;
+  if (result > 0) {
+    current_position_ += result;
+    if (!is_chunked_) {
+      DCHECK_LE(current_position_, total_size_);
+      if (current_position_ == total_size_)
+        is_eof_ = true;
+    }
   }
-
-  DCHECK(result > 0 || is_eof_);
 
   if (!callback_.is_null())
     base::ResetAndReturn(&callback_).Run(result);

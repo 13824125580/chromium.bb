@@ -10,6 +10,7 @@
 #include "base/stl_util.h"
 #include "base/time/time.h"
 #include "content/browser/message_port_message_filter.h"
+#include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_request_handler.h"
 #include "content/browser/service_worker/service_worker_controllee_request_handler.h"
@@ -17,12 +18,15 @@
 #include "content/browser/service_worker/service_worker_handle.h"
 #include "content/browser/service_worker/service_worker_registration_handle.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/common/resource_request_body.h"
+#include "content/common/resource_request_body_impl.h"
 #include "content/common/service_worker/service_worker_messages.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/browser/content_browser_client.h"
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/child_process_host.h"
+#include "content/public/common/content_client.h"
+#include "content/public/common/origin_util.h"
 
 namespace content {
 
@@ -45,15 +49,17 @@ ServiceWorkerProviderHost::OneShotGetReadyCallback::~OneShotGetReadyCallback() {
 }
 
 // static
-scoped_ptr<ServiceWorkerProviderHost>
+std::unique_ptr<ServiceWorkerProviderHost>
 ServiceWorkerProviderHost::PreCreateNavigationHost(
     base::WeakPtr<ServiceWorkerContextCore> context) {
   CHECK(IsBrowserSideNavigationEnabled());
   // Generate a new browser-assigned id for the host.
   int provider_id = g_next_navigation_provider_id--;
-  return scoped_ptr<ServiceWorkerProviderHost>(new ServiceWorkerProviderHost(
-      ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE, provider_id,
-      SERVICE_WORKER_PROVIDER_FOR_WINDOW, context, nullptr));
+  return std::unique_ptr<ServiceWorkerProviderHost>(
+      new ServiceWorkerProviderHost(
+          ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE, provider_id,
+          SERVICE_WORKER_PROVIDER_FOR_WINDOW, FrameSecurityLevel::UNINITIALIZED,
+          context, nullptr));
 }
 
 ServiceWorkerProviderHost::ServiceWorkerProviderHost(
@@ -61,6 +67,7 @@ ServiceWorkerProviderHost::ServiceWorkerProviderHost(
     int route_id,
     int provider_id,
     ServiceWorkerProviderType provider_type,
+    FrameSecurityLevel parent_frame_security_level,
     base::WeakPtr<ServiceWorkerContextCore> context,
     ServiceWorkerDispatcherHost* dispatcher_host)
     : client_uuid_(base::GenerateGUID()),
@@ -69,11 +76,11 @@ ServiceWorkerProviderHost::ServiceWorkerProviderHost(
       render_thread_id_(kDocumentMainThreadId),
       provider_id_(provider_id),
       provider_type_(provider_type),
+      parent_frame_security_level_(parent_frame_security_level),
       context_(context),
       dispatcher_host_(dispatcher_host),
       allow_association_(true) {
   DCHECK_NE(SERVICE_WORKER_PROVIDER_UNKNOWN, provider_type_);
-  DCHECK_NE(SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME, provider_type_);
 
   // PlzNavigate
   CHECK(render_process_id != ChildProcessHost::kInvalidUniqueID ||
@@ -96,10 +103,7 @@ ServiceWorkerProviderHost::~ServiceWorkerProviderHost() {
   if (controlling_version_.get())
     controlling_version_->RemoveControllee(this);
 
-  for (auto& key_registration : matching_registrations_) {
-    DecreaseProcessReference(key_registration.second->pattern());
-    key_registration.second->RemoveListener(this);
-  }
+  RemoveAllMatchingRegistrations();
 
   for (const GURL& pattern : associated_patterns_)
     DecreaseProcessReference(pattern);
@@ -109,6 +113,25 @@ int ServiceWorkerProviderHost::frame_id() const {
   if (provider_type_ == SERVICE_WORKER_PROVIDER_FOR_WINDOW)
     return route_id_;
   return MSG_ROUTING_NONE;
+}
+
+bool ServiceWorkerProviderHost::IsContextSecureForServiceWorker() const {
+  // |document_url_| may be empty if loading has not begun, or
+  // ServiceWorkerRequestHandler didn't handle the load (because e.g. another
+  // handler did first, or the initial request URL was such that
+  // OriginCanAccessServiceWorkers returned false).
+  if (!document_url_.is_valid())
+    return false;
+  if (!OriginCanAccessServiceWorkers(document_url_))
+    return false;
+
+  if (is_parent_frame_secure())
+    return true;
+
+  std::set<std::string> schemes;
+  GetContentClient()->browser()->GetSchemesBypassingSecureContextCheckWhitelist(
+      &schemes);
+  return schemes.find(document_url().scheme()) != schemes.end();
 }
 
 void ServiceWorkerProviderHost::OnVersionAttributesChanged(
@@ -156,6 +179,8 @@ void ServiceWorkerProviderHost::OnSkippedWaiting(
 void ServiceWorkerProviderHost::SetDocumentUrl(const GURL& url) {
   DCHECK(!url.has_ref());
   document_url_ = url;
+  if (IsProviderForClient())
+    SyncMatchingRegistrations();
 }
 
 void ServiceWorkerProviderHost::SetTopmostFrameUrl(const GURL& url) {
@@ -165,6 +190,7 @@ void ServiceWorkerProviderHost::SetTopmostFrameUrl(const GURL& url) {
 void ServiceWorkerProviderHost::SetControllerVersionAttribute(
     ServiceWorkerVersion* version,
     bool notify_controllerchange) {
+  CHECK(!version || IsContextSecureForServiceWorker());
   if (version == controlling_version_.get())
     return;
 
@@ -185,26 +211,12 @@ void ServiceWorkerProviderHost::SetControllerVersionAttribute(
       notify_controllerchange));
 }
 
-bool ServiceWorkerProviderHost::SetHostedVersionId(int64_t version_id) {
-  if (!context_)
-    return true;  // System is shutting down.
-  if (active_version())
-    return false;  // Unexpected bad message.
-
-  ServiceWorkerVersion* live_version = context_->GetLiveVersion(version_id);
-  if (!live_version)
-    return true;  // Was deleted before it got started.
-
-  ServiceWorkerVersionInfo info = live_version->GetInfo();
-  if (info.running_status != ServiceWorkerVersion::STARTING ||
-      info.process_id != render_process_id_) {
-    // If we aren't trying to start this version in our process
-    // something is amiss.
-    return false;
-  }
-
-  running_hosted_version_ = live_version;
-  return true;
+void ServiceWorkerProviderHost::SetHostedVersion(
+    ServiceWorkerVersion* version) {
+  DCHECK(!IsProviderForClient());
+  DCHECK_EQ(EmbeddedWorkerStatus::STARTING, version->running_status());
+  DCHECK_EQ(render_process_id_, version->embedded_worker()->process_id());
+  running_hosted_version_ = version;
 }
 
 bool ServiceWorkerProviderHost::IsProviderForClient() const {
@@ -215,7 +227,6 @@ bool ServiceWorkerProviderHost::IsProviderForClient() const {
       return true;
     case SERVICE_WORKER_PROVIDER_FOR_CONTROLLER:
       return false;
-    case SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME:
     case SERVICE_WORKER_PROVIDER_UNKNOWN:
       NOTREACHED() << provider_type_;
   }
@@ -233,7 +244,6 @@ blink::WebServiceWorkerClientType ServiceWorkerProviderHost::client_type()
     case SERVICE_WORKER_PROVIDER_FOR_SHARED_WORKER:
       return blink::WebServiceWorkerClientTypeSharedWorker;
     case SERVICE_WORKER_PROVIDER_FOR_CONTROLLER:
-    case SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME:
     case SERVICE_WORKER_PROVIDER_UNKNOWN:
       NOTREACHED() << provider_type_;
   }
@@ -244,6 +254,7 @@ blink::WebServiceWorkerClientType ServiceWorkerProviderHost::client_type()
 void ServiceWorkerProviderHost::AssociateRegistration(
     ServiceWorkerRegistration* registration,
     bool notify_controllerchange) {
+  CHECK(IsContextSecureForServiceWorker());
   DCHECK(CanAssociateRegistration(registration));
   associated_registration_ = registration;
   AddMatchingRegistration(registration);
@@ -272,6 +283,8 @@ void ServiceWorkerProviderHost::AddMatchingRegistration(
     ServiceWorkerRegistration* registration) {
   DCHECK(ServiceWorkerUtils::ScopeMatches(
         registration->pattern(), document_url_));
+  if (!IsContextSecureForServiceWorker())
+    return;
   size_t key = registration->pattern().spec().size();
   if (ContainsKey(matching_registrations_, key))
     return;
@@ -288,19 +301,6 @@ void ServiceWorkerProviderHost::RemoveMatchingRegistration(
   DecreaseProcessReference(registration->pattern());
   registration->RemoveListener(this);
   matching_registrations_.erase(key);
-}
-
-void ServiceWorkerProviderHost::AddAllMatchingRegistrations() {
-  DCHECK(context_);
-  const std::map<int64_t, ServiceWorkerRegistration*>& registrations =
-      context_->GetLiveRegistrations();
-  for (const auto& key_registration : registrations) {
-    ServiceWorkerRegistration* registration = key_registration.second;
-    if (!registration->is_uninstalled() &&
-        ServiceWorkerUtils::ScopeMatches(registration->pattern(),
-                                         document_url_))
-      AddMatchingRegistration(registration);
-  }
 }
 
 ServiceWorkerRegistration*
@@ -321,7 +321,7 @@ void ServiceWorkerProviderHost::NotifyControllerLost() {
   SetControllerVersionAttribute(nullptr, true /* notify_controllerchange */);
 }
 
-scoped_ptr<ServiceWorkerRequestHandler>
+std::unique_ptr<ServiceWorkerRequestHandler>
 ServiceWorkerProviderHost::CreateRequestHandler(
     FetchRequestMode request_mode,
     FetchCredentialsMode credentials_mode,
@@ -330,21 +330,21 @@ ServiceWorkerProviderHost::CreateRequestHandler(
     RequestContextType request_context_type,
     RequestContextFrameType frame_type,
     base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
-    scoped_refptr<ResourceRequestBody> body) {
+    scoped_refptr<ResourceRequestBodyImpl> body) {
   if (IsHostToRunningServiceWorker()) {
-    return scoped_ptr<ServiceWorkerRequestHandler>(
+    return std::unique_ptr<ServiceWorkerRequestHandler>(
         new ServiceWorkerContextRequestHandler(
             context_, AsWeakPtr(), blob_storage_context, resource_type));
   }
   if (ServiceWorkerUtils::IsMainResourceType(resource_type) ||
       controlling_version()) {
-    return scoped_ptr<ServiceWorkerRequestHandler>(
+    return std::unique_ptr<ServiceWorkerRequestHandler>(
         new ServiceWorkerControlleeRequestHandler(
             context_, AsWeakPtr(), blob_storage_context, request_mode,
             credentials_mode, redirect_mode, resource_type,
             request_context_type, frame_type, body));
   }
-  return scoped_ptr<ServiceWorkerRequestHandler>();
+  return std::unique_ptr<ServiceWorkerRequestHandler>();
 }
 
 ServiceWorkerObjectInfo
@@ -360,7 +360,7 @@ ServiceWorkerProviderHost::GetOrCreateServiceWorkerHandle(
     return handle->GetObjectInfo();
   }
 
-  scoped_ptr<ServiceWorkerHandle> new_handle(
+  std::unique_ptr<ServiceWorkerHandle> new_handle(
       ServiceWorkerHandle::Create(context_, AsWeakPtr(), version));
   handle = new_handle.get();
   dispatcher_host_->RegisterServiceWorkerHandle(std::move(new_handle));
@@ -381,7 +381,7 @@ bool ServiceWorkerProviderHost::CanAssociateRegistration(
 void ServiceWorkerProviderHost::PostMessageToClient(
     ServiceWorkerVersion* version,
     const base::string16& message,
-    const std::vector<TransferredMessagePort>& sent_message_ports) {
+    const std::vector<int>& sent_message_ports) {
   if (!dispatcher_host_)
     return;  // Could be NULL in some tests.
 
@@ -515,12 +515,11 @@ void ServiceWorkerProviderHost::SendSetVersionAttributesMessage(
     return;
 
   if (!IsReadyToSendMessages()) {
-    queued_events_.push_back(
-        base::Bind(&ServiceWorkerProviderHost::SendSetVersionAttributesMessage,
-                   AsWeakPtr(), registration_handle_id, changed_mask,
-                   make_scoped_refptr(installing_version),
-                   make_scoped_refptr(waiting_version),
-                   make_scoped_refptr(active_version)));
+    queued_events_.push_back(base::Bind(
+        &ServiceWorkerProviderHost::SendSetVersionAttributesMessage,
+        AsWeakPtr(), registration_handle_id, changed_mask,
+        base::RetainedRef(installing_version),
+        base::RetainedRef(waiting_version), base::RetainedRef(active_version)));
     return;
   }
 
@@ -586,6 +585,28 @@ void ServiceWorkerProviderHost::SendAssociateRegistrationMessage() {
       render_thread_id_, provider_id(), handle->GetObjectInfo(), attrs));
 }
 
+void ServiceWorkerProviderHost::SyncMatchingRegistrations() {
+  DCHECK(context_);
+  RemoveAllMatchingRegistrations();
+  const auto& registrations = context_->GetLiveRegistrations();
+  for (const auto& key_registration : registrations) {
+    ServiceWorkerRegistration* registration = key_registration.second;
+    if (!registration->is_uninstalled() &&
+        ServiceWorkerUtils::ScopeMatches(registration->pattern(),
+                                         document_url_))
+      AddMatchingRegistration(registration);
+  }
+}
+
+void ServiceWorkerProviderHost::RemoveAllMatchingRegistrations() {
+  for (const auto& it : matching_registrations_) {
+    ServiceWorkerRegistration* registration = it.second.get();
+    DecreaseProcessReference(registration->pattern());
+    registration->RemoveListener(this);
+  }
+  matching_registrations_.clear();
+}
+
 void ServiceWorkerProviderHost::IncreaseProcessReference(
     const GURL& pattern) {
   if (context_ && context_->process_manager()) {
@@ -621,7 +642,7 @@ bool ServiceWorkerProviderHost::IsReadyToSendMessages() const {
 }
 
 bool ServiceWorkerProviderHost::IsContextAlive() {
-  return context_ != NULL;
+  return context_ != nullptr;
 }
 
 void ServiceWorkerProviderHost::Send(IPC::Message* message) const {

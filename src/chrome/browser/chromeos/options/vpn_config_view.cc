@@ -333,6 +333,7 @@ bool VPNConfigView::HandleKeyEvent(views::Textfield* sender,
                                    const ui::KeyEvent& key_event) {
   if ((sender == psk_passphrase_textfield_ ||
        sender == user_passphrase_textfield_) &&
+      key_event.type() == ui::ET_KEY_PRESSED &&
       key_event.key_code() == ui::VKEY_RETURN) {
     parent_->GetDialogClientView()->AcceptWindow();
   }
@@ -806,7 +807,7 @@ void VPNConfigView::ParseUIProperties(const NetworkState* vpn) {
 
 void VPNConfigView::GetPropertiesError(
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   NET_LOG_ERROR("Shill Error from VpnConfigView: " + error_name, "");
 }
 

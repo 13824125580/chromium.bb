@@ -9,13 +9,15 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/rand_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -179,7 +181,7 @@ class OAuth2TokenService::Fetcher : public OAuth2AccessTokenConsumer {
 
   int retry_number_;
   base::OneShotTimer retry_timer_;
-  scoped_ptr<OAuth2AccessTokenFetcher> fetcher_;
+  std::unique_ptr<OAuth2AccessTokenFetcher> fetcher_;
 
   // Variables that store fetch results.
   // Initialized to be GoogleServiceAuthError::SERVICE_UNAVAILABLE to handle
@@ -313,7 +315,7 @@ void OAuth2TokenService::Fetcher::OnGetTokenFailure(
 int64_t OAuth2TokenService::Fetcher::ComputeExponentialBackOffMilliseconds(
     int retry_num) {
   DCHECK(retry_num < max_fetch_retry_num_);
-  int64_t exponential_backoff_in_seconds = 1 << retry_num;
+  int exponential_backoff_in_seconds = 1 << retry_num;
   // Returns a backoff with randomness < 1000ms
   return (exponential_backoff_in_seconds + base::RandDouble()) * 1000;
 }
@@ -343,7 +345,7 @@ void OAuth2TokenService::Fetcher::InformWaitingRequestsAndDelete() {
   // be added when it calls back the waiting requests.
   oauth2_token_service_->OnFetchComplete(this);
   InformWaitingRequests();
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 void OAuth2TokenService::Fetcher::AddWaitingRequest(
@@ -421,7 +423,7 @@ void OAuth2TokenService::RemoveDiagnosticsObserver(
   diagnostics_observer_list_.RemoveObserver(observer);
 }
 
-scoped_ptr<OAuth2TokenService::Request> OAuth2TokenService::StartRequest(
+std::unique_ptr<OAuth2TokenService::Request> OAuth2TokenService::StartRequest(
     const std::string& account_id,
     const OAuth2TokenService::ScopeSet& scopes,
     OAuth2TokenService::Consumer* consumer) {
@@ -434,7 +436,7 @@ scoped_ptr<OAuth2TokenService::Request> OAuth2TokenService::StartRequest(
       consumer);
 }
 
-scoped_ptr<OAuth2TokenService::Request>
+std::unique_ptr<OAuth2TokenService::Request>
 OAuth2TokenService::StartRequestForClient(
     const std::string& account_id,
     const std::string& client_id,
@@ -454,7 +456,7 @@ net::URLRequestContextGetter* OAuth2TokenService::GetRequestContext() const {
   return delegate_->GetRequestContext();
 }
 
-scoped_ptr<OAuth2TokenService::Request>
+std::unique_ptr<OAuth2TokenService::Request>
 OAuth2TokenService::StartRequestWithContext(
     const std::string& account_id,
     net::URLRequestContextGetter* getter,
@@ -469,7 +471,7 @@ OAuth2TokenService::StartRequestWithContext(
       consumer);
 }
 
-scoped_ptr<OAuth2TokenService::Request>
+std::unique_ptr<OAuth2TokenService::Request>
 OAuth2TokenService::StartRequestForClientWithContext(
     const std::string& account_id,
     net::URLRequestContextGetter* getter,
@@ -484,7 +486,7 @@ OAuth2TokenService::StartRequestForClientWithContext(
   tracked_objects::ScopedTracker tracking_profile1(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "422460 OAuth2TokenService::StartRequestForClientWithContext 1"));
-  scoped_ptr<RequestImpl> request(new RequestImpl(account_id, consumer));
+  std::unique_ptr<RequestImpl> request(new RequestImpl(account_id, consumer));
   FOR_EACH_OBSERVER(DiagnosticsObserver, diagnostics_observer_list_,
                     OnAccessTokenRequested(account_id,
                                            consumer->id(),
@@ -504,12 +506,10 @@ OAuth2TokenService::StartRequestForClientWithContext(
                           account_id, consumer->id(), scopes, error,
                           base::Time()));
 
-    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
-        &RequestImpl::InformConsumer,
-        request->AsWeakPtr(),
-        error,
-        std::string(),
-        base::Time()));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(), error,
+                   std::string(), base::Time()));
     return std::move(request);
   }
 
@@ -590,12 +590,11 @@ void OAuth2TokenService::StartCacheLookupRequest(
                         request_parameters.scopes,
                         GoogleServiceAuthError::AuthErrorNone(),
                         cache_entry->expiration_date));
-  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
-      &RequestImpl::InformConsumer,
-      request->AsWeakPtr(),
-      GoogleServiceAuthError(GoogleServiceAuthError::NONE),
-      cache_entry->access_token,
-      cache_entry->expiration_date));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(),
+                 GoogleServiceAuthError(GoogleServiceAuthError::NONE),
+                 cache_entry->access_token, cache_entry->expiration_date));
 }
 
 std::vector<std::string> OAuth2TokenService::GetAccounts() const {

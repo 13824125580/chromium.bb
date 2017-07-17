@@ -34,25 +34,32 @@
 #include "bindings/core/v8/SerializedScriptValue.h"
 #include "core/dom/CrossThreadTask.h"
 #include "core/frame/Deprecation.h"
-#include "core/frame/LocalDOMWindow.h"
+#include "core/frame/UseCounter.h"
+#include "core/frame/csp/ContentSecurityPolicy.h"
+#include "core/origin_trials/OriginTrialContext.h"
 #include "core/workers/DedicatedWorkerThread.h"
+#include "core/workers/InProcessWorkerObjectProxy.h"
 #include "core/workers/WorkerClients.h"
-#include "core/workers/WorkerObjectProxy.h"
 #include "core/workers/WorkerThreadStartupData.h"
+#include <memory>
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<DedicatedWorkerGlobalScope> DedicatedWorkerGlobalScope::create(DedicatedWorkerThread* thread, PassOwnPtr<WorkerThreadStartupData> startupData, double timeOrigin)
+DedicatedWorkerGlobalScope* DedicatedWorkerGlobalScope::create(DedicatedWorkerThread* thread, std::unique_ptr<WorkerThreadStartupData> startupData, double timeOrigin)
 {
     // Note: startupData is finalized on return. After the relevant parts has been
     // passed along to the created 'context'.
-    RefPtrWillBeRawPtr<DedicatedWorkerGlobalScope> context = adoptRefWillBeNoop(new DedicatedWorkerGlobalScope(startupData->m_scriptURL, startupData->m_userAgent, thread, timeOrigin, startupData->m_starterOriginPrivilegeData.release(), startupData->m_workerClients.release()));
+    DedicatedWorkerGlobalScope* context = new DedicatedWorkerGlobalScope(startupData->m_scriptURL, startupData->m_userAgent, thread, timeOrigin, std::move(startupData->m_starterOriginPrivilegeData), startupData->m_workerClients.release());
     context->applyContentSecurityPolicyFromVector(*startupData->m_contentSecurityPolicyHeaders);
-    return context.release();
+    if (!startupData->m_referrerPolicy.isNull())
+        context->parseAndSetReferrerPolicy(startupData->m_referrerPolicy);
+    context->setAddressSpace(startupData->m_addressSpace);
+    OriginTrialContext::addTokens(context, startupData->m_originTrialTokens.get());
+    return context;
 }
 
-DedicatedWorkerGlobalScope::DedicatedWorkerGlobalScope(const KURL& url, const String& userAgent, DedicatedWorkerThread* thread, double timeOrigin, PassOwnPtr<SecurityOrigin::PrivilegeData> starterOriginPrivilegeData, PassOwnPtrWillBeRawPtr<WorkerClients> workerClients)
-    : WorkerGlobalScope(url, userAgent, thread, timeOrigin, starterOriginPrivilegeData, workerClients)
+DedicatedWorkerGlobalScope::DedicatedWorkerGlobalScope(const KURL& url, const String& userAgent, DedicatedWorkerThread* thread, double timeOrigin, std::unique_ptr<SecurityOrigin::PrivilegeData> starterOriginPrivilegeData, WorkerClients* workerClients)
+    : WorkerGlobalScope(url, userAgent, thread, timeOrigin, std::move(starterOriginPrivilegeData), workerClients)
 {
 }
 
@@ -65,29 +72,29 @@ const AtomicString& DedicatedWorkerGlobalScope::interfaceName() const
     return EventTargetNames::DedicatedWorkerGlobalScope;
 }
 
-void DedicatedWorkerGlobalScope::postMessage(ExecutionContext* context, PassRefPtr<SerializedScriptValue> message, const MessagePortArray* ports, ExceptionState& exceptionState)
+void DedicatedWorkerGlobalScope::postMessage(ExecutionContext* context, PassRefPtr<SerializedScriptValue> message, const MessagePortArray& ports, ExceptionState& exceptionState)
 {
     // Disentangle the port in preparation for sending it to the remote context.
-    OwnPtr<MessagePortChannelArray> channels = MessagePort::disentanglePorts(context, ports, exceptionState);
+    std::unique_ptr<MessagePortChannelArray> channels = MessagePort::disentanglePorts(context, ports, exceptionState);
     if (exceptionState.hadException())
         return;
-    thread()->workerObjectProxy().postMessageToWorkerObject(message, channels.release());
+    thread()->workerObjectProxy().postMessageToWorkerObject(message, std::move(channels));
 }
 
 DedicatedWorkerThread* DedicatedWorkerGlobalScope::thread() const
 {
-    return static_cast<DedicatedWorkerThread*>(Base::thread());
+    return static_cast<DedicatedWorkerThread*>(WorkerGlobalScope::thread());
 }
 
 static void countOnDocument(UseCounter::Feature feature, ExecutionContext* context)
 {
-    ASSERT(context->isDocument());
+    DCHECK(context->isDocument());
     UseCounter::count(context, feature);
 }
 
 static void countDeprecationOnDocument(UseCounter::Feature feature, ExecutionContext* context)
 {
-    ASSERT(context->isDocument());
+    DCHECK(context->isDocument());
     Deprecation::countDeprecation(context, feature);
 }
 

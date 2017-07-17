@@ -15,13 +15,15 @@
 #include "platform/PopupMenu.h"
 #include "platform/testing/URLTestHelpers.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebUnitTestSupport.h"
+#include "public/platform/WebURLLoaderMockFactory.h"
+#include "public/web/WebCache.h"
 #include "public/web/WebExternalPopupMenu.h"
 #include "public/web/WebPopupMenuInfo.h"
 #include "public/web/WebSettings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "web/WebLocalFrameImpl.h"
 #include "web/tests/FrameTestHelpers.h"
+#include <memory>
 
 namespace blink {
 
@@ -33,16 +35,16 @@ protected:
     void SetUp() override
     {
         m_dummyPageHolder = DummyPageHolder::create(IntSize(800, 600));
-        RefPtrWillBeRawPtr<HTMLSelectElement> element = HTMLSelectElement::create(m_dummyPageHolder->document());
+        HTMLSelectElement* element = HTMLSelectElement::create(m_dummyPageHolder->document());
         // Set the 4th an 5th items to have "display: none" property
         element->setInnerHTML("<option><option><option><option style='display:none;'><option style='display:none;'><option><option>", ASSERT_NO_EXCEPTION);
-        m_dummyPageHolder->document().body()->appendChild(element.get(), ASSERT_NO_EXCEPTION);
-        m_ownerElement = element.release();
-        m_dummyPageHolder->document().updateLayoutIgnorePendingStylesheets();
+        m_dummyPageHolder->document().body()->appendChild(element, ASSERT_NO_EXCEPTION);
+        m_ownerElement = element;
+        m_dummyPageHolder->document().updateStyleAndLayoutIgnorePendingStylesheets();
     }
 
-    OwnPtr<DummyPageHolder> m_dummyPageHolder;
-    RefPtrWillBePersistent<HTMLSelectElement> m_ownerElement;
+    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
+    Persistent<HTMLSelectElement> m_ownerElement;
 };
 
 TEST_F(ExternalPopupMenuDisplayNoneItemsTest, PopupMenuInfoSizeTest)
@@ -107,7 +109,8 @@ protected:
     }
     void TearDown() override
     {
-        Platform::current()->unitTestSupport()->unregisterAllMockedURLs();
+        Platform::current()->getURLLoaderMockFactory()->unregisterAllURLs();
+        WebCache::clear();
     }
 
     void registerMockedURLLoad(const std::string& fileName)
@@ -118,6 +121,8 @@ protected:
     void loadFrame(const std::string& fileName)
     {
         FrameTestHelpers::loadFrame(mainFrame(), m_baseURL + fileName);
+        webView()->resize(WebSize(800, 600));
+        webView()->updateAllLifecyclePhases();
     }
 
     WebViewImpl* webView() const { return m_helper.webViewImpl(); }

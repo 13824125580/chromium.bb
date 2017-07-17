@@ -6,20 +6,11 @@
  * @fileoverview
  * 'settings-advanced-page' is the settings page containing the advanced
  * settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-advanced-page prefs="{{prefs}}">
- *      </settings-advanced-page>
- *      ... other pages ...
- *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-advanced-page
  */
 Polymer({
   is: 'settings-advanced-page',
+
+  behaviors: [SettingsPageVisibility, RoutableBehavior],
 
   properties: {
     /**
@@ -32,6 +23,7 @@ Polymer({
 
     /**
      * The current active route.
+     * @type {SettingsRoute}
      */
     currentRoute: {
       type: Object,
@@ -39,5 +31,10 @@ Polymer({
     },
   },
 
-  behaviors: [I18nBehavior, SettingsPageVisibility],
+  /**
+   * @type {string} Selector to get the sections.
+   * TODO(michaelpg): replace duplicate docs with @override once b/24294625
+   * is fixed.
+   */
+  sectionSelector: 'settings-section',
 });

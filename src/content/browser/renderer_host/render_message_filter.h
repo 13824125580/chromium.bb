@@ -15,15 +15,19 @@
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/shared_memory.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "cc/resources/shared_bitmap_manager.h"
+#include "content/common/cache_storage/cache_storage_types.h"
+#include "content/common/gpu_process_launch_causes.h"
 #include "content/common/host_discardable_shared_memory_manager.h"
 #include "content/common/host_shared_bitmap_manager.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "gpu/config/gpu_info.h"
 #include "ipc/message_filter.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "third_party/WebKit/public/web/WebPopupType.h"
 #include "ui/gfx/geometry/rect.h"
@@ -36,7 +40,6 @@
 #endif
 
 #if defined(OS_MACOSX)
-#include <IOSurface/IOSurface.h>
 #include "content/common/mac/font_loader.h"
 #endif
 
@@ -73,19 +76,25 @@ struct MediaLogEvent;
 }
 
 namespace net {
+class IOBuffer;
 class KeygenHandler;
 class URLRequestContext;
 class URLRequestContextGetter;
 }
 
+namespace url {
+class Origin;
+}
+
 namespace content {
 class BrowserContext;
+class CacheStorageContextImpl;
+class CacheStorageCacheHandle;
 class DOMStorageContextWrapper;
 class MediaInternals;
 class RenderWidgetHelper;
 class ResourceContext;
 class ResourceDispatcherHostImpl;
-struct Referrer;
 
 // This class filters out incoming IPC messages for the renderer process on the
 // IPC thread.
@@ -98,7 +107,8 @@ class CONTENT_EXPORT RenderMessageFilter : public BrowserMessageFilter {
                       RenderWidgetHelper* render_widget_helper,
                       media::AudioManager* audio_manager,
                       MediaInternals* media_internals,
-                      DOMStorageContextWrapper* dom_storage_context);
+                      DOMStorageContextWrapper* dom_storage_context,
+                      CacheStorageContextImpl* cache_storage_context);
 
   // BrowserMessageFilter methods:
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -112,14 +122,6 @@ class CONTENT_EXPORT RenderMessageFilter : public BrowserMessageFilter {
 
  protected:
   ~RenderMessageFilter() override;
-
-  // This method will be overridden by TestSaveImageFromDataURL class for test.
-  virtual void DownloadUrl(int render_view_id,
-                           int render_frame_id,
-                           const GURL& url,
-                           const Referrer& referrer,
-                           const base::string16& suggested_name,
-                           const bool use_prompt) const;
 
  private:
   friend class BrowserThread;
@@ -143,23 +145,20 @@ class CONTENT_EXPORT RenderMessageFilter : public BrowserMessageFilter {
 #endif
 
   void OnGenerateRoutingID(int* route_id);
-  void OnDownloadUrl(int render_view_id,
-                     int render_frame_id,
-                     const GURL& url,
-                     const Referrer& referrer,
-                     const base::string16& suggested_name);
-  void OnSaveImageFromDataURL(int render_view_id,
-                              int render_frame_id,
-                              const std::string& url_str);
 
   void OnGetAudioHardwareConfig(media::AudioParameters* input_params,
                                 media::AudioParameters* output_params);
 
-#if defined(OS_WIN)
-  // Used to look up the monitor color profile.
-  void OnGetMonitorColorProfile(std::vector<char>* profile);
-#endif
-
+  // Message handlers called on the browser IO thread:
+  void OnEstablishGpuChannel(CauseForGpuLaunch, IPC::Message* reply);
+  void OnHasGpuProcess(IPC::Message* reply);
+  // Helper callbacks for the message handlers.
+  void EstablishChannelCallback(std::unique_ptr<IPC::Message> reply,
+                                const IPC::ChannelHandle& channel,
+                                const gpu::GPUInfo& gpu_info);
+  void GetGpuProcessHandlesCallback(
+      std::unique_ptr<IPC::Message> reply,
+      const std::list<base::ProcessHandle>& handles);
   // Used to ask the browser to allocate a block of shared memory for the
   // renderer to send back data in, since shared memory can't be created
   // in the renderer on POSIX due to the sandbox.
@@ -192,15 +191,30 @@ class CONTENT_EXPORT RenderMessageFilter : public BrowserMessageFilter {
   void OnCacheableMetadataAvailable(const GURL& url,
                                     base::Time expected_response_time,
                                     const std::vector<char>& data);
+  void OnCacheableMetadataAvailableForCacheStorage(
+      const GURL& url,
+      base::Time expected_response_time,
+      const std::vector<char>& data,
+      const url::Origin& cache_storage_origin,
+      const std::string& cache_storage_cache_name);
+  void OnCacheStorageOpenCallback(
+      const GURL& url,
+      base::Time expected_response_time,
+      scoped_refptr<net::IOBuffer> buf,
+      int buf_len,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      CacheStorageError error);
   void OnKeygen(uint32_t key_size_index,
                 const std::string& challenge_string,
                 const GURL& url,
                 const GURL& top_origin,
                 IPC::Message* reply_msg);
-  void PostKeygenToWorkerThread(IPC::Message* reply_msg,
-                                scoped_ptr<net::KeygenHandler> keygen_handler);
-  void OnKeygenOnWorkerThread(scoped_ptr<net::KeygenHandler> keygen_handler,
-                              IPC::Message* reply_msg);
+  void PostKeygenToWorkerThread(
+      IPC::Message* reply_msg,
+      std::unique_ptr<net::KeygenHandler> keygen_handler);
+  void OnKeygenOnWorkerThread(
+      std::unique_ptr<net::KeygenHandler> keygen_handler,
+      IPC::Message* reply_msg);
   void OnMediaLogEvents(const std::vector<media::MediaLogEvent>&);
 
   bool CheckBenchmarkingEnabled() const;
@@ -234,10 +248,14 @@ class CONTENT_EXPORT RenderMessageFilter : public BrowserMessageFilter {
 
   scoped_refptr<DOMStorageContextWrapper> dom_storage_context_;
 
+  int gpu_process_id_;
   int render_process_id_;
 
   media::AudioManager* audio_manager_;
   MediaInternals* media_internals_;
+  CacheStorageContextImpl* cache_storage_context_;
+
+  base::WeakPtrFactory<RenderMessageFilter> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderMessageFilter);
 };

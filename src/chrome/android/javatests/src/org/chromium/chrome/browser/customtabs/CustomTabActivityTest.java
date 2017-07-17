@@ -10,8 +10,10 @@ import android.app.Activity;
 import android.app.Application;
 import android.app.Instrumentation;
 import android.app.Instrumentation.ActivityMonitor;
+import android.app.Instrumentation.ActivityResult;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -24,10 +26,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.IBinder;
 import android.support.customtabs.CustomTabsCallback;
+import android.support.customtabs.CustomTabsClient;
 import android.support.customtabs.CustomTabsIntent;
-import android.support.customtabs.ICustomTabsCallback;
+import android.support.customtabs.CustomTabsServiceConnection;
+import android.support.customtabs.CustomTabsSession;
+import android.support.customtabs.CustomTabsSessionToken;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.text.TextUtils;
 import android.view.Menu;
@@ -37,25 +41,33 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.ImageButton;
 
+import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.TabsOpenedFromExternalAppTest;
+import org.chromium.chrome.browser.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.prerender.ExternalPrerenderHandler;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.toolbar.CustomTabToolbar;
 import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.test.util.ChromeRestriction;
+import org.chromium.chrome.test.util.browser.LocationSettingsTestUtil;
 import org.chromium.chrome.test.util.browser.contextmenu.ContextMenuUtils;
 import org.chromium.content.browser.BrowserStartupController;
 import org.chromium.content.browser.BrowserStartupController.StartupCallback;
@@ -71,6 +83,7 @@ import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Instrumentation tests for app menu, context menu, and toolbar of a {@link CustomTabActivity}.
@@ -95,14 +108,19 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         }
     }
 
+    private static final String READ_IT_LATER_FEATURE = "ReadItLaterInMenu";
     private static final int MAX_MENU_CUSTOM_ITEMS = 5;
-    private static final int NUM_CHROME_MENU_ITEMS = 3;
+    private static final int NUM_CHROME_MENU_ITEMS = 2;
     private static final String
             TEST_ACTION = "org.chromium.chrome.browser.customtabs.TEST_PENDING_INTENT_SENT";
     private static final String TEST_PAGE = "/chrome/test/data/android/google.html";
     private static final String TEST_PAGE_2 = "/chrome/test/data/android/test.html";
+    private static final String GEOLOCATION_PAGE =
+            "/chrome/test/data/geolocation/geolocation_on_load.html";
+    private static final String SELECT_POPUP_PAGE = "/chrome/test/data/android/select.html";
     private static final String FRAGMENT_TEST_PAGE = "/chrome/test/data/android/fragment.html";
     private static final String TEST_MENU_TITLE = "testMenuTitle";
+    private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "chrome";
     private static final String WEBLITE_PREFIX = "http://googleweblight.com/?lite_url=";
 
     private static int sIdToIncrement = 1;
@@ -119,11 +137,27 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
                 getInstrumentation().getContext(), Environment.getExternalStorageDirectory());
         mTestPage = mTestServer.getURL(TEST_PAGE);
         mTestPage2 = mTestServer.getURL(TEST_PAGE_2);
+        PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX,
+                getInstrumentation().getTargetContext().getApplicationContext());
+        LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER)
+                .ensureInitialized(getInstrumentation().getTargetContext().getApplicationContext());
     }
 
     @Override
     protected void tearDown() throws Exception {
         mTestServer.stopAndDestroyServer();
+
+        // finish() is called on a non-UI thread by the testing harness. Must hide the menu
+        // first, otherwise the UI is manipulated on a non-UI thread.
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                if (mActivity == null) return;
+                AppMenuHandler handler = mActivity.getAppMenuHandler();
+                if (handler != null) handler.hideAppMenu();
+            }
+        });
+
         super.tearDown();
     }
 
@@ -134,11 +168,11 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     }
 
     /**
-     * @see CustomTabsTestUtils#createMinimalCustomTabIntent(Context, String, IBinder).
+     * @see CustomTabsTestUtils#createMinimalCustomTabIntent(Context, String).
      */
     private Intent createMinimalCustomTabIntent() {
         return CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), mTestPage, null);
+                getInstrumentation().getTargetContext(), mTestPage);
     }
 
     /**
@@ -210,7 +244,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("App menu was not shown") {
+        CriteriaHelper.pollUiThread(new Criteria("App menu was not shown") {
             @Override
             public boolean isSatisfied() {
                 return mActivity.getAppMenuHandler().isAppMenuShowing();
@@ -314,7 +348,8 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
 
         openAppMenuAndAssertMenuShown();
         Menu menu = getActivity().getAppMenuHandler().getAppMenu().getMenu();
-        final int expectedMenuSize = numMenuEntries + NUM_CHROME_MENU_ITEMS;
+        final int expectedMenuSize = numMenuEntries + NUM_CHROME_MENU_ITEMS
+                + (ChromeFeatureList.isEnabled(READ_IT_LATER_FEATURE) ? 1 : 0);
         final int actualMenuSize = getActualMenuSize(menu);
 
         assertNotNull("App menu is not initialized: ", menu);
@@ -322,11 +357,11 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         assertNotNull(menu.findItem(R.id.forward_menu_id));
         assertNotNull(menu.findItem(R.id.info_menu_id));
         assertNotNull(menu.findItem(R.id.reload_menu_id));
-        assertNotNull(menu.findItem(R.id.find_in_page_id));
         assertNotNull(menu.findItem(R.id.open_in_browser_id));
-        assertFalse(menu.findItem(R.id.share_menu_id).isVisible());
-        assertFalse(menu.findItem(R.id.share_menu_id).isEnabled());
+        assertFalse(menu.findItem(R.id.share_row_menu_id).isVisible());
+        assertFalse(menu.findItem(R.id.share_row_menu_id).isEnabled());
         assertNull(menu.findItem(R.id.bookmark_this_page_id));
+        assertNull(menu.findItem(R.id.find_in_page_id));
     }
 
     /**
@@ -357,7 +392,8 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
 
         openAppMenuAndAssertMenuShown();
         Menu menu = getActivity().getAppMenuHandler().getAppMenu().getMenu();
-        final int expectedMenuSize = MAX_MENU_CUSTOM_ITEMS + NUM_CHROME_MENU_ITEMS;
+        final int expectedMenuSize = MAX_MENU_CUSTOM_ITEMS + NUM_CHROME_MENU_ITEMS
+                + (ChromeFeatureList.isEnabled(READ_IT_LATER_FEATURE) ? 1 : 0);
         final int actualMenuSize = getActualMenuSize(menu);
         assertNotNull("App menu is not initialized: ", menu);
         assertEquals(expectedMenuSize, actualMenuSize);
@@ -387,7 +423,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForCriteria(new Criteria("Pending Intent was not sent.") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Pending Intent was not sent.") {
             @Override
             public boolean isSatisfied() {
                 return onFinished.isSent();
@@ -401,29 +437,113 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     @SmallTest
     public void testOpenInBrowser() throws InterruptedException {
         startCustomTabActivityWithIntent(createMinimalCustomTabIntent());
-        IntentFilter filter = new IntentFilter(Intent.ACTION_VIEW);
-        filter.addDataScheme(Uri.parse(mTestServer.getURL("/")).getScheme());
-        final ActivityMonitor monitor = getInstrumentation().addMonitor(filter, null, false);
         openAppMenuAndAssertMenuShown();
-        final String menuItemTitle = mActivity.getString(R.string.menu_open_in_product_default);
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                MenuItem item = mActivity.getAppMenuHandler()
-                        .getAppMenu().getMenu().findItem(R.id.open_in_browser_id);
-                assertNotNull(item);
-                assertEquals(menuItemTitle, item.getTitle().toString());
-                mActivity.onMenuOrKeyboardAction(R.id.open_in_browser_id, false);
-            }
-        });
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        if (ChromeFeatureList.isEnabled(READ_IT_LATER_FEATURE)) {
+            // TODO(ianwen): implement this test after read it later becomes a settled feature.
+        } else {
+            IntentFilter filter = new IntentFilter(Intent.ACTION_VIEW);
+            filter.addDataScheme(Uri.parse(mTestServer.getURL("/")).getScheme());
+            final ActivityMonitor monitor = getInstrumentation().addMonitor(filter, null, false);
+            final String menuItemTitle = mActivity.getString(R.string.menu_open_in_product_default);
+            ThreadUtils.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MenuItem item = mActivity.getAppMenuHandler()
+                            .getAppMenu().getMenu().findItem(R.id.open_in_browser_id);
+                    assertNotNull(item);
+                    assertEquals(menuItemTitle, item.getTitle().toString());
+                    mActivity.onMenuOrKeyboardAction(R.id.open_in_browser_id, false);
+                }
+            });
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return getInstrumentation().checkMonitorHit(monitor, 1);
+                }
+            });
+        }
+    }
+
+    /**
+     * Test whether a custom tab can be reparented to a new activity.
+     */
+    @SmallTest
+    public void testTabReparentingBasic() throws InterruptedException {
+        startCustomTabActivityWithIntent(createMinimalCustomTabIntent());
+        reparentAndVerifyTab();
+    }
+
+    /**
+     * Test whether a custom tab can be reparented to a new activity while showing an infobar.
+     */
+    @SmallTest
+    public void testTabReparentingInfoBar() throws InterruptedException {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
+                getInstrumentation().getTargetContext(),
+                        mTestServer.getURL(GEOLOCATION_PAGE)));
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return getInstrumentation().checkMonitorHit(monitor, 1);
+                Tab currentTab = getActivity().getActivityTab();
+                return currentTab != null
+                        && currentTab.getInfoBarContainer() != null
+                        && currentTab.getInfoBarContainer().getInfoBarsForTesting().size() == 1;
+            }
+        });
+        final ChromeActivity newActivity = reparentAndVerifyTab();
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                Tab currentTab = newActivity.getActivityTab();
+                return currentTab != null
+                        && currentTab.getInfoBarContainer() != null
+                        && currentTab.getInfoBarContainer().getInfoBarsForTesting().size() == 1;
             }
         });
     }
 
+    /**
+     * Test whether a custom tab can be reparented to a new activity while showing a select popup.
+     */
+    @SmallTest
+    public void testTabReparentingSelectPopup() throws InterruptedException {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
+                getInstrumentation().getTargetContext(),
+                        mTestServer.getURL(SELECT_POPUP_PAGE)));
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                Tab currentTab = getActivity().getActivityTab();
+                return currentTab != null
+                        && currentTab.getContentViewCore() != null;
+            }
+        });
+        try {
+            DOMUtils.clickNode(CustomTabActivityTest.this,
+                    getActivity().getActivityTab().getContentViewCore(), "select");
+        } catch (TimeoutException e) {
+            fail();
+        }
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return getActivity().getActivityTab().getContentViewCore().getSelectPopupForTest()
+                        != null;
+            }
+        });
+        final ChromeActivity newActivity = reparentAndVerifyTab();
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                Tab currentTab = newActivity.getActivityTab();
+                return currentTab != null
+                        && currentTab.getContentViewCore() != null
+                        && currentTab.getContentViewCore().getSelectPopupForTest() == null;
+            }
+        });
+    }
     /**
      * Test whether the color of the toolbar is correctly customized. For L or later releases,
      * status bar color is also tested.
@@ -479,7 +599,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForCriteria(new Criteria("Pending Intent was not sent.") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Pending Intent was not sent.") {
             @Override
             public boolean isSatisfied() {
                 return onFinished.isSent();
@@ -527,55 +647,60 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         intent.putExtra(CustomTabsIntent.EXTRA_SECONDARY_TOOLBAR_COLOR, barColor);
         startCustomTabActivityWithIntent(intent);
 
-        ViewGroup bottomBar = (ViewGroup) getActivity().findViewById(R.id.bottombar);
+        ViewGroup bottomBar = (ViewGroup) getActivity()
+                .findViewById(R.id.custom_tab_bottom_bar_wrapper);
         assertNotNull(bottomBar);
+        assertTrue("Bottom Bar wrapper is not visible.", bottomBar.getVisibility() == View.VISIBLE
+                && bottomBar.getHeight() > 0 && bottomBar.getWidth() > 0);
         assertEquals("Bottom Bar showing incorrect number of buttons.",
                 numItems, bottomBar.getChildCount());
         assertEquals("Bottom bar not showing correct color", barColor,
                 ((ColorDrawable) bottomBar.getBackground()).getColor());
-        for (int i = 1; i <= numItems; i++) {
-            ImageButton button = (ImageButton) bottomBar.getChildAt(i - 1);
+        for (int i = 0; i < numItems; i++) {
+            ImageButton button = (ImageButton) bottomBar.getChildAt(i);
             assertTrue("Bottom Bar button does not have the correct bitmap.",
                     expectedIcon.sameAs(((BitmapDrawable) button.getDrawable()).getBitmap()));
+            assertTrue("Bottom Bar button is not visible.", button.getVisibility() == View.VISIBLE
+                    && button.getHeight() > 0 && button.getWidth() > 0);
             assertEquals("Bottom Bar button does not have correct content description",
-                    Integer.toString(i), button.getContentDescription());
+                    Integer.toString(i + 1), button.getContentDescription());
         }
     }
 
     @SmallTest
     public void testLaunchWithSession() throws InterruptedException {
-        IBinder session = warmUpAndLaunchUrlWithSession();
+        CustomTabsSessionToken session = warmUpAndLaunchUrlWithSession();
         assertEquals(mActivity.getIntentDataProvider().getSession(), session);
     }
 
     @SmallTest
     public void testLoadNewUrlWithSession() throws InterruptedException {
-        final IBinder session = warmUpAndLaunchUrlWithSession();
         final Context context = getInstrumentation().getTargetContext();
+        final Intent intent = CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage);
+        CustomTabsSessionToken session = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        warmUpAndLaunchUrlWithSession(intent);
         assertEquals(mActivity.getIntentDataProvider().getSession(), session);
         assertFalse("CustomTabContentHandler handled intent with wrong session",
                 ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
                     @Override
                     public Boolean call() throws Exception {
                         return CustomTabActivity.handleInActiveContentIfNeeded(
-                                CustomTabsTestUtils.createMinimalCustomTabIntent(context,
-                                        mTestPage2,
-                                        (new CustomTabsTestUtils.DummyCallback()).asBinder()));
+                                CustomTabsTestUtils.createMinimalCustomTabIntent(
+                                        context, mTestPage2));
                     }
                 }));
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(Criteria.equals(mTestPage, new Callable<String>() {
             @Override
-            public boolean isSatisfied() {
-                return mActivity.getActivityTab().getUrl().equals(mTestPage);
+            public String call() {
+                return mActivity.getActivityTab().getUrl();
             }
-        });
+        }));
         assertTrue("CustomTabContentHandler can't handle intent with same session",
                 ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
                     @Override
                     public Boolean call() throws Exception {
-                        return CustomTabActivity.handleInActiveContentIfNeeded(
-                            CustomTabsTestUtils.createMinimalCustomTabIntent(context,
-                                    mTestPage2, session));
+                        intent.setData(Uri.parse(mTestPage2));
+                        return CustomTabActivity.handleInActiveContentIfNeeded(intent);
                     }
                 }));
         final Tab tab = mActivity.getActivityTab();
@@ -591,12 +716,13 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         } catch (TimeoutException e) {
             fail();
         }
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return mActivity.getActivityTab().getUrl().equals(mTestPage2);
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                Criteria.equals(mTestPage2, new Callable<String>() {
+                    @Override
+                    public String call() {
+                        return mActivity.getActivityTab().getUrl();
+                    }
+                }));
     }
 
     @SmallTest
@@ -604,7 +730,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         final String testUrl = mTestServer.getURL(
                 "/chrome/test/data/android/customtabs/test_window_open.html");
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         final TabModelSelector tabSelector = getActivity().getTabModelSelector();
 
         final CallbackHelper openTabHelper = new CallbackHelper();
@@ -628,9 +754,10 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
 
     @SmallTest
     public void testReferrerAddedAutomatically() throws InterruptedException {
-        final IBinder session = warmUpAndLaunchUrlWithSession();
-        assertEquals(mActivity.getIntentDataProvider().getSession(), session);
         final Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        final Intent intent = CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage2);
+        final CustomTabsSessionToken session = warmUpAndLaunchUrlWithSession(intent);
+        assertEquals(mActivity.getIntentDataProvider().getSession(), session);
         CustomTabsConnection connection = CustomTabsConnection.getInstance((Application) context);
         String packageName = context.getPackageName();
         final String referrer =
@@ -654,9 +781,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
                 ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
                     @Override
                     public Boolean call() throws Exception {
-                        return CustomTabActivity.handleInActiveContentIfNeeded(
-                            CustomTabsTestUtils.createMinimalCustomTabIntent(context,
-                                    mTestPage2, session));
+                        return CustomTabActivity.handleInActiveContentIfNeeded(intent);
                     }
                 }));
         try {
@@ -672,21 +797,56 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     @SmallTest
     public void testCallbacksAreSent() {
         final ArrayList<Integer> navigationEvents = new ArrayList<>();
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback() {
-            @Override
-            public void onNavigationEvent(int navigationEvent, Bundle extras) {
-                navigationEvents.add(navigationEvent);
-            }
-        };
+        final AtomicReference<Intent> intent = new AtomicReference<Intent>(null);
+        CustomTabsClient.bindCustomTabsService(getInstrumentation().getContext(),
+                getInstrumentation().getTargetContext().getPackageName(),
+                new CustomTabsServiceConnection() {
+                    @Override
+                    public void onServiceDisconnected(ComponentName name) {
+                    }
+
+                    @Override
+                    public void onCustomTabsServiceConnected(ComponentName name,
+                            CustomTabsClient client) {
+                        client.warmup(0);
+                        CustomTabsSession session = client.newSession(new CustomTabsCallback() {
+                            @Override
+                            public void onNavigationEvent(int navigationEvent, Bundle extras) {
+                                navigationEvents.add(navigationEvent);
+                            }
+                        });
+                        intent.set(new CustomTabsIntent.Builder(session).build().intent);
+                    }
+                });
         try {
-            warmUpAndLaunchUrlWithSession(cb);
-            assertTrue(navigationEvents.contains(CustomTabsCallback.NAVIGATION_STARTED));
-            assertTrue(navigationEvents.contains(CustomTabsCallback.NAVIGATION_FINISHED));
-            assertFalse(navigationEvents.contains(CustomTabsCallback.NAVIGATION_FAILED));
-            assertFalse(navigationEvents.contains(CustomTabsCallback.NAVIGATION_ABORTED));
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return intent.get() != null;
+                }
+            });
+            intent.get().setData(Uri.parse(mTestPage));
+            intent.get().setComponent(new ComponentName(getInstrumentation().getTargetContext(),
+                    ChromeLauncherActivity.class));
+            intent.get().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startCustomTabActivityWithIntent(intent.get());
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return navigationEvents.contains(CustomTabsCallback.NAVIGATION_STARTED);
+                }
+            });
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return navigationEvents.contains(CustomTabsCallback.NAVIGATION_FINISHED);
+                }
+            });
         } catch (InterruptedException e) {
             fail();
         }
+        assertFalse(navigationEvents.contains(CustomTabsCallback.NAVIGATION_FAILED));
+        assertFalse(navigationEvents.contains(CustomTabsCallback.NAVIGATION_ABORTED));
     }
 
     /**
@@ -694,24 +854,28 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
      * only one in the navigation history.
      */
     @SmallTest
-    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
-    public void testPrecreatedRenderer() {
+    public void testPrecreatedRenderer() throws InterruptedException {
         CustomTabsConnection connection = warmUpAndWait();
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback();
-        assertTrue(connection.newSession(cb));
+        Context context = getInstrumentation().getTargetContext();
+        Intent intent = CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage);
+        CustomTabsSessionToken token = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        assertTrue(connection.newSession(token));
         Bundle extras = new Bundle();
         extras.putBoolean(CustomTabsConnection.NO_PRERENDERING_KEY, true);
-        assertTrue(connection.mayLaunchUrl(cb, Uri.parse(mTestPage), extras, null));
-        Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        assertTrue(connection.mayLaunchUrl(token, Uri.parse(mTestPage), extras, null));
         try {
-            startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                    context, mTestPage, cb.asBinder()));
+            startCustomTabActivityWithIntent(intent);
         } catch (InterruptedException e) {
             fail();
         }
-        Tab tab = getActivity().getActivityTab();
-        assertEquals(mTestPage, tab.getUrl());
-        assertFalse(tab.canGoBack());
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                final Tab currentTab = getActivity().getActivityTab();
+                return mTestPage.equals(currentTab.getUrl());
+            }
+        });
+        assertFalse(getActivity().getActivityTab().canGoBack());
     }
 
     /** Tests that calling mayLaunchUrl() without warmup() succeeds. */
@@ -736,8 +900,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
      */
     @SmallTest
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
-    @CommandLineFlags.Add({
-            ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, ChromeSwitches.DISABLE_DOCUMENT_MODE})
+    @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
     public void testWarmupAndLaunchRegularChrome() {
         warmUpAndWait();
         Intent intent =
@@ -763,8 +926,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
      */
     @SmallTest
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
-    @CommandLineFlags.Add({
-            ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, ChromeSwitches.DISABLE_DOCUMENT_MODE})
+    @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
     public void testWarmupAndLaunchRightToolbarLayout() {
         warmUpAndWait();
         startActivityCompletely(createMinimalCustomTabIntent());
@@ -822,34 +984,22 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
             throws Exception {
         String testUrl = mTestServer.getURL(FRAGMENT_TEST_PAGE);
         String initialFragment = "#test";
-        final String initialUrl = testUrl + initialFragment;
+        String initialUrl = testUrl + initialFragment;
         String fragment = "#yeah";
         String urlWithFragment = testUrl + fragment;
 
         Context context = getInstrumentation().getTargetContext().getApplicationContext();
-        final CustomTabsConnection connection = warmUpAndWait();
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback();
-        connection.newSession(cb);
-        connection.setIgnoreUrlFragmentsForSession(cb.asBinder(), ignoreFragments);
-        assertTrue(connection.mayLaunchUrl(cb, Uri.parse(initialUrl), null, null));
+        CustomTabsConnection connection = warmUpAndWait();
+        Intent intent = CustomTabsTestUtils.createMinimalCustomTabIntent(context, urlWithFragment);
+        CustomTabsSessionToken token = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        connection.newSession(token);
+        connection.setIgnoreUrlFragmentsForSession(token, ignoreFragments);
+        assertTrue(connection.mayLaunchUrl(token, Uri.parse(initialUrl), null, null));
 
-        if (wait) {
-            // Check that there is a prerender.
-            CriteriaHelper.pollForUIThreadCriteria(new Criteria("No Prerender") {
-                @Override
-                public boolean isSatisfied() {
-                    return connection.mPrerender != null
-                            && connection.mPrerender.mWebContents != null
-                            && ExternalPrerenderHandler.hasPrerenderedAndFinishedLoadingUrl(
-                                    Profile.getLastUsedProfile(), initialUrl,
-                                    connection.mPrerender.mWebContents);
-                }
-            });
-        }
+        if (wait) ensureCompletedPrerenderForUrl(connection, initialUrl);
 
         try {
-            startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                    context, urlWithFragment, cb.asBinder()));
+            startCustomTabActivityWithIntent(intent);
         } catch (InterruptedException e) {
             fail();
         }
@@ -863,12 +1013,14 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
 
         if (wait) {
             // The tab hasn't been reloaded.
-            CriteriaHelper.pollForCriteria(initialVisibilityCriteria, 2000, 200);
+            CriteriaHelper.pollInstrumentationThread(initialVisibilityCriteria, 2000, 200);
             // No reload (initial fragment is correct).
-            CriteriaHelper.pollForCriteria(initialFragmentCriteria, 2000, 200);
-            if (ignoreFragments) CriteriaHelper.pollForCriteria(fragmentCriteria, 2000, 200);
+            CriteriaHelper.pollInstrumentationThread(initialFragmentCriteria, 2000, 200);
+            if (ignoreFragments) {
+                CriteriaHelper.pollInstrumentationThread(fragmentCriteria, 2000, 200);
+            }
         } else {
-            CriteriaHelper.pollForCriteria(new ElementContentCriteria(
+            CriteriaHelper.pollInstrumentationThread(new ElementContentCriteria(
                     tab, "initial-fragment", fragment), 2000, 200);
         }
         assertFalse(tab.canGoForward());
@@ -885,29 +1037,140 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testPrerenderingCorrectUrl() throws Exception {
         Context context = getInstrumentation().getTargetContext().getApplicationContext();
         final CustomTabsConnection connection = warmUpAndWait();
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback();
-        connection.newSession(cb);
-        assertTrue(connection.mayLaunchUrl(cb, Uri.parse(mTestPage), null, null));
-
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("No prerender") {
-            @Override
-            public boolean isSatisfied() {
-                return connection.mPrerender.mWebContents != null
-                        && ExternalPrerenderHandler.hasPrerenderedAndFinishedLoadingUrl(
-                                Profile.getLastUsedProfile(), mTestPage,
-                                connection.mPrerender.mWebContents);
-            }
-        });
+        CustomTabsSessionToken token = CustomTabsSessionToken.createDummySessionTokenForTesting();
+        connection.newSession(token);
+        assertTrue(connection.mayLaunchUrl(token, Uri.parse(mTestPage), null, null));
+        ensureCompletedPrerenderForUrl(connection, mTestPage);
 
         try {
             startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                    context, mTestPage, cb.asBinder()));
+                    context, mTestPage));
         } catch (InterruptedException e) {
             fail();
         }
         assertEquals(Uri.parse(mTestPage).getHost() + ":" + Uri.parse(mTestPage).getPort(),
                 ((EditText) mActivity.findViewById(R.id.url_bar)).getText()
                         .toString());
+    }
+
+    /**
+     * Tests that the activity knows there is already a child process when warmup() has been called.
+     */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testAllocateChildConnectionWithWarmup() throws Exception {
+        Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        final CustomTabsConnection connection = warmUpAndWait();
+        CustomTabsSessionToken token = CustomTabsSessionToken.createDummySessionTokenForTesting();
+        connection.newSession(token);
+        try {
+            startCustomTabActivityWithIntent(
+                    CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage));
+        } catch (InterruptedException e) {
+            fail();
+        }
+        assertFalse(
+                "Warmup() should have allocated a child connection",
+                mActivity.shouldAllocateChildConnection());
+    }
+
+    /**
+     * Tests that the activity knows there is no child process.
+     */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testAllocateChildConnectionNoWarmup() throws Exception {
+        Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        final CustomTabsConnection connection =
+                CustomTabsConnection.getInstance((Application) context);
+        CustomTabsSessionToken token = CustomTabsSessionToken.createDummySessionTokenForTesting();
+        connection.newSession(token);
+
+        try {
+            startCustomTabActivityWithIntent(
+                    CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage2));
+        } catch (InterruptedException e) {
+            fail();
+        }
+        assertTrue(
+                "No spare renderer available, should allocate a child connection.",
+                mActivity.shouldAllocateChildConnection());
+    }
+
+    /**
+     * Tests that the activity knows there is already a child process when prerendering.
+     */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testAllocateChildConnectionWithPrerender() throws Exception {
+        Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        final CustomTabsConnection connection = warmUpAndWait();
+        CustomTabsSessionToken token = CustomTabsSessionToken.createDummySessionTokenForTesting();
+        connection.newSession(token);
+        assertTrue(connection.mayLaunchUrl(token, Uri.parse(mTestPage), null, null));
+        try {
+            startCustomTabActivityWithIntent(
+                    CustomTabsTestUtils.createMinimalCustomTabIntent(context, mTestPage));
+        } catch (InterruptedException e) {
+            fail();
+        }
+        assertFalse(
+                "Prerendering should have allocated a child connection",
+                mActivity.shouldAllocateChildConnection());
+    }
+
+    /**
+     * Tests that prerendering accepts a referrer, and that this is not lost when launching the
+     * Custom Tab.
+     */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testPrerenderingWithReferrer() throws Exception {
+        String referrer = "android-app://com.foo.me/";
+        maybePrerenderAndLaunchWithReferrers(
+                mTestServer.getURL(FRAGMENT_TEST_PAGE), true, referrer, referrer);
+
+        Tab tab = mActivity.getActivityTab();
+        // The tab hasn't been reloaded.
+        CriteriaHelper.pollInstrumentationThread(
+                new ElementContentCriteria(tab, "visibility", "prerender"), 2000, 200);
+        // The Referrer is correctly set.
+        CriteriaHelper.pollInstrumentationThread(
+                new TabsOpenedFromExternalAppTest.ReferrerCriteria(tab, referrer), 2000, 200);
+    }
+
+    /**
+     * Tests that prerendering accepts a referrer, and that the prerender is dropped when the tab
+     * is launched with a mismatched referrer.
+     */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testPrerenderingWithMismatchedReferrers() throws Exception {
+        String prerenderReferrer = "android-app://com.foo.me/";
+        String launchReferrer = "android-app://com.foo.me.i.changed.my.mind/";
+        maybePrerenderAndLaunchWithReferrers(
+                mTestServer.getURL(FRAGMENT_TEST_PAGE), true, prerenderReferrer, launchReferrer);
+
+        Tab tab = mActivity.getActivityTab();
+        // Prerender has been dropped.
+        CriteriaHelper.pollInstrumentationThread(
+                new ElementContentCriteria(tab, "visibility", "visible"), 2000, 200);
+        // The Referrer is correctly set.
+        CriteriaHelper.pollInstrumentationThread(
+                new TabsOpenedFromExternalAppTest.ReferrerCriteria(tab, launchReferrer), 2000, 200);
+    }
+
+    /** Tests that a client can set a referrer, without prerendering. */
+    @SmallTest
+    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testClientCanSetReferrer() throws Exception {
+        String referrerUrl = "android-app://com.foo.me/";
+        maybePrerenderAndLaunchWithReferrers(mTestPage, false, null, referrerUrl);
+
+        Tab tab = mActivity.getActivityTab();
+        // The Referrer is correctly set.
+        CriteriaHelper.pollInstrumentationThread(
+                new TabsOpenedFromExternalAppTest.ReferrerCriteria(tab, referrerUrl), 2000, 200);
     }
 
     /**
@@ -920,7 +1183,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchWebLiteURL() throws Exception {
         final String testUrl = WEBLITE_PREFIX + mTestPage;
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(mTestPage, tab.getUrl());
     }
@@ -934,7 +1197,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchWebLiteURLNoPreviews() throws Exception {
         final String testUrl = WEBLITE_PREFIX + mTestPage;
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(testUrl, tab.getUrl());
     }
@@ -948,7 +1211,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchWebLiteURLNoLoFi() throws Exception {
         final String testUrl = WEBLITE_PREFIX + mTestPage;
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(testUrl, tab.getUrl());
     }
@@ -963,7 +1226,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchWebLiteURLNoDataReductionProxy() throws Exception {
         final String testUrl = WEBLITE_PREFIX + mTestPage;
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(testUrl, tab.getUrl());
     }
@@ -978,7 +1241,7 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchHttpsWebLiteURL() throws Exception {
         final String testUrl = WEBLITE_PREFIX + mTestPage.replaceFirst("http", "https");
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(testUrl, tab.getUrl());
     }
@@ -993,26 +1256,56 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
     public void testLaunchNonWebLiteURL() throws Exception {
         final String testUrl = mTestPage2 + "/?lite_url=" + mTestPage;
         startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                getInstrumentation().getTargetContext(), testUrl, null));
+                getInstrumentation().getTargetContext(), testUrl));
         Tab tab = getActivity().getActivityTab();
         assertEquals(testUrl, tab.getUrl());
+    }
+
+    /** Maybe prerenders a URL with a referrer, then launch it with another one. */
+    private void maybePrerenderAndLaunchWithReferrers(String url, boolean prerender,
+            String prerenderReferrer, String launchReferrer) throws Exception {
+        Context context = getInstrumentation().getTargetContext().getApplicationContext();
+        CustomTabsConnection connection = null;
+        CustomTabsSessionToken token = null;
+        Intent intent = CustomTabsTestUtils.createMinimalCustomTabIntent(context, url);
+        if (prerender) {
+            connection = warmUpAndWait();
+            token = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+            connection.newSession(token);
+            Bundle extras = null;
+            if (prerenderReferrer != null) {
+                extras = new Bundle();
+                extras.putParcelable(Intent.EXTRA_REFERRER, Uri.parse(prerenderReferrer));
+            }
+            assertTrue(connection.mayLaunchUrl(token, Uri.parse(url), extras, null));
+            ensureCompletedPrerenderForUrl(connection, url);
+        }
+
+        if (launchReferrer != null) {
+            intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse(launchReferrer));
+        }
+        try {
+            startCustomTabActivityWithIntent(intent);
+        } catch (InterruptedException e) {
+            fail();
+        }
     }
 
     private void mayLaunchUrlWithoutWarmup(boolean noPrerendering) {
         Context context = getInstrumentation().getTargetContext().getApplicationContext();
         CustomTabsConnection connection =
                 CustomTabsTestUtils.setUpConnection((Application) context);
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback();
-        connection.newSession(cb);
+        CustomTabsSessionToken token = CustomTabsSessionToken.createDummySessionTokenForTesting();
+        connection.newSession(token);
         Bundle extras = null;
         if (noPrerendering) {
             extras = new Bundle();
             extras.putBoolean(CustomTabsConnection.NO_PRERENDERING_KEY, true);
         }
-        assertTrue(connection.mayLaunchUrl(cb, Uri.parse(mTestPage), extras, null));
+        assertTrue(connection.mayLaunchUrl(token, Uri.parse(mTestPage), extras, null));
         try {
             startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                    context, mTestPage, cb.asBinder()));
+                    context, mTestPage));
         } catch (InterruptedException e) {
             fail();
         }
@@ -1052,19 +1345,85 @@ public class CustomTabActivityTest extends CustomTabActivityTestBase {
         return connection;
     }
 
-    private IBinder warmUpAndLaunchUrlWithSession(ICustomTabsCallback cb)
-            throws InterruptedException {
-        CustomTabsConnection connection = warmUpAndWait();
-        connection.newSession(cb);
-        Context context = getInstrumentation().getTargetContext().getApplicationContext();
-        startCustomTabActivityWithIntent(CustomTabsTestUtils.createMinimalCustomTabIntent(
-                context, mTestPage, cb.asBinder()));
-        return cb.asBinder();
+    private ChromeActivity reparentAndVerifyTab() throws InterruptedException {
+        ActivityResult result = null;
+        final ActivityMonitor monitor = getInstrumentation().addMonitor(
+                ChromeTabbedActivity.class.getName(), result, false);
+        final Tab tabToBeReparented = mActivity.getActivityTab();
+        final CallbackHelper tabHiddenHelper = new CallbackHelper();
+        TabObserver observer = new EmptyTabObserver() {
+            @Override
+            public void onHidden(Tab tab) {
+                tabHiddenHelper.notifyCalled();
+            }
+        };
+        tabToBeReparented.addObserver(observer);
+        ThreadUtils.postOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mActivity.openCurrentUrlInBrowser(true, true);
+                assertNull(mActivity.getActivityTab());
+            }
+        });
+        // Use the extended CriteriaHelper timeout to make sure we get an activity
+        final Activity lastActivity =
+                monitor.waitForActivityWithTimeout(CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL);
+        assertNotNull("Monitor did not get an activity before hitting the timeout", lastActivity);
+        assertTrue("Expected lastActivity to be a ChromeActivity, was "
+                + lastActivity.getClass().getName(),
+                lastActivity instanceof ChromeActivity);
+        final ChromeActivity newActivity = (ChromeActivity) lastActivity;
+        CriteriaHelper.pollUiThread((new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return newActivity.getActivityTab() != null
+                        && newActivity.getActivityTab().equals(tabToBeReparented);
+            }
+        }));
+        CriteriaHelper.pollUiThread((new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return mActivity.isActivityDestroyed();
+            }
+        }));
+        assertEquals(newActivity.getWindowAndroid(), tabToBeReparented.getWindowAndroid());
+        assertEquals(newActivity.getWindowAndroid(),
+                tabToBeReparented.getContentViewCore().getWindowAndroid());
+        assertFalse(tabToBeReparented.getDelegateFactory() instanceof CustomTabDelegateFactory);
+        assertEquals("The tab should never be hidden during the reparenting process",
+                0, tabHiddenHelper.getCallCount());
+        tabToBeReparented.removeObserver(observer);
+        return newActivity;
     }
 
-    private IBinder warmUpAndLaunchUrlWithSession() throws InterruptedException {
-        ICustomTabsCallback cb = new CustomTabsTestUtils.DummyCallback();
-        return warmUpAndLaunchUrlWithSession(cb);
+    private CustomTabsSessionToken warmUpAndLaunchUrlWithSession(Intent intentWithSession)
+            throws InterruptedException {
+        CustomTabsConnection connection = warmUpAndWait();
+        CustomTabsSessionToken token =
+                CustomTabsSessionToken.getSessionTokenFromIntent(intentWithSession);
+        connection.newSession(token);
+        intentWithSession.setData(Uri.parse(mTestPage));
+        startCustomTabActivityWithIntent(intentWithSession);
+        return token;
+    }
+
+    private CustomTabsSessionToken warmUpAndLaunchUrlWithSession() throws InterruptedException {
+        return warmUpAndLaunchUrlWithSession(
+                CustomTabsTestUtils.createMinimalCustomTabIntent(
+                        getInstrumentation().getTargetContext(), mTestPage));
+    }
+
+    private static void ensureCompletedPrerenderForUrl(
+            final CustomTabsConnection connection, final String url) throws Exception {
+        CriteriaHelper.pollUiThread(new Criteria("No Prerender") {
+            @Override
+            public boolean isSatisfied() {
+                return connection.mPrerender != null && connection.mPrerender.mWebContents != null
+                        && ExternalPrerenderHandler.hasPrerenderedAndFinishedLoadingUrl(
+                                   Profile.getLastUsedProfile(), url,
+                                   connection.mPrerender.mWebContents);
+            }
+        });
     }
 
     /**

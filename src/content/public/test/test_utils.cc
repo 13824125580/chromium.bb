@@ -13,7 +13,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/common/site_isolation_policy.h"
@@ -70,10 +70,10 @@ class ScriptCallback {
   virtual ~ScriptCallback() { }
   void ResultCallback(const base::Value* result);
 
-  scoped_ptr<base::Value> result() { return std::move(result_); }
+  std::unique_ptr<base::Value> result() { return std::move(result_); }
 
  private:
-  scoped_ptr<base::Value> result_;
+  std::unique_ptr<base::Value> result_;
 
   DISALLOW_COPY_AND_ASSIGN(ScriptCallback);
 };
@@ -129,9 +129,7 @@ void RunThisRunLoop(base::RunLoop* run_loop) {
   // If we're running inside a browser test, we might need to allow the test
   // launcher to do extra work before/after running a nested message loop.
   TestLauncherDelegate* delegate = NULL;
-#if !defined(OS_IOS)
   delegate = GetCurrentTestLauncherDelegate();
-#endif
   if (delegate)
     delegate->PreRunMessageLoop(run_loop);
   run_loop->Run();
@@ -183,8 +181,9 @@ base::Closure GetQuitTaskForRunLoop(base::RunLoop* run_loop) {
                     kNumQuitDeferrals);
 }
 
-scoped_ptr<base::Value> ExecuteScriptAndGetValue(
-    RenderFrameHost* render_frame_host, const std::string& script) {
+std::unique_ptr<base::Value> ExecuteScriptAndGetValue(
+    RenderFrameHost* render_frame_host,
+    const std::string& script) {
   ScriptCallback observer;
 
   render_frame_host->ExecuteJavaScriptForTests(
