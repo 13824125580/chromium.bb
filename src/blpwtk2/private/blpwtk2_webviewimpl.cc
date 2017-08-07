@@ -60,7 +60,6 @@
 #include <content/renderer/render_view_impl.h>
 #include <third_party/WebKit/public/web/WebFindOptions.h>
 #include <third_party/WebKit/public/web/WebView.h>
-#include <third_party/WebKit/public/web/WebBindings.h>
 #include <ui/base/win/hidden_window.h>
 
 namespace blpwtk2 {
@@ -388,22 +387,31 @@ void WebViewImpl::print()
     printViewManager->PrintNow();
 }
 
-bool WebViewImpl::printToPDF(std::string &buffer, const char *propertyNameOnIframeToPrint)
+String WebViewImpl::printToPDF(const char *propertyNameOnIframeToPrint)
 {    
+    String returnVal;
     content::RenderView* rv = content::RenderView::FromRoutingID(d_renderViewRoutingId);
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::HandleScope handleScope(isolate);
 
-    for (auto *frame = rv->GetWebView()->mainFrame(); frame; frame = frame->traverseNext(false)) {
+    for (auto *frame = rv->GetWebView()->mainFrame();
+         frame;
+         frame = frame->traverseNext(false)) {
 
-        NPObject *winOBject = frame->windowObject();
-        NPIdentifier property = blink::WebBindings::getStringIdentifier(propertyNameOnIframeToPrint);
+        v8::Local<v8::Context> jsContext = frame->mainWorldScriptContext();
+        v8::Local<v8::Object> winObject = jsContext->Global();
 
-        if (blink::WebBindings::hasProperty(0, winOBject, property)) {
+        if (winObject->Has(v8::String::NewFromUtf8(isolate, propertyNameOnIframeToPrint))) {
+            std::vector<char> buffer =
+                printing::PrintWebViewHelper::Get(rv)->PrintToPDF(
+                    frame->toWebLocalFrame());
 
-            return printing::PrintWebViewHelper::Get(rv)->PrintToPDF(frame->toWebLocalFrame(), buffer);
+            returnVal.assign(buffer.data(), buffer.size());
+            break;
         }
     }
 
-    return false;
+    return returnVal;
 }
 
 void WebViewImpl::drawContentsToBlob(Blob *blob, const DrawParams& params)
