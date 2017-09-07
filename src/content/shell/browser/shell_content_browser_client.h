@@ -43,7 +43,9 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
   bool SupportsInProcessRenderer() override;
-  void StartInProcessRendererThread(const std::string& channel_id) override;
+  void StartInProcessRendererThread(const std::string& channel_id,
+                                    const std::string& ipc_token,
+                                    const std::string& application_token) override;
   void StopInProcessRendererThread() override;
   void ResourceDispatcherHostCreated() override;
   GeolocationDelegate* CreateGeolocationDelegate() override;

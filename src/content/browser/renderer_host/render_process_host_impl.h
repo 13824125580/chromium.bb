@@ -137,7 +137,8 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void SetSuddenTerminationAllowed(bool enabled) override;
   bool SuddenTerminationAllowed() const override;
   IPC::ChannelProxy* GetChannel() override;
-  const std::string& GetChildToken() const override;
+  const std::string& GetIpcToken() const override;
+  std::string GetServiceToken() const override;
   void AddFilter(BrowserMessageFilter* filter) override;
   bool FastShutdownForPageCount(size_t count) override;
   bool FastShutdownStarted() const override;

@@ -24,6 +24,7 @@
 #include "ipc/ipc_platform_file.h"
 #include "ipc/message_router.h"
 #include "services/shell/public/cpp/shell_client.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 
 namespace base {
 class MessageLoop;
@@ -339,6 +340,7 @@ struct ChildThreadImpl::Options {
   std::vector<IPC::MessageFilter*> startup_filters;
   std::string in_process_ipc_token;
   std::string in_process_application_token;
+  int mojo_controller_handle;
 
  private:
   Options();

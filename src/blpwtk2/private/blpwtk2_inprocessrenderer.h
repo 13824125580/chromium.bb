@@ -50,7 +50,10 @@ class InProcessRenderer {
     // Initialize the renderer.  This will initialize Blink on the main thread,
     // or on a secondary thread, depending on the thread mode.  The browserIOTaskRunner
     // should be null if the browser is not in the same process.
-    static void init(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner);
+    static void init(const scoped_refptr<base::SingleThreadTaskRunner>& browserIOTaskRunner,
+                     const std::string& ipcToken,
+                     const std::string& serviceToken,
+                     int mojo_controller_handle);
 
     // Perform any cleanup, such as shutting down the secondary thread if we
     // are in the original chromium thread mode.

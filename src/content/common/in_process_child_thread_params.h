@@ -22,7 +22,8 @@ class CONTENT_EXPORT InProcessChildThreadParams {
       const std::string& channel_name,
       scoped_refptr<base::SequencedTaskRunner> io_runner,
       const std::string& ipc_token = std::string(),
-      const std::string& application_token = std::string());
+      const std::string& application_token = std::string(),
+      int mojo_controller_handle = 0);
   InProcessChildThreadParams(const InProcessChildThreadParams& other);
   ~InProcessChildThreadParams();
 
@@ -35,11 +36,16 @@ class CONTENT_EXPORT InProcessChildThreadParams {
     return application_token_;
   }
 
+  int mojo_controller_handle() const {
+    return mojo_controller_handle_;
+  }
+
  private:
   std::string channel_name_;
   scoped_refptr<base::SequencedTaskRunner> io_runner_;
   std::string ipc_token_;
   std::string application_token_;
+  int mojo_controller_handle_;
 };
 
 }  // namespace content

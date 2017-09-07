@@ -1271,6 +1271,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
     }
     else {
         toolkitParams.setThreadMode(blpwtk2::ThreadMode::ORIGINAL);
+        toolkitParams.disableInProcessRenderer();
     }
 
 #if AUTO_PUMP

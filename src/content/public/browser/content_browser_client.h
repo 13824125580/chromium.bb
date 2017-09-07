@@ -559,7 +559,9 @@ class CONTENT_EXPORT ContentBrowserClient {
 
   // Start the in-process renderer thread.  This will only ever be called if
   // SupportsInProcessRenderer() returns true.
-  virtual void StartInProcessRendererThread(const std::string& channel_id) {}
+  virtual void StartInProcessRendererThread(const std::string& channel_id,
+                                            const std::string& ipc_token,
+                                            const std::string& application_token) {}
 
   // Stop the in-process renderer thread.
   virtual void StopInProcessRendererThread() {}

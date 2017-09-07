@@ -67,9 +67,6 @@ class ProcessClientImpl : public ProcessClient,
     void OnChannelError() override;
     void OnBadMessageReceived(const IPC::Message& message) override;
 
-    // Control message handlers
-    void onSetInProcessRendererChannelName(const std::string& channelName);
-
     base::WaitableEvent d_shutdownEvent;
     std::unique_ptr<IPC::SyncChannel> d_channel;
     IDMap<IPC::Listener> d_routes;

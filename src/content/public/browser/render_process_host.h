@@ -181,8 +181,13 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Returns the renderer channel.
   virtual IPC::ChannelProxy* GetChannel() = 0;
 
-  // Returns the renderer mojo child token
-  virtual const std::string& GetChildToken() const = 0;
+  // Returns the MojoIPC token for use by the RenderProcess.
+  // The RenderProcess and the RenderProcessHost will use this token to send
+  // each other legacy ChromeIPC messages.
+  virtual const std::string& GetIpcToken() const = 0;
+
+  // Returns the MojoIPC service token for use by the RenderProcess.
+  virtual std::string GetServiceToken() const = 0;
 
   // Adds a message filter to the IPC channel.
   virtual void AddFilter(BrowserMessageFilter* filter) = 0;

@@ -149,6 +149,8 @@ class CONTENT_EXPORT BrowserMainLoop {
   }
 #endif
 
+  static bool s_allow_sync_call_in_browser;
+
  private:
   class MemoryObserver;
 

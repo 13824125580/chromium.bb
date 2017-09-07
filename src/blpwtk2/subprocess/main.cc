@@ -55,6 +55,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int)
                                 sandbox::SandboxInterfaceInfo* sandboxInfo);
         MainFunc mainFunc = (MainFunc)GetProcAddress(subProcessModule, "SubProcessMain");
         if (!mainFunc) return -4567;
+
         return mainFunc(instance, &sandboxInfo);
     }
 }

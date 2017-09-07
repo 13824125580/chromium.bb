@@ -10,9 +10,11 @@ InProcessChildThreadParams::InProcessChildThreadParams(
     const std::string& channel_name,
     scoped_refptr<base::SequencedTaskRunner> io_runner,
     const std::string& ipc_token,
-    const std::string& application_token)
+    const std::string& application_token,
+    int mojo_controller_handle)
     : channel_name_(channel_name), io_runner_(io_runner), ipc_token_(ipc_token),
-      application_token_(application_token) {}
+      application_token_(application_token),
+      mojo_controller_handle_(mojo_controller_handle) {}
 
 InProcessChildThreadParams::InProcessChildThreadParams(
     const InProcessChildThreadParams& other) = default;

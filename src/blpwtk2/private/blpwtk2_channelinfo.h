@@ -45,6 +45,7 @@ struct ChannelInfo {
         std::string d_key;
         std::string d_value;
     };
+
     std::string d_channelId;
     std::vector<Switch> d_switches;
 

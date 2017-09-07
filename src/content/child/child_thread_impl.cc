@@ -68,6 +68,7 @@
 #include "mojo/edk/embedder/named_platform_channel_pair.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/edk/embedder/platform_handle.h"
 #include "services/shell/runner/common/client_util.h"
 
 #if defined(OS_POSIX)
@@ -227,7 +228,7 @@ void QuitClosure::PostQuitFromNonMainThread() {
 base::LazyInstance<QuitClosure> g_quit_closure = LAZY_INSTANCE_INITIALIZER;
 #endif
 
-void InitializeMojoIPCChannel() {
+void InitializeMojoIPCChannel(int file_descriptor) {
   mojo::edk::ScopedPlatformHandle platform_channel;
 #if defined(OS_WIN)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -235,6 +236,13 @@ void InitializeMojoIPCChannel() {
     platform_channel =
         mojo::edk::PlatformChannelPair::PassClientHandleFromParentProcess(
             *base::CommandLine::ForCurrentProcess());
+  } else if (file_descriptor) {
+      mojo::edk::ScopedPlatformHandle clientHandle(
+          mojo::edk::PlatformHandle(
+          LongToHandle(file_descriptor)));
+
+      DCHECK(clientHandle.is_valid());
+      platform_channel = std::move(clientHandle);
   } else {
     // If this process is elevated, it will have a pipe path passed on the
     // command line.
@@ -263,7 +271,8 @@ ChildThreadImpl::Options::Options()
     : channel_name(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kProcessChannelID)),
       use_mojo_channel(base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kMojoChannelToken)) {
+          switches::kMojoChannelToken)),
+      mojo_controller_handle(0) {
 }
 
 ChildThreadImpl::Options::Options(const Options& other) = default;
@@ -281,6 +290,8 @@ ChildThreadImpl::Options::Builder::InBrowserProcess(
   options_.channel_name = params.channel_name();
   options_.in_process_ipc_token = params.ipc_token();
   options_.in_process_application_token = params.application_token();
+  options_.mojo_controller_handle = params.mojo_controller_handle();
+
   return *this;
 }
 
@@ -354,7 +365,7 @@ void ChildThreadImpl::ConnectChannel(bool use_mojo_channel,
   if (use_mojo_channel) {
     VLOG(1) << "Mojo is enabled on child";
     mojo::ScopedMessagePipeHandle handle;
-    if (!IsInBrowserProcess()) {
+    if (!IsInBrowserProcess() && ipc_token.empty()) {
       DCHECK(!handle.is_valid());
       handle = mojo::edk::CreateChildMessagePipe(
           base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -402,10 +413,12 @@ void ChildThreadImpl::Init(const Options& options) {
   if (!IsInBrowserProcess()) {
     // Don't double-initialize IPC support in single-process mode.
     mojo_ipc_support_.reset(new mojo::edk::ScopedIPCSupport(GetIOTaskRunner()));
-    InitializeMojoIPCChannel();
+
+    InitializeMojoIPCChannel(options.mojo_controller_handle);
   }
+
   std::string mojo_application_token;
-  if (!IsInBrowserProcess()) {
+  if (!IsInBrowserProcess() && options.in_process_application_token.empty()) {
     mojo_application_token =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
         switches::kMojoApplicationChannelToken);
@@ -601,9 +614,9 @@ void ChildThreadImpl::ReleaseCachedFonts() {
 #endif
 
 void ChildThreadImpl::SetChannelName(const std::string& channel_name) {
-  DCHECK(!channel_name.empty());
-  DCHECK(in_process_ipc_token_.empty());
-  in_process_ipc_token_ = channel_name;
+  //DCHECK(!channel_name.empty());
+  //DCHECK(channel_name_.empty());
+  channel_name_ = channel_name;
   InitChannel();
 }
 

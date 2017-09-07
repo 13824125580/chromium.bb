@@ -23,6 +23,7 @@
 #include <blpwtk2_processhostimpl.h>
 
 #include <blpwtk2_browsercontextimpl.h>
+#include <blpwtk2_browsercontextimplmanager.h>
 #include <blpwtk2_channelinfo.h>
 #include <blpwtk2_constants.h>
 #include <blpwtk2_control_messages.h>
@@ -49,9 +50,15 @@
 #include <ipc/ipc_channel_proxy.h>
 #include <printing/backend/print_backend.h>
 
+#include <mojo/edk/embedder/embedder.h>
+#include <mojo/edk/embedder/platform_channel_pair.h>
+
 namespace blpwtk2 {
 
-ProcessHostImpl::ProcessHostImpl(RendererInfoMap* rendererInfoMap)
+ProcessHostImpl::ProcessHostImpl(RendererInfoMap* rendererInfoMap,
+                                 const std::string& dataDir,
+                                 bool diskCacheEnabled,
+                                 bool cookiePersistenceEnabled)
 : d_processHandle(base::kNullProcessHandle)
 , d_rendererInfoMap(rendererInfoMap)
 , d_lastRoutingId(0x10000)
@@ -68,6 +75,21 @@ ProcessHostImpl::ProcessHostImpl(RendererInfoMap* rendererInfoMap)
                                           IPC::Channel::MODE_SERVER,
                                           this,
                                           ioTaskRunner);
+
+    // Create a RenderProcess host
+    content::BrowserContext* browserContext =
+        Statics::browserContextImplManager->obtainBrowserContextImpl(
+            dataDir, diskCacheEnabled, cookiePersistenceEnabled);
+
+    base::ProcessHandle processHandle =
+        base::GetCurrentProcessHandle();
+
+    d_renderProcessHost.reset(
+        new ManagedRenderProcessHost(
+        processHandle,
+        browserContext));
+
+    d_inProcessRendererInfo.d_hostId = d_renderProcessHost->id();
 }
 
 ProcessHostImpl::~ProcessHostImpl()
@@ -105,6 +127,18 @@ const std::string& ProcessHostImpl::channelId() const
     return d_channel->ChannelId();
 }
 
+const std::string& ProcessHostImpl::ipcToken() const
+{
+    DCHECK(d_renderProcessHost);
+    return d_renderProcessHost->ipcToken();
+}
+
+std::string ProcessHostImpl::serviceToken() const
+{
+    DCHECK(d_renderProcessHost);
+    return d_renderProcessHost->serviceToken();
+}
+
 std::string ProcessHostImpl::channelInfo() const
 {
     base::CommandLine commandLine(base::CommandLine::NO_PROGRAM);
@@ -121,6 +155,11 @@ std::string ProcessHostImpl::channelInfo() const
     channelInfo.d_channelId = channelId();
     channelInfo.loadSwitchesFromCommandLine(commandLine);
     return channelInfo.serialize();
+}
+
+int ProcessHostImpl::hostAffinity() const
+{
+    return d_inProcessRendererInfo.d_hostId;
 }
 
 // ProcessHost overrides
@@ -168,6 +207,7 @@ bool ProcessHostImpl::OnMessageReceived(const IPC::Message& message)
         IPC_BEGIN_MESSAGE_MAP(ProcessHostImpl, message)
             IPC_MESSAGE_HANDLER(BlpControlHostMsg_Sync, onSync)
             IPC_MESSAGE_HANDLER(BlpControlHostMsg_CreateNewHostChannel, onCreateNewHostChannel)
+            IPC_MESSAGE_HANDLER(BlpControlHostMsg_RequestMojoTokens, onRequestMojoTokens)
             IPC_MESSAGE_HANDLER(BlpControlHostMsg_ClearWebCache, onClearWebCache)
             IPC_MESSAGE_HANDLER(BlpControlHostMsg_RegisterNativeViewForStreaming, onRegisterNativeViewForStreaming)
             IPC_MESSAGE_HANDLER(BlpProfileHostMsg_New, onProfileNew)
@@ -243,15 +283,61 @@ void ProcessHostImpl::onSync(bool isFinalSync)
 }
 
 void ProcessHostImpl::onCreateNewHostChannel(int timeoutInMilliseconds,
+                                             std::string dataDir,
+                                             bool diskCacheEnabled,
+                                             bool cookiePersistenceEnabled,
                                              std::string* channelInfo)
 {
     DCHECK(Statics::processHostManager);
 
-    ProcessHostImpl* newProcessHost = new ProcessHostImpl(d_rendererInfoMap);
+    ProcessHostImpl* newProcessHost = new ProcessHostImpl(d_rendererInfoMap,
+                                                          dataDir,
+                                                          diskCacheEnabled,
+                                                          cookiePersistenceEnabled);
     *channelInfo = newProcessHost->channelInfo();
     Statics::processHostManager->addProcessHost(
         newProcessHost,
         base::TimeDelta::FromMilliseconds(timeoutInMilliseconds));
+}
+
+void ProcessHostImpl::onRequestMojoTokens(int rendererPid,
+                                          int* clientFileDescriptor,
+                                          std::string* ipcToken,
+                                          std::string* serviceToken)
+{
+    if (GetCurrentProcessId() != static_cast<unsigned>(rendererPid)) {
+        // Create the pipe for Mojo IPC
+        mojo::edk::PlatformChannelPair channel_pair;
+
+        // Duplicate handle to renderer process
+        HANDLE rendererProcess = OpenProcess(PROCESS_DUP_HANDLE, FALSE, rendererPid);
+
+        HANDLE clientPeerHandle;
+        BOOL rc = ::DuplicateHandle(
+            GetCurrentProcess(),
+            channel_pair.PassClientHandle().get().handle,
+            rendererProcess,
+            &clientPeerHandle,
+            0, FALSE, DUPLICATE_SAME_ACCESS);
+
+        PCHECK(rc != 0);
+        *clientFileDescriptor = HandleToLong(clientPeerHandle);
+
+        *ipcToken = d_renderProcessHost->ipcToken();
+        *serviceToken = d_renderProcessHost->serviceToken();
+
+        // Notify Mojo about the child process
+        mojo::edk::ChildProcessLaunched(rendererProcess,
+            std::move(channel_pair.PassServerHandle()),
+            *ipcToken);
+
+        CloseHandle(rendererProcess);
+    }
+    else {
+        *clientFileDescriptor = 0;
+        *ipcToken = d_renderProcessHost->ipcToken();
+        *serviceToken = d_renderProcessHost->serviceToken();
+    }
 }
 
 void ProcessHostImpl::onClearWebCache()
@@ -299,18 +385,6 @@ void ProcessHostImpl::onWebViewNew(const BlpWebViewHostMsg_NewParams& params)
         params.rendererAffinity == blpwtk2::Constants::IN_PROCESS_RENDERER;
 
     if (isInProcess) {
-        if (!d_renderProcessHost.get()) {
-            DCHECK(-1 == d_inProcessRendererInfo.d_hostId);
-            CHECK(d_processHandle != base::kNullProcessHandle);
-            d_renderProcessHost.reset(
-                new ManagedRenderProcessHost(
-                    d_processHandle,
-                    profileHost->browserContext()));
-            d_inProcessRendererInfo.d_hostId = d_renderProcessHost->id();
-            Send(new BlpControlMsg_SetInProcessRendererChannelName(
-                d_renderProcessHost->channelId()));
-        }
-
         DCHECK(-1 != d_inProcessRendererInfo.d_hostId);
         hostAffinity = d_inProcessRendererInfo.d_hostId;
     }

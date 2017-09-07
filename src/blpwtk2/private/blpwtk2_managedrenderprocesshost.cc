@@ -47,9 +47,14 @@ int ManagedRenderProcessHost::id() const
     return d_impl->GetID();
 }
 
-const std::string& ManagedRenderProcessHost::channelId() const
+const std::string& ManagedRenderProcessHost::ipcToken() const
 {
-    return d_impl->GetChildToken();
+    return d_impl->GetIpcToken();
+}
+
+std::string ManagedRenderProcessHost::serviceToken() const
+{
+    return d_impl->GetServiceToken();
 }
 
 void ManagedRenderProcessHost::adjustCommandLineForRenderer(base::CommandLine* command_line)

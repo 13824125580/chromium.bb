@@ -39,7 +39,7 @@ struct BlpWebViewHostMsg_NewParams;
 
 namespace IPC {
 class ChannelProxy;
-}  // close namespace blpwtk2
+}  // close namespace IPC
 
 namespace blpwtk2 {
 
@@ -50,11 +50,19 @@ class ManagedRenderProcessHost;
 class ProcessHostImpl : public ProcessHost,
                         private IPC::Listener {
   public:
-    ProcessHostImpl(RendererInfoMap* rendererInfoMap);
+    ProcessHostImpl(RendererInfoMap* rendererInfoMap, 
+                    const std::string& dataDir,
+                    bool diskCacheEnabled,
+                    bool cookiePersistenceEnabled);
     ~ProcessHostImpl();
 
     const std::string& channelId() const;
+
+    const std::string& ipcToken() const;
+    std::string serviceToken() const;
     std::string channelInfo() const;
+
+    int hostAffinity() const;
 
     // ProcessHost overrides
     void addRoute(int routingId, ProcessHostListener* listener) override;
@@ -76,7 +84,16 @@ class ProcessHostImpl : public ProcessHost,
     // Control message handlers
     void onSync(bool isFinalSync);
     void onCreateNewHostChannel(int timeoutInMilliseconds,
+                                std::string dataDir,
+                                bool diskCacheEnabled,
+                                bool cookiePersistenceEnabled,
                                 std::string* channelInfo);
+
+    void onRequestMojoTokens(int rendererPid,
+                             int* clientFileDescriptor,
+                             std::string* ipcToken,
+                             std::string* serviceToken);
+
     void onClearWebCache();
     void onRegisterNativeViewForStreaming(NativeViewForTransit view,
                                           std::string* result);
@@ -98,6 +115,10 @@ class ProcessHostImpl : public ProcessHost,
     IDMap<ProcessHostListener> d_routes;
     int d_lastRoutingId;
     bool d_receivedFinalSync;
+
+    // File descriptor used for Mojo IPC
+    // This descriptor is with respect to renderer process control block.
+    int d_clientFileDescriptor;
 
     DISALLOW_COPY_AND_ASSIGN(ProcessHostImpl);
 };

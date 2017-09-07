@@ -59,6 +59,11 @@ std::string ChannelInfo::serialize() const
     base::StringPiece sp((const char*)pickle.data(), pickle.size());
     std::string result;
     Base64Encode(sp, &result);
+
+    // The pickle size is already approching to 1KB.  The maximum character
+    // limit for Windows command line is 8KB.  We want to make sure we don't
+    // come close to the limit with lots of room to spare.
+    DCHECK(result.length() < 4096);
     return result;
 }
 

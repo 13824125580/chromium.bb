@@ -737,7 +737,6 @@ bool RenderProcessHostImpl::Init() {
   // Single-process mode not supported in multiple-dll mode currently.
   if (IsProcessManagedExternally()) {
     DCHECK(externally_managed_handle_ == base::GetCurrentProcessHandle());
-    DCHECK(GetContentClient()->browser()->SupportsInProcessRenderer());
 
     // Crank up a thread and run the initialization there.  With the way that
     // messages flow between the browser and renderer, this thread is required
@@ -752,7 +751,13 @@ bool RenderProcessHostImpl::Init() {
     // in-process-render-thread using ChannelMojo there.
     OnProcessLaunched();  // Fake a callback that the process is ready.
 
-    GetContentClient()->browser()->StartInProcessRendererThread(channel_id);
+    if (GetContentClient()->browser()->SupportsInProcessRenderer()) {
+        GetContentClient()->browser()->StartInProcessRendererThread(
+            channel_id,
+            mojo_channel_token_,
+            mojo_child_connection_->shell_client_token());
+    }
+
   } else {
     // Build command line for renderer.  We call AppendRendererCommandLine()
     // first so the process type argument will appear first.
@@ -2077,8 +2082,12 @@ IPC::ChannelProxy* RenderProcessHostImpl::GetChannel() {
   return channel_.get();
 }
 
-const std::string& RenderProcessHostImpl::GetChildToken() const {
-  return child_token_;
+const std::string& RenderProcessHostImpl::GetIpcToken() const {
+    return mojo_channel_token_;
+}
+
+std::string RenderProcessHostImpl::GetServiceToken() const {
+    return mojo_child_connection_->shell_client_token();
 }
 
 void RenderProcessHostImpl::AddFilter(BrowserMessageFilter* filter) {

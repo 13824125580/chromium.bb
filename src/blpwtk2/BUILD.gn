@@ -292,6 +292,7 @@ shared_library("blpwtk2") {
     "//content:sandbox_helper_win",
     "//content/app/resources",
     "//ipc",
+    "//mojo/edk/system",
     "//net",
     "//net:extras",
     "//sandbox",

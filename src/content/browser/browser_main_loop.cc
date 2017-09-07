@@ -388,6 +388,8 @@ BrowserMainLoop* g_current_browser_main_loop = NULL;
 bool g_browser_main_loop_shutting_down = false;
 #endif
 
+bool BrowserMainLoop::s_allow_sync_call_in_browser = false;
+
 // For measuring memory usage after each task. Behind a command line flag.
 class BrowserMainLoop::MemoryObserver : public base::MessageLoop::TaskObserver {
  public:
@@ -1167,7 +1169,7 @@ int BrowserMainLoop::BrowserThreadsStarted() {
   // Bring up Mojo IPC and shell as early as possible.
 
   // Disallow mojo sync call in the browser process.
-  if (!parsed_command_line_.HasSwitch(switches::kSingleProcess)) {
+  if (!parsed_command_line_.HasSwitch(switches::kSingleProcess) && !s_allow_sync_call_in_browser) {
     // Disallow mojo sync calls in the browser process. Note that we allow sync
     // calls in single-process mode since renderer IPCs are made from a browser
     // thread.

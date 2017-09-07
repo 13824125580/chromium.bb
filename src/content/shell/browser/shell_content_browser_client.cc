@@ -263,12 +263,16 @@ bool ShellContentBrowserClient::SupportsInProcessRenderer()
 }
 
 void ShellContentBrowserClient::StartInProcessRendererThread(
-    const std::string& channel_id) {
+    const std::string& channel_id,
+    const std::string& ipc_token,
+    const std::string& application_token) {
   DCHECK(!g_in_process_renderer_thread);
 
   g_in_process_renderer_thread = CreateInProcessRendererThread(
       InProcessChildThreadParams(channel_id,
-                                 BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::IO)->task_runner()));
+                                 BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::IO)->task_runner(),
+                                 ipc_token,
+                                 application_token));
 
   base::Thread::Options options;
 #if defined(OS_WIN) && !defined(OS_MACOSX)
