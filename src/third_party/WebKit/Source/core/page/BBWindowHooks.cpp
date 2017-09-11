@@ -140,6 +140,15 @@ void BBWindowHooks::addMarker(Range* range, long markerType)
 
 }
 
+void BBWindowHooks::addHighlightMarker(Range* range, long foregroundColor, long backgroundColor)
+{
+    range->ownerDocument().markers().addHighlightMarker(
+        range->startPosition(),
+        range->endPosition(),
+        Color(foregroundColor),
+        Color(backgroundColor).blendWithWhite());
+}
+
 Range* BBWindowHooks::findPlainText(Range* range, const String& target, long options)
 {
     EphemeralRange result = blink::findPlainText(EphemeralRange(range), target, options);

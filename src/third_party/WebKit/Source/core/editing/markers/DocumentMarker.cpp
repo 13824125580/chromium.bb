@@ -132,6 +132,32 @@ inline TextCompositionMarkerDetails* toTextCompositionMarkerDetails(DocumentMark
 }
 
 
+class HighlightMarkerDetails final: public DocumentMarkerDetails {
+public:
+    HighlightMarkerDetails(Color foregroundColor, Color backgroundColor)
+        : m_foregroundColor(foregroundColor)
+        , m_backgroundColor(backgroundColor)
+    {
+    }
+
+    bool isHighlightMarker() const override { return true; }
+    Color foregroundColor() const { return m_foregroundColor; }
+    Color backgroundColor() const { return m_backgroundColor; }
+
+private:
+
+    Color m_foregroundColor;
+    Color m_backgroundColor;
+};
+
+
+inline HighlightMarkerDetails* toHighlightMarkerDetails(DocumentMarkerDetails* details)
+{
+    if (details && details->isHighlightMarker())
+        return static_cast<HighlightMarkerDetails*>(details);
+    return nullptr;
+}
+
 DocumentMarker::DocumentMarker(MarkerType type, unsigned startOffset, unsigned endOffset, const String& description, uint32_t hash)
     : m_type(type)
     , m_startOffset(startOffset)
@@ -155,6 +181,15 @@ DocumentMarker::DocumentMarker(unsigned startOffset, unsigned endOffset, Color u
     , m_startOffset(startOffset)
     , m_endOffset(endOffset)
     , m_details(TextCompositionMarkerDetails::create(underlineColor, thick, backgroundColor))
+    , m_hash(0)
+{
+}
+
+DocumentMarker::DocumentMarker(unsigned startOffset, unsigned endOffset, Color foregroundColor, Color backgroundColor)
+    : m_type(DocumentMarker::Highlight)
+    , m_startOffset(startOffset)
+    , m_endOffset(endOffset)
+    , m_details(new HighlightMarkerDetails(foregroundColor, backgroundColor))
     , m_hash(0)
 {
 }
@@ -211,6 +246,18 @@ Color DocumentMarker::backgroundColor() const
 {
     if (TextCompositionMarkerDetails* details = toTextCompositionMarkerDetails(m_details.get()))
         return details->backgroundColor();
+
+    if (HighlightMarkerDetails* details = toHighlightMarkerDetails(m_details.get())) 
+        return details->backgroundColor();
+
+    return Color::transparent;
+}
+
+Color DocumentMarker::foregroundColor() const
+{
+    if (HighlightMarkerDetails* details = toHighlightMarkerDetails(m_details.get()))
+        return details->foregroundColor();
+
     return Color::transparent;
 }
 

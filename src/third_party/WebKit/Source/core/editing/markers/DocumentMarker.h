@@ -45,6 +45,7 @@ public:
         TextMatchMarkerIndex,
         InvisibleSpellcheckMarkerIndex,
         CompositionMarkerIndex,
+        HighlightMarkerIndex,
         MarkerTypeIndexesCount
     };
 
@@ -54,6 +55,7 @@ public:
         TextMatch = 1 << TextMatchMarkerIndex,
         InvisibleSpellcheck = 1 << InvisibleSpellcheckMarkerIndex,
         Composition = 1 << CompositionMarkerIndex,
+        Highlight = 1 << HighlightMarkerIndex
     };
 
     class MarkerTypes {
@@ -75,7 +77,7 @@ public:
     class AllMarkers : public MarkerTypes {
     public:
         AllMarkers()
-            : MarkerTypes(Spelling | Grammar | TextMatch | InvisibleSpellcheck | Composition)
+            : MarkerTypes(Spelling | Grammar | TextMatch | InvisibleSpellcheck | Composition | Highlight)
         {
         }
     };
@@ -99,6 +101,7 @@ public:
     DocumentMarker(MarkerType, unsigned startOffset, unsigned endOffset, const String& description, uint32_t hash);
     DocumentMarker(unsigned startOffset, unsigned endOffset, bool activeMatch);
     DocumentMarker(unsigned startOffset, unsigned endOffset, Color underlineColor, bool thick, Color backgroundColor);
+    DocumentMarker(unsigned startOffset, unsigned endOffset, Color foregroundColor, Color backgroundColor);
 
     DocumentMarker(const DocumentMarker&);
 
@@ -112,6 +115,7 @@ public:
     Color underlineColor() const;
     bool thick() const;
     Color backgroundColor() const;
+    Color foregroundColor() const;
     DocumentMarkerDetails* details() const;
 
     void setActiveMatch(bool);
@@ -157,6 +161,7 @@ public:
     virtual bool isDescription() const { return false; }
     virtual bool isTextMatch() const { return false; }
     virtual bool isComposition() const { return false; }
+    virtual bool isHighlightMarker() const { return false; }
 
     DEFINE_INLINE_VIRTUAL_TRACE() { }
 };

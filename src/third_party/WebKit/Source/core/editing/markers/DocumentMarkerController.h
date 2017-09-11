@@ -63,7 +63,7 @@ public:
     void addMarker(const Position& start, const Position& end, DocumentMarker::MarkerType, const String& description = emptyString(), uint32_t hash = 0);
     void addTextMatchMarker(const Range*, bool activeMatch);
     void addCompositionMarker(const Position& start, const Position& end, Color underlineColor, bool thick, Color backgroundColor);
-
+    void addHighlightMarker(const Position& start, const Position& end, Color foregroundColor, Color backgroundColor);
     void copyMarkers(Node* srcNode, unsigned startOffset, int length, Node* dstNode, int delta);
 
     void prepareForDestruction();
