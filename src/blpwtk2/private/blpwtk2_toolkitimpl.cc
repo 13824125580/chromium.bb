@@ -532,7 +532,6 @@ String ToolkitImpl::createHostChannel(int timeoutInMilliseconds)
 bool ToolkitImpl::preHandleMessage(const NativeMsg* msg)
 {
     DCHECK(Statics::isInApplicationMainThread());
-    DCHECK(PumpMode::MANUAL == Statics::pumpMode);
     if (d_threadsStarted) {
         return MainMessagePump::current()->preHandleMessage(*msg);
     }
@@ -542,7 +541,6 @@ bool ToolkitImpl::preHandleMessage(const NativeMsg* msg)
 void ToolkitImpl::postHandleMessage(const NativeMsg* msg)
 {
     DCHECK(Statics::isInApplicationMainThread());
-    DCHECK(PumpMode::MANUAL == Statics::pumpMode);
     if (d_threadsStarted) {
         MainMessagePump::current()->postHandleMessage(*msg);
     }

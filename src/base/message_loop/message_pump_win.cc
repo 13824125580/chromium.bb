@@ -239,6 +239,10 @@ LRESULT CALLBACK MessagePumpForUI::WndProcThunk(
   return g_def_window_proc(hwnd, message, wparam, lparam);
 }
 
+bool MessagePumpForUI::DoIdleWork() {
+  return state_->delegate->DoIdleWork();
+}
+
 void MessagePumpForUI::DoRunLoop() {
   // IF this was just a simple PeekMessage() loop (servicing all possible work
   // queues), then Windows would try to achieve the following order according
@@ -373,10 +377,12 @@ void MessagePumpForUI::HandleWorkMessage() {
     return;
   }
 
-  // Let whatever would have run had we not been putting messages in the queue
-  // run now.  This is an attempt to make our dummy message not starve other
-  // messages that may be in the Windows message queue.
-  ProcessPumpReplacementMessage();
+  if (should_process_pump_replacement_) {
+    // Let whatever would have run had we not been putting messages in the queue
+    // run now.  This is an attempt to make our dummy message not starve other
+    // messages that may be in the Windows message queue.
+    ProcessPumpReplacementMessage();
+  }
 
   // Now give the delegate a chance to do some work.  It'll let us know if it
   // needs to do more work.
@@ -485,6 +491,12 @@ bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
   return true;
 }
 
+void MessagePumpForUI::ResetWorkState() {
+  // Since we discarded a kMsgHaveWork message, we must update the flag.
+  int old_work_state_ = InterlockedExchange(&work_state_, READY);
+  DCHECK_EQ(HAVE_WORK, old_work_state_);
+}
+
 bool MessagePumpForUI::ProcessPumpReplacementMessage() {
   // When we encounter a kMsgHaveWork message, this method is called to peek and
   // process a replacement message. The goal is to make the kMsgHaveWork as non-
@@ -496,23 +508,14 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
   // asynchronous to this thread!!
 
   MSG msg;
-  bool have_message;
-
-  if (MessageLoop::current()->os_modal_loop()) {
-    // We only peek out WM_PAINT and WM_TIMER here for reasons mentioned above.
-    have_message = g_peek_message(&msg, nullptr, WM_PAINT, WM_PAINT, PM_REMOVE) ||
-                   g_peek_message(&msg, nullptr, WM_TIMER, WM_TIMER, PM_REMOVE);
-  } else {
-    have_message = g_peek_message(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
-  }
+  const bool have_message =
+      g_peek_message(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
 
   // Expect no message or a message different than kMsgHaveWork.
   DCHECK(!have_message || kMsgHaveWork != msg.message ||
          msg.hwnd != message_hwnd_);
 
-  // Since we discarded a kMsgHaveWork message, we must update the flag.
-  int old_work_state_ = InterlockedExchange(&work_state_, READY);
-  DCHECK_EQ(HAVE_WORK, old_work_state_);
+  ResetWorkState();
 
   // We don't need a special time slice if we didn't have_message to process.
   if (!have_message)

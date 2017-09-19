@@ -135,8 +135,6 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
 
     Statics::initApplicationMainThread();
     Statics::threadMode = params.threadMode();
-    Statics::pumpMode = params.pumpMode();
-    Statics::workMessageWhileDoingWorkDisabled = params.workMessageWhileDoingWorkDisabled();
     Statics::inProcessResourceLoader = params.inProcessResourceLoader();
     Statics::isInProcessRendererDisabled = params.isInProcessRendererDisabled();
     Statics::channelErrorHandler = params.channelErrorHandler();

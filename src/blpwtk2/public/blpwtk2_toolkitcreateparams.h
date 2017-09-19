@@ -25,7 +25,6 @@
 
 #include <blpwtk2_config.h>
 
-#include <blpwtk2_pumpmode.h>
 #include <blpwtk2_threadmode.h>
 
 #include <stdlib.h>  // for _invalid_parameter_handler and _purecall_handler
@@ -81,17 +80,6 @@ class ToolkitCreateParams {
     // By default, blpwtk2 uses 'ThreadMode::ORIGINAL'.  Use this method to
     // change the thread mode.
     BLPWTK2_EXPORT void setThreadMode(ThreadMode::Value mode);
-
-    // By default, blpwtk2 uses 'PumpMode::MANUAL'.  Use this method to change
-    // the pump mode.
-    BLPWTK2_EXPORT void setPumpMode(PumpMode::Value mode);
-
-    // This only has any effect in the MANUAL pump mode.  By default, blpwtk2
-    // allows work messages to be posted to the main thread while it is doing
-    // work.  This function can be used to disable that.  In this case, the
-    // work message will be posted after doing work, if there is still more
-    // work to be done.
-    BLPWTK2_EXPORT void disableWorkMessageWhileDoingWork();
 
     // By default, initiating a document print will cause the browser to open
     // a print dialog to ask for the target printing device.  Calling this
@@ -223,8 +211,6 @@ class ToolkitCreateParams {
 
     // ACCESSORS
     ThreadMode::Value threadMode() const;
-    PumpMode::Value pumpMode() const;
-    bool workMessageWhileDoingWorkDisabled() const;
     bool useDefaultPrintSettings() const;
     LogMessageHandler logMessageHandler() const;
     ConsoleLogMessageHandler consoleLogMessageHandler() const;

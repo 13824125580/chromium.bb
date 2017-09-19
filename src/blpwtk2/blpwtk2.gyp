@@ -272,8 +272,6 @@
         'public/blpwtk2_profilecreateparams.h',
         'public/blpwtk2_proxyconfig.cc',
         'public/blpwtk2_proxyconfig.h',
-        'public/blpwtk2_pumpmode.cc',
-        'public/blpwtk2_pumpmode.h',
         'public/blpwtk2_resourcecontext.cc',
         'public/blpwtk2_resourcecontext.h',
         'public/blpwtk2_resourceloader.cc',

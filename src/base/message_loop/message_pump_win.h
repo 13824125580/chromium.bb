@@ -130,6 +130,10 @@ class BASE_EXPORT MessagePumpForUI : public MessagePumpWin {
   void ScheduleWork() override;
   void ScheduleDelayedWork(const TimeTicks& delayed_work_time) override;
 
+ protected:
+   bool DoIdleWork();
+   void ResetWorkState();
+
  private:
   static LRESULT CALLBACK WndProcThunk(HWND window_handle,
                                        UINT message,
@@ -154,6 +158,10 @@ class BASE_EXPORT MessagePumpForUI : public MessagePumpWin {
  protected:
   // A hidden message-only window.
   HWND message_hwnd_;
+
+  // Determines if the pump should dispatch a non-Chrome message
+  // to reduce starvation
+  bool should_process_pump_replacement_ = true;
 };
 
 //-----------------------------------------------------------------------------

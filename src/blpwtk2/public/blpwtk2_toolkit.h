@@ -168,9 +168,7 @@ class Toolkit {
     // in the code snippet above.  If 'preHandleMessage' returns true, this
     // means that blpwtk2 has consumed the message, and it should not be
     // dispatched through the normal Windows mechanism.  However, the
-    // application must still call 'postHandleMessage'.  The behavior is also
-    // undefined if these functions are called when 'PumpMode::AUTOMATIC' is
-    // being used.
+    // application must still call 'postHandleMessage'.
     virtual bool preHandleMessage(const NativeMsg* msg) = 0;
     virtual void postHandleMessage(const NativeMsg* msg) = 0;
 
