@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 #include "base/compiler_specific.h"
+#include "base/memory/free_deleter.h"
 #include "base/macros.h"
 #include "base/win/scoped_handle.h"
 #include "sandbox/win/src/crosscall_server.h"

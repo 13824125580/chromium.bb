@@ -179,6 +179,7 @@
         '../..',
       ],
       'defines': [
+        'SANDBOX_DLL',
         'SANDBOX_EXPORTS',
       ],
       'target_conditions': [
