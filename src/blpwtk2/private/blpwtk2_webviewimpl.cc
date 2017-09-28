@@ -122,6 +122,20 @@ WebViewImpl::WebViewImpl(WebViewDelegate* delegate,
     d_webContents->SetDelegate(this);
     Observe(d_webContents.get());
 
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_WIN)
+    CR_DEFINE_STATIC_LOCAL(const gfx::FontRenderParams, fontRenderParams,
+        (gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), NULL)));
+
+    content::RendererPreferences *prefs = d_webContents->GetMutableRendererPrefs();
+
+    prefs->should_antialias_text    = fontRenderParams.antialiasing;
+    prefs->use_subpixel_positioning = fontRenderParams.subpixel_positioning;
+    prefs->hinting                  = fontRenderParams.hinting;
+    prefs->use_autohinter           = fontRenderParams.autohinter;
+    prefs->use_bitmaps              = fontRenderParams.use_bitmaps;
+    prefs->subpixel_rendering       = fontRenderParams.subpixel_rendering;
+#endif
+
     printing::PrintViewManager::CreateForWebContents(d_webContents.get());
 
     createWidget(parent);
@@ -160,6 +174,21 @@ WebViewImpl::WebViewImpl(content::WebContents* contents,
     d_webContents.reset(contents);
     d_webContents->SetDelegate(this);
     Observe(d_webContents.get());
+
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_WIN)
+    CR_DEFINE_STATIC_LOCAL(const gfx::FontRenderParams, fontRenderParams,
+        (gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), NULL)));
+
+    content::RendererPreferences *prefs = d_webContents->GetMutableRendererPrefs();
+
+    prefs->should_antialias_text    = fontRenderParams.antialiasing;
+    prefs->use_subpixel_positioning = fontRenderParams.subpixel_positioning;
+    prefs->hinting                  = fontRenderParams.hinting;
+    prefs->use_autohinter           = fontRenderParams.autohinter;
+    prefs->use_bitmaps              = fontRenderParams.use_bitmaps;
+    prefs->subpixel_rendering       = fontRenderParams.subpixel_rendering;
+#endif
+    
     show();
 }
 
