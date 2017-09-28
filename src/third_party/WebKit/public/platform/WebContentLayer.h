@@ -37,10 +37,6 @@ public:
 
     // The WebContentLayer has ownership of this wrapper.
     virtual WebLayer* layer() = 0;
-
-    // Set the color to blend LCD text with when the layer's background color
-    // would otherwise be transparent.
-    virtual void setDefaultLCDBackgroundColor(WebColor) { }
 };
 
 } // namespace blink

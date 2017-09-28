@@ -183,7 +183,6 @@ public:
     WebSettings* settings() override;
     WebString pageEncoding() const override;
     void setPageEncoding(const WebString&) override;
-    void setLCDTextShouldBlendWithCSSBackgroundColor(bool) override;
     bool tabsToLinks() const override;
     void setTabsToLinks(bool value) override;
     bool tabKeyCyclesThroughElements() const override;

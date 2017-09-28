@@ -56,7 +56,6 @@ LayerImpl::LayerImpl(LayerTreeImpl* tree_impl, int id)
       layer_property_changed_(false),
       masks_to_bounds_(false),
       contents_opaque_(false),
-      contents_opaque_for_lcd_text_(false),
       use_parent_backface_visibility_(false),
       use_local_transform_for_backface_visibility_(false),
       should_check_backface_visibility_(false),
@@ -1021,7 +1020,7 @@ void LayerImpl::AsValueInto(base::trace_event::TracedValue* state) const {
     state->EndArray();
   }
 
-  state->SetBoolean("can_use_lcd_text", CanUseLCDText());
+  state->SetBoolean("can_use_lcd_text", can_use_lcd_text());
   state->SetBoolean("contents_opaque", contents_opaque());
 
   state->SetBoolean("has_animation_bounds",
@@ -1087,16 +1086,6 @@ gfx::Transform LayerImpl::DrawTransform() const {
   return draw_properties().target_space_transform;
 }
 
-gfx::Transform LayerImpl::ScreenSpaceTransform() const {
-  // Only drawn layers have up-to-date draw properties.
-  if (!is_drawn_render_surface_layer_list_member()) {
-    return draw_property_utils::ScreenSpaceTransform(
-        this, layer_tree_impl()->property_trees()->transform_tree);
-  }
-
-  return draw_properties().screen_space_transform;
-}
-
 bool LayerImpl::CanUseLCDText() const {
   if (layer_tree_impl()->settings().layers_always_allowed_lcd_text)
     return true;
@@ -1110,13 +1099,11 @@ bool LayerImpl::CanUseLCDText() const {
           ->effect_tree.Node(effect_tree_index())
           ->data.screen_space_opacity != 1.f)
     return false;
-  // TODO(abetts3): LCD text should be disabled in cases of rotational,
-  // shearing, or perspective transformation.
-  // if (!layer_tree_impl()
-  //          ->property_trees()
-  //          ->transform_tree.Node(transform_tree_index())
-  //          ->data.node_and_ancestors_have_only_integer_translation)
-  //   return false;
+  if (!layer_tree_impl()
+           ->property_trees()
+           ->transform_tree.Node(transform_tree_index())
+           ->data.node_and_ancestors_have_only_integer_translation)
+    return false;
   if (static_cast<int>(offset_to_transform_parent().x()) !=
       offset_to_transform_parent().x())
     return false;

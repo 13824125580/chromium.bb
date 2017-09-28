@@ -151,8 +151,6 @@ public:
     virtual WebString pageEncoding() const = 0;
     virtual void setPageEncoding(const WebString&) = 0;
 
-    virtual void setLCDTextShouldBlendWithCSSBackgroundColor(bool) = 0;
-
     // Controls whether pressing Tab key advances focus to links.
     virtual bool tabsToLinks() const = 0;
     virtual void setTabsToLinks(bool) = 0;

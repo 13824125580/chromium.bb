@@ -33,7 +33,6 @@ void SkImageInfo::unflatten(SkReadBuffer& buffer) {
     uint32_t packed = buffer.read32();
     fColorType = (SkColorType)((packed >> 0) & kColorTypeMask);
     fAlphaType = (SkAlphaType)((packed >> 8) & kAlphaTypeMask);
-    fDefaultLCDBackgroundColor = buffer.readColor();
     buffer.validate(alpha_type_is_valid(fAlphaType) && color_type_is_valid(fColorType));
 
     sk_sp<SkData> data = buffer.readByteArrayAsData();
@@ -48,7 +47,6 @@ void SkImageInfo::flatten(SkWriteBuffer& buffer) const {
     SkASSERT(0 == (fColorType & ~kColorTypeMask));
     uint32_t packed = (fAlphaType << 8) | fColorType;
     buffer.write32(packed);
-    buffer.writeColor(fDefaultLCDBackgroundColor);
 
     if (fColorSpace) {
         sk_sp<SkData> data = fColorSpace->serialize();

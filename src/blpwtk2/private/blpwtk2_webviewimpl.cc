@@ -411,16 +411,6 @@ void WebViewImpl::setRegion(NativeRegion region)
     }
 }
 
-void WebViewImpl::setLCDTextShouldBlendWithCSSBackgroundColor(bool lcdTextShouldBlendWithCSSBackgroundColor)
-{
-    DCHECK(Statics::isSingleThreadMode());
-    DCHECK(d_isMainFrameAccessible)
-        << "You should wait for didFinishLoad";
-    DCHECK(d_gotRenderViewInfo);
-
-    RendererUtil::setLCDTextShouldBlendWithCSSBackgroundColor(d_renderViewRoutingId, lcdTextShouldBlendWithCSSBackgroundColor);
-}
-
 void WebViewImpl::clearTooltip()
 {
     content::RenderWidgetHostViewBase* rwhv =

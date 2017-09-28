@@ -1040,11 +1040,6 @@ void GraphicsLayer::setBackgroundColor(const Color& color)
     m_layer->layer()->setBackgroundColor(m_backgroundColor.rgb());
 }
 
-void GraphicsLayer::setDefaultLCDBackgroundColor(const Color& color)
-{
-    m_layer->setDefaultLCDBackgroundColor(color.rgb());
-}
-
 void GraphicsLayer::setContentsOpaque(bool opaque)
 {
     m_contentsOpaque = opaque;

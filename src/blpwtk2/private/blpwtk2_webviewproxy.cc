@@ -341,17 +341,6 @@ void WebViewProxy::setRegion(NativeRegion region)
     }
 }
 
-void WebViewProxy::setLCDTextShouldBlendWithCSSBackgroundColor(bool enable)
-{
-    DCHECK(Statics::isRendererMainThreadMode());
-    DCHECK(d_isMainFrameAccessible)
-        << "You should wait for didFinishLoad";
-    DCHECK(d_gotRenderViewInfo);
-
-    RendererUtil::setLCDTextShouldBlendWithCSSBackgroundColor(d_renderViewRoutingId,
-                                                              enable);
-}
-
 void WebViewProxy::clearTooltip()
 {
     DCHECK(Statics::isInApplicationMainThread());
