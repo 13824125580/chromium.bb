@@ -111,6 +111,7 @@ BrowserContextImpl::BrowserContextImpl(const std::string& dataDir,
                                               // calling CreateBrowserContextServices.
 
     BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(this);
+    content::BrowserContext::Initialize(this, base::FilePath());
 }
 
 BrowserContextImpl::~BrowserContextImpl()
