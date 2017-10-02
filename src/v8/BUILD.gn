@@ -2120,7 +2120,11 @@ group("gn_all") {
 
 if (v8_as_shared_library) {
   v8_shared_library("v8") {
-    output_name = "blpv8.$bb_version"
+    if (bb_version != "") {
+      output_name = "blpv8.$bb_version"
+    } else {
+      output_name = "blpv8"
+    }
 
     sources = [
       "src/blpv8.rc",
