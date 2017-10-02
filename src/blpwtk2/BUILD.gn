@@ -314,6 +314,14 @@ shared_library("blpwtk2") {
     "//ui/views",
     "//url",
   ]
+
+  libs = [
+    "dwmapi.lib"
+  ]
+
+  ldflags = [
+    "/DELAYLOAD:dwmapi.dll"
+  ]
 }
 
 executable("blpwtk2_subprocess") {
