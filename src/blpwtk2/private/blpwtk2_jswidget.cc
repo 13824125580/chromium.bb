@@ -44,15 +44,6 @@ static v8::Handle<v8::Object> toV8(v8::Isolate* isolate, const blink::WebRect& r
     return result;
 }
 
-static void scheduleDispatchEvent(const tracked_objects::Location& location,
-                                  JsWidget* widget,
-                                  const blink::WebDOMEvent& event)
-{
-    base::MessageLoop::current()->PostTask(
-        location,
-        base::Bind(&JsWidget::dispatchEvent, base::Unretained(widget), event));
-}
-
 JsWidget::JsWidget(blink::WebLocalFrame* frame)
 : d_container(nullptr)
 , d_frame(frame)
@@ -74,7 +65,7 @@ bool JsWidget::initialize(blink::WebPluginContainer* container)
 {
     d_container = container;
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnInitialize", false, false, blink::WebSerializedScriptValue());
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
     return true;
 }
 
@@ -82,7 +73,7 @@ void JsWidget::destroy()
 {
     if (d_container) {
         blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnDestroy", false, false, blink::WebSerializedScriptValue());
-        scheduleDispatchEvent(FROM_HERE, this, event);
+        dispatchEvent(event);
         base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
 
         d_container = nullptr;
@@ -123,7 +114,7 @@ void JsWidget::updateGeometry(
 
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnUpdateGeometry", false, false,
                                                                      blink::WebSerializedScriptValue::serialize(detailObj));
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
 }
 
 void JsWidget::updateVisibility(bool isVisible)
@@ -140,7 +131,7 @@ void JsWidget::updateVisibility(bool isVisible)
 
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnUpdateVisibility", false, false,
                                                                      blink::WebSerializedScriptValue::serialize(detailObj));
-    scheduleDispatchEvent(FROM_HERE, this, event);
+    dispatchEvent(event);
 }
 
 }  // close namespace blpwtk2
