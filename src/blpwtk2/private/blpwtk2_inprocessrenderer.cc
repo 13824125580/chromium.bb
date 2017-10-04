@@ -28,6 +28,7 @@
 #include <content/common/in_process_child_thread_params.h>
 #include <content/public/renderer/render_thread.h>
 #include <content/renderer/render_process_impl.h>
+#include <content/child/dwrite_font_proxy/dwrite_font_proxy_init_win.h>
 #include <third_party/WebKit/public/web/WebRuntimeFeatures.h>
 #include <third_party/WebKit/public/web/win/WebFontRendering.h>
 #include <ui/gfx/win/direct_write.h>
@@ -41,6 +42,7 @@ static void InitDirectWrite()
     // which is used for out-of-process renderers, but is not used for in-process
     // renderers.  So, we need to do it here.
 
+    content::InitializeDWriteFontProxy();
     blink::WebFontRendering::setDeviceScaleFactor(display::win::GetDPIScale());
 }
 

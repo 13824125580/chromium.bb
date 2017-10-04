@@ -38,6 +38,10 @@ class CONTENT_EXPORT DWriteFontProxyMessageFilter
   void OverrideThreadForMessage(const IPC::Message& message,
                                 content::BrowserThread::ID* thread) override;
 
+#if defined(OS_WIN)
+  void SetFontCollection(FontCollection* collection);
+#endif
+
   void SetWindowsFontsPathForTesting(base::string16 path);
 
  protected:
@@ -78,6 +82,10 @@ class CONTENT_EXPORT DWriteFontProxyMessageFilter
   Microsoft::WRL::ComPtr<IDWriteFontFallback> font_fallback_;
   base::string16 windows_fonts_path_;
   CustomFontFileLoadingMode custom_font_file_loading_mode_;
+
+#if defined(OS_WIN)
+  FontCollection* font_collection_ = nullptr;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(DWriteFontProxyMessageFilter);
 };

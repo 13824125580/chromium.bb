@@ -113,6 +113,8 @@ class BrowserContextImpl : public content::BrowserContext,
           const base::FilePath& partition_path,
           bool in_memory) override;
 
+	content::FontCollection* GetFontCollection() override;
+
   private:
     std::unique_ptr<ResourceContextImpl> d_resourceContext;
     scoped_refptr<URLRequestContextGetterImpl> d_requestContextGetter;

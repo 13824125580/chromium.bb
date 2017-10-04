@@ -30,6 +30,7 @@
 #include <blpwtk2_statics.h>
 #include <blpwtk2_stringref.h>
 #include <blpwtk2_urlrequestcontextgetterimpl.h>
+#include <blpwtk2_fontcollectionimpl.h>
 
 #include <base/files/file_path.h>
 #include <base/files/file_util.h>
@@ -365,6 +366,11 @@ net::URLRequestContextGetter* BrowserContextImpl::CreateMediaRequestContextForSt
       bool in_memory)
 {
     return nullptr;
+}
+
+content::FontCollection* BrowserContextImpl::GetFontCollection()
+{
+	return FontCollectionImpl::GetCurrent();
 }
 
 }  // close namespace blpwtk2

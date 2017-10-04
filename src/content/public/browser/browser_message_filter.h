@@ -28,8 +28,20 @@ namespace IPC {
 class MessageFilter;
 }
 
+struct IDWriteFactory;
+struct IDWriteFontCollection;
+
 namespace content {
 struct BrowserMessageFilterTraits;
+
+#if defined(OS_WIN)
+class FontCollection {
+ public:
+  virtual int GetFontCollection(
+            IDWriteFactory         *factory,
+            IDWriteFontCollection **font_collection) = 0;
+};
+#endif
 
 // Base class for message filters in the browser process.  You can receive and
 // send messages on any thread.
@@ -81,6 +93,11 @@ class CONTENT_EXPORT BrowserMessageFilter
   // OverrideXForMessage modifies the thread used to dispatch the message,
   // your function will be called on the requested thread.
   virtual bool OnMessageReceived(const IPC::Message& message) = 0;
+
+#if defined(OS_WIN)
+  // blpwtk2: Allow the embedder to specify the font collection
+  virtual void SetFontCollection(FontCollection* collection) {}
+#endif
 
   // Can be called on any thread, after OnChannelConnected is called.
   base::ProcessHandle PeerHandle();
