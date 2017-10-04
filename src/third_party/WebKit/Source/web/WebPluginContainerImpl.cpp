@@ -420,6 +420,12 @@ void WebPluginContainerImpl::enqueueMessageEvent(const WebDOMMessageEvent& event
     m_element->getExecutionContext()->getEventQueue()->enqueueEvent(event);
 }
 
+void WebPluginContainerImpl::enqueueEvent(const WebDOMEvent& event)
+{
+    static_cast<Event*>(event)->setTarget(m_element);
+    m_element->getExecutionContext()->getEventQueue()->enqueueEvent(event);
+}
+
 void WebPluginContainerImpl::invalidate()
 {
     Widget::invalidate();

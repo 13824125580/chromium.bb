@@ -65,7 +65,7 @@ JsWidget::~JsWidget()
 
 void JsWidget::dispatchEvent(const blink::WebDOMEvent& event)
 {
-    d_webElement.dispatchEvent(event);
+    d_container->enqueueEvent(event);
 }
 
 // blink::WebPlugin overrides
@@ -73,7 +73,6 @@ void JsWidget::dispatchEvent(const blink::WebDOMEvent& event)
 bool JsWidget::initialize(blink::WebPluginContainer* container)
 {
     d_container = container;
-    d_webElement = container->element();
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnInitialize", false, false, blink::WebSerializedScriptValue());
     scheduleDispatchEvent(FROM_HERE, this, event);
     return true;
@@ -81,9 +80,18 @@ bool JsWidget::initialize(blink::WebPluginContainer* container)
 
 void JsWidget::destroy()
 {
-    blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnDestroy", false, false, blink::WebSerializedScriptValue());
-    scheduleDispatchEvent(FROM_HERE, this, event);
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    if (d_container) {
+        blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnDestroy", false, false, blink::WebSerializedScriptValue());
+        scheduleDispatchEvent(FROM_HERE, this, event);
+        base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+
+        d_container = nullptr;
+    }
+}
+
+blink::WebPluginContainer* JsWidget::container() const
+{
+    return d_container;
 }
 
 void JsWidget::updateGeometry(

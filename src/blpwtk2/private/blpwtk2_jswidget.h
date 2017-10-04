@@ -49,6 +49,7 @@ class JsWidget : public blink::WebPlugin {
     // blink::WebPlugin overrides
     bool initialize(blink::WebPluginContainer*) override;
     void destroy() override;
+    blink::WebPluginContainer* container() const override;
     void paint(blink::WebCanvas*, const blink::WebRect&) override {}
     void updateGeometry(
         const blink::WebRect& windowRect, const blink::WebRect& clipRect,
@@ -64,8 +65,7 @@ class JsWidget : public blink::WebPlugin {
     void updateAllLifecyclePhases() override {}
 
   private:
-    blink::WebPluginContainer* d_container;
-    blink::WebElement d_webElement;
+    blink::WebPluginContainer* d_container;    
     blink::WebLocalFrame* d_frame;
 
     DISALLOW_COPY_AND_ASSIGN(JsWidget);
