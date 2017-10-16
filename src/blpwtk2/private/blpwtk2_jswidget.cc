@@ -24,8 +24,8 @@
 
 #include <base/bind.h>
 #include <base/message_loop/message_loop.h>
+#include <third_party/WebKit/public/web/WebDocument.h>
 #include <third_party/WebKit/public/web/WebDOMEvent.h>
-#include <third_party/WebKit/public/web/WebElement.h>
 #include <third_party/WebKit/public/web/WebLocalFrame.h>
 #include <third_party/WebKit/public/web/WebPluginContainer.h>
 #include <third_party/WebKit/public/web/WebSerializedScriptValue.h>
@@ -34,7 +34,7 @@
 namespace blpwtk2 {
 
 static v8::Handle<v8::Object> toV8(v8::Isolate* isolate, const blink::WebRect& rc)
-{
+    {
     // TODO: make a template for this
     v8::Handle<v8::Object> result = v8::Object::New(isolate);
     result->Set(v8::String::NewFromUtf8(isolate, "x"), v8::Integer::New(isolate, rc.x));
@@ -47,6 +47,7 @@ static v8::Handle<v8::Object> toV8(v8::Isolate* isolate, const blink::WebRect& r
 JsWidget::JsWidget(blink::WebLocalFrame* frame)
 : d_container(nullptr)
 , d_frame(frame)
+, d_hasParent(false)
 {
 }
 
@@ -72,8 +73,6 @@ bool JsWidget::initialize(blink::WebPluginContainer* container)
 void JsWidget::destroy()
 {
     if (d_container) {
-        blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnDestroy", false, false, blink::WebSerializedScriptValue());
-        dispatchEvent(event);
         base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
 
         d_container = nullptr;
@@ -90,6 +89,10 @@ void JsWidget::updateGeometry(
     const blink::WebRect& unobscuredRect, const blink::WebVector<blink::WebRect>& cutOutsRects,
     bool isVisible)
 {
+    if (!d_hasParent) {
+        return;
+    }
+
     v8::Isolate* isolate = d_frame->scriptIsolate();
 
     v8::HandleScope handleScope(isolate);
@@ -119,6 +122,10 @@ void JsWidget::updateGeometry(
 
 void JsWidget::updateVisibility(bool isVisible)
 {
+    if (!d_hasParent) {
+        return;
+    }
+
     v8::Isolate* isolate = d_frame->scriptIsolate();
 
     v8::HandleScope handleScope(isolate);
@@ -132,6 +139,16 @@ void JsWidget::updateVisibility(bool isVisible)
     blink::WebDOMEvent event = blink::WebDOMEvent::createCustomEvent("bbOnUpdateVisibility", false, false,
                                                                      blink::WebSerializedScriptValue::serialize(detailObj));
     dispatchEvent(event);
+}
+
+void JsWidget::addedToParent()
+{
+    d_hasParent = true;
+}
+
+void JsWidget::removedFromParent()
+{
+    d_hasParent = false;
 }
 
 }  // close namespace blpwtk2

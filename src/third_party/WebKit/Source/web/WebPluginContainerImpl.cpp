@@ -264,6 +264,19 @@ void WebPluginContainerImpl::setParentVisible(bool parentVisible)
         m_webPlugin->updateVisibility(isVisible());
 }
 
+void WebPluginContainerImpl::setParent(Widget* parent)
+{
+    if (Widget::parent() && m_webPlugin) {
+        m_webPlugin->removedFromParent();
+    }
+
+    Widget::setParent(parent);
+
+    if (Widget::parent() && m_webPlugin) {
+        m_webPlugin->addedToParent();
+    }
+}
+
 void WebPluginContainerImpl::setPlugin(WebPlugin* plugin)
 {
     if (plugin == m_webPlugin)

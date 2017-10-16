@@ -63,10 +63,13 @@ class JsWidget : public blink::WebPlugin {
     void didFinishLoading() override {}
     void didFailLoading(const blink::WebURLError&) override {}
     void updateAllLifecyclePhases() override {}
+    void addedToParent() override;
+    void removedFromParent() override;
 
   private:
     blink::WebPluginContainer* d_container;    
     blink::WebLocalFrame* d_frame;
+    bool d_hasParent;
 
     DISALLOW_COPY_AND_ASSIGN(JsWidget);
 };

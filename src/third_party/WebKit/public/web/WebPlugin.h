@@ -187,6 +187,9 @@ public:
 
     virtual bool isPlaceholder() { return true; }
 
+    virtual void addedToParent() { }
+    virtual void removedFromParent() { }
+
 protected:
     ~WebPlugin() { }
 };
