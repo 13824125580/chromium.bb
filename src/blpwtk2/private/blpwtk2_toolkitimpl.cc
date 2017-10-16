@@ -315,6 +315,7 @@ void ToolkitImpl::shutdownThreads()
     }
     else {
         DCHECK(Statics::isOriginalThreadMode() || Statics::isSingleThreadMode());
+        destroyInProcessHost();
         d_browserMainRunner->destroyProcessHostManager();
         Statics::browserContextImplManager->destroyBrowserContexts();
     }
