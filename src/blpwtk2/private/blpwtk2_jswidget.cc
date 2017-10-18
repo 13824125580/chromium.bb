@@ -48,6 +48,7 @@ JsWidget::JsWidget(blink::WebLocalFrame* frame)
 : d_container(nullptr)
 , d_frame(frame)
 , d_hasParent(false)
+, d_pendingVisible(false)
 {
 }
 
@@ -123,6 +124,7 @@ void JsWidget::updateGeometry(
 void JsWidget::updateVisibility(bool isVisible)
 {
     if (!d_hasParent) {
+        d_pendingVisible = isVisible;
         return;
     }
 
@@ -144,6 +146,10 @@ void JsWidget::updateVisibility(bool isVisible)
 void JsWidget::addedToParent()
 {
     d_hasParent = true;
+    if (d_pendingVisible) {
+        updateVisibility(d_pendingVisible);
+        d_pendingVisible = false;
+    }
 }
 
 void JsWidget::removedFromParent()

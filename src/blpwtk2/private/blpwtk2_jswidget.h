@@ -70,6 +70,7 @@ class JsWidget : public blink::WebPlugin {
     blink::WebPluginContainer* d_container;    
     blink::WebLocalFrame* d_frame;
     bool d_hasParent;
+    bool d_pendingVisible; // Whether to make visible when added to a parent
 
     DISALLOW_COPY_AND_ASSIGN(JsWidget);
 };
