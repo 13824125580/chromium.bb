@@ -2010,6 +2010,7 @@ Color FrameView::baseBackgroundColor() const
 void FrameView::setBaseBackgroundColor(const Color& backgroundColor)
 {
     m_baseBackgroundColor = backgroundColor;
+    DisableCompositingQueryAsserts disabler;
 
     if (!layoutViewItem().isNull() && layoutViewItem().layer()->hasCompositedLayerMapping()) {
         CompositedLayerMapping* compositedLayerMapping = layoutViewItem().layer()->compositedLayerMapping();
