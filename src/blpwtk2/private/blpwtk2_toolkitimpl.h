@@ -93,6 +93,7 @@ class ToolkitImpl : public Toolkit {
     String getHostChannelId() override;
     void setWebViewHostObserver(WebViewHostObserver* observer) override;
     void setDefaultPrinterName(const StringRef& printerName) override;
+    void setTraceThreshold(unsigned int timeoutMS) override;
 
   private:
     void createInProcessHost();

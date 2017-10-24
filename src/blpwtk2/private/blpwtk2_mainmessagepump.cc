@@ -66,6 +66,7 @@ MainMessagePump::MainMessagePump()
     , d_minTimer(USER_TIMER_MINIMUM)
     , d_maxTimer(USER_TIMER_MAXIMUM)
     , d_maxPumpCountInsideModalLoop(1)
+    , d_traceThreshold(0)
 {
   d_window = ::CreateWindowW(getClassName(),   // lpClassName
                              0,                // lpWindowName
@@ -199,6 +200,14 @@ void MainMessagePump::postHandleMessage(const MSG& msg)
       schedulePump();
     }
   }
+}
+
+void MainMessagePump::setTraceThreshold(unsigned int timeoutMS)
+{
+  d_traceThreshold = timeoutMS;
+  LOG(INFO) << "blpwtk2::MainMessagePump::setTraceThreshold: Set traceThreshold to "
+            << timeoutMS
+            << " ms";
 }
 
 void MainMessagePump::ScheduleWork()
@@ -400,6 +409,8 @@ void MainMessagePump::doWork()
   int wasPumped = ::InterlockedExchange(&d_isPumped, 0);
   DCHECK_EQ(1, wasPumped);
 
+  unsigned int startTime1 = ::GetTickCount();
+
   // Since MessagePumpForUI::DoRunLoop is not called when MainMessagePump is
   // used, the functions MessagePumpForUI::ProcessNextWindowsMessage,
   // MessagePumpForUI::ProcessMessageHelper, and
@@ -433,10 +444,23 @@ void MainMessagePump::doWork()
   }
 
   if (!d_skipIdleWork) {
+    unsigned int startTime2 = ::GetTickCount();
     MessagePumpForUI::DoIdleWork();
+    unsigned int endTime2 = ::GetTickCount();
+
+    if (shouldTrace(endTime2 - startTime2)) {
+      LOG(WARNING) << "blpwtk2::MainMessagePump::doWork:  MainMessagePumpForUI::DoIdleWork took "
+                   << (endTime2 - startTime2) << " ms to run";
+    }
   }
   else {
     d_skipIdleWork = false;
+  }
+
+  unsigned int endTime1 = ::GetTickCount();
+  if (shouldTrace(endTime1 - startTime1)) {
+    LOG(WARNING) << "blpwtk2::MainMessagePump::doWork:  MainMessagePumpForUI::HandleWorkMessage took "
+                 << (endTime1 - startTime1) << " ms to run";
   }
 }
 

@@ -71,6 +71,7 @@ class MainMessagePump final : public base::MessagePumpForUI {
     void doWork();
     void modalLoop(bool enabled);
     void resetWorkState();
+    bool shouldTrace(unsigned int elapsedTime);
 
     NativeView d_window;
     std::unique_ptr<base::RunLoop> d_runLoop;
@@ -87,9 +88,16 @@ class MainMessagePump final : public base::MessagePumpForUI {
     unsigned int d_minTimer;
     unsigned int d_maxTimer;
     unsigned int d_maxPumpCountInsideModalLoop;
+    unsigned int d_traceThreshold;
 
     DISALLOW_COPY_AND_ASSIGN(MainMessagePump);
 };
+
+inline
+bool MainMessagePump::shouldTrace(unsigned int elapsedTime)
+{
+  return d_traceThreshold != 0 && elapsedTime >= d_traceThreshold;
+}
 
 }  // close namespace blpwtk2
 

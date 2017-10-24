@@ -666,4 +666,9 @@ void ToolkitImpl::setDefaultPrinterName(const StringRef& printerName)
         new BlpControlHostMsg_SetDefaultPrinterName(printerName2));
 }
 
+void ToolkitImpl::setTraceThreshold(unsigned int timeoutMS)
+{
+    MainMessagePump::current()->setTraceThreshold(timeoutMS);
+}
+
 }  // close namespace blpwtk2

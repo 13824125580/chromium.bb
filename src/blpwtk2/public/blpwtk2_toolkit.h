@@ -206,6 +206,10 @@ class Toolkit {
     // specified) instead of the Windows default printer
     virtual void setDefaultPrinterName(const StringRef& printerName) = 0;
 
+    // If non-zero, defines the time threshold for enabling trace
+    // (in milliseconds)
+    virtual void setTraceThreshold(unsigned int timeoutMS) = 0;
+
   protected:
     // Destroy this Toolkit object.  Note that clients of blpwtk2 should use
     // the 'destroy()' method, instead of deleting the object directly.
