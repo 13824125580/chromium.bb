@@ -48,8 +48,6 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // SYSTEM_DRAWN.
   virtual bool HasFrame() const = 0;
 
-  virtual bool ShouldRerouteMouseWheelToAnyRelatedWindow() const;
-
   virtual void SchedulePaint() = 0;
   virtual void SetAlwaysRenderAsActive(bool always_render_as_active) = 0;
   virtual bool IsAlwaysRenderAsActive() = 0;

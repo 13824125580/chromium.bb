@@ -28,7 +28,6 @@
 #include "cc/raster/raster_buffer.h"
 #include "cc/raster/task_category.h"
 #include "cc/tiles/tile.h"
-#include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace cc {
@@ -62,7 +61,7 @@ class RasterTaskImpl : public TileTask {
         raster_source_(std::move(raster_source)),
         content_rect_(tile->content_rect()),
         invalid_content_rect_(tile->invalidated_content_rect()),
-        contents_transform_(tile->contents_transform()),
+        contents_scale_(tile->contents_scale()),
         playback_settings_(playback_settings),
         tile_resolution_(tile_resolution),
         layer_id_(tile->layer_id()),
@@ -91,7 +90,7 @@ class RasterTaskImpl : public TileTask {
 
     raster_buffer_->Playback(raster_source_.get(), content_rect_,
                              invalid_content_rect_, new_content_id_,
-                             gfx::AxisTransform2d(contents_transform_),  playback_settings_);
+                             contents_scale_,  playback_settings_);
   }
 
   // Overridden from TileTask:
@@ -125,7 +124,7 @@ class RasterTaskImpl : public TileTask {
   scoped_refptr<RasterSource> raster_source_;
   gfx::Rect content_rect_;
   gfx::Rect invalid_content_rect_;
-  gfx::AxisTransform2d contents_transform_;
+  float contents_scale_;
   RasterSource::PlaybackSettings playback_settings_;
   TileResolution tile_resolution_;
   int layer_id_;
@@ -641,11 +640,9 @@ TileManager::PrioritizedWorkToSchedule TileManager::AssignGpuMemoryToTiles() {
       // TODO(sohanjg): Check if we could use a shared analysis
       // canvas which is reset between tiles.
       SkColor color = SK_ColorTRANSPARENT;
-      gfx::RectF layer_rect = tile->contents_transform().InverseMapRect(
-          gfx::RectF(tile->content_rect()));
       bool is_solid_color =
           prioritized_tile.raster_source()->PerformSolidColorAnalysis(
-              gfx::ToEnclosingRect(layer_rect), gfx::AxisTransform2d(), &color);
+              tile->content_rect(), tile->contents_scale(), &color);
       if (is_solid_color) {
         tile->draw_info().set_solid_color(color);
         tile->draw_info().set_was_ever_ready_to_draw();
@@ -960,7 +957,7 @@ scoped_refptr<TileTask> TileManager::CreateRasterTask(
   images.clear();
   if (!playback_settings.skip_images) {
   prioritized_tile.raster_source()->GetDiscardableImagesInRect(
-        tile->enclosing_layer_rect(), tile->contents_transform().scale(), &images);
+        tile->enclosing_layer_rect(), tile->contents_scale(), &images);
   }
 
   // We can skip the image hijack canvas if we have no images.

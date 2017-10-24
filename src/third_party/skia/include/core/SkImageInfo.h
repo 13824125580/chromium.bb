@@ -217,8 +217,8 @@ public:
         return Make(width, height, kN32_SkColorType, kPremul_SkAlphaType, cs, lcdbc);
     }
 
-    static SkImageInfo MakeN32Premul(const SkISize& size, SkColor lcdbd = SK_ColorTRANSPARENT) {
-        return MakeN32Premul(size.width(), size.height(), lcdbc);
+    static SkImageInfo MakeN32Premul(const SkISize& size, SkColor lcdbc = SK_ColorTRANSPARENT) {
+        return MakeN32Premul(size.width(), size.height(), nullptr, lcdbc);
     }
 
 

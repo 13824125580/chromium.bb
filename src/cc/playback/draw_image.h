@@ -9,7 +9,6 @@
 #include "third_party/skia/include/core/SkFilterQuality.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkMatrix.h"
-#include "ui/gfx/geometry/scaling2d.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
@@ -42,13 +41,6 @@ class CC_EXPORT DrawImage {
     SkMatrix scaled_matrix = matrix_;
     scaled_matrix.postScale(scale.width(), scale.height());
     return DrawImage(image_, src_rect_, filter_quality_, scaled_matrix);
-  }
-
-  DrawImage ApplyScale(const gfx::Scaling2d& scale) const {
-    return DrawImage(
-        image_, src_rect_,
-        SkSize::Make(scale_.width() * scale.x(), scale_.height() * scale.y()),
-        filter_quality_, matrix_has_perspective_, matrix_is_decomposable_);
   }
 
  private:

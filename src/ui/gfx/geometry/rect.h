@@ -19,7 +19,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/gfx/geometry/scaling2d.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
 
@@ -244,10 +243,6 @@ inline Rect ScaleToEnclosingRect(const Rect& rect, float scale) {
   return ScaleToEnclosingRect(rect, scale, scale);
 }
 
-inline Rect ScaleToEnclosingRect(const Rect& rect, const Scaling2d& scale) {
-  return ScaleToEnclosingRect(rect, scale.x(), scale.y());
-}
-
 inline Rect ScaleToEnclosedRect(const Rect& rect,
                                 float x_scale,
                                 float y_scale) {
@@ -272,10 +267,6 @@ inline Rect ScaleToEnclosedRect(const Rect& rect,
 
 inline Rect ScaleToEnclosedRect(const Rect& rect, float scale) {
   return ScaleToEnclosedRect(rect, scale, scale);
-}
-
-inline Rect ScaleToEnclosedRect(const Rect& rect, const Scaling2d& scale) {
-  return ScaleToEnclosedRect(rect, scale.x(), scale.y());
 }
 
 // This is declared here for use in gtest-based unit tests but is defined in

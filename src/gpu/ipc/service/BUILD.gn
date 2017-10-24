@@ -125,6 +125,7 @@ source_set("test_support") {
   ]
 }
 
+if (false) {
 test("gpu_ipc_service_unittests") {
   configs += [ "//build/config:precompiled_headers" ]
   sources = [
@@ -167,3 +168,5 @@ test("gpu_ipc_service_unittests") {
     deps += [ "//ui/ozone" ]
   }
 }
+}
+

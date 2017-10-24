@@ -194,6 +194,7 @@
       'WebRuntimeFeatures.cpp',
       'WebScopedUserGesture.cpp',
       'WebScopedWindowFocusAllowedIndicator.cpp',
+      'WebScriptBindings.cpp',
       'WebScriptController.cpp',
       'WebScriptSource.cpp',
       'WebSearchableFormData.cpp',

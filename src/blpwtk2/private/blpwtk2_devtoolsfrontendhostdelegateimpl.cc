@@ -32,6 +32,7 @@
 #include <content/public/browser/devtools_agent_host.h>
 #include <content/public/browser/render_frame_host.h>
 #include <content/public/browser/web_contents.h>
+#include <content/public/browser/storage_partition.h>
 #include <ipc/ipc_channel.h>
 #include <net/base/io_buffer.h>
 #include <net/base/net_errors.h>
@@ -161,7 +162,7 @@ void DevToolsFrontendHostDelegateImpl::DocumentAvailableInMainFrame()
 void DevToolsFrontendHostDelegateImpl::WebContentsDestroyed()
 {
     if (d_agentHost) {
-        d_agentHost->DetachClient();
+        d_agentHost->DetachClient(this);
         d_agentHost = 0;
     }
 }
@@ -176,7 +177,7 @@ void DevToolsFrontendHostDelegateImpl::HandleMessageFromDevToolsFrontend(
     std::string method;
     base::ListValue* params = NULL;
     base::DictionaryValue* dict = NULL;
-    scoped_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+    std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
     if (!parsed_message ||
         !parsed_message->GetAsDictionary(&dict) ||
         !dict->GetString("method", &method)) {
@@ -191,7 +192,7 @@ void DevToolsFrontendHostDelegateImpl::HandleMessageFromDevToolsFrontend(
         if (!params->GetString(0, &protocol_message))
             return;
         if (d_agentHost)
-            d_agentHost->DispatchProtocolMessage(protocol_message);
+            d_agentHost->DispatchProtocolMessage(this, protocol_message);
     }
     else if (method == "loadCompleted") {
         web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
@@ -219,10 +220,13 @@ void DevToolsFrontendHostDelegateImpl::HandleMessageFromDevToolsFrontend(
         net::URLFetcher* fetcher =
             net::URLFetcher::Create(gurl, net::URLFetcher::GET, this).release();
         d_pendingRequests[fetcher] = request_id;
-        fetcher->SetRequestContext(web_contents()->GetBrowserContext()->
-            GetRequestContext());
+
+        content::BrowserContext* browser_context = web_contents()->GetBrowserContext();
+        fetcher->SetRequestContext(
+            content::BrowserContext::GetDefaultStoragePartition(browser_context)->GetURLRequestContext());
+
         fetcher->SetExtraRequestHeaders(headers);
-        fetcher->SaveResponseWithWriter(scoped_ptr<net::URLFetcherResponseWriter>(
+        fetcher->SaveResponseWithWriter(std::unique_ptr<net::URLFetcherResponseWriter>(
             new ResponseWriter(d_weakFactory.GetWeakPtr(), stream_id)));
         fetcher->Start();
         return;

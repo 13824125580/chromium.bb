@@ -186,6 +186,7 @@ static_library("renderer") {
   }
 }
 
+if (false) {
 # In GYP this is part of test_support_common.
 source_set("test_support") {
   testonly = true
@@ -225,3 +226,5 @@ source_set("test_support") {
     ]
   }
 }
+}
+

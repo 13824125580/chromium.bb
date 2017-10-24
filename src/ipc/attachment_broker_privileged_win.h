@@ -67,7 +67,8 @@ class IPC_EXPORT AttachmentBrokerPrivilegedWin
   std::map<base::ProcessId, WireFormats> stored_wire_formats_;
 
   // Sends the message from the Browser IO thread
-  void SendInBrowserIOThread(const HandleWireFormat& wire_format, SRWLOCK* lock);
+  void SendInBrowserIOThread(
+          const HandleWireFormat& wire_format, SRWLOCK* lock, bool store_on_failure);
 
   DISALLOW_COPY_AND_ASSIGN(AttachmentBrokerPrivilegedWin);
 };

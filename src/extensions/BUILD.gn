@@ -69,6 +69,7 @@ grit("extensions_renderer_resources") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = rebase_path(extensions_gypi_values.extensions_test_support_sources,
@@ -101,6 +102,7 @@ source_set("test_support") {
     "//content/public/browser",
     "//extensions/common/api/cast_channel:cast_channel_proto",
   ]
+}
 }
 
 # GYP version: //extensions/extensions.gyp:extensions_shell_and_test_pak
@@ -139,6 +141,7 @@ repack("shell_and_test_pak") {
   ]
 }
 
+if (false) {
 test("extensions_unittests") {
   sources =
       rebase_path(extensions_tests_gypi_values.extensions_unittests_sources,
@@ -365,3 +368,5 @@ source_set("chrome_extensions_interactive_uitests") {
     "//ui/web_dialogs:test_support",
   ]
 }
+}
+

@@ -30,6 +30,7 @@
 #include <base/strings/string_util.h>
 #include <base/threading/sequenced_worker_pool.h>
 #include <base/threading/worker_pool.h>
+#include <base/memory/ptr_util.h>
 #include <content/public/browser/browser_thread.h>
 #include <content/public/common/content_switches.h>
 #include <content/public/common/url_constants.h>
@@ -54,24 +55,10 @@
 #include <net/url_request/static_http_user_agent_settings.h>
 #include <net/url_request/url_request_context.h>
 #include <net/url_request/url_request_context_storage.h>
+#include <net/url_request/url_request_context_builder.h>
 #include <net/url_request/url_request_job_factory_impl.h>
 
 namespace blpwtk2 {
-
-namespace {
-
-void installProtocolHandlers(net::URLRequestJobFactoryImpl* jobFactory,
-                             content::ProtocolHandlerMap* protocolHandlers) {
-    for (content::ProtocolHandlerMap::iterator it = protocolHandlers->begin();
-         it != protocolHandlers->end(); ++it) {
-        bool setProtocol = jobFactory->SetProtocolHandler(
-            it->first, make_scoped_ptr(it->second.release()));
-        DCHECK(setProtocol);
-    }
-    protocolHandlers->clear();
-}
-
-}  // close unnamed namespace
 
 URLRequestContextGetterImpl::URLRequestContextGetterImpl(
     const base::FilePath& path,
@@ -95,14 +82,14 @@ void URLRequestContextGetterImpl::setProxyConfig(const net::ProxyConfig& config)
 
     d_wasProxyInitialized = true;
 
-    scoped_ptr<net::ProxyConfigService> proxyConfigService(
-        new net::ProxyConfigServiceFixed(config));
+    net::ProxyConfigService* proxyConfigService =
+        new net::ProxyConfigServiceFixed(config);
 
     GetNetworkTaskRunner()->PostTask(
         FROM_HERE,
         base::Bind(&URLRequestContextGetterImpl::updateProxyConfig,
                    this,
-                   base::Passed(&proxyConfigService)));
+                   proxyConfigService));
 }
 
 void URLRequestContextGetterImpl::useSystemProxyConfig()
@@ -122,16 +109,16 @@ void URLRequestContextGetterImpl::useSystemProxyConfig()
     // We must create the proxy config service on the UI loop on Linux
     // because it must synchronously run on the glib message loop.  This
     // will be passed to the ProxyServer on the IO thread.
-    scoped_ptr<net::ProxyConfigService> proxyConfigService(
+    net::ProxyConfigService* proxyConfigService =
         net::ProxyService::CreateSystemProxyConfigService(
             ioLoop->task_runner(),
-            fileLoop->task_runner()));
+            fileLoop->task_runner()).release();
 
     GetNetworkTaskRunner()->PostTask(
         FROM_HERE,
         base::Bind(&URLRequestContextGetterImpl::updateProxyConfig,
                    this,
-                   base::Passed(&proxyConfigService)));
+                   proxyConfigService));
 }
 
 void URLRequestContextGetterImpl::setProtocolHandlers(
@@ -153,7 +140,7 @@ void URLRequestContextGetterImpl::setProtocolHandlers(
     base::AutoLock guard(d_protocolHandlersLock);
     DCHECK(!d_gotProtocolHandlers);
     std::swap(d_protocolHandlers, *protocolHandlers);
-    d_requestInterceptors = requestInterceptors.Pass();
+    d_requestInterceptors = std::move(requestInterceptors);
     d_gotProtocolHandlers = true;
 }
 
@@ -193,115 +180,88 @@ void URLRequestContextGetterImpl::initialize()
 
     const base::CommandLine& cmdline = *base::CommandLine::ForCurrentProcess();
 
-    d_urlRequestContext.reset(new net::URLRequestContext());
-    d_urlRequestContext->set_proxy_service(d_proxyService.get());
-    d_storage.reset(
-        new net::URLRequestContextStorage(d_urlRequestContext.get()));
-    d_storage->set_network_delegate(make_scoped_ptr(new NetworkDelegateImpl()));
-    d_storage->set_cookie_store(
-        new net::CookieMonster(d_cookieStore.get(), 0));
-    d_storage->set_channel_id_service(make_scoped_ptr(
-        new net::ChannelIDService(new net::DefaultChannelIDStore(NULL),
-                                  base::WorkerPool::GetTaskRunner(true))));
-    d_storage->set_http_user_agent_settings(
-        make_scoped_ptr(new net::StaticHttpUserAgentSettings(
-                        "en-us,en", base::EmptyString())));
+    net::URLRequestContextBuilder builder;
 
-    scoped_ptr<net::HostResolver> hostResolver
+    builder.set_proxy_service(std::move(d_proxyService));
+    builder.set_network_delegate(std::unique_ptr<NetworkDelegateImpl>(new NetworkDelegateImpl()));
+    builder.SetCookieAndChannelIdStores(
+        std::unique_ptr<net::CookieMonster>(
+            new net::CookieMonster(d_cookieStore.get(), 0)),
+        std::unique_ptr<net::ChannelIDService>(
+            new net::ChannelIDService(new net::DefaultChannelIDStore(NULL),
+                                      base::WorkerPool::GetTaskRunner(true))));
+
+    builder.set_accept_language("en-us,en");
+    builder.set_user_agent(base::EmptyString());
+
+    std::unique_ptr<net::HostResolver> hostResolver
         = net::HostResolver::CreateDefaultResolver(0);
 
-    d_storage->set_cert_verifier(net::CertVerifier::CreateDefault());
-    d_storage->set_transport_security_state(make_scoped_ptr(new net::TransportSecurityState()));
-    d_storage->set_ssl_config_service(new net::SSLConfigServiceDefaults);
-    d_storage->set_http_auth_handler_factory(
-        net::HttpAuthHandlerFactory::CreateDefault(hostResolver.get()));
-    d_storage->set_http_server_properties(
-        scoped_ptr<net::HttpServerProperties>(
-            new net::HttpServerPropertiesImpl()));
-
-    net::HttpNetworkSession::Params networkSessionParams;
-    networkSessionParams.cert_verifier =
-        d_urlRequestContext->cert_verifier();
-    networkSessionParams.transport_security_state =
-        d_urlRequestContext->transport_security_state();
-    networkSessionParams.channel_id_service =
-        d_urlRequestContext->channel_id_service();
-    networkSessionParams.proxy_service =
-        d_urlRequestContext->proxy_service();
-    networkSessionParams.ssl_config_service =
-        d_urlRequestContext->ssl_config_service();
-    networkSessionParams.http_auth_handler_factory =
-        d_urlRequestContext->http_auth_handler_factory();
-    networkSessionParams.network_delegate =
-        d_urlRequestContext->network_delegate();
-    networkSessionParams.http_server_properties =
-        d_urlRequestContext->http_server_properties();
-    networkSessionParams.ignore_certificate_errors = false;
     if (cmdline.HasSwitch(switches::kHostResolverRules)) {
-        scoped_ptr<net::MappedHostResolver> mappedHostResolver(
-            new net::MappedHostResolver(hostResolver.Pass()));
+        std::unique_ptr<net::MappedHostResolver> mappedHostResolver(
+            new net::MappedHostResolver(std::move(hostResolver)));
         mappedHostResolver->SetRulesFromString(
             cmdline.GetSwitchValueASCII(switches::kHostResolverRules));
-        hostResolver = mappedHostResolver.Pass();
+        hostResolver = std::move(mappedHostResolver);
     }
 
     // Give d_storage ownership at the end in case it's mappedHostResolver.
-    d_storage->set_host_resolver(hostResolver.Pass());
-    networkSessionParams.host_resolver =
-        d_urlRequestContext->host_resolver();
+    builder.set_host_resolver(std::move(hostResolver));
 
-    bool useCache = d_diskCacheEnabled;
-    scoped_ptr<net::HttpCache::BackendFactory> backendFactory;
-    if (useCache) {
-        backendFactory.reset(new net::HttpCache::DefaultBackend(net::DISK_CACHE,
-                                                                net::CACHE_BACKEND_DEFAULT,
-                                                                d_path.Append(FILE_PATH_LITERAL("Cache")),
-                                                                0,
-                                                                content::BrowserThread::GetMessageLoopProxyForThread(content::BrowserThread::CACHE)));
+    net::URLRequestContextBuilder::HttpCacheParams cache_params;
+
+    if (d_diskCacheEnabled) {
+        cache_params.type =
+            net::URLRequestContextBuilder::HttpCacheParams::DISK;
     }
     else {
-        backendFactory = net::HttpCache::DefaultBackend::InMemory(0);
+        cache_params.type =
+            net::URLRequestContextBuilder::HttpCacheParams::IN_MEMORY;
+
     }
 
-    d_storage->set_http_network_session(
-        make_scoped_ptr(new net::HttpNetworkSession(networkSessionParams)));
-    net::HttpCache* mainCache = new net::HttpCache(d_storage->http_network_session(),
-                                                   backendFactory.Pass(),
-                                                   true);
-    d_storage->set_http_transaction_factory(make_scoped_ptr(mainCache));
-
-    scoped_ptr<net::URLRequestJobFactoryImpl> jobFactory(
-        new net::URLRequestJobFactoryImpl());
+    builder.EnableHttpCache(cache_params);
     {
         base::AutoLock guard(d_protocolHandlersLock);
         DCHECK(d_gotProtocolHandlers);
-        installProtocolHandlers(jobFactory.get(), &d_protocolHandlers);
+
+        for (auto& scheme_handler : d_protocolHandlers) {
+          builder.SetProtocolHandler(
+              scheme_handler.first,
+              std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>(scheme_handler.second.release()));
+        }
+        d_protocolHandlers.clear();
     }
-    bool setProtocol = jobFactory->SetProtocolHandler(
+
+    builder.SetProtocolHandler(
         url::kDataScheme,
-        make_scoped_ptr(new net::DataProtocolHandler));
-    DCHECK(setProtocol);
-    setProtocol = jobFactory->SetProtocolHandler(
+        std::unique_ptr<net::DataProtocolHandler>(new net::DataProtocolHandler));
+
+    builder.SetProtocolHandler(
         url::kFileScheme,
-        make_scoped_ptr(new net::FileProtocolHandler(
+        std::unique_ptr<net::FileProtocolHandler>(new net::FileProtocolHandler(
                             content::BrowserThread::GetBlockingPool()->
                                 GetTaskRunnerWithShutdownBehavior(
                                     base::SequencedWorkerPool::SKIP_ON_SHUTDOWN))));
-    DCHECK(setProtocol);
-    d_storage->set_job_factory(jobFactory.Pass());
+
+    d_urlRequestContext = std::move(builder.Build());
 }
 
 void URLRequestContextGetterImpl::updateProxyConfig(
-    scoped_ptr<net::ProxyConfigService> proxyConfigService)
+    net::ProxyConfigService* proxyConfigService)
 {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
+    std::unique_ptr<net::ProxyConfigService> proxyConfigService_(proxyConfigService);
+
+
     if (d_proxyService) {
-        d_proxyService->ResetConfigService(proxyConfigService.Pass());
+        d_proxyService->ResetConfigService(std::move(proxyConfigService_));
         return;
     }
 
     // TODO(jam): use v8 if possible, look at chrome code.
-    d_proxyService = net::ProxyService::CreateUsingSystemProxyResolver(proxyConfigService.Pass(), 0, 0);
+    d_proxyService = net::ProxyService::CreateUsingSystemProxyResolver(
+            std::move(proxyConfigService_), 0, 0);
 }
 
 }  // close namespace blpwtk2

@@ -287,6 +287,8 @@ class CONTENT_EXPORT ChildThreadImpl
 
   bool use_mojo_channel_;
 
+  std::string in_process_ipc_token_;
+
   base::MessageLoop* message_loop_;
 
   std::unique_ptr<FileSystemDispatcher> file_system_dispatcher_;

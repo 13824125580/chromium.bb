@@ -239,7 +239,7 @@ static_library("content_shell_lib") {
     "//content/gpu",
     # blpwtk2, not needed
 #    "//content/test:layouttest_support",
-    "//content/test:test_support",
+#    "//content/test:test_support",
     "//device/bluetooth",
     "//gin",
     "//gpu",

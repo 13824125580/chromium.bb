@@ -22,6 +22,7 @@ component("url_ipc") {
   ]
 }
 
+if (false) {
 test("url_ipc_unittests") {
   sources = [
     "url_param_traits_unittest.cc",
@@ -36,3 +37,5 @@ test("url_ipc_unittests") {
     "//url:url",
   ]
 }
+}
+

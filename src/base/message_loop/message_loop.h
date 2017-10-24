@@ -374,6 +374,14 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   void RemoveTaskObserver(TaskObserver* task_observer);
 
 #if defined(OS_WIN)
+  void set_os_modal_loop(bool os_modal_loop) {
+    os_modal_loop_ = os_modal_loop;
+  }
+
+  bool os_modal_loop() const {
+    return os_modal_loop_;
+  }
+
   void set_ipc_sync_messages_should_peek(bool ipc_sync_messages_should_peek) {
     ipc_sync_messages_should_peek_ = ipc_sync_messages_should_peek;
   }
@@ -537,6 +545,10 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   bool nestable_tasks_allowed_;
 
 #if defined(OS_WIN)
+  // Should be set to true before calling Windows APIs like TrackPopupMenu, etc.
+  // which enter a modal message loop.
+  bool os_modal_loop_;
+
   // Should be set to true if IPC sync messages should PeekMessage periodically.
   bool ipc_sync_messages_should_peek_;
 #endif

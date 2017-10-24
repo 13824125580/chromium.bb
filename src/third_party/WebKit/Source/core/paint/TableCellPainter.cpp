@@ -77,13 +77,13 @@ void TableCellPainter::paintCollapsedBorders(const PaintInfo& paintInfo, const L
 
     int displayItemType = DisplayItem::TableCollapsedBorderBase;
     if (topBorderValue.shouldPaint(currentBorderValue))
-            displayItemType |= DisplayItem::TableCollapsedBorderTop;
+        displayItemType |= DisplayItem::TableCollapsedBorderTop;
     if (bottomBorderValue.shouldPaint(currentBorderValue))
-            displayItemType |= DisplayItem::TableCollapsedBorderBottom;
+        displayItemType |= DisplayItem::TableCollapsedBorderBottom;
     if (leftBorderValue.shouldPaint(currentBorderValue))
-            displayItemType |= DisplayItem::TableCollapsedBorderLeft;
+        displayItemType |= DisplayItem::TableCollapsedBorderLeft;
     if (rightBorderValue.shouldPaint(currentBorderValue))
-            displayItemType |= DisplayItem::TableCollapsedBorderRight;
+        displayItemType |= DisplayItem::TableCollapsedBorderRight;
     if (displayItemType == DisplayItem::TableCollapsedBorderBase)
         return;
 
@@ -142,7 +142,7 @@ void TableCellPainter::paintContainerBackgroundBehindCell(const PaintInfo& paint
         return;
 
     if (LayoutObjectDrawingRecorder::useCachedDrawingIfPossible(paintInfo.context, m_layoutTableCell, type))
-            return;
+        return;
 
     LayoutRect paintRect = paintRectNotIncludingVisualOverflow(adjustedPaintOffset);
     LayoutObjectDrawingRecorder recorder(paintInfo.context, m_layoutTableCell, type, paintRect);
@@ -153,9 +153,22 @@ void TableCellPainter::paintBackground(const PaintInfo& paintInfo, const LayoutR
 {
     Color c = m_layoutTableCell.isFullySelected()
         ? m_layoutTableCell.selectionBackgroundColor()
-        : backgroundObject->resolveColor(CSSPropertyBackgroundColor);
-    const FillLayer& bgLayer = backgroundObject.styleRef().backgroundLayers();
+        : backgroundObject.resolveColor(CSSPropertyBackgroundColor);
 
+    const FillLayer& bgLayer = backgroundObject.styleRef().backgroundLayers();
+    if (bgLayer.hasImage() || c.alpha()) {
+        // We have to clip here because the background would paint
+        // on top of the borders otherwise.  This only matters for cells and rows.
+        bool shouldClip = backgroundObject.hasLayer() && (backgroundObject == m_layoutTableCell || backgroundObject == m_layoutTableCell.parent()) && m_layoutTableCell.table()->collapseBorders();
+        GraphicsContextStateSaver stateSaver(paintInfo.context, shouldClip);
+        if (shouldClip) {
+            LayoutRect clipRect(paintRect.location(), m_layoutTableCell.size());
+            clipRect.expand(m_layoutTableCell.borderInsets());
+            paintInfo.context.clip(pixelSnappedIntRect(clipRect));
+        }
+        BoxPainter(m_layoutTableCell).paintFillLayers(paintInfo, c, bgLayer, paintRect, BackgroundBleedNone, SkXfermode::kSrcOver_Mode, &backgroundObject);
+    }
+}
 
 void TableCellPainter::paintBoxDecorationBackground(const PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {

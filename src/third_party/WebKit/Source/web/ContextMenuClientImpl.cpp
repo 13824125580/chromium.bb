@@ -505,15 +505,16 @@ static bool fireBbContextMenuEvent(LocalFrame* frame, WebContextMenuData& data, 
     exposeString(isolate, detailObj, "srcURL", data.srcURL.string().utf8());
     exposeBool(isolate, detailObj, "fromContextMenuKey", fromContextMenuKey);
 
-    RefPtrWillBeRawPtr<CustomEvent> event = CustomEvent::create();
+    CustomEvent* event = CustomEvent::create();
     TrackExceptionState exceptionState;
-    RefPtr<SerializedScriptValue> detailScriptValue = SerializedScriptValueFactory::instance().create(v8::Isolate::GetCurrent(), detailObj, 0, 0, 0, exceptionState);
+    WTF::PassRefPtr<SerializedScriptValue> detailScriptValue = SerializedScriptValue::serialize(v8::Isolate::GetCurrent(), detailObj, 0, 0, exceptionState);
     if (exceptionState.hadException()) {
         return false;
     }
     event->initCustomEvent("bbContextMenu", true, true, detailScriptValue);
 
-    data.node.unwrap<Node>()->dispatchEvent(event);
+    WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(frame);
+    webFrame->contextMenuNode().unwrap<Node>()->dispatchEvent(event);
     return event->defaultPrevented();
 }
 

@@ -12,7 +12,7 @@ import("//media/media_options.gni")
 # "use_vpx". These should be added here if necessary but its not clear if
 # they are required any more.
 shared_library("clearkeycdm") {
-  output_dir = "$root_out_dir/$clearkey_cdm_path"
+#  output_dir = "$root_out_dir/$clearkey_cdm_path"
   sources = [
     "cdm_file_io_test.cc",
     "cdm_file_io_test.h",
@@ -63,16 +63,4 @@ process_version("clearkeycdmadapter_resources") {
   output = "$target_gen_dir/clearkeycdmadapter_version.rc"
 }
 
-ppapi_cdm_adapter("clearkeycdmadapter") {
-  output_dir = "$root_out_dir/$clearkey_cdm_path"
 
-  # Check whether the plugin's origin URL is valid.
-  defines = [ "CHECK_DOCUMENT_URL" ]
-  deps = [
-    ":clearkeycdm",
-    ":clearkeycdmadapter_resources",
-    "//base",  # Required for the allocator implementation.
-    "//media:shared_memory_support",
-    "//ui/gfx/geometry",
-  ]
-}

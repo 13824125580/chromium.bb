@@ -26,7 +26,7 @@
 #include <blpwtk2_config.h>
 
 #include <content/public/renderer/content_renderer_client.h>
-#include <content/public/renderer/render_process_observer.h>
+#include <content/public/renderer/render_thread_observer.h>
 
 class SpellCheck;
 
@@ -35,7 +35,7 @@ namespace blpwtk2 {
 // This interface allows us to add hooks to the "renderer" portion of the
 // content module.  This is created during the startup process.
 class ContentRendererClientImpl : public content::ContentRendererClient,
-                                    public content::RenderProcessObserver {
+                                  public content::RenderThreadObserver {
   public:
     ContentRendererClientImpl();
     virtual ~ContentRendererClientImpl();
@@ -65,7 +65,7 @@ class ContentRendererClientImpl : public content::ContentRendererClient,
     // If it returns NULL, the content layer will provide a bridge.
     content::ResourceLoaderBridge* OverrideResourceLoaderBridge(
         const content::RequestInfo& request_info,
-        content::ResourceRequestBody* request_body) override;
+        content::ResourceRequestBodyImpl* request_body) override;
 
     // Allows the embedder to override creating a plugin. If it returns true, then
     // |plugin| will contain the created plugin, although it could be NULL. If it
@@ -77,7 +77,7 @@ class ContentRendererClientImpl : public content::ContentRendererClient,
         blink::WebPlugin** plugin) override;
 
 
-   // -------- RenderProcessObserver overrides --------
+   // -------- RenderThreadObserver overrides --------
 
    bool OnControlMessageReceived(const IPC::Message& message) override;
 
@@ -87,7 +87,7 @@ class ContentRendererClientImpl : public content::ContentRendererClient,
   private:
     DISALLOW_COPY_AND_ASSIGN(ContentRendererClientImpl);
 
-    scoped_ptr<SpellCheck> d_spellcheck;
+    std::unique_ptr<SpellCheck> d_spellcheck;
 };
 
 }  // close namespace blpwtk2

@@ -61,7 +61,7 @@ class MainMessagePump : public base::MessagePumpForUI {
     // MessagePump overrides
     void ScheduleDelayedWork(const base::TimeTicks& delayed_work_time) override;
 
-    scoped_ptr<base::RunLoop> d_runLoop;
+    std::unique_ptr<base::RunLoop> d_runLoop;
     RunState d_runState;
     bool d_hasAutoPumpTimer;
     bool d_moreWorkIsPlausible;  // whether or not we need work scheduled

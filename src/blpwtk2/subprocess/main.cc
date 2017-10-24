@@ -37,7 +37,7 @@ std::string getSubProcessModuleName()
               CHROMIUM_VERSION_PATCH,
               BB_PATCH_NUMBER);
     std::string result;
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     if (!env->GetVar(subProcessModuleEnvVar, &result) || result.empty()) {
         return BLPWTK2_DLL_NAME;
     }

@@ -14,7 +14,6 @@
 #include "cc/resources/resource_provider.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/scaling2d.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace cc {
@@ -35,7 +34,7 @@ class CC_EXPORT PictureDrawQuad : public ContentDrawQuadBase {
               bool nearest_neighbor,
               ResourceFormat texture_format,
               const gfx::Rect& content_rect,
-              const gfx::Scaling2d& contents_scale,
+              float contents_scale,
               scoped_refptr<RasterSource> raster_source);
 
   void SetAll(const SharedQuadState* shared_quad_state,
@@ -48,11 +47,11 @@ class CC_EXPORT PictureDrawQuad : public ContentDrawQuadBase {
               bool nearest_neighbor,
               ResourceFormat texture_format,
               const gfx::Rect& content_rect,
-              const gfx::Scaling2d& contents_scale,
+              float contents_scale,
               scoped_refptr<RasterSource> raster_source);
 
   gfx::Rect content_rect;
-  gfx::Scaling2d contents_scale;
+  float contents_scale;
   scoped_refptr<RasterSource> raster_source;
   ResourceFormat texture_format;
 

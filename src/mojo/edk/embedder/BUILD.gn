@@ -132,6 +132,7 @@ source_set("delegates") {
   ]
 }
 
+if (false) {
 source_set("embedder_unittests") {
   testonly = true
 
@@ -153,3 +154,5 @@ source_set("embedder_unittests") {
     "//testing/gtest",
   ]
 }
+}
+

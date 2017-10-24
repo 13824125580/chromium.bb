@@ -336,7 +336,8 @@ void TestSuite::Initialize() {
 
   if (!CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kTestDoNotInitializeIcu)) {
-    i18n::InitializeICU();
+    const void *icu_data;
+    i18n::InitializeICU(&icu_data);
   }
   // On the Mac OS X command line, the default locale is *_POSIX. In Chromium,
   // the locale is set via an OS X locale API and is never *_POSIX.

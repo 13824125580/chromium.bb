@@ -133,7 +133,7 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   typedef std::deque<IPC::Message*> MessageQueue;
   struct PendingRequestInfo {
     PendingRequestInfo(std::unique_ptr<RequestPeer> peer,
-        ResourceLoaderBridge* bridge,
+        std::unique_ptr<ResourceLoaderBridge> bridge,
         ResourceType resource_type,
         int origin_pid,
         const GURL& frame_origin,
@@ -143,7 +143,7 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
     ~PendingRequestInfo();
 
     std::unique_ptr<RequestPeer> peer;
-    ResourceLoaderBridge* bridge = nullptr;
+    std::unique_ptr<ResourceLoaderBridge> bridge;
     ResourceType resource_type;
     // The PID of the original process which issued this request. This gets
     // non-zero only for a request proxied by another renderer, particularly

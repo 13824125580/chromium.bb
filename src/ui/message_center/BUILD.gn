@@ -166,6 +166,7 @@ component("message_center") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
 
@@ -255,3 +256,5 @@ test("message_center_unittests") {
     }
   }  # enable_notifications && !is_android
 }
+}
+

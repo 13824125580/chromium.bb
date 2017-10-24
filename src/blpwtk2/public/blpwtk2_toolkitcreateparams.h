@@ -140,12 +140,6 @@ class ToolkitCreateParams {
     // so it may not support *all* the switches mentioned on that page.
     BLPWTK2_EXPORT void appendCommandLineSwitch(const StringRef& switchString);
 
-    // By default, blpwtk2 will automatically load plugins it finds on the
-    // system (e.g. from paths in the Windows registry).  Use this method to
-    // disable this behavior.  If it is disabled, then only plugins registered
-    // via 'registerPlugin' will be loaded.
-    BLPWTK2_EXPORT void disablePluginDiscovery();
-
     // Install a custom ResourceLoader.  Note that this is only valid when
     // using the 'RENDERER_MAIN' thread-mode, and will only be used for
     // in-process renderers.

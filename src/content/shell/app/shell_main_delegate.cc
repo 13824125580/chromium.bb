@@ -132,7 +132,7 @@ ShellMainDelegate::~ShellMainDelegate() {
 }
 
 bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
-  base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
+//  base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
   int dummy;
   if (!exit_code)
     exit_code = &dummy;
@@ -164,19 +164,16 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
       return true;
     }
   }
-#endif
 
   if (command_line.HasSwitch(switches::kRunLayoutTest)) {
     // SHEZ: remove test-only code
     //EnableBrowserLayoutTestMode();
 
-#if 0
 #if defined(ENABLE_PLUGINS)
     if (!ppapi::RegisterBlinkTestPlugin(&command_line)) {
       *exit_code = 1;
       return true;
     }
-#endif
 #endif
     command_line.AppendSwitch(cc::switches::kEnableGpuBenchmarking);
     command_line.AppendSwitch(switches::kProcessPerTab);
@@ -232,19 +229,22 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
     media::RemoveProprietaryMediaTypesAndCodecsForTests();
 #endif
 
-    // blpwtk2: Remove test-only code
-#if 0
     if (!BlinkTestPlatformInitialize()) {
       *exit_code = 1;
       return true;
     }
-#endif
   }
+#endif
 
+    // blpwtk2: Remove test-only code
+#if 0
   content_client_.reset(base::CommandLine::ForCurrentProcess()->HasSwitch(
                             switches::kRunLayoutTest)
                             ? new LayoutTestContentClient
                             : new ShellContentClient);
+#endif
+
+  content_client_.reset(new ShellContentClient);
   SetContentClient(content_client_.get());
 
   return false;

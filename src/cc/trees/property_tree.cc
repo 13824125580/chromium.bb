@@ -169,7 +169,7 @@ TransformNodeData::TransformNodeData()
       has_only_translation_animations(true),
       flattens_inherited_transform(false),
       node_and_ancestors_are_flat(true),
-      node_and_ancestors_have_only_axis_aligned_transform(true),
+      node_and_ancestors_have_only_integer_translation(true),
       scrolls(false),
       needs_sublayer_scale(false),
       affected_by_inner_viewport_bounds_delta_x(false),
@@ -203,8 +203,8 @@ bool TransformNodeData::operator==(const TransformNodeData& other) const {
              other.has_only_translation_animations &&
          flattens_inherited_transform == other.flattens_inherited_transform &&
          node_and_ancestors_are_flat == other.node_and_ancestors_are_flat &&
-         node_and_ancestors_have_only_axis_aligned_transform ==
-             other.node_and_ancestors_have_only_axis_aligned_transform &&
+         node_and_ancestors_have_only_integer_translation ==
+             other.node_and_ancestors_have_only_integer_translation &&
          scrolls == other.scrolls &&
          needs_sublayer_scale == other.needs_sublayer_scale &&
          affected_by_inner_viewport_bounds_delta_x ==
@@ -274,8 +274,8 @@ void TransformNodeData::ToProtobuf(proto::TreeNode* proto) const {
   data->set_flattens_inherited_transform(flattens_inherited_transform);
   data->set_node_and_ancestors_are_flat(node_and_ancestors_are_flat);
 
-  data->set_node_and_ancestors_have_only_axis_aligned_transform(
-      node_and_ancestors_have_only_axis_aligned_transform);
+  data->set_node_and_ancestors_have_only_integer_translation(
+      node_and_ancestors_have_only_integer_translation);
   data->set_scrolls(scrolls);
   data->set_needs_sublayer_scale(needs_sublayer_scale);
 
@@ -328,8 +328,8 @@ void TransformNodeData::FromProtobuf(const proto::TreeNode& proto) {
   flattens_inherited_transform = data.flattens_inherited_transform();
   node_and_ancestors_are_flat = data.node_and_ancestors_are_flat();
 
-  node_and_ancestors_have_only_axis_aligned_transform =
-      data.node_and_ancestors_have_only_axis_aligned_transform();
+  node_and_ancestors_have_only_integer_translation =
+      data.node_and_ancestors_have_only_integer_translation();
   scrolls = data.scrolls();
   needs_sublayer_scale = data.needs_sublayer_scale();
 
@@ -792,7 +792,7 @@ void TransformTree::UpdateTransforms(int id) {
   UpdateTargetSpaceTransform(node, target_node);
   UpdateAnimationProperties(node, parent_node);
   UpdateSnapping(node);
-  UpdateNodeAndAncestorsHaveAxisAlignedTransforms(node, parent_node);
+  UpdateNodeAndAncestorsHaveIntegerTranslations(node, parent_node);
   UpdateTransformChanged(node, parent_node, source_node);
   UpdateNodeAndAncestorsAreAnimatedOrInvertible(node, parent_node);
 }
@@ -1549,15 +1549,15 @@ void EffectTree::ResetChangeTracking() {
   }
 }
 
-void TransformTree::UpdateNodeAndAncestorsHaveAxisAlignedTransforms(
+void TransformTree::UpdateNodeAndAncestorsHaveIntegerTranslations(
     TransformNode* node,
     TransformNode* parent_node) {
-  node->data.node_and_ancestors_have_only_axis_aligned_transform =
-      node->data.to_parent.IsScaleOrTranslation();
+  node->data.node_and_ancestors_have_only_integer_translation =
+      node->data.to_parent.IsIdentityOrIntegerTranslation();
   if (parent_node)
-    node->data.node_and_ancestors_have_only_axis_aligned_transform =
-        node->data.node_and_ancestors_have_only_axis_aligned_transform &&
-        parent_node->data.node_and_ancestors_have_only_axis_aligned_transform;
+    node->data.node_and_ancestors_have_only_integer_translation =
+        node->data.node_and_ancestors_have_only_integer_translation &&
+        parent_node->data.node_and_ancestors_have_only_integer_translation;
 }
 
 void ClipTree::SetViewportClip(gfx::RectF viewport_rect) {

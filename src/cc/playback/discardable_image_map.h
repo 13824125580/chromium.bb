@@ -14,7 +14,6 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/scaling2d.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace cc {
@@ -45,7 +44,7 @@ class CC_EXPORT DiscardableImageMap {
 
   bool empty() const { return all_images_.empty(); }
   void GetDiscardableImagesInRect(const gfx::Rect& rect,
-                                  const gfx::Scaling2d& raster_scale,
+                                  float raster_scale,
                                   std::vector<DrawImage>* images) const;
 
  private:

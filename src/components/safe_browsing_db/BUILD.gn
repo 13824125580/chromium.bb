@@ -262,6 +262,7 @@ source_set("v4_update_protocol_manager") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -322,3 +323,5 @@ source_set("unit_tests_mobile") {
     cflags = [ "/wd4267" ]  # Conversion from size_t to 'type'.
   }
 }
+}
+

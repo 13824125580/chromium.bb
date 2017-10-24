@@ -37,7 +37,6 @@
 #include <components/printing/renderer/print_web_view_helper.h>
 #include <content/child/font_warmup_win.h>
 #include <content/public/app/content_main_runner.h>
-#include <content/public/common/dwrite_font_platform_win.h>
 #include <content/renderer/render_frame_impl.h>
 #include <content/renderer/render_widget.h>
 #include <net/http/http_network_session.h>
@@ -159,7 +158,7 @@ Toolkit* ToolkitFactory::create(const ToolkitCreateParams& params)
         if (subProcessModule.empty()) {
             subProcessModule = BLPWTK2_DLL_NAME;
         }
-        scoped_ptr<base::Environment> env(base::Environment::Create());
+        std::unique_ptr<base::Environment> env(base::Environment::Create());
         env->SetVar(subProcessModuleEnvVar, subProcessModule);
     }
 

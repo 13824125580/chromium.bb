@@ -39,7 +39,8 @@ int LauncherProcessMain() {
   Context shell_context;
   {
     base::MessageLoop message_loop;
-    CHECK(base::i18n::InitializeICU());
+    const void *icu_data;
+    CHECK(base::i18n::InitializeICU(&icu_data));
     shell_context.Init(nullptr);
 
     message_loop.task_runner()->PostTask(

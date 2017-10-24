@@ -131,7 +131,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   bool HasNonClientView() const override;
   FrameMode GetFrameMode() const override;
   bool HasFrame() const override;
-  bool ShouldRerouteMouseWheelToAnyRelatedWindow() const override;
   void SchedulePaint() override;
   void SetAlwaysRenderAsActive(bool always_render_as_active) override;
   bool IsAlwaysRenderAsActive() override;

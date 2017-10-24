@@ -45,21 +45,13 @@ ContentUtilityClientImpl::~ContentUtilityClientImpl()
 
 bool ContentUtilityClientImpl::OnMessageReceived(const IPC::Message& message)
 {
-    bool handled = true;
-    IPC_BEGIN_MESSAGE_MAP(ContentUtilityClientImpl, message)
-        IPC_MESSAGE_HANDLER(ChromeUtilityMsg_StartupPing, onStartupPing)
-        IPC_MESSAGE_UNHANDLED(handled = false)
-    IPC_END_MESSAGE_MAP()
+    bool handled = false;
 
-    for (Handlers::iterator it = d_handlers.begin(); !handled && it != d_handlers.end(); ++it)
+    for (auto it = d_handlers.begin(); !handled && it != d_handlers.end(); ++it) {
         handled = (*it)->OnMessageReceived(message);
+    }
 
     return handled;
-}
-
-void ContentUtilityClientImpl::onStartupPing()
-{
-    Send(new ChromeUtilityHostMsg_ProcessStarted);
 }
 
 }  // close namespace blpwtk2

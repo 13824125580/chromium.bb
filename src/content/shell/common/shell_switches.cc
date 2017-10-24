@@ -6,7 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/strings/string_split.h"
-#include "content/shell/common/layout_test/layout_test_switches.h"
+//#include "content/shell/common/layout_test/layout_test_switches.h"
 
 namespace switches {
 
@@ -52,8 +52,12 @@ std::vector<std::string> GetSideloadFontFiles() {
 }
 
 bool IsRunLayoutTestSwitchPresent() {
+    // blpwtk2: Remove test code
+#if 0
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kRunLayoutTest);
+#endif
+  return false;
 }
 
 }  // namespace switches

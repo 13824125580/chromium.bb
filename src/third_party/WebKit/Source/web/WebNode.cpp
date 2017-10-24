@@ -38,6 +38,7 @@
 #include "core/dom/StaticNodeList.h"
 #include "core/dom/TagCollection.h"
 #include "core/editing/serializers/Serialization.h"
+#include "core/events/EventQueue.h"
 #include "core/events/Event.h"
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLElement.h"
@@ -192,6 +193,14 @@ bool WebNode::isDocumentNode() const
 bool WebNode::isDocumentTypeNode() const
 {
     return m_private->getNodeType() == Node::DOCUMENT_TYPE_NODE;
+}
+
+void WebNode::dispatchEvent(const WebDOMEvent& event)
+{
+    if (!event.isNull() && m_private->getExecutionContext()) {
+        //static_cast<Event*>(event)->setTarget(this);
+        m_private->getExecutionContext()->getEventQueue()->enqueueEvent(event);
+    }
 }
 
 void WebNode::simulateClick()

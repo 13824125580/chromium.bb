@@ -114,7 +114,8 @@ std::string ProcessHostImpl::channelInfo() const
     //             in-process renderer.  We need to either have the profile
     //             specified upfront, or we need to handle kDisableDatabases
     //             once the profile is known.
-    content::RenderProcessHost::AdjustCommandLineForRenderer(&commandLine);
+    DCHECK(d_renderProcessHost.get());
+    d_renderProcessHost->adjustCommandLineForRenderer(&commandLine);
 
     ChannelInfo channelInfo;
     channelInfo.d_channelId = channelId();

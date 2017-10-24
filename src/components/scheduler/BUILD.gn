@@ -114,6 +114,7 @@ source_set("common") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
 
@@ -176,3 +177,5 @@ source_set("test_support") {
     "//base",
   ]
 }
+}
+

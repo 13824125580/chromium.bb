@@ -137,6 +137,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void SetSuddenTerminationAllowed(bool enabled) override;
   bool SuddenTerminationAllowed() const override;
   IPC::ChannelProxy* GetChannel() override;
+  const std::string& GetChildToken() const override;
   void AddFilter(BrowserMessageFilter* filter) override;
   bool FastShutdownForPageCount(size_t count) override;
   bool FastShutdownStarted() const override;
@@ -172,6 +173,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void IncrementWorkerRefCount() override;
   void DecrementWorkerRefCount() override;
   void PurgeAndSuspend() override;
+  void AdjustCommandLineForRenderer(base::CommandLine* command_line) const override;
 
   // IPC::Sender via RenderProcessHost.
   bool Send(IPC::Message* msg) override;
@@ -317,6 +319,13 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // Generates a command line to be used to spawn a renderer and appends the
   // results to |*command_line|.
   void AppendRendererCommandLine(base::CommandLine* command_line) const;
+
+  // Copies applicable command line switches from the given |browser_cmd| line
+  // flags to the output |renderer_cmd| line flags. Not all switches will be
+  // copied over.
+  void PropagateBrowserCommandLineToRenderer(
+      const base::CommandLine& browser_cmd,
+      base::CommandLine* renderer_cmd) const;
 
   // Inspects the current object state and sets/removes background priority if
   // appropriate. Should be called after any of the involved data members

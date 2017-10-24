@@ -8,12 +8,15 @@
 #   * Both js_unittests and js_integration_tests should auto-generate their
 #     tests somehow. The .cc files are just test runner stubs, including
 #     explicit lists of .js files.
+
+if (false) {
 group("tests") {
   testonly = true
   deps = [
     "test:js_integration_tests",
     "test:js_unittests",
   ]
+}
 }
 
 source_set("js") {

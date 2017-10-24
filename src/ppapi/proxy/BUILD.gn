@@ -356,6 +356,7 @@ source_set("ipc_sources") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
 
@@ -379,3 +380,5 @@ source_set("test_support") {
     "//testing/gtest",
   ]
 }
+}
+

@@ -30,7 +30,6 @@
 
 #include <base/compiler_specific.h>
 #include <base/id_map.h>
-#include <base/memory/scoped_ptr.h>
 #include <base/process/process_handle.h>
 #include <ipc/ipc_listener.h>
 
@@ -92,8 +91,8 @@ class ProcessHostImpl : public ProcessHost,
     void onSetDefaultPrinterName(const std::string& printerName);
 
     base::ProcessHandle d_processHandle;
-    scoped_ptr<ManagedRenderProcessHost> d_renderProcessHost;
-    scoped_ptr<IPC::ChannelProxy> d_channel;
+    std::unique_ptr<ManagedRenderProcessHost> d_renderProcessHost;
+    std::unique_ptr<IPC::ChannelProxy> d_channel;
     RendererInfoMap* d_rendererInfoMap;
     RendererInfo d_inProcessRendererInfo;
     IDMap<ProcessHostListener> d_routes;

@@ -638,7 +638,7 @@ WTF_EXPORT extern const String& xmlnsWithColon;
 
 // Pretty printer for gtest and base/logging.*.  It prepends and appends
 // double-quotes, and escapes chracters other than ASCII printables.
-//WTF_EXPORT std::ostream& operator<<(std::ostream&, const String&);
+WTF_EXPORT std::ostream& operator<<(std::ostream&, const String&);
 
 } // namespace WTF
 

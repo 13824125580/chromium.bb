@@ -140,6 +140,7 @@ mojom("mojom") {
   ]
 }
 
+if (false) {
 test("keyboard_unittests") {
   sources = [
     "keyboard_controller_unittest.cc",
@@ -165,3 +166,5 @@ test("keyboard_unittests") {
     "//ui/wm",
   ]
 }
+}
+

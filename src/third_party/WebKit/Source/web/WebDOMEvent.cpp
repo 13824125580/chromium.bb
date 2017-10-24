@@ -40,7 +40,7 @@ namespace blink {
 // static
 WebDOMEvent WebDOMEvent::createCustomEvent(const char* name, bool canBubble, bool cancelable, const WebSerializedScriptValue& detail)
 {
-    RefPtrWillBeRawPtr<CustomEvent> customEvent = CustomEvent::create();
+    CustomEvent* customEvent = CustomEvent::create();
     customEvent->initCustomEvent(name, canBubble, cancelable, detail);
     return WebDOMEvent(customEvent);
 }

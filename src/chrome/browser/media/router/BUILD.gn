@@ -41,6 +41,7 @@ mojom("mojo_bindings") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   deps = [
@@ -62,3 +63,5 @@ source_set("test_support") {
                     "//chrome/browser/media/router")
   }
 }
+}
+

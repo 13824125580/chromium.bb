@@ -176,11 +176,6 @@ void ToolkitCreateParams::appendCommandLineSwitch(const StringRef& switchString)
                                                 switchString.length());
 }
 
-void ToolkitCreateParams::disablePluginDiscovery()
-{
-    appendCommandLineSwitch(switches::kDisablePluginsDiscovery);
-}
-
 void ToolkitCreateParams::setInProcessResourceLoader(
     ResourceLoader* loader)
 {

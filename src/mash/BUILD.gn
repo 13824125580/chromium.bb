@@ -10,14 +10,16 @@ group("all") {
   testonly = true
 
   deps = [
-    ":mash_unittests",
+#    ":mash_unittests",
     "//components/leveldb",
     "//mash/catalog_viewer",
-    "//mash/example",
+#    "//mash/example",
     "//mash/init",
-    "//mash/login",
-    "//mash/screenlock",
-    "//mash/session",
+
+# blpwtk2: removing components that depend on Ash
+#    "//mash/login",
+#    "//mash/screenlock",
+#    "//mash/session",
     "//mash/task_viewer",
   ]
 }
@@ -32,6 +34,7 @@ group("browser") {
   ]
 }
 
+if (false) {
 test("mash_unittests") {
   sources = [
     "test/mash_test_suite.cc",
@@ -60,3 +63,5 @@ mojo_application_manifest("unittests_manifest") {
   application_name = "mash_unittests"
   source = "unittests_manifest.json"
 }
+}
+

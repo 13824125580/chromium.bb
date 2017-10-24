@@ -123,7 +123,7 @@ class ShellBrowserContext : public BrowserContext {
   BrowserPluginGuestManager* guest_manager_;
   scoped_refptr<ShellURLRequestContextGetter> url_request_getter_;
   scoped_refptr<PrefRegistrySimple> pref_registry_;
-  scoped_ptr<PrefService> pref_service_;
+  std::unique_ptr<PrefService> pref_service_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellBrowserContext);
 };

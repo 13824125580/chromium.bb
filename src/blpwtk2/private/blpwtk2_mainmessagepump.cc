@@ -243,7 +243,7 @@ void MainMessagePump::cleanup()
 
 bool MainMessagePump::preHandleMessage(const MSG& msg)
 {
-    if (CallMsgFilter(const_cast<MSG*>(&msg), kMessageFilterCode)) {
+    if (CallMsgFilter(const_cast<MSG*>(&msg), base::kMessageFilterCode)) {
         return true;
     }
     else {
@@ -330,23 +330,23 @@ void MainMessagePump::scheduleMoreWorkIfNecessary()
 
     if (state_ && !state_->should_quit) {
         if (PumpMode::AUTOMATIC == Statics::pumpMode) {
-            // If have_work_ is 1, that means ScheduleWork was called while we
+            // If work_state_ is 1, that means ScheduleWork was called while we
             // were doing work.  In this case, don't kill the timer.  We'll set
-            // have_work_ back to 2 so that we can know if ScheduleWork was
+            // work_state_ back to 2 so that we can know if ScheduleWork was
             // called again the next time round.
-            if (1 == InterlockedCompareExchange(&have_work_, 2, 1)) {
+            if (1 == InterlockedCompareExchange(&work_state_, 2, 1)) {
                 d_moreWorkIsPlausible = true;
             }
             // However, if we finished all our work, then try setting
-            // have_work_ back to 0, only if it is still 2.  If it has
+            // work_state_ back to 0, only if it is still 2.  If it has
             // become 1 between now and the previous switch, that means
             // ScheduleWork was called (note: this can happen on a separate
-            // thread!), so don't kill the timer.  Also, set have_work_ back
+            // thread!), so don't kill the timer.  Also, set work_state_ back
             // to 2 so that we can know if ScheduleWork was called again the
             // next time round.
-            else if (!d_moreWorkIsPlausible && 1 == InterlockedCompareExchange(&have_work_, 0, 2)) {
+            else if (!d_moreWorkIsPlausible && 1 == InterlockedCompareExchange(&work_state_, 0, 2)) {
                 d_moreWorkIsPlausible = true;
-                InterlockedExchange(&have_work_, 2);
+                InterlockedExchange(&work_state_, base::MessagePumpWin::WORKING);
             }
         }
 
@@ -398,14 +398,14 @@ void MainMessagePump::scheduleMoreWorkIfNecessary()
 void MainMessagePump::handleWorkMessage()
 {
     if (PumpMode::MANUAL == Statics::pumpMode) {
-        // In MANUAL pump mode, have_work_ alternates between 0 and 1, where 1
+        // In MANUAL pump mode, work_state_ alternates between 0 and 1, where 1
         // indicates that there is a kMsgHaveWork in the queue.  Now that we
         // are processing the kMsgHaveWork message, set it back to 0.  This is
-        // identical to how have_work_ is used in the upstream pump.
+        // identical to how work_state_ is used in the upstream pump.
 
         if (Statics::workMessageWhileDoingWorkDisabled) {
             // This branch is different from what upstream chromium does.  In
-            // this branch, we will change have_work_ *after* doing work, so
+            // this branch, we will change work_state_ *after* doing work, so
             // that work messages are not posted to the Windows queue while we
             // are doing work.
             // If there is work remaining after doWork(), then we will schedule
@@ -413,12 +413,12 @@ void MainMessagePump::handleWorkMessage()
             // are other messages waiting), or as a work message (if the queue
             // is empty).
             doWork();
-            int old_have_work = InterlockedExchange(&have_work_, 0);
+            int old_have_work = InterlockedExchange(&work_state_, base::MessagePumpWin::READY);
             DCHECK(1 == old_have_work);
         }
         else {
             // This branch is what upstream chromium does.
-            int old_have_work = InterlockedExchange(&have_work_, 0);
+            int old_have_work = InterlockedExchange(&work_state_, base::MessagePumpWin::READY);
             DCHECK(1 == old_have_work);
             doWork();
         }
@@ -426,30 +426,30 @@ void MainMessagePump::handleWorkMessage()
     else {
         DCHECK(PumpMode::AUTOMATIC == Statics::pumpMode);
 
-        // In AUTOMATIC pump mode, we have 3 values for have_work_:
+        // In AUTOMATIC pump mode, we have 3 values for work_state_:
         //   0: nothing is scheduled/happening.
         //   1: ScheduleWork has been called (kMsgHaveWork may or may not be in
         //      the queue, see below).
         //   2: work is happening, or we are waiting for the auto-pump timer.
-        // The kMsgHaveWork is only posted if have_work_ is 0.  When
-        // ScheduleWork is called, have_work_ will be set to 1.  This is the
+        // The kMsgHaveWork is only posted if work_state_ is 0.  When
+        // ScheduleWork is called, work_state_ will be set to 1.  This is the
         // same as what the upstream pump does.
         // However, when we start handling the kMsgHaveWork message, we set
-        // have_work_ to 2 instead of 0 (which is what upstream does).  This
+        // work_state_ to 2 instead of 0 (which is what upstream does).  This
         // essentially prevents kMsgHaveWork from being posted again, but lets
         // us know whether ScheduleWork() has been called (in which case
-        // have_work_ would go back to 1).  Preventing kMsgHaveWork from being
+        // work_state_ would go back to 1).  Preventing kMsgHaveWork from being
         // posted is important, because the posted message would preempt the
         // auto-pump timer, which we use to continue work not completed in the
         // first doWork().
-        // When we finish doing some work (in doWork), we look at have_work_
-        // again (this happens in scheduleMoreWorkIfNecessary).  If have_work_
+        // When we finish doing some work (in doWork), we look at work_state_
+        // again (this happens in scheduleMoreWorkIfNecessary).  If work_state_
         // has become 1, then we set it back to 2 and use the auto-pump timer
         // to do the rest of the work.  This timer will continue firing until
         // we no longer have any immediate work to do.  At this point,
-        // have_work_ will be set back to zero, so everything goes back to the
+        // work_state_ will be set back to zero, so everything goes back to the
         // original state.
-        int old_have_work = InterlockedExchange(&have_work_, 2);
+        int old_have_work = InterlockedExchange(&work_state_, base::MessagePumpWin::WORKING);
         DCHECK(1 == old_have_work || 2 == old_have_work);
         doWork();
     }

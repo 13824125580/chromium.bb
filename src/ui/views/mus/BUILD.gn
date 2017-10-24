@@ -9,10 +9,6 @@ import("//mojo/public/mojo_application_manifest.gni")
 import("//testing/test.gni")
 import("//tools/grit/repack.gni")
 
-gypi = exec_script("//build/gypi_to_gn.py",
-                   [ rebase_path("../views.gyp") ],
-                   "scope",
-                   [ "../views.gyp" ])
 component("mus") {
   output_name = "ui_views_mus_lib"
 
@@ -118,6 +114,7 @@ group("for_mojo_application") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
 
@@ -309,3 +306,5 @@ mojo_application_manifest("interactive_ui_tests_manifest") {
   application_name = "views_mus_interactive_ui_tests"
   source = "interactive_ui_tests_manifest.json"
 }
+}
+

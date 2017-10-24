@@ -46,6 +46,7 @@ static_library("test_support") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
 
@@ -61,3 +62,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

@@ -11,13 +11,19 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "components/web_cache/renderer/web_cache_impl.h"
-#include "content/public/test/test_mojo_service.mojom.h"
+
+// blpwtk2: Remove test code
+//#include "content/public/test/test_mojo_service.mojom.h"
+
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/renderer/shell_render_view_observer.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/shell/public/cpp/interface_registry.h"
-#include "third_party/WebKit/public/web/WebTestingSupport.h"
+
+// blpwtk2: Remove test code
+//#include "third_party/WebKit/public/web/WebTestingSupport.h"
+
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
@@ -33,6 +39,8 @@ namespace content {
 
 namespace {
 
+// blpwtk2: Remove test code.
+#if 0
 // A test Mojo service which can be driven by browser tests for various reasons.
 class TestMojoServiceImpl : public mojom::TestMojoService {
  public:
@@ -84,6 +92,7 @@ void CreateTestMojoService(mojom::TestMojoServiceRequest request) {
   // Owns itself.
   new TestMojoServiceImpl(std::move(request));
 }
+#endif
 
 }  // namespace
 
@@ -101,7 +110,7 @@ void ShellContentRendererClient::RenderViewCreated(RenderView* render_view) {
   new ShellRenderViewObserver(render_view);
   new SpellCheckProvider(render_view, spellcheck_.get());
   new printing::PrintWebViewHelper(render_view,
-                                   scoped_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()));
+                                   std::unique_ptr<printing::PrintWebViewHelper::Delegate>(printing::PrintWebViewHelper::CreateEmptyDelegate()));
 }
 
 bool ShellContentRendererClient::IsPluginAllowedToUseCompositorAPI(
@@ -133,16 +142,22 @@ bool ShellContentRendererClient::IsPluginAllowedToUseDevChannelAPIs() {
 
 void ShellContentRendererClient::DidInitializeWorkerContextOnWorkerThread(
     v8::Local<v8::Context> context) {
+  // blpwtk2: Remove test code.
+#if 0
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kExposeInternalsForTesting)) {
     blink::WebTestingSupport::injectInternalsObject(context);
   }
+#endif
 }
 
 void ShellContentRendererClient::ExposeInterfacesToBrowser(
     shell::InterfaceRegistry* interface_registry) {
+  // blpwtk2: Remove test code.
+#if 0
   interface_registry->AddInterface<mojom::TestMojoService>(
       base::Bind(&CreateTestMojoService));
+#endif
 }
 
 }  // namespace content

@@ -480,19 +480,7 @@ class MemoryObserver : public base::MessageLoop::TaskObserver {
 void RenderThread::InitInProcessRenderer(const InProcessChildThreadParams& params)
 {
   g_render_process = new RenderProcessImpl();
-  RenderThreadImpl* thread = RenderThreadImpl::Create(params);
-  if (params.channel_name().empty()) {
-    // Normally, WebKit is initialized in the browser's WebKit thread.  This is
-    // necessary because there is code in the browser that depends on WebKit
-    // being initialized at startup.  However, when running an in-process
-    // renderer, we don't run the browser's WebKit thread.
-    // We need to ensure WebKit is initialized to simulate the case that the
-    // WebKit thread has been run.  We only do this if the channel_id is empty,
-    // so that this behavior is only performed for blpwtk2.  Regular
-    // content_shell --single-process mode will have the default upstream
-    // behavior of initializing WebKit when the first RenderView is created.
-    thread->EnsureWebKitInitialized();
-  }
+  RenderThreadImpl::Create(params);
 }
 
 // static

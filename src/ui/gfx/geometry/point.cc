@@ -78,12 +78,6 @@ Point ScaleToCeiledPoint(const Point& point, float scale) {
   return ToCeiledPoint(ScalePoint(gfx::PointF(point), scale, scale));
 }
 
-Point ScaleToCeiledPoint(const Point& point, const Scaling2d& scale) {
-  if (scale == 1.f)
-    return point;
-  return ToCeiledPoint(ScalePoint(gfx::PointF(point), scale.x(), scale.y()));
-}
-
 Point ScaleToFlooredPoint(const Point& point, float x_scale, float y_scale) {
   if (x_scale == 1.f && y_scale == 1.f)
     return point;
@@ -96,12 +90,6 @@ Point ScaleToFlooredPoint(const Point& point, float scale) {
   return ToFlooredPoint(ScalePoint(gfx::PointF(point), scale, scale));
 }
 
-Point ScaleToFlooredPoint(const Point& point, const Scaling2d& scale) {
-  if (scale == 1.f)
-    return point;
-  return ToFlooredPoint(ScalePoint(gfx::PointF(point), scale.x(), scale.y()));
-}
-
 Point ScaleToRoundedPoint(const Point& point, float x_scale, float y_scale) {
   if (x_scale == 1.f && y_scale == 1.f)
     return point;
@@ -112,12 +100,6 @@ Point ScaleToRoundedPoint(const Point& point, float scale) {
   if (scale == 1.f)
     return point;
   return ToRoundedPoint(ScalePoint(gfx::PointF(point), scale, scale));
-}
-
-Point ScaleToRoundedPoint(const Point& point, const gfx::Scaling2d& scale) {
-  if (scale == 1.f)
-    return point;
-  return ToRoundedPoint(ScalePoint(gfx::PointF(point), scale.x(), scale.y()));
 }
 
 }  // namespace gfx

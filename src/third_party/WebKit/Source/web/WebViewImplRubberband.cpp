@@ -37,6 +37,7 @@
 #include "core/layout/TextRunConstructor.h"
 #include "core/page/Page.h"
 #include "core/paint/PaintLayer.h"
+#include "core/style/ComputedStyleConstants.h"
 #include "wtf/text/StringBuilder.h"
 
 #include "public/web/WebViewClient.h"
@@ -206,9 +207,9 @@ class RubberbandContext {
 
 static bool isClipped(EOverflow overflow)
 {
-    return overflow == OAUTO
-        || overflow == OHIDDEN
-        || overflow == OSCROLL;
+    return overflow == OverflowAuto
+        || overflow == OverflowHidden
+        || overflow == OverflowScroll;
 }
 
 static bool isSupportedTransform(const TransformationMatrix& matrix)
@@ -260,7 +261,7 @@ static IntRect getRubberbandRect(const IntPoint& start, const IntPoint& extent)
 
 void WebViewImpl::rubberbandWalkFrame(const RubberbandContext& context, LocalFrame* frame, const LayoutPoint& clientTopLeft)
 {
-    frame->document()->updateLayout();
+    frame->document()->updateStyleAndLayout();
 
     FrameView* view = frame->view();
 
@@ -353,9 +354,9 @@ void WebViewImpl::rubberbandWalkLayoutObject(const RubberbandContext& context, L
             }
         }
 
-        if (layer->scrollableArea()) {
-            layerContext.m_layerScrollOffset.setWidth(layer->scrollableArea()->scrollXOffset() * layerContext.m_scaleX);
-            layerContext.m_layerScrollOffset.setHeight(layer->scrollableArea()->scrollYOffset() * layerContext.m_scaleY);
+        if (layer->getScrollableArea()) {
+            layerContext.m_layerScrollOffset.setWidth(layer->getScrollableArea()->scrollXOffset() * layerContext.m_scaleX);
+            layerContext.m_layerScrollOffset.setHeight(layer->getScrollableArea()->scrollYOffset() * layerContext.m_scaleY);
         }
     }
     else if (localContext.m_containingBlock != context.m_containingBlock) {
@@ -758,7 +759,7 @@ bool WebViewImpl::preStartRubberbanding()
     if (!m_page || !m_page->mainFrame() || !m_page->mainFrame()->isLocalFrame() || !m_page->deprecatedLocalMainFrame()->document())
         return false;
 
-    RefPtrWillBeRawPtr<Event> event = Event::createCancelable("rubberbandstarting");
+    Event* event = Event::createCancelable("rubberbandstarting");
     if (DispatchEventResult::CanceledByEventHandler == m_page->deprecatedLocalMainFrame()->document()->dispatchEvent(event))
         return false;
 
@@ -769,7 +770,7 @@ void WebViewImpl::startRubberbanding()
 {
     ASSERT(!isRubberbanding());
 
-    m_rubberbandState = adoptPtr(new RubberbandState());
+    m_rubberbandState = std::unique_ptr<RubberbandState>(new RubberbandState());
 
     RubberbandContext context;
     rubberbandWalkFrame(context, m_page->deprecatedLocalMainFrame(), LayoutPoint());
@@ -854,10 +855,10 @@ WebString WebViewImpl::finishRubberbanding(const WebRect& rc)
 
     WTF::String copied = getTextInRubberbandImpl(rc);
 
-    m_rubberbandState.clear();
+    m_rubberbandState.reset(nullptr);
     m_rubberbandingForcedOn = false;
     if (m_page && m_page->mainFrame() && m_page->mainFrame()->isLocalFrame() && m_page->deprecatedLocalMainFrame()->document()) {
-        RefPtrWillBeRawPtr<Event> event = Event::create("rubberbandfinished");
+        Event* event = Event::create("rubberbandfinished");
         m_page->deprecatedLocalMainFrame()->document()->dispatchEvent(event);
     }
 
@@ -871,11 +872,11 @@ void WebViewImpl::abortRubberbanding()
     if (m_client)
         m_client->hideRubberbandRect();
 
-    m_rubberbandState.clear();
+    m_rubberbandState.reset(nullptr);
     m_rubberbandingForcedOn = false;
 
     if (m_page && m_page->mainFrame() && m_page->mainFrame()->isLocalFrame() && m_page->deprecatedLocalMainFrame()->document()) {
-        RefPtrWillBeRawPtr<Event> event = Event::create("rubberbandaborted");
+        Event* event = Event::create("rubberbandaborted");
         m_page->deprecatedLocalMainFrame()->document()->dispatchEvent(event);
     }
 }
@@ -887,7 +888,7 @@ WebString WebViewImpl::getTextInRubberband(const WebRect& rc)
     if (!m_page || !m_page->mainFrame() || rc.isEmpty() || !m_page->mainFrame()->isLocalFrame())
         return WTF::emptyString();
 
-    m_rubberbandState = adoptPtr(new RubberbandState());
+    m_rubberbandState = std::unique_ptr<RubberbandState>(new RubberbandState());
 
     RubberbandContext context;
     RubberbandLayerContext layerContext;
@@ -895,7 +896,7 @@ WebString WebViewImpl::getTextInRubberband(const WebRect& rc)
     layerContext.m_clipRect = LayoutRect(rc);
     rubberbandWalkFrame(context, m_page->deprecatedLocalMainFrame(), LayoutPoint());
     WTF::String result = getTextInRubberbandImpl(rc);
-    m_rubberbandState.clear();
+    m_rubberbandState.reset(nullptr);
     return result;
 }
 

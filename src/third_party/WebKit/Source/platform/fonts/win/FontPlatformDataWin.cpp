@@ -54,7 +54,7 @@ void FontPlatformData::setupPaint(SkPaint* paint, float, const Font* font) const
 
     uint32_t textFlags;
     if (font) {
-        switch (font->fontDescription().fontSmoothing()) {
+        switch (font->getFontDescription().fontSmoothing()) {
         case NoSmoothing:
             textFlags = 0;
             break;

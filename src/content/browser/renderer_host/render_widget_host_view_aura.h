@@ -684,7 +684,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
   gfx::Insets insets_;
 
   // The rect to draw the rubberband highlight.
-  scoped_ptr<ui::RubberbandOutline> rubberband_outline_;
+  std::unique_ptr<ui::RubberbandOutline> rubberband_outline_;
 
   std::vector<ui::LatencyInfo> software_latency_info_;
 

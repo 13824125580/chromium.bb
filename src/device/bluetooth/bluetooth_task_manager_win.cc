@@ -909,6 +909,9 @@ void BluetoothTaskManagerWin::RegisterGattCharacteristicValueChangedEvent(
     BTH_LE_GATT_DESCRIPTOR ccc_descriptor,
     const GattEventRegistrationCallback& callback,
     const GattCharacteristicValueChangedCallback& registered_callback) {
+
+// blpwtk2: no bluetooth needed
+#if 0
   DCHECK(bluetooth_task_runner_->RunsTasksOnCurrentThread());
   BLUETOOTH_GATT_EVENT_HANDLE win_event_handle = NULL;
 
@@ -953,6 +956,7 @@ void BluetoothTaskManagerWin::RegisterGattCharacteristicValueChangedEvent(
 
   ui_task_runner_->PostTask(FROM_HERE,
                             base::Bind(callback, user_event_handle, hr));
+#endif
 }
 
 void BluetoothTaskManagerWin::UnregisterGattCharacteristicValueChangedEvent(

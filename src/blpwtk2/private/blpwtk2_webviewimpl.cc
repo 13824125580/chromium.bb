@@ -506,7 +506,7 @@ void WebViewImpl::reload(bool ignoreCache)
     const bool checkForRepost = false;  // TODO: do we want to make this an argument
 
     if (ignoreCache)
-        d_webContents->GetController().ReloadIgnoringCache(checkForRepost);
+        d_webContents->GetController().ReloadBypassingCache(checkForRepost);
     else
         d_webContents->GetController().Reload(checkForRepost);
 }
@@ -686,7 +686,7 @@ void WebViewImpl::fileChooserCompleted(const StringRef* paths,
         files[i].display_name = files[i].file_path.BaseName().value();
     }
 
-    d_webContents->GetRenderViewHost()->FilesSelectedInChooser(files, d_lastFileChooserMode);
+    d_webContents->GetRenderViewHost()->GetMainFrame()->FilesSelectedInChooser(files, d_lastFileChooserMode);
 }
 
 void WebViewImpl::performCustomContextMenuAction(int actionId)
@@ -851,11 +851,11 @@ void WebViewImpl::DidNavigateMainFramePostCommit(content::WebContents* source)
         d_delegate->didNavigateMainFramePostCommit(this, source->GetURL().spec());
 }
 
-void WebViewImpl::RunFileChooser(content::WebContents* source,
+void WebViewImpl::RunFileChooser(content::RenderFrameHost* render_frame_host,
                                  const content::FileChooserParams& params)
 {
     DCHECK(Statics::isInBrowserMainThread());
-    DCHECK(source == d_webContents.get());
+    DCHECK(render_frame_host);
 
     if (!d_delegate) {
         return;
@@ -1010,7 +1010,7 @@ void WebViewImpl::RequestMediaAccessPermission(
     const content::MediaStreamDevices& videoDevices =
         content::MediaCaptureDevices::GetInstance()->GetVideoCaptureDevices();
 
-    scoped_ptr<content::MediaStreamUI> ui(new DummyMediaStreamUI());
+    std::unique_ptr<content::MediaStreamUI> ui(new DummyMediaStreamUI());
     content::MediaStreamDevices devices;
     if (request.requested_video_device_id.empty()) {
         if (request.video_type != content::MEDIA_NO_SERVICE && !videoDevices.empty()) {
@@ -1040,7 +1040,7 @@ void WebViewImpl::RequestMediaAccessPermission(
             devices.push_back(*device);
         }
     }
-    callback.Run(devices, content::MEDIA_DEVICE_OK, ui.Pass());
+    callback.Run(devices, content::MEDIA_DEVICE_OK, std::move(ui));
 }
 
 bool WebViewImpl::OnNCHitTest(int* result)

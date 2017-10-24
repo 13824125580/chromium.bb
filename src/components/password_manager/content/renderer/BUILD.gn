@@ -21,6 +21,7 @@ static_library("renderer") {
   ]
 }
 
+if (false) {
 source_set("browser_tests") {
   testonly = true
   sources = [
@@ -37,3 +38,5 @@ source_set("browser_tests") {
     "//third_party/WebKit/public:blink",
   ]
 }
+}
+

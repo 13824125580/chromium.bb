@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Bloomberg Finance L.P.
+ * Copyright (C) 2017 Bloomberg Finance L.P.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -20,17 +20,27 @@
  * IN THE SOFTWARE.
  */
 
-[
-] interface BBWindowHooks {
+#include "public/web/WebScriptBindings.h"
 
-    boolean isBlock(Node node);
-    DOMString getPlainText(Node node, optional DOMString excluder, optional DOMString mask);
-    void setTextMatchMarkerVisibility(Document document, boolean highlight);
-    boolean checkSpellingForRange(Range range);
-    void removeMarker(Range range, long mask, long removeMarkerFlag);
-    void addMarker(Range range, long markerType);
-    Range findPlainText(Range range, DOMString target, long options);
-    boolean checkSpellingForNode(Node node);
-    ClientRect getAbsoluteCaretRectAtOffset(Node node, long offset);
-};
+#include "bindings/core/v8/DOMWrapperWorld.h"
+#include "bindings/core/v8/ScriptState.h"
+#include "bindings/core/v8/V8Binding.h"
+#include "public/platform/WebString.h"
+
+#include <v8.h>
+
+namespace blink {
+
+v8::Local<v8::Context> WebScriptBindings::createWebScriptContext()
+{
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+    v8::EscapableHandleScope hs(isolate);
+    v8::Local<v8::Context> context = v8::Context::New(isolate);
+
+    PassRefPtr<ScriptState> scriptState = ScriptState::create(context, &DOMWrapperWorld::mainWorld());
+
+    return hs.Escape(context);
+}
+
+} // namespace blink
 

@@ -181,6 +181,9 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Returns the renderer channel.
   virtual IPC::ChannelProxy* GetChannel() = 0;
 
+  // Returns the renderer mojo child token
+  virtual const std::string& GetChildToken() const = 0;
+
   // Adds a message filter to the IPC channel.
   virtual void AddFilter(BrowserMessageFilter* filter) = 0;
 
@@ -314,6 +317,10 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Purges and suspends the renderer process.
   virtual void PurgeAndSuspend() = 0;
 
+  // Adjust the specified command line for in-process renderers in blpwtk2
+  // client processes.
+  virtual void AdjustCommandLineForRenderer(base::CommandLine* command_line) const = 0;
+
   // Returns the current number of active views in this process.  Excludes
   // any RenderViewHosts that are swapped out.
   size_t GetActiveViewCount();
@@ -323,10 +330,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Adjust the specified command line for in-process renderers.  This is used
   // to adjust the command-line for *this* process.
   static void AdjustCommandLineForInProcessRenderer(base::CommandLine* command_line);
-
-  // Adjust the specified command line for in-process renderers in blpwtk2
-  // client processes.
-  static void AdjustCommandLineForRenderer(base::CommandLine* command_line);
 
   // Allows iteration over all the RenderProcessHosts in the browser. Note
   // that each host may not be active, and therefore may have nullptr channels.

@@ -570,10 +570,10 @@ void StyleBuilderFunctions::applyValueCSSPropertyWebkitBorderImage(StyleResolver
     state.style()->setBorderImage(image);
 }
 
-void StyleBuilderFunctions::applyValueCSSPropertyWebkitCaretColor(StyleResolverState& state, CSSValue* value)
+void StyleBuilderFunctions::applyValueCSSPropertyWebkitCaretColor(StyleResolverState& state, const CSSValue& value)
 {
-    if (value->isPrimitiveValue() || value->isColorValue()) {
-        Color col = state.document().textLinkColors().colorFromCSSValue(*value, state.style()->visitedDependentColor(CSSPropertyWebkitCaretColor));
+    if (value.isPrimitiveValue() || value.isColorValue()) {
+        Color col = state.document().textLinkColors().colorFromCSSValue(value, state.style()->visitedDependentColor(CSSPropertyWebkitCaretColor));
         state.style()->setCaretColor(col);
     }
 }

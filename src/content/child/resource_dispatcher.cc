@@ -398,7 +398,7 @@ bool ResourceDispatcher::RemovePendingRequest(int request_id) {
   ReleaseResourcesInMessageQueue(&request_info->deferred_message_queue);
 
   if (it->second.get()->bridge)
-    delete it->second.get()->bridge;
+    it->second.get()->bridge.reset(nullptr);
 
   // Always delete the pending_request asyncly so that cancelling the request
   // doesn't delete the request context info while its response is still being
@@ -491,14 +491,14 @@ void ResourceDispatcher::DidChangePriority(int request_id,
 
 ResourceDispatcher::PendingRequestInfo::PendingRequestInfo(
     std::unique_ptr<RequestPeer> peer,
-    ResourceLoaderBridge* bridge,
+    std::unique_ptr<ResourceLoaderBridge> bridge,
     ResourceType resource_type,
     int origin_pid,
     const GURL& frame_origin,
     const GURL& request_url,
     bool download_to_file)
     : peer(std::move(peer)),
-      bridge(bridge),
+      bridge(std::move(bridge)),
       resource_type(resource_type),
       origin_pid(origin_pid),
       url(request_url),
@@ -600,18 +600,15 @@ void ResourceDispatcher::StartSync(const RequestInfo& request_info,
 int ResourceDispatcher::StartAsync(const RequestInfo& request_info,
                                    ResourceRequestBodyImpl* request_body,
                                    std::unique_ptr<RequestPeer> peer) {
-  GURL frame_origin;
-  std::unique_ptr<ResourceRequest> request =
-      CreateRequest(request_info, request_body, &frame_origin);
 
   // Compute a unique request_id for this renderer process.
   int request_id = MakeRequestID();
 
-  scoped_ptr<ResourceLoaderBridge> bridge(
+  std::unique_ptr<ResourceLoaderBridge> bridge(
       GetContentClient()->renderer()->OverrideResourceLoaderBridge(
         request_info,
         request_body));
-  if (bridge.get()) {
+  if (bridge) {
       const RequestExtraData kEmptyData;
       const RequestExtraData* extra_data;
       if (request_info.extra_data)
@@ -622,7 +619,7 @@ int ResourceDispatcher::StartAsync(const RequestInfo& request_info,
       bridge->Start(peer.get());
       pending_requests_[request_id] =
           base::WrapUnique(new PendingRequestInfo(std::move(peer),
-                             bridge.release(),
+                             std::move(bridge),
                              request_info.request_type,
                              request_info.requestor_pid,
                              extra_data->frame_origin(),
@@ -636,7 +633,7 @@ int ResourceDispatcher::StartAsync(const RequestInfo& request_info,
       CreateRequest(request_info, request_body, &frame_origin);
 
   pending_requests_[request_id] = base::WrapUnique(new PendingRequestInfo(
-      std::move(peer), request->resource_type, request->resource_type, request->origin_pid,
+      std::move(peer), std::move(bridge), request->resource_type, request->origin_pid,
       frame_origin, request->url, request_info.download_to_file));
 
   if (resource_scheduling_filter_.get() &&

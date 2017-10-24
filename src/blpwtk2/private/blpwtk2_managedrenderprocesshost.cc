@@ -49,7 +49,12 @@ int ManagedRenderProcessHost::id() const
 
 const std::string& ManagedRenderProcessHost::channelId() const
 {
-    return d_impl->GetChannel()->ChannelId();
+    return d_impl->GetChildToken();
+}
+
+void ManagedRenderProcessHost::adjustCommandLineForRenderer(base::CommandLine* command_line)
+{
+    d_impl->AdjustCommandLineForRenderer(command_line);
 }
 
 }  // close namespace blpwtk2

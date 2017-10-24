@@ -69,6 +69,7 @@ component("snapshot") {
   }
 }
 
+if (false) {
 test("snapshot_unittests") {
   sources = [
     "snapshot_aura_unittest.cc",
@@ -100,3 +101,5 @@ test("snapshot_unittests") {
     sources -= [ "snapshot_aura_unittest.cc" ]
   }
 }
+}
+

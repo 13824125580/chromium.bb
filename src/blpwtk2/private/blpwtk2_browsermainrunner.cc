@@ -38,8 +38,8 @@
 #include <content/public/common/content_switches.h>
 #include <net/base/net_errors.h>
 #include <net/socket/tcp_server_socket.h>
-#include <ui/gfx/screen.h>
 #include <ui/views/widget/desktop_aura/desktop_screen.h>
+#include <ui/display/screen.h>
 #include <base/threading/thread_restrictions.h>
 
 namespace {
@@ -53,12 +53,12 @@ class TCPServerSocketFactory
 
  private:
   // DevToolsHttpHandler::ServerSocketFactory.
-  scoped_ptr<net::ServerSocket> CreateForHttpServer() override {
+  std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
     const int kBackLog = 10;
-    scoped_ptr<net::ServerSocket> socket(
+    std::unique_ptr<net::ServerSocket> socket(
         new net::TCPServerSocket(nullptr, net::NetLog::Source()));
     if (socket->ListenWithAddressAndPort(address_, port_, kBackLog) != net::OK)
-      return scoped_ptr<net::ServerSocket>();
+      return std::unique_ptr<net::ServerSocket>();
 
     return socket;
   }
@@ -120,7 +120,7 @@ BrowserMainRunner::BrowserMainRunner(
 
     d_devtoolsHttpHandler.reset(
         new devtools_http_handler::DevToolsHttpHandler(
-            scoped_ptr<devtools_http_handler::DevToolsHttpHandler::ServerSocketFactory>(
+            std::unique_ptr<devtools_http_handler::DevToolsHttpHandler::ServerSocketFactory>(
                 new TCPServerSocketFactory("127.0.0.1", getRemoteDebuggingPort())),
             "",
             new DevToolsHttpHandlerDelegateImpl(),  // the DevToolsHttpHandler takes ownership of this
@@ -130,7 +130,7 @@ BrowserMainRunner::BrowserMainRunner(
             ContentClient::Instance()->GetUserAgent()));
     Statics::devToolsHttpHandler = d_devtoolsHttpHandler.get();
 
-    gfx::Screen::SetScreenInstance(views::CreateDesktopScreen());
+    display::Screen::SetScreenInstance(views::CreateDesktopScreen());
 
     d_viewsDelegate.reset(
         new ViewsDelegateImpl());

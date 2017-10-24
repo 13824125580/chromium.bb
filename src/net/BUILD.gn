@@ -1750,6 +1750,7 @@ if (!is_ios) {
   }
 }
 
+if (false) {
 # Fuzzers
 
 source_set("net_fuzzer_test_support") {
@@ -1771,6 +1772,8 @@ source_set("net_fuzzer_test_support") {
     "//base:i18n",
     "//net",
   ]
+}
+
 }
 
 fuzzer_test("net_data_job_fuzzer") {

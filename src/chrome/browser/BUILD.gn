@@ -194,7 +194,7 @@ split_static_library("browser") {
     "//components/strings",
     "//components/subresource_filter/core/browser",
     "//components/suggestions",
-    "//components/supervised_user_error_page",
+#    "//components/supervised_user_error_page",
     "//components/sync_bookmarks",
     "//components/sync_driver",
     "//components/sync_sessions",
@@ -1058,6 +1058,7 @@ if (is_chrome_branded) {
   }
 }
 
+if (false) {
 # In GYP this is part of test_support_common.
 #
 # Use a static library here because many test binaries depend on this but don't
@@ -1341,6 +1342,7 @@ source_set("test_support_ui") {
     "//skia",
     "//testing/gtest",
   ]
+}
 }
 
 if (enable_rlz_support) {

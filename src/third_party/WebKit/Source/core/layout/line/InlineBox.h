@@ -181,7 +181,6 @@ public:
     void setParent(InlineFlowBox* par) { m_parent = par; }
 
     const RootInlineBox& root() const;
-    CORE_EXPORT
     RootInlineBox& root();
 
     // x() is the left side of the box in the containing block's coordinate system.
@@ -233,7 +232,6 @@ public:
     LayoutUnit logicalWidth() const { return m_logicalWidth; }
 
     // The logical height is our extent in the block flow direction, i.e., height for horizontal text and width for vertical text.
-    CORE_EXPORT
     LayoutUnit logicalHeight() const;
 
     LayoutRect logicalFrameRect() const { return isHorizontal() ? LayoutRect(m_topLeft.x(), m_topLeft.y(), m_logicalWidth, logicalHeight()) : LayoutRect(m_topLeft.y(), m_topLeft.x(), m_logicalWidth, logicalHeight()); }
@@ -303,10 +301,9 @@ public:
     bool dirOverride() const { return m_bitfields.dirOverride(); }
     void setDirOverride(bool dirOverride) { m_bitfields.setDirOverride(dirOverride); }
 
-    bool isLayoutBlock() const { return m_layoutObject.isLayoutBlock(); }
-    Node* node() const { return m_layoutObject.node(); }
-    const ComputedStyle& styleRef(bool firstLine) const { return m_layoutObject.styleRef(firstLine); }
-    LayoutBlock* containingBlock() const { return m_layoutObject.containingBlock(); }
+    Node* node() const { return m_lineLayoutItem.layoutObject()->node(); }
+    const ComputedStyle& styleRef(bool firstLine) const { return m_lineLayoutItem.layoutObject()->styleRef(firstLine); }
+    LayoutBlock* containingBlock() const { return m_lineLayoutItem.layoutObject()->containingBlock(); }
 
     // Set all LineLayoutItems in the inline box subtree should do full paint invalidation.
     void setShouldDoFullPaintInvalidationRecursively();

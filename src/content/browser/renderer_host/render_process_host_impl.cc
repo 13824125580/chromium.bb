@@ -118,7 +118,10 @@
 #include "content/browser/service_worker/service_worker_dispatcher_host.h"
 #include "content/browser/shared_worker/shared_worker_message_filter.h"
 #include "content/browser/shared_worker/worker_storage_partition.h"
-#include "content/browser/speech/speech_recognition_dispatcher_host.h"
+
+// blpwtk2: Remove dependency on Speech Recognition
+//#include "content/browser/speech/speech_recognition_dispatcher_host.h"
+
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/streams/stream_context.h"
 #include "content/browser/tracing/trace_message_filter.h"
@@ -911,8 +914,11 @@ void RenderProcessHostImpl::CreateMessageFilters() {
 #if defined(ENABLE_PLUGINS)
   AddFilter(new PepperRendererConnection(GetID()));
 #endif
+  // blpwtk2: Remove dependency on Speech Recognition
+#if 0
   AddFilter(new SpeechRecognitionDispatcherHost(
       GetID(), storage_partition_impl_->GetURLRequestContext()));
+#endif
   AddFilter(new FileAPIMessageFilter(
       GetID(), storage_partition_impl_->GetURLRequestContext(),
       storage_partition_impl_->GetFileSystemContext(),
@@ -1295,7 +1301,14 @@ static void AppendCompositorCommandLineFlags(base::CommandLine* command_line) {
 
 void RenderProcessHostImpl::AppendRendererCommandLine(
     base::CommandLine* command_line) const {
-  RenderProcessHost::AdjustCommandLineForRenderer(command_line);
+  AdjustCommandLineForRenderer(command_line);
+
+  if (!mojo_channel_token_.empty()) {
+    command_line->AppendSwitchASCII(switches::kMojoChannelToken,
+                                    mojo_channel_token_);
+  }
+  command_line->AppendSwitchASCII(switches::kMojoApplicationChannelToken,
+                                  mojo_child_connection_->shell_client_token());
 
   // Disable databases in incognito mode.
   if (GetBrowserContext()->IsOffTheRecord() &&
@@ -1307,13 +1320,8 @@ void RenderProcessHostImpl::AppendRendererCommandLine(
                                                                 GetID());
 }
 
-static void PropagateBrowserCommandLineToRenderer(
-    const base::CommandLine& browser_cmd,
-    base::CommandLine* renderer_cmd);
-
-// static
-void RenderProcessHost::AdjustCommandLineForRenderer(
-    base::CommandLine* command_line) {
+void RenderProcessHostImpl::AdjustCommandLineForRenderer(
+    base::CommandLine* command_line) const {
   // Pass the process type first, so it shows first in process listings.
   command_line->AppendSwitchASCII(switches::kProcessType,
                                   switches::kRendererProcess);
@@ -1342,18 +1350,11 @@ void RenderProcessHost::AdjustCommandLineForRenderer(
 #endif
 
   AppendCompositorCommandLineFlags(command_line);
-
-  if (!mojo_channel_token_.empty()) {
-    command_line->AppendSwitchASCII(switches::kMojoChannelToken,
-                                    mojo_channel_token_);
-  }
-  command_line->AppendSwitchASCII(switches::kMojoApplicationChannelToken,
-                                  mojo_child_connection_->shell_client_token());
 }
 
-static void PropagateBrowserCommandLineToRenderer(
+void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
     const base::CommandLine& browser_cmd,
-    base::CommandLine* renderer_cmd) {
+    base::CommandLine* renderer_cmd) const {
   // Propagate the following switches to the renderer command line (along
   // with any associated values) if present in the browser command line.
   static const char* const kSwitchNames[] = {
@@ -1400,7 +1401,10 @@ static void PropagateBrowserCommandLineToRenderer(
     switches::kDisableSeccompFilterSandbox,
     switches::kDisableSharedWorkers,
     switches::kDisableSmoothScrolling,
-    switches::kDisableSpeechAPI,
+
+    // blpwtk2: Remove dependency on Speech Recognition
+    //switches::kDisableSpeechAPI,
+
     switches::kDisableThreadedCompositing,
     switches::kDisableThreadedScrolling,
     switches::kDisableTouchAdjustment,
@@ -2071,6 +2075,10 @@ bool RenderProcessHostImpl::IsProcessManagedExternally() const {
 
 IPC::ChannelProxy* RenderProcessHostImpl::GetChannel() {
   return channel_.get();
+}
+
+const std::string& RenderProcessHostImpl::GetChildToken() const {
+  return child_token_;
 }
 
 void RenderProcessHostImpl::AddFilter(BrowserMessageFilter* filter) {

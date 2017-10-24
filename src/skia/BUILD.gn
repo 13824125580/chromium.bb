@@ -702,6 +702,7 @@ source_set("skia_opts") {
   visibility = [ ":skia" ]
 }
 
+if (false) {
 test("skia_unittests") {
   sources = [
     "ext/analysis_canvas_unittest.cc",
@@ -737,6 +738,7 @@ test("skia_unittests") {
       "//skia/public/interfaces:test_interfaces",
     ]
   }
+}
 }
 
 if (!is_ios) {

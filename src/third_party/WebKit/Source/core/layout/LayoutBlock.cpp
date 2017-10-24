@@ -45,6 +45,7 @@
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/layout/LayoutView.h"
+#include "core/layout/LayoutInline.h"
 #include "core/layout/TextAutosizer.h"
 #include "core/layout/api/LineLayoutBox.h"
 #include "core/layout/api/LineLayoutItem.h"
@@ -53,10 +54,12 @@
 #include "core/paint/BlockPainter.h"
 #include "core/paint/PaintLayer.h"
 #include "core/style/ComputedStyle.h"
+#include "core/HTMLNames.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "wtf/PtrUtil.h"
 #include "wtf/StdLibExtras.h"
 #include <memory>
+
 
 namespace blink {
 
@@ -486,7 +489,7 @@ void LayoutBlock::addVisualOverflowFromTheme()
 
 LayoutUnit LayoutBlock::additionalMarginStart() const
 {
-    if (isInline() || !parent() || parent()->childrenInline() || !parent()->node() || (!parent()->node()->hasTagName(ulTag) && !parent()->node()->hasTagName(olTag))) {
+    if (isInline() || !parent() || parent()->childrenInline() || !parent()->node() || (!parent()->node()->hasTagName(HTMLNames::ulTag) && !parent()->node()->hasTagName(HTMLNames::olTag))) {
         return LayoutUnit(0);
     }
 

@@ -55,6 +55,7 @@ component("touch_selection") {
   }
 }
 
+if (false) {
 static_library("test_support") {
   testonly = true
 
@@ -91,6 +92,7 @@ test("ui_touch_selection_unittests") {
   data_deps = [
     "//third_party/mesa:osmesa",
   ]
+}
 }
 
 if (is_android) {

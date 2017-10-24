@@ -362,34 +362,22 @@ hooks = [
     'name':
       'lastchange_blink'
   },
-  {
-    'action': [
-      'download_from_google_storage',
-      '--no_resume',
-      '--platform=linux*',
-      '--extract',
-      '--no_auth',
-      '--bucket',
-      'chromium-fonts',
-      '-s',
-      'src/third_party/blimp_fonts/font_bundle.tar.gz.sha1'
-    ],
-    'pattern':
-      '.',
-    'name':
-      'blimp_fonts'
-  },
-  {
-    'action': [
-      'python',
-      'src/build/gyp_blpwtk2.py'
-      '--running-as-hook'
-    ],
-    'pattern':
-      '.',
-    'name':
-      'gyp'
-  },
+#  {
+#    'action': [
+#      'download_from_google_storage',
+#       '--no_resume',
+#      '--platform=win32',
+#      '--no_auth',
+#      '--bucket',
+#      'chromium-gn',
+#      '-s',
+#      'src/buildtools/win/gn.exe.sha1'
+#    ],
+#    'pattern':
+#      '.',
+#    'name':
+#      'gn_win'
+#  },
 ]
 
 include_rules = [

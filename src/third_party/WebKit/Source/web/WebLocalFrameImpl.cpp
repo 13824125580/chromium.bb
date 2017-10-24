@@ -1387,7 +1387,7 @@ class CanvasPainterContext : public DisplayItemClient {
         TransformRecorder transformRecorder(context, *this, transform);
 
         // Enter a clipped region
-        ClipRecorder clipRecorder(context, *this, DisplayItem::ClipPrintedPage, LayoutRect(floatRect));
+        ClipRecorder clipRecorder(context, *this, DisplayItem::ClipPrintedPage, IntRect(floatRect));
 
         view->updateAllLifecyclePhases();
 

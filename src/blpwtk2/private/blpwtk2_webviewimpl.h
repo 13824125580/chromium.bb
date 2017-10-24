@@ -186,7 +186,7 @@ class WebViewImpl : public WebView,
     void DidNavigateMainFramePostCommit(content::WebContents* source) override;
 
     // Called when a file selection is to be done.
-    void RunFileChooser(content::WebContents* source,
+    void RunFileChooser(content::RenderFrameHost* render_frame_host,
                         const content::FileChooserParams& params) override;
 
     // This is called when WebKit tells us that it is done tabbing through
@@ -281,9 +281,9 @@ class WebViewImpl : public WebView,
     void OnWebContentsBlurred() override;
 
   private:
-    scoped_ptr<DevToolsFrontendHostDelegateImpl> d_devToolsFrontEndHost;
-    scoped_ptr<content::WebContents> d_webContents;
-    scoped_ptr<FindOnPage> d_find;
+    std::unique_ptr<DevToolsFrontendHostDelegateImpl> d_devToolsFrontEndHost;
+    std::unique_ptr<content::WebContents> d_webContents;
+    std::unique_ptr<FindOnPage> d_find;
     WebViewDelegate* d_delegate;
     WebViewImplClient* d_implClient;
     BrowserContextImpl* d_browserContext;
@@ -309,7 +309,7 @@ class WebViewImpl : public WebView,
     bool d_isMainFrameAccessible;
     bool d_gotRenderViewInfo;
     int d_renderViewRoutingId;
-    scoped_ptr<WebFrameImpl> d_mainFrame;
+    std::unique_ptr<WebFrameImpl> d_mainFrame;
 
     DISALLOW_COPY_AND_ASSIGN(WebViewImpl);
 };

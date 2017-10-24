@@ -44,6 +44,7 @@
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/editing/spellcheck/SpellChecker.h"
+#include "core/editing/Position.h"
 #include "core/events/EventListener.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/frame/LocalFrame.h"
@@ -379,8 +380,8 @@ void HTMLElement::parseAttribute(const QualifiedName& name, const AtomicString& 
         if (name == contenteditableAttr) {
             if (value.isNull() || equalIgnoringCase(value, "false")) {
                 if (document().frame()) {
-                    VisiblePosition startPos = createVisiblePosition(firstPositionInNode(this));
-                    VisiblePosition endPos = createVisiblePosition(lastPositionInNode(this));
+                    VisiblePosition startPos = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(this));
+                    VisiblePosition endPos = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(this));
                     EphemeralRange range(startPos.deepEquivalent(), endPos.deepEquivalent());
                     document().frame()->spellChecker().clearMisspellingsAndBadGrammar(VisibleSelection(range));
                 }

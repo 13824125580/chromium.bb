@@ -19,7 +19,8 @@ static bool color_type_is_valid(SkColorType colorType) {
 
 SkImageInfo SkImageInfo::MakeS32(int width, int height, SkAlphaType at) {
     return SkImageInfo(width, height, kN32_SkColorType, at,
-                       SkColorSpace::NewNamed(SkColorSpace::kSRGB_Named));
+                       SkColorSpace::NewNamed(SkColorSpace::kSRGB_Named),
+                       SK_ColorTRANSPARENT);
 }
 
 static const int kColorTypeMask = 0x0F;
@@ -60,7 +61,6 @@ void SkImageInfo::flatten(SkWriteBuffer& buffer) const {
         sk_sp<SkData> data = SkData::MakeEmpty();
         buffer.writeDataAsByteArray(data.get());
     }
->>>>>>> origin/upstream/53.0.2785.157
 }
 
 bool SkColorTypeValidateAlphaType(SkColorType colorType, SkAlphaType alphaType,

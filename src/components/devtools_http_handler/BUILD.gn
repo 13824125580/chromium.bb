@@ -19,6 +19,7 @@ source_set("devtools_http_handler") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -33,3 +34,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

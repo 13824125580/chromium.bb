@@ -24,6 +24,7 @@ source_set("content") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -39,3 +40,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

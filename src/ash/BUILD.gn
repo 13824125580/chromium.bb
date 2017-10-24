@@ -180,6 +180,7 @@ component("ash_with_content") {
   ]
 }
 
+if (false) {
 # TODO(msw): Move support code with content deps to test_support_with_content.
 source_set("test_support") {
   testonly = true
@@ -271,6 +272,7 @@ source_set("interactive_ui_test_support") {
     "//ui/gl:test_support",
   ]
 }
+}
 
 static_library("ash_shell_lib") {
   testonly = true
@@ -279,7 +281,7 @@ static_library("ash_shell_lib") {
   deps = [
     ":ash",
     ":ash_with_content",
-    ":test_support",
+#    ":test_support",
     "//ash/resources",
     "//ash/strings",
     "//base",
@@ -302,9 +304,9 @@ static_library("ash_shell_lib") {
     "//ui/message_center",
     "//ui/resources",
     "//ui/views",
-    "//ui/views:test_support",
-    "//ui/views/examples:views_examples_lib",
-    "//ui/views/examples:views_examples_with_content_lib",
+#    "//ui/views:test_support",
+#    "//ui/views/examples:views_examples_lib",
+#    "//ui/views/examples:views_examples_with_content_lib",
     "//ui/wm",
   ]
 }
@@ -329,7 +331,7 @@ static_library("ash_shell_lib_with_content") {
     "//ui/display",
     "//ui/events/devices",
     "//ui/message_center",
-    "//ui/views:test_support",
+#    "//ui/views:test_support",
     "//ui/wm",
   ]
 
@@ -338,6 +340,7 @@ static_library("ash_shell_lib_with_content") {
   }
 }
 
+if (false) {
 test("ash_unittests") {
   sources = gypi_values.ash_unittests_sources
   configs += [ "//build/config:precompiled_headers" ]
@@ -452,6 +455,7 @@ test("ash_unittests") {
   if (!is_chromeos) {
     sources -= [ "sticky_keys/sticky_keys_unittest.cc" ]
   }
+}
 }
 
 executable("ash_shell_with_content") {

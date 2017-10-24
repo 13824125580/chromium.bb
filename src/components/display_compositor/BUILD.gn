@@ -57,6 +57,7 @@ component("display_compositor") {
   }
 }
 
+if (false) {
 # These are part of the components_unittests build target.
 source_set("unit_tests") {
   testonly = true
@@ -159,3 +160,5 @@ test("display_compositor_benchmark") {
     "//third_party/mesa:osmesa",
   ]
 }
+}
+

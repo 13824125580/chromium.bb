@@ -17,7 +17,6 @@ if (is_android) {
   import("//build/config/mac/rules.gni")
 }
 
-build_ime = !is_ios
 
 # As part of building Chrome on iOS, it is necessary to run a tool on
 # the host to load datapack and generate output in a format defined
@@ -613,6 +612,7 @@ component("base") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -687,6 +687,7 @@ source_set("test_support") {
     sources -= [ "test/ui_controls_win.cc" ]
   }
 }
+}
 
 if (is_android) {
   generate_jni("ui_base_jni_headers") {
@@ -713,6 +714,7 @@ bundle_data("ui_base_unittests_bundle_data") {
   ]
 }
 
+if (false) {
 # GYP version: ui/base/ui_base_tests.gyp:ui_base_unittests
 test("ui_base_unittests") {
   sources = [
@@ -813,19 +815,19 @@ test("ui_base_unittests") {
   deps = [
     ":ui_base_unittests_bundle_data",
     "//base",
-    "//base/test:test_support",
+#    "//base/test:test_support",
     "//net",
     "//skia",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/icu",
     "//ui/base",
-    "//ui/base:test_support",
+#    "//ui/base:test_support",
     "//ui/base:ui_data_pack",
     "//ui/display",
     "//ui/events:events_base",
-    "//ui/events:test_support",
-    "//ui/gfx:test_support",
+#    "//ui/events:test_support",
+#    "//ui/gfx:test_support",
     "//ui/resources",
     "//ui/resources:ui_test_pak",
     "//ui/strings",
@@ -946,6 +948,7 @@ test("ui_base_unittests") {
       # data += [ "$root_out_dir/ui_base_unittests.dSYM/" ]
     }
   }
+}
 }
 
 if (is_mac) {

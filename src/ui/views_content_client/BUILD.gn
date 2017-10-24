@@ -35,7 +35,7 @@ component("views_content_client") {
     "//ui/resources",
     "//ui/resources:ui_test_pak",
     "//ui/views",
-    "//ui/views:test_support",
+#    "//ui/views:test_support",
   ]
 
   if (use_aura) {

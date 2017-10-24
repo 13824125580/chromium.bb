@@ -60,7 +60,10 @@ int ChildProcessMain() {
       command_line.GetSwitchValuePath(switches::kChildProcess);
   if (!app_library_path.empty())
     app_library = LoadNativeApplication(app_library_path);
-  base::i18n::InitializeICU();
+
+  const void *icu_data;
+  base::i18n::InitializeICU(&icu_data);
+
   if (app_library)
     CallLibraryEarlyInitialization(app_library);
 

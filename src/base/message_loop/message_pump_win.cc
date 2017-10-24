@@ -115,9 +115,6 @@ static const wchar_t kWndClassFormat[] = L"Chrome_MessagePumpWindow_%p";
 // task (a series of such messages creates a continuous task pump).
 static const int kMsgHaveWork = WM_USER + 1;
 
-// The application-defined code passed to the hook procedure.
-static const int kMessageFilterCode = 0x5001;
-
 //-----------------------------------------------------------------------------
 // MessagePumpWin public:
 
@@ -305,7 +302,7 @@ void MessagePumpForUI::InitMessageWnd(WNDPROC wnd_proc) {
   if (!wnd_proc)
     wnd_proc = base::win::WrappedWindowProc<WndProcThunk>;
 
-  HINSTANCE instance = GetModuleFromAddress(wnd_proc);
+  HINSTANCE instance = CURRENT_MODULE();
   WNDCLASSEX wc = {0};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = wnd_proc;
@@ -499,8 +496,15 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
   // asynchronous to this thread!!
 
   MSG msg;
-  const bool have_message =
-      g_peek_message(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
+  bool have_message;
+
+  if (MessageLoop::current()->os_modal_loop()) {
+    // We only peek out WM_PAINT and WM_TIMER here for reasons mentioned above.
+    have_message = g_peek_message(&msg, nullptr, WM_PAINT, WM_PAINT, PM_REMOVE) ||
+                   g_peek_message(&msg, nullptr, WM_TIMER, WM_TIMER, PM_REMOVE);
+  } else {
+    have_message = g_peek_message(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
+  }
 
   // Expect no message or a message different than kMsgHaveWork.
   DCHECK(!have_message || kMsgHaveWork != msg.message ||

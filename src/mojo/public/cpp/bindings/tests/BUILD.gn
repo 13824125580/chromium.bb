@@ -4,6 +4,7 @@
 
 import("../../../mojo_application.gni")
 
+if (false) {
 source_set("tests") {
   testonly = true
 
@@ -97,6 +98,7 @@ if (!is_ios) {
     ]
   }
 }
+}
 
 source_set("struct_with_traits_impl") {
   sources = [
@@ -110,6 +112,7 @@ source_set("struct_with_traits_impl") {
   ]
 }
 
+if (false) {
 source_set("perftests") {
   testonly = true
 
@@ -142,3 +145,5 @@ source_set("mojo_public_bindings_test_utils") {
     "//mojo/public/c/system",
   ]
 }
+}
+

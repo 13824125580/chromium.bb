@@ -1043,7 +1043,6 @@ void GraphicsLayer::setBackgroundColor(const Color& color)
 void GraphicsLayer::setDefaultLCDBackgroundColor(const Color& color)
 {
     m_layer->setDefaultLCDBackgroundColor(color.rgb());
-    m_layer->layer()->setOpaqueForLCDText(color.alpha() == 255);
 }
 
 void GraphicsLayer::setContentsOpaque(bool opaque)

@@ -32,7 +32,6 @@
 #include <base/message_loop/message_loop.h>
 #include <content/child/request_info.h>
 #include <content/child/sync_load_response.h>
-#include <content/common/resource_request_body.h>
 #include <content/public/child/request_peer.h>
 #include <net/base/load_flags.h>
 #include <net/base/mime_sniffer.h>
@@ -58,7 +57,7 @@ class InProcessResourceLoaderBridge::InProcessURLRequest
 
     InProcessURLRequest(
         const content::RequestInfo& requestInfo,
-        content::ResourceRequestBody* requestBody)
+        content::ResourceRequestBodyImpl* requestBody)
     : d_url(requestInfo.url)
     , d_firstPartyForCookies(requestInfo.first_party_for_cookies)
     , d_loadFlags(requestInfo.load_flags)
@@ -142,7 +141,7 @@ class InProcessResourceLoaderBridge::InProcessURLRequest
         }
 
         using ElementVector =
-                          std::vector<content::ResourceRequestBody::Element>;
+                          std::vector<content::ResourceRequestBodyImpl::Element>;
         const ElementVector* elements = d_requestBody->elements();
 
         for (ElementVector::const_iterator
@@ -216,7 +215,7 @@ class InProcessResourceLoaderBridge::InProcessURLRequest
     bool d_downloadToFile;
     net::RequestPriority d_priority;
 
-    scoped_refptr<content::ResourceRequestBody> d_requestBody;
+    scoped_refptr<content::ResourceRequestBodyImpl> d_requestBody;
     net::HttpRequestHeaders d_requestHeaders;
 };
 
@@ -226,7 +225,7 @@ class InProcessResourceLoaderBridge::InProcessResourceContext
   public:
     InProcessResourceContext(
         const content::RequestInfo& requestInfo,
-        content::ResourceRequestBody* requestBody);
+        content::ResourceRequestBodyImpl* requestBody);
 
     // accessors
     const GURL& url() const;
@@ -249,7 +248,7 @@ class InProcessResourceLoaderBridge::InProcessResourceContext
     void cancelLoad();
     void ensureResponseHeadersSent(const char* buffer, int length);
 
-    scoped_ptr<InProcessURLRequest> d_urlRequest;
+    std::unique_ptr<InProcessURLRequest> d_urlRequest;
     GURL d_url;
     scoped_refptr<net::HttpResponseHeaders> d_responseHeaders;
     content::RequestPeer* d_peer;
@@ -268,7 +267,7 @@ class InProcessResourceLoaderBridge::InProcessResourceContext
 
 InProcessResourceLoaderBridge::InProcessResourceContext::InProcessResourceContext(
     const content::RequestInfo& requestInfo,
-    content::ResourceRequestBody* requestBody)
+    content::ResourceRequestBodyImpl* requestBody)
 : d_urlRequest(new InProcessURLRequest(requestInfo, requestBody))
 , d_url(requestInfo.url)
 , d_peer(0)
@@ -385,10 +384,10 @@ void InProcessResourceLoaderBridge::InProcessResourceContext::addResponseData(co
         return;
 
     // TODO: Remove the need to copy here.
-    scoped_ptr<ReceivedDataImpl> copiedData(new ReceivedDataImpl());
+    std::unique_ptr<ReceivedDataImpl> copiedData(new ReceivedDataImpl());
     copiedData->d_data.assign(buffer, buffer + length);
 
-    d_peer->OnReceivedData(copiedData.Pass());
+    d_peer->OnReceivedData(std::move(copiedData));
 }
 
 void InProcessResourceLoaderBridge::InProcessResourceContext::failed()
@@ -517,7 +516,7 @@ void InProcessResourceLoaderBridge::InProcessResourceContext::ensureResponseHead
 
 InProcessResourceLoaderBridge::InProcessResourceLoaderBridge(
     const content::RequestInfo& requestInfo,
-    content::ResourceRequestBody* requestBody)
+    content::ResourceRequestBodyImpl* requestBody)
 {
     DCHECK(Statics::isInApplicationMainThread());
     DCHECK(Statics::inProcessResourceLoader);

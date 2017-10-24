@@ -249,8 +249,10 @@ void Shell::AddNewContents(WebContents* source,
                            bool user_gesture,
                            bool* was_blocked) {
   CreateShell(new_contents, AdjustWindowSize(initial_rect.size()));
+#if 0
   if (switches::IsRunLayoutTestSwitchPresent())
     SecondaryTestWindowObserver::CreateForWebContents(new_contents);
+#endif
 }
 
 void Shell::GoBackOrForward(int offset) {

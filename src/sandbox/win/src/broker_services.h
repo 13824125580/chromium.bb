@@ -94,7 +94,7 @@ class BrokerServicesBase final : public BrokerServices,
 
 #if SANDBOX_DLL
   // Stores the module name where sandbox.lib is linked into.
-  scoped_ptr<wchar_t, base::FreeDeleter> module_path_;
+  std::unique_ptr<wchar_t, base::FreeDeleter> module_path_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(BrokerServicesBase);

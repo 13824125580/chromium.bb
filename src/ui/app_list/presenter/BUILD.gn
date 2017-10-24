@@ -46,6 +46,7 @@ mojom("mojom") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   sources = [
     "test/app_list_presenter_impl_test_api.cc",
@@ -94,3 +95,5 @@ test("app_list_presenter_unittests") {
     "//ui/resources:ui_test_pak_data",
   ]
 }
+}
+

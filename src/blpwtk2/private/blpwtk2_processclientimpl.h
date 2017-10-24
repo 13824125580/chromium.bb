@@ -30,7 +30,6 @@
 #include <base/compiler_specific.h>
 #include <base/id_map.h>
 #include <base/memory/ref_counted.h>
-#include <base/memory/scoped_ptr.h>
 #include <base/synchronization/waitable_event.h>
 #include <ipc/ipc_listener.h>
 
@@ -72,7 +71,7 @@ class ProcessClientImpl : public ProcessClient,
     void onSetInProcessRendererChannelName(const std::string& channelName);
 
     base::WaitableEvent d_shutdownEvent;
-    scoped_ptr<IPC::SyncChannel> d_channel;
+    std::unique_ptr<IPC::SyncChannel> d_channel;
     IDMap<IPC::Listener> d_routes;
 
     DISALLOW_COPY_AND_ASSIGN(ProcessClientImpl);

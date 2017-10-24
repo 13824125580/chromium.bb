@@ -19,7 +19,7 @@ static_library("content_client") {
     "//content/shell:content_shell_lib",
     "//net",
     "//services/navigation:lib",
-    "//ui/views:test_support",
+#    "//ui/views:test_support",
     "//ui/views/mus",
   ]
 }

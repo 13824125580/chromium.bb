@@ -1247,7 +1247,7 @@ public:
         EventSourceDocument = 1479,
         EventSourceWorker = 1480,
 
-        SelectionGetClipboardCopyString = 1265, // Bloomberg-specific at the moment
+        SelectionGetClipboardCopyString = 1481, // Bloomberg-specific at the moment
 
         // Add new features immediately above this line. Don't change assigned
         // numbers of any item, and don't reuse removed slots.

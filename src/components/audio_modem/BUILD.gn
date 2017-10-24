@@ -29,6 +29,7 @@ source_set("audio_modem") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -70,3 +71,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

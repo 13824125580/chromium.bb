@@ -61,6 +61,7 @@ source_set("test_support") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -85,3 +86,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

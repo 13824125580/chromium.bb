@@ -405,11 +405,6 @@ static HTMLElement* adjacentEnclosingList(const VisiblePosition& pos, const Visi
     return listElement;
 }
 
-static bool isInline(const Node* node)
-{
-    return node && node->layoutObject() && node->layoutObject()->isInline();
-}
-
 void InsertListCommand::listifyParagraph(const VisiblePosition& originalStart, const HTMLQualifiedName& listTag, EditingState* editingState)
 {
     const VisiblePosition& start = startOfParagraph(originalStart, CanSkipOverEditingBoundary);
@@ -461,12 +456,12 @@ void InsertListCommand::listifyParagraph(const VisiblePosition& originalStart, c
     // clean markup when inline elements are pushed down as far as possible.
     Position insertionPos(mostBackwardCaretPosition(startPos));
     while (isInline(insertionPos.anchorNode()) && !insertionPos.anchorNode()->hasTagName(brTag)) {
-        insertionPos = positionInParentBeforeNode(*insertionPos.anchorNode());
+        insertionPos = PositionTemplate<EditingStrategy>::inParentBeforeNode(*insertionPos.anchorNode());
     }
     // Also avoid the containing list item.
     Node* const listChild = enclosingListChild(insertionPos.anchorNode());
     if (isHTMLLIElement(listChild))
-        insertionPos = Position::inParentBeforeNode(*listChild);
+        insertionPos = PositionTemplate<EditingStrategy>::inParentBeforeNode(*listChild);
 
     HTMLElement* listElement = createHTMLElement(document(), listTag);
     insertNodeAt(listElement, insertionPos, editingState);

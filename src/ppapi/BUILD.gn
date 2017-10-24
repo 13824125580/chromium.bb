@@ -157,6 +157,7 @@ if (!is_mac) {
   }
 }
 
+if (false) {
 test("ppapi_unittests") {
   sources = [
     "host/resource_message_filter_unittest.cc",
@@ -227,6 +228,7 @@ test("ppapi_perftests") {
     "//ppapi/shared_impl:test_support",
     "//testing/gtest",
   ]
+}
 }
 
 executable("pepper_hash_for_uma") {

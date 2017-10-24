@@ -20,8 +20,6 @@ class ShellContentUtilityClient : public ContentUtilityClient {
   void RegisterMojoApplications(StaticMojoApplicationMap* apps) override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
-  void onStartupPing();
-
   void ExposeInterfacesToBrowser(shell::InterfaceRegistry* registry) override;
 
  private:

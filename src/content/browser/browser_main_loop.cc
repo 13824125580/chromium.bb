@@ -59,7 +59,10 @@
 #include "content/browser/net/browser_online_state_observer.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
-#include "content/browser/speech/speech_recognition_manager_impl.h"
+
+// blpwtk2: Remove dependency on Speech recognition
+// #include "content/browser/speech/speech_recognition_manager_impl.h"
+
 #include "content/browser/startup_task_runner.h"
 #include "content/browser/time_zone_monitor.h"
 #include "content/browser/utility_process_host_impl.h"
@@ -1286,12 +1289,15 @@ int BrowserMainLoop::BrowserThreadsStarted() {
     media_stream_manager_.reset(new MediaStreamManager(audio_manager_.get()));
   }
 
+  // blpwtk: Remove dependency on Speech Recognition
+#if 0
   {
     TRACE_EVENT0("startup",
       "BrowserMainLoop::BrowserThreadsStarted:InitSpeechRecognition");
     speech_recognition_manager_.reset(new SpeechRecognitionManagerImpl(
         audio_manager_.get(), media_stream_manager_.get()));
   }
+#endif
 
   {
     TRACE_EVENT0(

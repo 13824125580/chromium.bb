@@ -150,6 +150,7 @@ component("aura") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -220,6 +221,7 @@ source_set("test_support") {
     sources += [ "test/ui_controls_factory_ozone.cc" ]
   }
 }
+}
 
 executable("demo") {
   output_name = "aura_demo"
@@ -231,7 +233,7 @@ executable("demo") {
 
   deps = [
     ":aura",
-    ":test_support",
+#    ":test_support",
     "//base",
     "//base:i18n",
     "//build/config/sanitizers:deps",
@@ -240,7 +242,7 @@ executable("demo") {
     "//third_party/icu",
     "//ui/base",
     "//ui/compositor",
-    "//ui/compositor:test_support",
+#    "//ui/compositor:test_support",
     "//ui/display",
     "//ui/events",
     "//ui/gfx",
@@ -253,6 +255,7 @@ executable("demo") {
   }
 }
 
+if (false) {
 test("aura_unittests") {
   sources = [
     "gestures/gesture_recognizer_unittest.cc",
@@ -285,3 +288,5 @@ test("aura_unittests") {
     "//third_party/mesa:osmesa",
   ]
 }
+}
+

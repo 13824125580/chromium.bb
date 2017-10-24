@@ -80,7 +80,7 @@ class RenderView;
 class SynchronousCompositor;
 struct RequestInfo;
 class ResourceLoaderBridge;
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 struct WebPluginInfo;
 
 // Embedder API for participating in renderer logic.
@@ -200,7 +200,7 @@ class CONTENT_EXPORT ContentRendererClient {
   // If it returns NULL, the content layer will provide a bridge.
   virtual content::ResourceLoaderBridge* OverrideResourceLoaderBridge(
       const content::RequestInfo& request_info,
-      content::ResourceRequestBody* request_body);
+      content::ResourceRequestBodyImpl* request_body);
 
   // Returns true if the renderer process should schedule the idle handler when
   // all widgets are hidden.

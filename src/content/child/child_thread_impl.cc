@@ -375,6 +375,7 @@ void ChildThreadImpl::ConnectChannel(bool use_mojo_channel,
 void ChildThreadImpl::Init(const Options& options) {
   channel_name_ = options.channel_name;
   use_mojo_channel_ = options.use_mojo_channel;
+  in_process_ipc_token_ = options.in_process_ipc_token;
 
   g_lazy_tls.Pointer()->Set(this);
   on_channel_error_called_ = false;
@@ -492,11 +493,11 @@ void ChildThreadImpl::Init(const Options& options) {
 }
 
 void ChildThreadImpl::InitChannel() {
-  ConnectChannel(use_mojo_channel_, in_process_ipc_token);
-
   if (!IsInBrowserProcess()) {
     IPC::AttachmentBroker::GetGlobal()->RegisterBrokerCommunicationChannel(channel_.get());
   }
+
+  ConnectChannel(use_mojo_channel_, in_process_ipc_token_);
 
   int connection_timeout = kConnectionTimeoutS;
   std::string connection_override =
@@ -601,8 +602,8 @@ void ChildThreadImpl::ReleaseCachedFonts() {
 
 void ChildThreadImpl::SetChannelName(const std::string& channel_name) {
   DCHECK(!channel_name.empty());
-  DCHECK(channel_name_.empty());
-  channel_name_ = channel_name;
+  DCHECK(in_process_ipc_token_.empty());
+  in_process_ipc_token_ = channel_name;
   InitChannel();
 }
 

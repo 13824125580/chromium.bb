@@ -45,37 +45,37 @@ BlockCommand::BlockCommand(Document& document)
 {
 }
 
-void BlockCommand::formatBlockExtent(PassRefPtrWillBeRawPtr<Node> prpFirstNode, PassRefPtrWillBeRawPtr<Node> prpLastNode, Node* stayWithin, EditingState *editingState)
+void BlockCommand::formatBlockExtent(Node* prpFirstNode, Node* prpLastNode, Node* stayWithin, EditingState *editingState)
 {
-    RefPtrWillBeRawPtr<Node> currentNode = prpFirstNode;
-    RefPtrWillBeRawPtr<Node> endNode = prpLastNode;
+    Node* currentNode = prpFirstNode;
+    Node* endNode = prpLastNode;
 
-    while (currentNode->isDescendantOf(endNode.get()))
+    while (currentNode->isDescendantOf(endNode))
         endNode = endNode->lastChild();
 
     while (currentNode) {
-        while (endNode->isDescendantOf(currentNode.get())) {
+        while (endNode->isDescendantOf(currentNode)) {
             ASSERT(currentNode->firstChild());
             currentNode = currentNode->firstChild();
         }
 
-        RefPtrWillBeRawPtr<Node> firstSibling = currentNode;
-        RefPtrWillBeRawPtr<Node> lastSibling = currentNode;
+        Node* firstSibling = currentNode;
+        Node* lastSibling = currentNode;
 
         while (lastSibling != endNode) {
-            RefPtrWillBeRawPtr<Node> nextSibling = lastSibling->nextSibling();
-            if (!nextSibling || endNode->isDescendantOf(nextSibling.get()))
+            Node* nextSibling = lastSibling->nextSibling();
+            if (!nextSibling || endNode->isDescendantOf(nextSibling))
                 break;
             lastSibling = nextSibling;
         }
 
-        RefPtrWillBeRawPtr<Node> nextNode = lastSibling == endNode ? 0 : NodeTraversal::nextSkippingChildren(*lastSibling, stayWithin);
-        formatBlockSiblings(firstSibling, lastSibling, stayWithin, endNode.get(), editingState);
+        Node* nextNode = lastSibling == endNode ? 0 : NodeTraversal::nextSkippingChildren(*lastSibling, stayWithin);
+        formatBlockSiblings(firstSibling, lastSibling, stayWithin, endNode, editingState);
         currentNode = nextNode;
     }
 }
 
-void BlockCommand::formatBlockSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState)
+void BlockCommand::formatBlockSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node* stayWithin, Node* lastNode, EditingState *editingState)
 {
     ASSERT_NOT_REACHED();
 }
@@ -84,8 +84,8 @@ void BlockCommand::doApply(EditingState *editingState)
 {
     VisiblePosition startOfSelection;
     VisiblePosition endOfSelection;
-    RefPtrWillBeRawPtr<ContainerNode> startScope;
-    RefPtrWillBeRawPtr<ContainerNode> endScope;
+    ContainerNode* startScope;
+    ContainerNode* endScope;
     int startIndex;
     int endIndex;
 
@@ -106,7 +106,7 @@ void BlockCommand::formatSelection(const VisiblePosition& startOfSelection, cons
 
     if (startEnclosingCell != endEnclosingCell) {
         if (startEnclosingCell && (!endEnclosingCell || !endEnclosingCell->isDescendantOf(startEnclosingCell))) {
-            VisiblePosition newEnd = createVisiblePosition(lastPositionInNode(startEnclosingCell));
+            VisiblePosition newEnd = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(startEnclosingCell));
             VisiblePosition nextStart = nextPositionOf(newEnd);
             while (isDisplayInsideTable(nextStart.deepEquivalent().anchorNode()))
                 nextStart = nextPositionOf(nextStart);
@@ -118,7 +118,7 @@ void BlockCommand::formatSelection(const VisiblePosition& startOfSelection, cons
 
         ASSERT(endEnclosingCell);
 
-        VisiblePosition nextStart = createVisiblePosition(firstPositionInNode(endEnclosingCell));
+        VisiblePosition nextStart = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(endEnclosingCell));
         VisiblePosition newEnd = previousPositionOf(nextStart);
         while (isDisplayInsideTable(newEnd.deepEquivalent().anchorNode()))
             newEnd = previousPositionOf(newEnd);
@@ -133,10 +133,10 @@ void BlockCommand::formatSelection(const VisiblePosition& startOfSelection, cons
     if (!root || root == startOfSelection.deepEquivalent().anchorNode())
         return;
 
-    RefPtrWillBeRawPtr<Node> currentNode = blockExtentStart(startOfSelection.deepEquivalent().anchorNode(), root);
-    RefPtrWillBeRawPtr<Node> endNode = blockExtentEnd(endOfSelection.deepEquivalent().anchorNode(), root);
+    Node* currentNode = blockExtentStart(startOfSelection.deepEquivalent().anchorNode(), root);
+    Node* endNode = blockExtentEnd(endOfSelection.deepEquivalent().anchorNode(), root);
 
-    while (currentNode->isDescendantOf(endNode.get()))
+    while (currentNode->isDescendantOf(endNode))
         endNode = endNode->lastChild();
 
     formatBlockExtent(currentNode, endNode, root, editingState);

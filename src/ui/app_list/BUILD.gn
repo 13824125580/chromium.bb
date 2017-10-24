@@ -213,6 +213,7 @@ component("app_list") {
   }
 }
 
+if (false) {
 static_library("test_support") {
   sources = [
     "test/app_list_test_model.cc",
@@ -230,6 +231,7 @@ static_library("test_support") {
     "//ui/gfx/geometry",
   ]
 }
+}
 
 if (toolkit_views) {
   executable("app_list_demo") {
@@ -241,7 +243,7 @@ if (toolkit_views) {
 
     deps = [
       ":app_list",
-      ":test_support",
+#      ":test_support",
       "//base",
       "//build/config/sanitizers:deps",
       "//build/win:default_exe_manifest",
@@ -269,6 +271,7 @@ if (toolkit_views) {
   }
 }
 
+if (false) {
 test("app_list_unittests") {
   sources = [
     "app_list_item_list_unittest.cc",
@@ -338,3 +341,5 @@ test("app_list_unittests") {
     ]
   }
 }
+}
+

@@ -185,7 +185,7 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::isolatedCopyImpl()
 }
 
 static bool s_enabledStackCaptureInConstructor = false;
-bool ScriptController::s_stackCaptureControlledByInspector = true;
+bool V8StackTraceImpl::s_stackCaptureControlledByInspector = true;
 
 V8StackTraceImpl::V8StackTraceImpl(int contextGroupId, const String16& description, std::vector<Frame>& frames, std::unique_ptr<V8StackTraceImpl> parent)
     : m_contextGroupId(contextGroupId)
@@ -197,7 +197,7 @@ V8StackTraceImpl::V8StackTraceImpl(int contextGroupId, const String16& descripti
     // If this is true, then callstack capturing will be enabled by
     // InspectorConsoleAgent.
     if (!s_stackCaptureControlledByInspector && !s_enabledStackCaptureInConstructor) {
-        setCaptureCallStackForUncaughtExceptions_bb(true);
+        v8::V8::SetCaptureStackTraceForUncaughtExceptions(true, V8StackTraceImpl::maxCallStackSizeToCapture, stackTraceOptions);
         s_enabledStackCaptureInConstructor = true;
     }
 }

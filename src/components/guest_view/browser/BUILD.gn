@@ -30,6 +30,7 @@ source_set("browser") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -53,3 +54,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

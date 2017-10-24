@@ -616,10 +616,6 @@ bool DesktopWindowTreeHostWin::HasFrame() const {
   return !remove_standard_frame_;
 }
 
-bool DesktopWindowTreeHostWin::ShouldRerouteMouseWheelToAnyRelatedWindow() const {
-  return reroute_mouse_wheel_to_any_related_window_;
-}
-
 void DesktopWindowTreeHostWin::SchedulePaint() {
   GetWidget()->GetRootView()->SchedulePaint();
 }

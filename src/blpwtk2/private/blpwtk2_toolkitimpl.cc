@@ -62,20 +62,20 @@
 #include <third_party/WebKit/public/platform/WebSecurityOrigin.h>
 #include <third_party/WebKit/public/web/WebKit.h>
 #include <third_party/WebKit/public/web/WebSecurityPolicy.h>
-#include <third_party/WebKit/public/web/WebScriptBindings.h>
 #include <third_party/WebKit/public/web/WebScriptController.h>
+#include <third_party/WebKit/public/web/WebScriptBindings.h>
 
 extern HANDLE g_instDLL;  // set in DllMain
 
 namespace blpwtk2 {
 
-static scoped_ptr<base::MessagePump> messagePumpForUIFactory()
+static std::unique_ptr<base::MessagePump> messagePumpForUIFactory()
 {
     if (Statics::isInApplicationMainThread()) {
-        return scoped_ptr<base::MessagePump>(new MainMessagePump());
+        return std::unique_ptr<base::MessagePump>(new MainMessagePump());
     }
 
-    return scoped_ptr<base::MessagePump>(new base::MessagePumpForUI());
+    return std::unique_ptr<base::MessagePump>(new base::MessagePumpForUI());
 }
 
 static ToolkitImpl* g_instance = 0;

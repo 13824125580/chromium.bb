@@ -34,6 +34,7 @@
 #include "core/layout/SubtreeLayoutScope.h"
 #include "core/paint/TableCellPainter.h"
 #include "core/style/CollapsedBorderValue.h"
+#include "core/frame/LocalFrame.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/TransformState.h"
 #include "wtf/PtrUtil.h"
@@ -246,7 +247,7 @@ void LayoutTableCell::setSelectionState(SelectionState state)
 
     if (SelectionStart == state || SelectionBoth == state) {
         VisiblePosition selectionStart = node()->document().frame()->selection().selection().visibleStart();
-        VisiblePosition firstPos = createVisiblePosition(firstPositionInNode(node()), TextAffinity::Downstream);
+        VisiblePosition firstPos = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(node()), TextAffinity::Downstream);
         if (selectionStart.deepEquivalent() != firstPos.deepEquivalent()) {
             m_isFullySelected = false;
             return;
@@ -254,7 +255,7 @@ void LayoutTableCell::setSelectionState(SelectionState state)
     }
     if (SelectionEnd == state || SelectionBoth == state) {
         VisiblePosition selectionEnd = node()->document().frame()->selection().selection().visibleEnd();
-        VisiblePosition lastPos = createVisiblePosition(lastPositionInNode(node()), TextAffinity::Upstream);
+        VisiblePosition lastPos = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(node()), TextAffinity::Upstream);
         if (selectionEnd.deepEquivalent() != lastPos.deepEquivalent()) {
             m_isFullySelected = false;
             return;

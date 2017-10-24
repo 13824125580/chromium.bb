@@ -36,7 +36,6 @@
 #include "cc/tiles/tile_priority.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkXfermode.h"
-#include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -148,7 +147,6 @@ class CC_EXPORT LayerImpl {
 
   void PopulateSharedQuadState(SharedQuadState* state) const;
   void PopulateScaledSharedQuadState(SharedQuadState* state, float scale) const;
-  void PopulateTransformedSharedQuadState(SharedQuadState* state, const gfx::AxisTransform2d& transform) const;
   // WillDraw must be called before AppendQuads. If WillDraw returns false,
   // AppendQuads and DidDraw will not be called. If WillDraw returns true,
   // DidDraw is guaranteed to be called before another WillDraw or before
@@ -203,7 +201,6 @@ class CC_EXPORT LayerImpl {
   void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return contents_opaque_; }
 
-  void SetContentsOpaqueForLCDText(bool opaque);
   bool contents_opaque_for_lcd_text() const { return contents_opaque_for_lcd_text_; }
   float Opacity() const;
 
@@ -463,7 +460,6 @@ class CC_EXPORT LayerImpl {
   bool InsideReplica() const;
 
   float GetIdealContentsScale() const;
-  gfx::Scaling2d GetIdealContentsScale2d() const;
 
   bool was_ever_ready_since_last_transform_animation() const {
     return was_ever_ready_since_last_transform_animation_;
@@ -501,7 +497,6 @@ class CC_EXPORT LayerImpl {
                              float width) const;
 
   gfx::Rect GetScaledEnclosingRectInTargetSpace(float scale) const;
-  gfx::Rect GetScaledEnclosingRectInTargetSpace(const gfx::Scaling2d& scale) const;
 
  private:
   void ValidateQuadResourcesInternal(DrawQuad* quad) const;

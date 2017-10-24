@@ -17,6 +17,7 @@ source_set("constrained_window") {
   ]
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -29,3 +30,5 @@ source_set("unit_tests") {
     "//ui/views:test_support",
   ]
 }
+}
+

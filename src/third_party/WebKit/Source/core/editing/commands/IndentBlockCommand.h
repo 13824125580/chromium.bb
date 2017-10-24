@@ -34,9 +34,9 @@ class QualifiedName;
 
 class IndentBlockCommand : public BlockCommand {
 public:
-    static PassRefPtrWillBeRawPtr<IndentBlockCommand> create(Document& document)
+    static IndentBlockCommand* create(Document& document)
     {
-        return adoptRefWillBeNoop(new IndentBlockCommand(document));
+        return new IndentBlockCommand(document);
     }
 
     virtual bool preservesTypingStyle() const { return true; }
@@ -45,10 +45,10 @@ private:
     explicit IndentBlockCommand(Document&);
 
     virtual EditAction editingAction() const override { return EditActionIndent; }
-    PassRefPtrWillBeRawPtr<Element> createIndentBlock(const QualifiedName& tagName) const;
-    void indentSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node* lastNode, EditingState *editingState);
+    Element* createIndentBlock(const QualifiedName& tagName) const;
+    void indentSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node* lastNode, EditingState *editingState);
 
-    void formatBlockSiblings(PassRefPtrWillBeRawPtr<Node> prpFirstSibling, PassRefPtrWillBeRawPtr<Node> prpLastSibling, Node*, Node* lastNode, EditingState *editingState) override
+    void formatBlockSiblings(Node* prpFirstSibling, Node* prpLastSibling, Node*, Node* lastNode, EditingState *editingState) override
     {
         indentSiblings(prpFirstSibling, prpLastSibling, lastNode, editingState);
     }

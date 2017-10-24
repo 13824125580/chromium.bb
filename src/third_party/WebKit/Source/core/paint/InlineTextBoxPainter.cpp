@@ -431,7 +431,7 @@ void InlineTextBoxPainter::paintDocumentMarker(GraphicsContext& context, const L
 
             if (colorAttr != nullAtom) {
                 Color parsedColor;
-                String colorStr = colorAttr.string();
+                String colorStr = colorAttr.getString();
                 if (CSSParser::parseColor(parsedColor, colorStr, false)) {
                     markerColor = parsedColor;
                 }

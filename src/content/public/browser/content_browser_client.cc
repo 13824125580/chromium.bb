@@ -6,15 +6,22 @@
 
 #include "base/files/file_path.h"
 #include "base/guid.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/geolocation_delegate.h"
 #include "content/public/browser/vpn_service_proxy.h"
 #include "content/public/common/sandbox_type.h"
+#include "content/shell/common/shell_switches.h"
 #include "media/base/cdm_factory.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
+
+#if defined(OS_WIN)
+#include "content/common/sandbox_win.h"
+#include "sandbox/win/src/sandbox.h"
+#endif
 
 namespace content {
 
@@ -412,15 +419,6 @@ const wchar_t* ContentBrowserClient::GetResourceDllName() {
 }
 
 bool ContentBrowserClient::PreSpawnRenderer(sandbox::TargetPolicy* policy) {
-  std::vector<std::string> font_files = switches::GetSideloadFontFiles();
-  for (std::vector<std::string>::const_iterator i(font_files.begin());
-      i != font_files.end();
-      ++i) {
-    policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
-        sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-        base::UTF8ToWide(*i).c_str());
-  }
-
   return true;
 }
 

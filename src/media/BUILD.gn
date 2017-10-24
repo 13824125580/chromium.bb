@@ -484,7 +484,7 @@ component("media") {
     "//url",
   ]
 
-  public_configs = [
+  public_configs += [
     "//blpwtk2:blpwtk2_public"
   ]
 }

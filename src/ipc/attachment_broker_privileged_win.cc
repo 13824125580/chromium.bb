@@ -87,23 +87,37 @@ void AttachmentBrokerPrivilegedWin::OnDuplicateWinHandle(
   RouteDuplicatedHandle(new_wire_format, true);
 }
 
-void AttachmentBrokerPrivilegedWin::SendInBrowserIOThread(const HandleWireFormat& wire_format, SRWLOCK* lock) {
+void AttachmentBrokerPrivilegedWin::SendInBrowserIOThread(
+        const HandleWireFormat& wire_format, SRWLOCK* lock, bool store_on_failure) {
   base::ProcessId dest = wire_format.destination_process;
   base::AutoLock auto_lock(*get_lock());
 
-  Sender* sender = GetSenderWithProcessId(dest);
-  if (!sender) {
-    // Assuming that this message was not sent from a malicious process, the
-    // channel endpoint that would have received this message will block
-    // forever.
-    LOG(ERROR) << "Failed to deliver brokerable attachment to process with id: "
-               << dest;
-    LogError(DESTINATION_NOT_FOUND);
+  AttachmentBrokerPrivileged::EndpointRunnerPair pair =
+      GetSenderWithProcessId(dest);
+
+  if (!pair.first) {
+    if (store_on_failure) {
+      LogError(DELAYED);
+      stored_wire_formats_[dest].push_back(wire_format);
+    } else {
+      // Assuming that this message was not sent from a malicious process, the
+      // channel endpoint that would have received this message will block
+      // forever.
+      LOG(ERROR)
+          << "Failed to deliver brokerable attachment to process with id: "
+          << dest;
+      LogError(DESTINATION_NOT_FOUND);
+    }
     return;
   }
 
   LogError(DESTINATION_FOUND);
-  sender->Send(new AttachmentBrokerMsg_WinHandleHasBeenDuplicated(wire_format));
+  if (!store_on_failure)
+    LogError(DELAYED_SEND);
+
+  SendMessageToEndpoint(
+    pair, new AttachmentBrokerMsg_WinHandleHasBeenDuplicated(wire_format));
+
   ReleaseSRWLockExclusive(lock);
 }
 
@@ -120,26 +134,34 @@ void AttachmentBrokerPrivilegedWin::RouteDuplicatedHandle(
 
   // Another process is the destination.
   base::ProcessId dest = wire_format.destination_process;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner;
 
-  if (task_runner()->BelongsToCurrentThread()) {
-    // The current thread is Chrome_IOThread
-
+  {
     base::AutoLock auto_lock(*get_lock());
-  AttachmentBrokerPrivileged::EndpointRunnerPair pair =
-      GetSenderWithProcessId(dest);
-  if (!pair.first) {
-    if (store_on_failure) {
-      LogError(DELAYED);
-      stored_wire_formats_[dest].push_back(wire_format);
-    } else {
-      // Assuming that this message was not sent from a malicious process, the
-      // channel endpoint that would have received this message will block
-      // forever.
-      LOG(ERROR)
-          << "Failed to deliver brokerable attachment to process with id: "
-                 << dest;
-      LogError(DESTINATION_NOT_FOUND);
-    }
+    AttachmentBrokerPrivileged::EndpointRunnerPair pair =
+        GetSenderWithProcessId(dest);
+
+    task_runner = pair.second;
+  }
+
+  if (task_runner->BelongsToCurrentThread()) {
+    // The current thread is Chrome_IOThread
+    base::AutoLock auto_lock(*get_lock());
+    AttachmentBrokerPrivileged::EndpointRunnerPair pair =
+        GetSenderWithProcessId(dest);
+    if (!pair.first) {
+      if (store_on_failure) {
+        LogError(DELAYED);
+        stored_wire_formats_[dest].push_back(wire_format);
+      } else {
+        // Assuming that this message was not sent from a malicious process, the
+        // channel endpoint that would have received this message will block
+        // forever.
+        LOG(ERROR)
+            << "Failed to deliver brokerable attachment to process with id: "
+            << dest;
+        LogError(DESTINATION_NOT_FOUND);
+      }
       return;
     }
 
@@ -163,12 +185,13 @@ void AttachmentBrokerPrivilegedWin::RouteDuplicatedHandle(
     SRWLOCK lock = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&lock);
 
-    task_runner()->PostTask(
+    task_runner->PostTask(
           FROM_HERE,
           base::Bind(&AttachmentBrokerPrivilegedWin::SendInBrowserIOThread,
           base::Unretained(this),
           wire_format,
-          &lock));
+          &lock,
+          store_on_failure));
 
     // This will block the thread until the posted task is completed.
     AcquireSRWLockExclusive(&lock);

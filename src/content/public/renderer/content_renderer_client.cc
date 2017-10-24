@@ -89,7 +89,7 @@ blink::WebSpeechSynthesizer* ContentRendererClient::OverrideSpeechSynthesizer(
 content::ResourceLoaderBridge*
 ContentRendererClient::OverrideResourceLoaderBridge(
     const content::RequestInfo& request_info,
-    content::ResourceRequestBody* request_body) {
+    content::ResourceRequestBodyImpl* request_body) {
   return NULL;
 }
 

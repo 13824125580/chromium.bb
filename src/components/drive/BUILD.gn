@@ -144,6 +144,7 @@ proto_library("proto") {
   ]
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -187,3 +188,5 @@ source_set("test_support_chromeos") {
     "//google_apis:test_support",
   ]
 }
+}
+

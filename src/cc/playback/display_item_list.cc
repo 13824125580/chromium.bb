@@ -25,7 +25,6 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
 #include "third_party/skia/include/utils/SkPictureUtils.h"
-#include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/skia_util.h"
 
@@ -118,7 +117,7 @@ void DisplayItemList::ToProtobuf(proto::DisplayItemList* proto) {
 void DisplayItemList::Raster(SkCanvas* canvas,
                              SkPicture::AbortCallback* callback,
                              const gfx::Rect& canvas_target_playback_rect,
-                             const gfx::AxisTransform2d& contents_transform) const {
+                             float contents_scale) const {
   canvas->save();
 
   if (!canvas_target_playback_rect.IsEmpty()) {
@@ -130,8 +129,7 @@ void DisplayItemList::Raster(SkCanvas* canvas,
     canvas->clipRegion(device_clip);
   }
 
-  canvas->translate(contents_transform.translation().x(), contents_transform.translation().y());
-  canvas->scale(contents_transform.scale_x(), contents_transform.scale_y());
+  canvas->scale(contents_scale, contents_scale);
   Raster(canvas, callback);
   canvas->restore();
 }
@@ -319,7 +317,7 @@ void DisplayItemList::GenerateDiscardableImagesMetadata() {
 
 void DisplayItemList::GetDiscardableImagesInRect(
     const gfx::Rect& rect,
-    const gfx::Scaling2d& raster_scale,
+    float raster_scale,
     std::vector<DrawImage>* images) {
   image_map_.GetDiscardableImagesInRect(rect, raster_scale, images);
 }

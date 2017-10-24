@@ -55,6 +55,7 @@ mojom("test_common_custom_types") {
 }
 
 # GYP version: mojo/mojo_base.gyp:mojo_common_unittests
+if (false) {
 test("mojo_common_unittests") {
   deps = [
     ":common",
@@ -86,3 +87,6 @@ test("mojo_common_perftests") {
     "//testing/gtest",
   ]
 }
+
+}
+

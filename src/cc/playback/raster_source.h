@@ -69,7 +69,7 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   // Returns whether the given rect at given scale is of solid color in
   // this raster source, as well as the solid color value.
   bool PerformSolidColorAnalysis(const gfx::Rect& content_rect,
-                                 const gfx::AxisTransform2d& contents_transform,
+                                 float contents_scale,
                                  SkColor* color) const;
 
   // Returns true iff the whole raster source is of solid color.
@@ -86,7 +86,7 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   // rect in layer space. The returned draw images' matrices are modified as if
   // they were being using during raster at scale |raster_scale|.
   void GetDiscardableImagesInRect(const gfx::Rect& layer_rect,
-                                  const gfx::Scaling2d& raster_scale,
+                                  float raster_scale,
                                   std::vector<DrawImage>* images) const;
 
   // Return true iff this raster source can raster the given rect in layer
@@ -162,7 +162,6 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   // TODO(enne/vmiura): this has a read/write race between raster and compositor
   // threads with multi-threaded Ganesh.  Make this const or remove it.
   bool should_attempt_to_use_distance_field_text_;
-  const SkColor default_lcd_background_color_;
 
   // In practice, this is only set once before raster begins, so it's ok with
   // respect to threading.

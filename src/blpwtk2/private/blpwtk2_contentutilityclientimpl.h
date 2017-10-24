@@ -41,17 +41,11 @@ class ContentUtilityClientImpl : public content::ContentUtilityClient {
     // Allows the embedder to filter messages.
     bool OnMessageReceived(const IPC::Message& message) override;
 
-    // Message handler for the chrome ping message.  This message is sent to
-    // the utility process right after it is started, and the utility process
-    // pings back.  This is just a mechanism for the browser process to know
-    // when the utility process has started.  TODO: why is this needed?
-    void onStartupPing();
-
   private:
-    DISALLOW_COPY_AND_ASSIGN(ContentUtilityClientImpl);
-
     typedef ScopedVector<UtilityMessageHandler> Handlers;
     Handlers d_handlers;
+
+    DISALLOW_COPY_AND_ASSIGN(ContentUtilityClientImpl);
 };
 
 }  // close namespace blpwtk2

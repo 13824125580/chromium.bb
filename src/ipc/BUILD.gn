@@ -175,6 +175,7 @@ source_set("param_traits") {
   ]
 }
 
+if (false) {
 if (!is_ios) {
   source_set("run_all_unittests") {
     testonly = true
@@ -303,3 +304,5 @@ if (!is_ios) {
     ]
   }
 }
+}
+

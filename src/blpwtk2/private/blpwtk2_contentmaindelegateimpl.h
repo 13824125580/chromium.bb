@@ -25,9 +25,9 @@
 
 #include <blpwtk2_config.h>
 
-#include <base/memory/scoped_ptr.h>
 #include <content/public/app/content_main_delegate.h>
 #include <chrome/common/chrome_content_client.h>
+#include <memory>
 
 namespace base {
 class FilePath;
@@ -77,9 +77,9 @@ class ContentMainDelegateImpl : public content::ContentMainDelegate {
   private:
     std::vector<std::string> d_commandLineSwitches;
     ContentClient d_contentClient;
-    scoped_ptr<content::ContentBrowserClient> d_contentBrowserClient;
-    scoped_ptr<content::ContentRendererClient> d_contentRendererClient;
-    scoped_ptr<content::ContentUtilityClient> d_contentUtilityClient;
+    std::unique_ptr<content::ContentBrowserClient> d_contentBrowserClient;
+    std::unique_ptr<content::ContentRendererClient> d_contentRendererClient;
+    std::unique_ptr<content::ContentUtilityClient> d_contentUtilityClient;
     RendererInfoMap* d_rendererInfoMap;
     bool d_isSubProcess;
 

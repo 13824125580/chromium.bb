@@ -96,6 +96,7 @@ component("compositor") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   testonly = true
   sources = [
@@ -204,3 +205,5 @@ test("compositor_unittests") {
     deps += [ "//third_party/mesa:osmesa" ]
   }
 }
+}
+

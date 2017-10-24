@@ -223,7 +223,7 @@ EditCommandComposition* CompositeEditCommand::ensureComposition()
         command = command->parent();
     if (!command->m_composition)
         command->m_composition = EditCommandComposition::create(&document(), startingSelection(), endingSelection(), editingAction());
-    return command->m_composition.get();
+    return command->m_composition;
 }
 
 bool CompositeEditCommand::preservesTypingStyle() const
@@ -398,7 +398,7 @@ void CompositeEditCommand::removeChildrenInRange(Node* node, unsigned from, unsi
 
     size_t size = children.size();
     for (size_t i = 0; i < size; ++i) {
-        removeNode(children[i].release(), editingState);
+        removeNode(children[i], editingState);
         if (editingState->isAborted())
             return;
     }
@@ -430,7 +430,7 @@ void CompositeEditCommand::removeNodeAndPruneAncestors(Node* node, EditingState*
 
 void CompositeEditCommand::moveRemainingSiblingsToNewParent(Node* node, Node* pastLastNodeToMove, Element* newParent, EditingState* editingState, Node* prpRefChild)
 {
-    ASSERT(!prpRefChild || prpRefChild->parentNode() == prpNewParent);
+    ASSERT(!prpRefChild || prpRefChild->parentNode() == newParent);
 
     NodeVector nodesToRemove;
     Node* refChild = prpRefChild;
@@ -1094,7 +1094,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
         // Clone every node between start.anchorNode() and outerBlock.
 
         for (size_t i = ancestors.size(); i != 0; --i) {
-            Node* item = ancestors[i - 1].get();
+            Node* item = ancestors[i - 1];
             Node* child = item->cloneNode(isDisplayInsideTable(item));
             appendNode(child, toElement(lastNode), editingState);
             if (editingState->isAborted())
@@ -1597,7 +1597,7 @@ Position CompositeEditCommand::positionAvoidingSpecialElementBoundary(const Posi
 }
 
 bool CompositeEditCommand::prepareForBlockCommand(VisiblePosition& startOfSelection, VisiblePosition& endOfSelection,
-                                                  RefPtrWillBeRawPtr<ContainerNode>& startScope, RefPtrWillBeRawPtr<ContainerNode>& endScope,
+                                                  ContainerNode*& startScope, ContainerNode*& endScope,
                                                   int& startIndex, int& endIndex,
                                                   bool includeEmptyParagraphAtEnd)
 {
@@ -1634,17 +1634,17 @@ bool CompositeEditCommand::prepareForBlockCommand(VisiblePosition& startOfSelect
     return true;
 }
 
-void CompositeEditCommand::finishBlockCommand(PassRefPtrWillBeRawPtr<ContainerNode> startScope, PassRefPtrWillBeRawPtr<ContainerNode> endScope,
+void CompositeEditCommand::finishBlockCommand(ContainerNode* startScope, ContainerNode* endScope,
                                               int startIndex, int endIndex)
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
     ASSERT(startScope == endScope);
     ASSERT(startIndex >= 0);
     ASSERT(startIndex <= endIndex);
     if (startScope == endScope && startIndex >= 0 && startIndex <= endIndex) {
-        VisiblePosition start(visiblePositionForIndex(startIndex, startScope.get()));
-        VisiblePosition end(visiblePositionForIndex(endIndex, endScope.get()));
+        VisiblePosition start(visiblePositionForIndex(startIndex, startScope));
+        VisiblePosition end(visiblePositionForIndex(endIndex, endScope));
         if (start.isNotNull() && end.isNotNull())
             setEndingSelection(VisibleSelection(start, end, endingSelection().isDirectional()));
     }

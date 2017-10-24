@@ -70,10 +70,6 @@ class IPC_EXPORT AttachmentBrokerPrivileged : public IPC::AttachmentBroker {
   // necessary.
   void SendMessageToEndpoint(EndpointRunnerPair pair, Message* message);
 
-  const scoped_refptr<base::SingleThreadTaskRunner>& task_runner() {
-    return task_runner_;
-  }
-
   // Errors that can be reported by subclasses.
   // These match tools/metrics/histograms/histograms.xml.
   // This enum is append-only.

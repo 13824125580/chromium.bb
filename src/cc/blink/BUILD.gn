@@ -49,6 +49,7 @@ component("blink") {
   ]
 }
 
+if (false) {
 # GYP version: //cc/blink/cc_blink_tests.gyp:cc_blink_unittests
 test("cc_blink_unittests") {
   sources = [
@@ -73,3 +74,5 @@ test("cc_blink_unittests") {
     "//ui/gfx/geometry",
   ]
 }
+}
+

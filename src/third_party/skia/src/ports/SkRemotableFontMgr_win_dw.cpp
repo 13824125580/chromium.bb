@@ -466,7 +466,7 @@ SkRemotableFontMgr* SkRemotableFontMgr_New_DirectWrite() {
     }
 
     SkTScopedComPtr<IDWriteFontCollection> sysFontCollection;
-    HRNM(SkFontMgr_GetFontCollectionToUse(&sysFontCollection, factory),
+    HRNM(factory->GetSystemFontCollection(&sysFontCollection),
          "Could not get system font collection.");
 
     WCHAR localeNameStorage[LOCALE_NAME_MAX_LENGTH];

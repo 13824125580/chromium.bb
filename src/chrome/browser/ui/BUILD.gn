@@ -640,6 +640,7 @@ if (is_mac) {
   }
 }
 
+if (false) {
 # In GYP this is part of test_support_common.
 static_library("test_support") {
   testonly = true
@@ -714,3 +715,5 @@ static_library("test_support") {
     "//ui/base",
   ]
 }
+}
+

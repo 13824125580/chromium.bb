@@ -100,6 +100,7 @@ component("blink") {
   }
 }
 
+if (false) {
 test("media_blink_unittests") {
   deps = [
     ":blink",
@@ -158,3 +159,5 @@ test("media_blink_unittests") {
     ]
   }
 }
+}
+

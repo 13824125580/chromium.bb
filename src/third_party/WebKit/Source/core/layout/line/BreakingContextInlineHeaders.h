@@ -757,9 +757,6 @@ inline bool BreakingContext::handleText(WordMeasurements& wordMeasurements, bool
         lineBreakType = LineBreakType::Normal;
     }
 
-    // Use LineBreakType::Normal for break-all. When a word does not fit,
-    // rewindToMidWordBreak() finds the mid-word break point.
-    LineBreakType lineBreakType = keepAll ? LineBreakType::KeepAll : LineBreakType::Normal;
     bool canBreakMidWord = breakAll || breakWords;
     int nextBreakablePositionForBreakAll = -1;
 

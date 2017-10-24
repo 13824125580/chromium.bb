@@ -7,6 +7,7 @@ import("//build/config/ui.gni")
 import("//testing/test.gni")
 import("//tools/grit/repack.gni")
 
+if (false) {
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
@@ -31,6 +32,7 @@ if (is_ios) {
   }
 }
 
+if (false) {
 # To add a unit test to this target, make a "unit_test" source_set in your
 # component (it's important to use a source_set instead of a static library or
 # no tests will run) and add a reference here. You can add more than one unit
@@ -502,3 +504,7 @@ if (!is_ios) {
     ]
   }
 }
+}
+
+}
+

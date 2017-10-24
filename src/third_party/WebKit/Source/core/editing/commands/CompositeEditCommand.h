@@ -171,7 +171,7 @@ protected:
     Position positionAvoidingSpecialElementBoundary(const Position&, EditingState*);
 
     bool prepareForBlockCommand(VisiblePosition& startOfSelection, VisiblePosition& endOfSelection,
-                                ContainerNode* startScope, ContainerNode* endScope,
+                                ContainerNode*& startScope, ContainerNode*& endScope,
                                 int& startIndex, int& endIndex,
                                 bool includeEmptyParagraphAtEnd);
     void finishBlockCommand(ContainerNode* startScope, ContainerNode* endScope,

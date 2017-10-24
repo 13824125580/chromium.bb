@@ -239,7 +239,8 @@ SyncChannel::SyncContext::SyncContext(
     WaitableEvent* shutdown_event)
     : ChannelProxy::Context(listener, ipc_task_runner),
       received_sync_msgs_(ReceivedSyncMsgQueue::AddContext()),
-      peek_messages_event_(true, false),
+      peek_messages_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED),
       shutdown_event_(shutdown_event),
       restrict_dispatch_group_(kRestrictDispatchGroup_None) {
 }

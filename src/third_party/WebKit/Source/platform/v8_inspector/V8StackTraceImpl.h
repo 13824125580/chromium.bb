@@ -77,10 +77,11 @@ private:
     std::vector<Frame> m_frames;
     std::unique_ptr<V8StackTraceImpl> m_parent;
 
+public:
     // Set this to false if callstack capturing should always happen.  By default, this
     // is true, which means callstack capturing only happens when the inspector is open
     // (which is the default upstream behavior).
-    static bool s_stackCaptureControlledByInspector;
+    PLATFORM_EXPORT static bool s_stackCaptureControlledByInspector;
 };
 
 } // namespace blink

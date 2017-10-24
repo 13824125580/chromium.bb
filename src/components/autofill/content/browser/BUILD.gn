@@ -57,6 +57,7 @@ proto_library("risk_proto") {
   proto_out_dir = "components/autofill/content/browser/risk/proto"
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -83,3 +84,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

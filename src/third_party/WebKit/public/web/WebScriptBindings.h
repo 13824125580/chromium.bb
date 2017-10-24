@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Bloomberg Finance L.P.
+ * Copyright (C) 2017 Bloomberg Finance L.P.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -20,17 +20,27 @@
  * IN THE SOFTWARE.
  */
 
-[
-] interface BBWindowHooks {
+#ifndef WebScriptBindings_h
+#define WebScriptBindings_h
 
-    boolean isBlock(Node node);
-    DOMString getPlainText(Node node, optional DOMString excluder, optional DOMString mask);
-    void setTextMatchMarkerVisibility(Document document, boolean highlight);
-    boolean checkSpellingForRange(Range range);
-    void removeMarker(Range range, long mask, long removeMarkerFlag);
-    void addMarker(Range range, long markerType);
-    Range findPlainText(Range range, DOMString target, long options);
-    boolean checkSpellingForNode(Node node);
-    ClientRect getAbsoluteCaretRectAtOffset(Node node, long offset);
+#include "../platform/WebCommon.h"
+
+namespace v8 {
+class Context;
+template <class T> class Local;
+}
+
+namespace blink {
+
+class WebString;
+
+class WebScriptBindings {
+public:
+    // Creates a V8 context that can access the DOM.
+    BLINK_EXPORT static v8::Local<v8::Context> createWebScriptContext();
 };
+
+} // namespace blink
+
+#endif
 

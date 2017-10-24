@@ -74,7 +74,7 @@ class LoaderDelegateImpl;
 class MediaStreamManager;
 class MojoShellContext;
 class ResourceDispatcherHostImpl;
-class SpeechRecognitionManagerImpl;
+//class SpeechRecognitionManagerImpl;
 class StartupTaskRunner;
 class TimeZoneMonitor;
 struct MainFunctionParams;
@@ -285,7 +285,7 @@ class CONTENT_EXPORT BrowserMainLoop {
   std::unique_ptr<LoaderDelegateImpl> loader_delegate_;
   std::unique_ptr<ResourceDispatcherHostImpl> resource_dispatcher_host_;
   std::unique_ptr<MediaStreamManager> media_stream_manager_;
-  std::unique_ptr<SpeechRecognitionManagerImpl> speech_recognition_manager_;
+//  std::unique_ptr<SpeechRecognitionManagerImpl> speech_recognition_manager_;
   std::unique_ptr<TimeZoneMonitor> time_zone_monitor_;
 
   // DO NOT add members here. Add them to the right categories above.

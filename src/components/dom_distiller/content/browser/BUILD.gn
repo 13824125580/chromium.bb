@@ -58,6 +58,7 @@ static_library("browser") {
   }
 }
 
+if (false) {
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -70,3 +71,5 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
 }
+}
+

@@ -12,11 +12,6 @@ import("//third_party/WebKit/Source/platform/platform_generated.gni")
 # Most targets in this file are private actions so use that as the default.
 visibility = [ ":*" ]
 
-heap_gypi = exec_script("//build/gypi_to_gn.py",
-                        [ rebase_path("heap/blink_heap.gypi") ],
-                        "scope",
-                        [ "heap/blink_heap.gypi" ])
-
 blink_platform_neon_files = [ "graphics/cpu/arm/WebGLImageConversionNEON.h" ]
 
 blink_platform_sse_files = [ "graphics/cpu/x86/WebGLImageConversionSSE.h" ]
@@ -466,6 +461,7 @@ component("platform") {
   }
 }
 
+if (false) {
 source_set("test_support") {
   sources = platform_test_support_files
   visibility += [ "//third_party/WebKit/*" ]
@@ -600,6 +596,7 @@ group("blink_platform_unittests_data") {
     "image-decoders/testing/",
     "../../LayoutTests/fast/images/resources/",
   ]
+}
 }
 
 if (current_cpu == "arm") {

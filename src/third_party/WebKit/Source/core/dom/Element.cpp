@@ -87,6 +87,7 @@
 #include "core/editing/serializers/Serialization.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/editing/spellcheck/SpellCheckRequester.h"
+#include "core/editing/Position.h"
 #include "core/events/EventDispatcher.h"
 #include "core/events/FocusEvent.h"
 #include "core/frame/FrameHost.h"
@@ -994,8 +995,8 @@ void Element::bbRequestSpellCheck()
         else if (element->isTextFormControl()) {
             HTMLElement* innerElement = toHTMLTextFormControlElement(element)->innerEditorElement();
             if (innerElement && innerElement->hasEditableStyle() && innerElement->isSpellCheckingEnabled()) {
-                VisiblePosition startPos = createVisiblePosition(firstPositionInNode(innerElement));
-                VisiblePosition endPos = createVisiblePosition(lastPositionInNode(innerElement));
+                VisiblePosition startPos = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(innerElement));
+                VisiblePosition endPos = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(innerElement));
                 if (startPos.isNotNull() && endPos.isNotNull()) {
                     EphemeralRange rangeToCheck(startPos.deepEquivalent(), endPos.deepEquivalent());
                     spellCheckRequester.requestCheckingFor(SpellCheckRequest::create(TextCheckingTypeSpelling | TextCheckingTypeGrammar, TextCheckingProcessBatch, rangeToCheck, rangeToCheck));
@@ -1004,8 +1005,8 @@ void Element::bbRequestSpellCheck()
             element = ElementTraversal::nextSkippingChildren(*element, stayWithin);
         }
         else if (element->hasEditableStyle() && element->isSpellCheckingEnabled()) {
-            VisiblePosition startPos = createVisiblePosition(firstPositionInNode(element));
-            VisiblePosition endPos = createVisiblePosition(lastPositionInNode(element));
+            VisiblePosition startPos = createVisiblePosition(PositionTemplate<EditingStrategy>::firstPositionInNode(element));
+            VisiblePosition endPos = createVisiblePosition(PositionTemplate<EditingStrategy>::lastPositionInNode(element));
             if (startPos.isNotNull() && endPos.isNotNull()) {
                 EphemeralRange rangeToCheck(startPos.deepEquivalent(), endPos.deepEquivalent());
                 spellCheckRequester.requestCheckingFor(SpellCheckRequest::create(TextCheckingTypeSpelling | TextCheckingTypeGrammar, TextCheckingProcessBatch, rangeToCheck, rangeToCheck));
@@ -1020,7 +1021,7 @@ void Element::bbRequestSpellCheck()
 
 int Element::bbScrollLeftNoZoomAdjust()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         return lb->scrollLeft();
     return 0;
@@ -1028,7 +1029,7 @@ int Element::bbScrollLeftNoZoomAdjust()
 
 int Element::bbScrollTopNoZoomAdjust()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         return lb->scrollTop();
     return 0;
@@ -1036,21 +1037,21 @@ int Element::bbScrollTopNoZoomAdjust()
 
 void Element::setBbScrollLeftNoZoomAdjust(int newLeft)
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         lb->setScrollLeft(LayoutUnit(newLeft));
 }
 
 void Element::setBbScrollTopNoZoomAdjust(int newTop)
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         lb->setScrollTop(LayoutUnit(newTop));
 }
 
 int Element::bbScrollWidthNoZoomAdjust()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         return lb->scrollWidth();
     return 0;
@@ -1058,7 +1059,7 @@ int Element::bbScrollWidthNoZoomAdjust()
 
 int Element::bbScrollHeightNoZoomAdjust()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
     if (LayoutBox* lb = layoutBox())
         return lb->scrollHeight();
     return 0;

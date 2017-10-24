@@ -11,7 +11,10 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/process/process.h"
-#include "content/public/test/test_mojo_service.mojom.h"
+
+// blpwtk2: Remove test-only code
+//#include "content/public/test/test_mojo_service.mojom.h"
+
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/shell/public/cpp/interface_registry.h"
 
@@ -26,6 +29,8 @@ namespace content {
 
 namespace {
 
+// blpwtk2: Remove test-only code
+#if 0
 class TestMojoServiceImpl : public mojom::TestMojoService {
  public:
   static void Create(mojo::InterfaceRequest<mojom::TestMojoService> request) {
@@ -60,6 +65,7 @@ class TestMojoServiceImpl : public mojom::TestMojoService {
 
   DISALLOW_COPY_AND_ASSIGN(TestMojoServiceImpl);
 };
+#endif
 
 bool Send(IPC::Message* message) {
   return content::UtilityThread::Get()->Send(message);
@@ -92,24 +98,15 @@ void ShellContentUtilityClient::RegisterMojoApplications(
 
 void ShellContentUtilityClient::ExposeInterfacesToBrowser(
     shell::InterfaceRegistry* registry) {
+// blpwtk2: Remove test-only code
+#if 0
   registry->AddInterface(base::Bind(&TestMojoServiceImpl::Create));
+#endif
 }
 
 bool ShellContentUtilityClient::OnMessageReceived(const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(ShellContentUtilityClient, message)
-    IPC_MESSAGE_HANDLER(ChromeUtilityMsg_StartupPing, onStartupPing)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-
-  for (Handlers::iterator it = d_handlers.begin(); !handled && it != d_handlers.end(); ++it)
-    handled = (*it)->OnMessageReceived(message);
-
-  return handled;
+  return false;
 }
 
-void ShellContentUtilityClient::onStartupPing() {
-  Send(new ChromeUtilityHostMsg_ProcessStarted);
-}
 
 }  // namespace content
