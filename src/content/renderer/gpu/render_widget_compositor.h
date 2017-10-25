@@ -57,7 +57,8 @@ class CONTENT_EXPORT RenderWidgetCompositor
   static std::unique_ptr<RenderWidgetCompositor> Create(
       RenderWidgetCompositorDelegate* delegate,
       float device_scale_factor,
-      CompositorDependencies* compositor_deps);
+      CompositorDependencies* compositor_deps,
+      int routingId);
 
   ~RenderWidgetCompositor() override;
 
@@ -202,7 +203,7 @@ class CONTENT_EXPORT RenderWidgetCompositor
   RenderWidgetCompositor(RenderWidgetCompositorDelegate* delegate,
                          CompositorDependencies* compositor_deps);
 
-  void Initialize(float device_scale_factor);
+  void Initialize(float device_scale_factor, int routingId);
   cc::LayerTreeHost* layer_tree_host() { return layer_tree_host_.get(); }
 
  private:

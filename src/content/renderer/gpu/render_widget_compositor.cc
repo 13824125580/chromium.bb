@@ -208,10 +208,11 @@ static cc::TopControlsState ConvertTopControlsState(
 std::unique_ptr<RenderWidgetCompositor> RenderWidgetCompositor::Create(
     RenderWidgetCompositorDelegate* delegate,
     float device_scale_factor,
-    CompositorDependencies* compositor_deps) {
+    CompositorDependencies* compositor_deps,
+    int routingId) {
   std::unique_ptr<RenderWidgetCompositor> compositor(
       new RenderWidgetCompositor(delegate, compositor_deps));
-  compositor->Initialize(device_scale_factor);
+  compositor->Initialize(device_scale_factor, routingId);
   return compositor;
 }
 
@@ -227,7 +228,7 @@ RenderWidgetCompositor::RenderWidgetCompositor(
       remote_proto_channel_receiver_(nullptr),
       weak_factory_(this) {}
 
-void RenderWidgetCompositor::Initialize(float device_scale_factor) {
+void RenderWidgetCompositor::Initialize(float device_scale_factor, int routingId) {
   base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
   cc::LayerTreeSettings settings =
       GenerateLayerTreeSettings(*cmd, compositor_deps_, device_scale_factor);
@@ -245,6 +246,7 @@ void RenderWidgetCompositor::Initialize(float device_scale_factor) {
         delegate_->CreateExternalBeginFrameSource();
   }
   params.animation_host = cc::AnimationHost::CreateMainInstance();
+  params.routing_id = routingId;
 
   if (cmd->HasSwitch(switches::kUseRemoteCompositing)) {
     DCHECK(!threaded_);

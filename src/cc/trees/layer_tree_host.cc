@@ -251,7 +251,8 @@ LayerTreeHost::LayerTreeHost(InitParams* params, CompositorMode mode)
       task_graph_runner_(params->task_graph_runner),
       image_serialization_processor_(params->image_serialization_processor),
       surface_id_namespace_(0u),
-      next_surface_sequence_(1u) {
+      next_surface_sequence_(1u),
+      routing_id_(params->routing_id) {
   DCHECK(task_graph_runner_);
 
   DCHECK(animation_host_);

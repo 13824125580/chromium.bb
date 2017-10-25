@@ -1126,7 +1126,7 @@ void RenderWidget::initializeLayerTreeView() {
   DCHECK(!host_closing_);
 
   compositor_ = RenderWidgetCompositor::Create(this, device_scale_factor_,
-                                               compositor_deps_);
+                                               compositor_deps_, routing_id_);
   compositor_->setViewportSize(physical_backing_size_);
   OnDeviceScaleFactorChanged();
   // For background pages and certain tests, we don't want to trigger

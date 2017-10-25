@@ -96,6 +96,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
     std::unique_ptr<BeginFrameSource> external_begin_frame_source;
     ImageSerializationProcessor* image_serialization_processor = nullptr;
     std::unique_ptr<AnimationHost> animation_host;
+    int routing_id = 0;
 
     InitParams();
     ~InitParams();
@@ -443,6 +444,10 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
     return client_picture_cache_ ? client_picture_cache_.get() : nullptr;
   }
 
+  int GetRoutingId() const {
+    return routing_id_;
+  }
+
  protected:
   LayerTreeHost(InitParams* params, CompositorMode mode);
   void InitializeThreaded(
@@ -617,6 +622,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
 
   uint32_t surface_id_namespace_;
   uint32_t next_surface_sequence_;
+
+  int routing_id_;
 
   DISALLOW_COPY_AND_ASSIGN(LayerTreeHost);
 };

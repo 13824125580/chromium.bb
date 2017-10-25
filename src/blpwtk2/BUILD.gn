@@ -285,6 +285,7 @@ shared_library("blpwtk2") {
 
   deps = [
     "//base",
+    "//cc",
     "//chrome/chrome_blpwtk2",
     "//components/devtools_http_handler",
     "//content",
